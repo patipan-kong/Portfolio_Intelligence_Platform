@@ -559,6 +559,25 @@ decision policy, analytics, or UI selection.
 Governed by `M34-D-0002`.
 
 
+## Portfolio Base Currency
+
+The single, explicit currency reference, drawn from Asset Foundation's
+currency and Unit Semantics vocabulary, in which one Portfolio Identity's
+NAV, returns, and benchmark comparisons are expressed.
+
+Owned by Ledger & Accounting.
+
+It is scoped to exactly one Portfolio Identity and is not ambient. A change is
+an explicit, recorded event, never an in-place edit or silent reinterpretation
+of historical meaning. It carries no FX rate, computed conversion, NAV value,
+strategy, policy, or benchmark meaning.
+
+Governed by the
+[M42-WP1 Portfolio Canonical Vocabulary and Ownership Register](implementation/M42_WP1_PORTFOLIO_CANONICAL_VOCABULARY_AND_OWNERSHIP_REGISTER.md)
+and the confirmed
+[M42-WP2 Portfolio Identity, Accounting Scope, Membership & Base Currency Contract Specification](implementation/M42_WP2_PORTFOLIO_IDENTITY_ACCOUNTING_SCOPE_MEMBERSHIP_AND_BASE_CURRENCY_CONTRACT_SPECIFICATION.md).
+
+
 ## Accounting Scope
 
 The accounting boundary to which a portfolio's holdings, transactions, cash,
@@ -596,6 +615,64 @@ Owned by Portfolio Intelligence.
 It excludes Goal Target, Decision Policy, and accounting truth.
 
 Governed by `M34-D-0002` and `M34-D-0007`.
+
+
+## Investment Universe
+
+The inert, portfolio-scoped declaration of the intended scope of holdings for
+one Portfolio Identity. Its named criteria use already-owned Asset Foundation
+vocabulary and are declarative data only.
+
+Owned by Portfolio Intelligence as a specialization of Portfolio Strategy
+Metadata.
+
+It presupposes but never redefines Accounting Scope. It is not an executable
+function, truth-valued predicate, belonging verdict, recommendation, or
+enforcement constraint. Investment Universe Membership is distinct and is
+not admitted by M42.
+
+Governed by the
+[M42-WP1 Portfolio Canonical Vocabulary and Ownership Register](implementation/M42_WP1_PORTFOLIO_CANONICAL_VOCABULARY_AND_OWNERSHIP_REGISTER.md).
+
+
+## Portfolio Benchmark Declaration
+
+A portfolio-scoped declaration of exactly one of four forms: Single,
+Composite, Category, or explicitly None. It states which Market
+Intelligence-owned canonical Benchmark observation series, if any, the
+portfolio's performance is judged against.
+
+Owned by Portfolio Intelligence.
+
+It cites the Benchmark observation series without re-deriving it and computes
+no alpha, attribution, or comparison value. It is never abbreviated to bare
+"Benchmark." The Policy-derived form is withheld pending a future, separately
+confirmed admission.
+
+Governed by the
+[M42-WP1 Portfolio Canonical Vocabulary and Ownership Register](implementation/M42_WP1_PORTFOLIO_CANONICAL_VOCABULARY_AND_OWNERSHIP_REGISTER.md).
+
+
+## Portfolio Composition
+
+The single, deterministic, canonically serializable projection that binds one
+Portfolio Identity's frozen and confirmed coordinates into an immutable read
+surface.
+
+Owned by Portfolio Intelligence.
+
+It composes Portfolio Identity, Accounting Scope, Portfolio Lifecycle State,
+Investment Universe, Portfolio Base Currency, Portfolio Benchmark
+Declaration, and provenance only by citation at their confirmed meanings. It
+is not a second source of Ledger & Accounting facts, introduces no ambient
+default, and carries no derived measure.
+
+This entry names the concept only. Exact fields, order, schema version, and
+serialization remain the responsibility of the separately governed M42-WP7
+contract.
+
+Governed by the
+[M42-WP1 Portfolio Canonical Vocabulary and Ownership Register](implementation/M42_WP1_PORTFOLIO_CANONICAL_VOCABULARY_AND_OWNERSHIP_REGISTER.md).
 
 
 ## Goal Target

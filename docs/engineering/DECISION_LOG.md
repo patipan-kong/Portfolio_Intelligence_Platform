@@ -2121,3 +2121,33 @@ partial-result composition, and outcome/degraded-state interaction remain
 deferred to WP4 exactly as allocated by the approved architecture. WP4 may
 begin only under separately authorized architecture work; this closeout does
 not begin WP4.
+
+---
+
+## M42-WP2 — Portfolio Identity, Accounting Scope & Membership Contract Closeout
+
+**Date:** 2026-07-24
+
+**Decision:** Close M42-WP2 as `COMPLETE AND CONFIRMED`. M42 Architecture is
+`COMPLETE AND FROZEN`; M42-WP1 is `COMPLETE AND CONFIRMED`; and every required
+M42-WP2 correction is verified. The canonical closeout record is
+[M42_WP2_CLOSEOUT.md](../implementation/M42_WP2_CLOSEOUT.md).
+
+**Reasoning:** The Independent Governance Review identified six bounded
+corrections. The first Independent Confirmation verified the resolved set and
+narrowed the remaining set to RC-1 and RC-4. The Final Independent
+Confirmation verified both residual corrections and recorded `ALL REQUIRED
+CORRECTIONS VERIFIED`. Repository reconciliation confirms a complete document
+chain, consistent Ledger & Accounting ownership, and unchanged authority
+boundaries. Workflow-stage labels preserved in frozen source and review
+records are historical evidence and do not override this canonical closeout
+status.
+
+**Impact:** Ledger & Accounting remains sole owner of Portfolio Identity,
+Accounting Scope, Portfolio Membership, and Portfolio Base Currency.
+Portfolio Intelligence may cite and compose those coordinates without an
+ownership transfer. M42 Architecture, M42-WP1 normative content, and M42-WP2
+normative content remain frozen and unchanged. This decision introduces no
+new vocabulary, redesigns no governance, begins no later M42 work package, and
+grants no implementation, runtime, provider, persistence, API, production,
+executable-validation, or lifecycle-transition authority.
