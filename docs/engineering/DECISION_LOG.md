@@ -2151,3 +2151,252 @@ normative content remain frozen and unchanged. This decision introduces no
 new vocabulary, redesigns no governance, begins no later M42 work package, and
 grants no implementation, runtime, provider, persistence, API, production,
 executable-validation, or lifecycle-transition authority.
+
+---
+
+## M42-WP3 — Investment Universe Declaration Contract Architecture Closeout
+
+**Date:** 2026-07-27
+
+**Decision:** Close M42-WP3 Architecture as `COMPLETE AND CONFIRMED`. M42
+Architecture remains `COMPLETE AND FROZEN`; M42-WP1 and M42-WP2 remain
+`COMPLETE AND CONFIRMED`; and every required M42-WP3 Architecture correction
+is verified. The canonical closeout record is
+[M42_WP3_CLOSEOUT.md](../implementation/M42_WP3_CLOSEOUT.md).
+
+**Reasoning:** Final Independent Confirmation completed with the result
+`ALL REQUIRED CORRECTIONS VERIFIED`. Repository reconciliation confirms that
+the Investment Universe Declaration Contract Architecture preserves its
+declaration-only boundary, cites upstream authority without reinterpretation,
+and leaves no current temporary review or correction-pending status outside
+historical records. The confirmation result is incorporated into the
+canonical closeout; no separate Final Independent Confirmation artifact is
+present in the repository.
+
+**Impact:** Portfolio Intelligence remains owner of the Investment Universe
+declaration as a specialization of Portfolio Strategy Metadata. Ledger &
+Accounting, Asset Foundation, and Decision Intelligence retain their existing
+coordinate and semantic authorities; citation and composition transfer no
+ownership. Architectural authority is unchanged. Frozen M42 Architecture and
+confirmed WP1, WP2, and WP3 architectural content remain unchanged. This
+decision introduces no vocabulary, begins no implementation or later work
+package, and grants no implementation, runtime, provider, persistence, API,
+production, executable-validation, enforcement, or lifecycle-transition
+authority.
+
+---
+
+## M42-WP3 Stage A: Investment Universe Vocabulary & Semantic Surface Closeout
+
+**Date:** 2026-07-27
+
+**Decision:** Close M42-WP3 Stage A as `COMPLETE AND CONFIRMED`. Independent
+Architecture Review completed with the final result `APPROVED`. M42
+Architecture remains `COMPLETE AND FROZEN`; M42-WP1, M42-WP2, and M42-WP3
+Architecture remain `COMPLETE AND CONFIRMED`. The canonical Stage A closeout
+record is
+[M42_WP3_STAGE_A_CLOSEOUT.md](../implementation/M42_WP3_STAGE_A_CLOSEOUT.md).
+
+**Reasoning:** The approved
+[Stage A Vocabulary and Semantic Surface Register](../implementation/M42_WP3_STAGE_A_VOCABULARY_AND_SEMANTIC_SURFACE_REGISTER.md)
+reuses Investment Universe as its sole governed noun, preserves every
+upstream owner, and keeps the admitted surface limited to inert descriptive
+strategy data. Investment Universe Membership remains rejected. Repository
+reconciliation leaves no current temporary Stage A review, approval, or
+correction status outside historical records.
+
+**Impact:** No vocabulary admission, ownership allocation, or semantic
+boundary changes. Frozen M42 Architecture and confirmed WP1, WP2, WP3
+Architecture, and Stage A semantic content remain unchanged except for
+authorized closeout status synchronization. This decision does not start
+Stage B and grants no implementation, persistence, runtime, API,
+serialization, executable-validation, evaluation, enforcement, provider,
+production, or lifecycle-transition authority.
+
+---
+
+## M42-WP3 Stage B: Investment Universe Declaration Contract Closeout
+
+**Date:** 2026-07-27
+
+**Decision:** Close M42-WP3 Stage B as `COMPLETE AND CONFIRMED`. Independent
+Architecture Review completed with the final result `APPROVED`. M42
+Architecture remains `COMPLETE AND FROZEN`; M42-WP1, M42-WP2, M42-WP3
+Architecture, and M42-WP3 Stage A remain `COMPLETE AND CONFIRMED`. The
+canonical Stage B closeout record is
+[M42_WP3_STAGE_B_CLOSEOUT.md](../implementation/M42_WP3_STAGE_B_CLOSEOUT.md).
+
+**Reasoning:** The approved
+[Stage B Investment Universe Declaration Contract Specification](../implementation/M42_WP3_STAGE_B_INVESTMENT_UNIVERSE_DECLARATION_CONTRACT_SPECIFICATION.md)
+preserves Investment Universe as its sole reused governed noun, retains every
+upstream owner, and keeps the contract implementation-neutral and
+declaration-only. Investment Universe Membership remains rejected. Repository
+reconciliation leaves no current provisional Stage B review, approval, or
+correction status outside historical records.
+
+**Impact:** No ownership, vocabulary admission, or semantic contract changes.
+Frozen M42 Architecture and confirmed WP1, WP2, WP3 Architecture, Stage A,
+and approved Stage B semantic content remain unchanged except for authorized
+Stage B status synchronization. This decision does not begin a later stage
+and grants no implementation, persistence, runtime, API, serialization,
+executable-validation, evaluation, enforcement, provider, production, or
+lifecycle-transition authority.
+
+---
+
+## M42-WP4 — Portfolio Policy Ownership Investigation Closeout
+
+**Date:** 2026-07-27
+
+**Decision:** Close M42-WP4 permanently as `COMPLETE — REJECT`. The canonical
+investigation record is
+[M42_WP4_PORTFOLIO_POLICY_OWNERSHIP_INVESTIGATION.md](../implementation/M42_WP4_PORTFOLIO_POLICY_OWNERSHIP_INVESTIGATION.md).
+
+**Reasoning:** Confirmed M42-WP1 established that the proposed Portfolio
+Policy noun overlaps Decision Intelligence-owned Decision Policy and
+Portfolio Limits while its remaining grouped meaning has no proven single
+owner. The M42-WP4 ownership investigation therefore resolved the
+architecture's blocked branch by rejection at the ownership/admission gate.
+
+**Impact:** M42-WP4 does not proceed to contract design. Portfolio Policy is
+not admitted, no residual ownership question is resolved, and no vocabulary,
+architecture, implementation, runtime, persistence, API, enforcement, or
+operational authority is created. This status is permanent for M42-WP4 and is
+not changed by M42-WP5 closeout.
+
+---
+
+## M42-WP5 — Portfolio Benchmark Declaration Contract Closeout
+
+**Date:** 2026-07-27
+
+**Decision:** Close M42-WP5 as `COMPLETE`. The surviving work-package scope is
+the **Portfolio Benchmark Declaration Contract**, and Independent Review
+completed with the final verdict `APPROVED`. The canonical closeout record is
+[M42_WP5_CLOSEOUT.md](../implementation/M42_WP5_CLOSEOUT.md).
+
+**Reasoning:** M42-WP5 ownership validation completed with the original
+combined scope narrowed. Portfolio Benchmark Declaration was proven as
+Portfolio Intelligence-owned contract territory. Portfolio Base Currency was
+excluded because it remains Ledger & Accounting-owned and was completed under
+M42-WP2. Independent Review approved the resulting Portfolio Benchmark
+Declaration Contract after verifying its frozen citation format, Composite
+and Category meanings, ownership preservation, authority boundaries, Golden
+Vectors, and Acceptance Criteria.
+
+**Impact:** Portfolio Intelligence retains Portfolio Benchmark Declaration;
+Market Intelligence retains Benchmark observations; Asset Foundation retains
+canonical asset identity; and Ledger & Accounting retains Portfolio Base
+Currency. M42-WP4 remains permanently `COMPLETE — REJECT`. The original
+combined WP5 label remains historical only and is not the current contract
+scope. No frozen semantic contract changes, no later work package begins, and
+no implementation, persistence, runtime, API, serialization, provider-mapping,
+calculation, executable-validation, enforcement, or lifecycle-transition
+authority is granted.
+
+---
+
+## M42-WP6 — Portfolio Lifecycle State Reuse & Provenance Contract Closeout
+
+**Date:** 2026-07-27
+
+**Decision:** Close M42-WP6 as `COMPLETE`. Independent Review completed with
+the final result `APPROVED`, and no corrections were required. The canonical
+closeout record is
+[M42_WP6_CLOSEOUT.md](../implementation/M42_WP6_CLOSEOUT.md).
+
+**Reasoning:** M42-WP6 ownership validation admitted only the narrow reuse and
+carriage surface. The approved contract binds one exact portfolio subject,
+cites the Ledger & Accounting-owned Portfolio Lifecycle State without
+reinterpretation, preserves and carries already-captured Provenance, and
+hands those unchanged cited coordinates to Portfolio Composition. Independent
+Review found no required correction to subject binding, citation rules,
+provenance carriage, ownership boundaries, golden vectors, downstream
+authority, or acceptance criteria.
+
+**Impact:** The constitutional scope and ownership boundaries are preserved.
+Ledger & Accounting retains Portfolio Lifecycle State and primary WP6
+contract ownership. Connectivity & Ingestion retains Provenance meaning and
+capture authority. Portfolio Intelligence retains Portfolio Composition.
+Citation and carriage transfer no ownership. Frozen upstream artifacts and
+approved WP6 normative content remain unchanged except for approved status
+metadata. This decision grants no implementation, runtime, persistence, API,
+schema, serialization, audit, event-sourcing, reconciliation,
+provider-mapping, authorization, executable-validation, lifecycle-execution,
+or lifecycle-transition authority. It makes no constitutional amendment and
+does not activate M42-WP7.
+
+---
+
+## M42-WP7 — Portfolio Composition Contract Closeout
+
+**Date:** 2026-07-28
+
+**Decision:** Close M42-WP7 as `COMPLETE`. The M42-WP7 Architecture
+Investigation and Portfolio Composition Contract Specification are approved,
+canonical, and frozen. Independent Constitutional Review completed with the
+final result `APPROVED`, and Constitutional Confirmation completed with the
+final result `APPROVED`. No unresolved constitutional findings or required
+corrections remain. The canonical closeout record is
+[M42_WP7_CLOSEOUT.md](../implementation/M42_WP7_CLOSEOUT.md).
+
+**Reasoning:** The approved
+[Portfolio Composition Contract Specification](../implementation/M42_WP7_PORTFOLIO_COMPOSITION_CONTRACT_SPECIFICATION.md)
+closes the terminal M42 semantic-definition surface by composing only frozen
+and confirmed-admitted coordinates, preserving exact source meanings, owner
+attributions, coordinate associations, and already-captured Provenance
+associations. Independent constitutional review and confirmation approved that
+contract without an unresolved finding. The specification's historical
+`READY_FOR_INDEPENDENT_REVIEW` marker remains unchanged because the approved
+artifact is frozen; this decision and the canonical closeout carry the final
+repository status.
+
+**Impact:** M42 Architecture remains `COMPLETE AND FROZEN`; M42-WP1,
+M42-WP2, M42-WP3, M42-WP5, M42-WP6, and M42-WP7 are complete; and M42-WP4
+remains permanently `COMPLETE — REJECT`. Every approved artifact remains
+canonical and frozen. Portfolio Intelligence owns only the approved Portfolio
+Composition surface; all cited coordinates and Provenance meaning/capture
+retain their source owners. This decision transfers no ownership, changes no
+constitutional contract, and grants no runtime, implementation, persistence,
+database, API, UI, service, calculation, valuation, analytics, optimization,
+recommendation, policy, workflow, provider, production, executable-validation,
+serialization-implementation, or operational authority. M42-WP7 is complete
+and the repository is ready for M42 Epic closeout.
+
+---
+
+## M42 — Portfolio Intelligence Foundation Epic Closeout
+
+**Date:** 2026-07-28
+
+**Decision:** Close M42 as `COMPLETE AND FROZEN`. M42 Architecture and every
+approved M42 artifact are canonical and frozen. M42-WP1, M42-WP2, M42-WP3,
+M42-WP5, M42-WP6, and M42-WP7 are complete. M42-WP4 remains permanently
+`COMPLETE — REJECT`. All constitutional reviews and confirmations have final
+approved outcomes, no unresolved constitutional findings or required
+corrections remain, and repository reconciliation is complete. The canonical
+milestone record is
+[M42_EPIC_CLOSEOUT.md](../implementation/M42_EPIC_CLOSEOUT.md).
+
+**Reasoning:** The completed work-package chain establishes one
+ownership-preserving Portfolio semantic foundation. WP1 resolves vocabulary
+and ownership; WP2 fixes the Ledger & Accounting subject and accounting
+boundary; WP3 fixes the inert Investment Universe declaration; WP4 resolves
+the Portfolio Policy branch by rejection at the single-owner admission gate;
+WP5 fixes the narrowed Portfolio Benchmark Declaration; WP6 fixes exact
+Lifecycle State reuse and already-captured Provenance carriage; and WP7
+terminates the chain with Portfolio Composition. The dependency chain is
+acyclic and complete, every approved coordinate retains its source owner, and
+the rejected WP4 branch contributes only an exclusion constraint. The
+historical WP2 correction cycle is fully verified and no review, confirmation,
+or correction condition remains open.
+
+**Impact:** M42 is complete in its approved documentation-only constitutional
+scope and the repository is ready for M43. This closeout changes no approved
+specification, architecture, semantic contract, ownership allocation, or
+constitutional decision. It grants no runtime, persistence, database, schema,
+API, UI, service, provider, calculation, valuation, analytics, performance,
+risk, attribution, exposure, optimization, recommendation, enforcement,
+workflow, lifecycle-execution, production, executable-validation,
+serialization-implementation, or operational authority. M43 is not defined,
+authorized, or begun by this closeout.

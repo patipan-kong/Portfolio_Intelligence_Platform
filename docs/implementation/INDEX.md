@@ -16,21 +16,19 @@ reader can navigate without re-deriving history from file names and dates.
 
 ## Current Milestone Status
 
-The latest completed work package is **M42-WP2 — Portfolio Identity,
-Accounting Scope & Membership Contract**, including the Portfolio Base
-Currency coordinate allocated to Component B. M42 Architecture is `COMPLETE
-AND FROZEN`; M42-WP1 and M42-WP2 are `COMPLETE AND CONFIRMED`. The canonical
-closeout is [M42_WP2_CLOSEOUT.md](M42_WP2_CLOSEOUT.md), and the decision is
-recorded in the
-[Decision Log](../engineering/DECISION_LOG.md#m42-wp2--portfolio-identity-accounting-scope--membership-contract-closeout).
+The latest completed milestone is **M42 — Portfolio Intelligence Foundation**.
+M42 Architecture and every approved artifact are canonical and frozen.
+M42-WP1, M42-WP2, M42-WP3, M42-WP5, M42-WP6, and M42-WP7 are complete;
+M42-WP4 is permanently `COMPLETE — REJECT`. All constitutional reviews and
+confirmations are approved, no unresolved constitutional findings remain, and
+repository reconciliation is complete.
 
-M42-WP2 preserves Ledger & Accounting ownership of Portfolio Identity,
-Accounting Scope, Portfolio Membership, and Portfolio Base Currency.
-Portfolio Intelligence may cite and compose those coordinates without an
-ownership transfer. The closeout grants no implementation, runtime, provider,
-persistence, API, production, executable-validation, or lifecycle-transition
-authority. All M42 Architecture, WP1, and WP2 normative records remain frozen
-and immutable.
+The canonical milestone closeout is
+[M42_EPIC_CLOSEOUT.md](M42_EPIC_CLOSEOUT.md), and the final decision is recorded
+in the [Decision Log](../engineering/DECISION_LOG.md#m42--portfolio-intelligence-foundation-epic-closeout).
+M42 grants no runtime, implementation, persistence, API, calculation,
+serialization-implementation, or operational authority. M42 is complete and
+the repository is ready for M43.
 
 The earlier closed milestone **M38 — Product Workspace Foundation**
 (WP1–WP10), remains complete and frozen; its canonical closeout is
@@ -71,7 +69,15 @@ those frozen designs.
 | M41-WP1 | `COMPLETE`, `CONFIRMED`, `FROZEN` — Architecture, Stage 1, and Stage 2 (after a two-round Independent Confirmation correction cycle) all independently confirmed | [Architecture Proposal](M41_ARCHITECTURE_PROPOSAL.md) `CAD`; [Stage 1 Register](M41_WP1_CANDIDATE_VOCABULARY_AND_OWNERSHIP_REGISTER.md) `CAD`; [Stage 2 Specification](M41_WP1_DEFINITION_METHOD_VERSION_APPLICABILITY_CONTRACT_SPECIFICATION.md) `CAD`; review/confirmation corpus per [M41_WP1_CLOSEOUT.md](M41_WP1_CLOSEOUT.md) | [M41_WP1_CLOSEOUT.md](M41_WP1_CLOSEOUT.md) `CO` | [§M41-WP1 Closeout](../engineering/DECISION_LOG.md#m41-wp1--market-measure-definition-method-version-and-applicability-contract-closeout) |
 | M41-WP2 | `COMPLETE`, `CONFIRMED`, `FROZEN` — immutable upstream authority for WP3 | [Architecture Proposal](M41_WP2_ARCHITECTURE_PROPOSAL.md) `CAD`; [Stage A Register](M41_WP2_STAGE_A_CANDIDATE_VOCABULARY_REGISTER.md) `CAD`; [Stage B Specification](M41_WP2_STAGE_B_SUBJECT_AND_MANIFEST_CONTRACT_SPECIFICATION.md) `CAD`; review/confirmation corpus linked from those records | — | not separately indexed |
 | M41-WP3 | `COMPLETE`, `CLOSED`, `FROZEN` — Architecture and Stage A approved; Stage B confirmed and frozen after RC-1 resolution; all 30 Golden Vectors canonical | [WP3 Architecture](M41_WP3_ARCHITECTURE_PROPOSAL.md) `CAD`; [Stage A Register](M41_WP3_STAGE_A_VOCABULARY_AND_SEMANTIC_SURFACE_REGISTER.md) `CAD`; [Stage B Specification](M41_WP3_STAGE_B_TEMPORAL_UNIT_ADJUSTMENT_ARITHMETIC_CONTRACT_SPECIFICATION.md) `CAD`; complete review/confirmation corpus per [M41_WP3_CLOSEOUT.md](M41_WP3_CLOSEOUT.md) | [M41_WP3_CLOSEOUT.md](M41_WP3_CLOSEOUT.md) `CO` | [§M41-WP3 Closeout](../engineering/DECISION_LOG.md#m41-wp3--temporal-unit-adjustment-and-arithmetic-semantics-closeout) |
+| M42 | `COMPLETE AND FROZEN`; WP1, WP2, WP3, WP5, WP6, and WP7 complete; WP4 permanently `COMPLETE — REJECT`; all constitutional reviews and confirmations approved; no unresolved findings; ready for M43 | [Architecture Proposal](M42_ARCHITECTURE_PROPOSAL.md) `CAD`; complete WP1–WP7 constitutional corpus and closeouts listed below | [M42_EPIC_CLOSEOUT.md](M42_EPIC_CLOSEOUT.md) `CO` | [§M42 Epic Closeout](../engineering/DECISION_LOG.md#m42--portfolio-intelligence-foundation-epic-closeout) |
 | M42-WP2 | `COMPLETE AND CONFIRMED`; M42 Architecture `COMPLETE AND FROZEN`; M42-WP1 `COMPLETE AND CONFIRMED`; no implementation or operational authority | [Architecture Proposal](M42_ARCHITECTURE_PROPOSAL.md) `CAD`; [WP1 Vocabulary and Ownership Register](M42_WP1_PORTFOLIO_CANONICAL_VOCABULARY_AND_OWNERSHIP_REGISTER.md) `CAD`; [Post-WP1 Roadmap Reconciliation](M42_WP1_ROADMAP_RECONCILIATION.md) `DT`; [WP2 Contract Specification](M42_WP2_PORTFOLIO_IDENTITY_ACCOUNTING_SCOPE_MEMBERSHIP_AND_BASE_CURRENCY_CONTRACT_SPECIFICATION.md) `CAD`; [Independent Review](M42_WP2_INDEPENDENT_REVIEW.md) `AU`; [Independent Confirmation](M42_WP2_INDEPENDENT_CONFIRMATION.md) `AU`; [Final Independent Confirmation](M42_WP2_FINAL_INDEPENDENT_CONFIRMATION.md) `AU` | [M42_WP2_CLOSEOUT.md](M42_WP2_CLOSEOUT.md) `CO` | [§M42-WP2 Closeout](../engineering/DECISION_LOG.md#m42-wp2--portfolio-identity-accounting-scope--membership-contract-closeout) |
+| M42-WP3 Architecture | `COMPLETE AND CONFIRMED`; all required corrections verified; ownership and architectural authority unchanged; implementation and runtime authority `NONE` | [M42-WP3 Architecture Proposal](M42_WP3_ARCHITECTURE_PROPOSAL.md) `CAD`; final confirmation result and governance chain recorded in the canonical closeout | [M42_WP3_CLOSEOUT.md](M42_WP3_CLOSEOUT.md) `CO` | [§M42-WP3 Architecture Closeout](../engineering/DECISION_LOG.md#m42-wp3--investment-universe-declaration-contract-architecture-closeout) |
+| M42-WP3 Stage A | `COMPLETE AND CONFIRMED`; Independent Architecture Review `APPROVED`; no vocabulary, ownership, semantic-boundary, or authority change | [Stage A Vocabulary and Semantic Surface Register](M42_WP3_STAGE_A_VOCABULARY_AND_SEMANTIC_SURFACE_REGISTER.md) `CAD`; approved review result recorded in the canonical closeout | [M42_WP3_STAGE_A_CLOSEOUT.md](M42_WP3_STAGE_A_CLOSEOUT.md) `CO` | [§M42-WP3 Stage A Closeout](../engineering/DECISION_LOG.md#m42-wp3-stage-a-investment-universe-vocabulary--semantic-surface-closeout) |
+| M42-WP3 Stage B | `COMPLETE AND CONFIRMED`; Independent Architecture Review `APPROVED`; no ownership, vocabulary-admission, semantic-contract, or authority change | [Stage B Investment Universe Declaration Contract Specification](M42_WP3_STAGE_B_INVESTMENT_UNIVERSE_DECLARATION_CONTRACT_SPECIFICATION.md) `CAD`; approved review result recorded in the canonical closeout | [M42_WP3_STAGE_B_CLOSEOUT.md](M42_WP3_STAGE_B_CLOSEOUT.md) `CO` | [§M42-WP3 Stage B Closeout](../engineering/DECISION_LOG.md#m42-wp3-stage-b-investment-universe-declaration-contract-closeout) |
+| M42-WP4 | `COMPLETE — REJECT`; ownership/admission rejection is permanent; contract-design authority `NONE` | [Portfolio Policy Ownership Investigation](M42_WP4_PORTFOLIO_POLICY_OWNERSHIP_INVESTIGATION.md) `AU` | — | [§M42-WP4 Closeout](../engineering/DECISION_LOG.md#m42-wp4--portfolio-policy-ownership-investigation-closeout) |
+| M42-WP5 | `COMPLETE`; Portfolio Benchmark Declaration Contract; Independent Review `APPROVED`; original combined scope narrowed; no implementation or operational authority | [Ownership Validation](M42_WP5_BENCHMARK_AND_PORTFOLIO_BASE_CURRENCY_OWNERSHIP_VALIDATION.md) `AU`; [Portfolio Benchmark Declaration Contract Specification](M42_WP5_PORTFOLIO_BENCHMARK_DECLARATION_CONTRACT_SPECIFICATION.md) `CAD` | [M42_WP5_CLOSEOUT.md](M42_WP5_CLOSEOUT.md) `CO` | [§M42-WP5 Closeout](../engineering/DECISION_LOG.md#m42-wp5--portfolio-benchmark-declaration-contract-closeout) |
+| M42-WP6 | `COMPLETE`; Portfolio Lifecycle State Reuse & Provenance Contract; Independent Review `APPROVED`; no corrections required; no implementation or runtime authority; M42-WP7 not activated | [Ownership Validation](M42_WP6_Proposed_Architectural_Specification.md) `AU`; [Portfolio Lifecycle State Reuse & Provenance Contract Specification](M42_WP6_PORTFOLIO_LIFECYCLE_STATE_REUSE_AND_PROVENANCE_CONTRACT_SPECIFICATION.md) `CAD` | [M42_WP6_CLOSEOUT.md](M42_WP6_CLOSEOUT.md) `CO` | [§M42-WP6 Closeout](../engineering/DECISION_LOG.md#m42-wp6--portfolio-lifecycle-state-reuse--provenance-contract-closeout) |
+| M42-WP7 | `COMPLETE`; Portfolio Composition Contract; Independent Constitutional Review `APPROVED`; Constitutional Confirmation `APPROVED`; approved artifacts canonical and frozen; no unresolved findings; M42 Epic ready for closeout | [Portfolio Composition Contract Specification](M42_WP7_PORTFOLIO_COMPOSITION_CONTRACT_SPECIFICATION.md) `CAD`; approved Architecture Investigation and review/confirmation outcomes recorded in the canonical closeout | [M42_WP7_CLOSEOUT.md](M42_WP7_CLOSEOUT.md) `CO` | [§M42-WP7 Closeout](../engineering/DECISION_LOG.md#m42-wp7--portfolio-composition-contract-closeout) |
 
 **M34 status detail** (a single "Complete" label does not hold for the whole
 milestone — its two governance tracks diverge):
@@ -111,6 +117,15 @@ any earlier draft of the same subject:
 - [M39_WP5_market_observation_relationship_specification.md](M39_WP5_market_observation_relationship_specification.md)
 - [M39_WP6_market_observation_identity_specification.md](M39_WP6_market_observation_identity_specification.md)
 - [M42_WP2_PORTFOLIO_IDENTITY_ACCOUNTING_SCOPE_MEMBERSHIP_AND_BASE_CURRENCY_CONTRACT_SPECIFICATION.md](M42_WP2_PORTFOLIO_IDENTITY_ACCOUNTING_SCOPE_MEMBERSHIP_AND_BASE_CURRENCY_CONTRACT_SPECIFICATION.md)
+- [M42_WP3_ARCHITECTURE_PROPOSAL.md](M42_WP3_ARCHITECTURE_PROPOSAL.md)
+- [M42_WP3_STAGE_A_VOCABULARY_AND_SEMANTIC_SURFACE_REGISTER.md](M42_WP3_STAGE_A_VOCABULARY_AND_SEMANTIC_SURFACE_REGISTER.md)
+- [M42_WP3_STAGE_B_INVESTMENT_UNIVERSE_DECLARATION_CONTRACT_SPECIFICATION.md](M42_WP3_STAGE_B_INVESTMENT_UNIVERSE_DECLARATION_CONTRACT_SPECIFICATION.md)
+- [M42_WP4_PORTFOLIO_POLICY_OWNERSHIP_INVESTIGATION.md](M42_WP4_PORTFOLIO_POLICY_OWNERSHIP_INVESTIGATION.md)
+- [M42_WP5_BENCHMARK_AND_PORTFOLIO_BASE_CURRENCY_OWNERSHIP_VALIDATION.md](M42_WP5_BENCHMARK_AND_PORTFOLIO_BASE_CURRENCY_OWNERSHIP_VALIDATION.md)
+- [M42_WP5_PORTFOLIO_BENCHMARK_DECLARATION_CONTRACT_SPECIFICATION.md](M42_WP5_PORTFOLIO_BENCHMARK_DECLARATION_CONTRACT_SPECIFICATION.md)
+- [M42_WP6_Proposed_Architectural_Specification.md](M42_WP6_Proposed_Architectural_Specification.md)
+- [M42_WP6_PORTFOLIO_LIFECYCLE_STATE_REUSE_AND_PROVENANCE_CONTRACT_SPECIFICATION.md](M42_WP6_PORTFOLIO_LIFECYCLE_STATE_REUSE_AND_PROVENANCE_CONTRACT_SPECIFICATION.md)
+- [M42_WP7_PORTFOLIO_COMPOSITION_CONTRACT_SPECIFICATION.md](M42_WP7_PORTFOLIO_COMPOSITION_CONTRACT_SPECIFICATION.md)
 - [ASSET_REGISTRY_IMPLEMENTATION_PLAN.md](ASSET_REGISTRY_IMPLEMENTATION_PLAN.md) (Status: Complete, 2026-07-09)
 
 [M36_1_Runtime_Foundation.md](M36_1_Runtime_Foundation.md) is deliberately
@@ -132,6 +147,14 @@ Broader architecture documents (not milestone-scoped) live under
 - [M39_EPIC_CLOSEOUT.md](M39_EPIC_CLOSEOUT.md) — Canonical Asset Market Observation; WP1–WP6 complete and frozen, `APPROVED FOR EPIC CLOSEOUT` by independent constitutional architecture review, closed 2026-07-23
 - [M41_WP1_CLOSEOUT.md](M41_WP1_CLOSEOUT.md) — Market Measure Definition, Method Version, and Applicability Contract; Architecture, Stage 1, and Stage 2 all independently confirmed and frozen, closed 2026-07-23; grants no implementation, runtime, provider, persistence, or API authority
 - [M41_WP3_CLOSEOUT.md](M41_WP3_CLOSEOUT.md) — Temporal, Unit, Adjustment, and Arithmetic Semantics; Architecture and Stage A approved, Stage B confirmed and frozen, WP3 closed 2026-07-24; grants no implementation, runtime, provider, persistence, API, production, or executable-validation authority
+- [M42_WP2_CLOSEOUT.md](M42_WP2_CLOSEOUT.md) — Portfolio Identity, Accounting Scope & Membership Contract, including Portfolio Base Currency; complete and confirmed, closed 2026-07-24; grants no implementation or runtime authority
+- [M42_WP3_CLOSEOUT.md](M42_WP3_CLOSEOUT.md) — Investment Universe Declaration Contract Architecture; complete and confirmed, closed 2026-07-27; ownership and architectural authority unchanged; grants no implementation or runtime authority
+- [M42_WP3_STAGE_A_CLOSEOUT.md](M42_WP3_STAGE_A_CLOSEOUT.md) - Investment Universe Vocabulary & Semantic Surface Register; complete and confirmed after approved Independent Architecture Review, closed 2026-07-27; grants no implementation, persistence, runtime, API, serialization, evaluation, or enforcement authority
+- [M42_WP3_STAGE_B_CLOSEOUT.md](M42_WP3_STAGE_B_CLOSEOUT.md) - Investment Universe Declaration Contract Specification; complete and confirmed after approved Independent Architecture Review, closed 2026-07-27; grants no implementation, persistence, runtime, API, serialization, evaluation, or enforcement authority
+- [M42_WP5_CLOSEOUT.md](M42_WP5_CLOSEOUT.md) — Portfolio Benchmark Declaration Contract; complete after approved Independent Review, closed 2026-07-27; M42-WP4 remains `COMPLETE — REJECT`; grants no implementation or operational authority
+- [M42_WP6_CLOSEOUT.md](M42_WP6_CLOSEOUT.md) — Portfolio Lifecycle State Reuse & Provenance Contract; complete after approved Independent Review with no corrections required, closed 2026-07-27; grants no implementation or runtime authority, transfers no ownership, and does not activate M42-WP7
+- [M42_WP7_CLOSEOUT.md](M42_WP7_CLOSEOUT.md) — Portfolio Composition Contract; complete after Independent Constitutional Review `APPROVED` and Constitutional Confirmation `APPROVED`, closed 2026-07-28; approved artifacts canonical and frozen, no unresolved findings, and M42 Epic ready for closeout
+- [M42_EPIC_CLOSEOUT.md](M42_EPIC_CLOSEOUT.md) — Portfolio Intelligence Foundation; M42 Architecture and all approved artifacts canonical and frozen, WP1/WP2/WP3/WP5/WP6/WP7 complete, WP4 permanently `COMPLETE — REJECT`, all constitutional gates approved, repository synchronized, and ready for M43
 
 ## Active Governance
 
