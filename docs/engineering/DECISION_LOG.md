@@ -2400,3 +2400,129 @@ risk, attribution, exposure, optimization, recommendation, enforcement,
 workflow, lifecycle-execution, production, executable-validation,
 serialization-implementation, or operational authority. M43 is not defined,
 authorized, or begun by this closeout.
+
+---
+
+## M43-WP6 — Constitutional Scope and Implementation Plan Closeout
+
+**Date:** 2026-07-28
+
+**Decision:** Close M43-WP6 as `COMPLETE`, `CONFIRMED`, and `FROZEN`. The
+M43-WP6 Constitutional Scope and Implementation Plan, Independent
+Constitutional Review, RC1, Independent Constitutional Confirmation, RC2, and
+Final Independent Constitutional Confirmation have completed. Every confirmed
+artifact is frozen. No unresolved WP6 review finding, correction request,
+confirmation condition, pending RC reference, or placeholder status remains.
+The frozen plan's in-document proposed-status, governance-block, and
+future-review language is retained as historical planning text and does not
+represent current repository status or an open action.
+
+**Reasoning:** Independent review identified the required constitutional
+corrections, RC1 applied every major and minor finding, and the subsequent
+confirmation isolated one remaining citation-integrity defect. RC2 corrected
+that citation mechanically without changing constitutional meaning. Final
+Independent Constitutional Confirmation then confirmed the corrected WP6
+planning artifact. The completed chain preserves the frozen M43 allocation,
+singular ownership and placement, vocabulary closure, fail-closed inheritance,
+authority declarations, traceability, and documentary-only scope.
+
+**Impact:** The canonical
+[M43-WP6 Constitutional Scope and Implementation Plan](../implementation/M43_WP6_CONSTITUTIONAL_SCOPE_AND_IMPLEMENTATION_PLAN.md)
+is frozen. M43 Architecture, M43-WP1 through M43-WP5, and all other confirmed
+artifacts remain unchanged and frozen. This closeout synchronizes repository
+status only: it changes no architecture, scope, ownership, placement,
+authority, specification, or implementation content, and grants no executable,
+runtime, persistence, database, schema, API, UI, provider, calculation,
+production, or operational authority.
+
+---
+
+## M43-WP7 — Constitutional Scope and Implementation Plan Closeout
+
+**Date:** 2026-07-28
+
+**Decision:** Close M43-WP7 as `COMPLETE`, `CONFIRMED`, and `FROZEN`. The
+M43-WP7 Constitutional Scope and Implementation Plan, original Independent
+Constitutional Review, RC1 Independent Constitutional Confirmation, RC2, and
+Final Independent Constitutional Confirmation have completed. The final
+confirmation result is `CONFIRMED`, and unresolved findings are `NONE`.
+Normative WP7 method work remains
+`BLOCKED PENDING INHERITED GATE CLOSURE`. Runtime authority is `NONE`;
+implementation authority is `NONE`; production authority is `NONE`.
+
+**Reasoning:** The original independent review identified three major and six
+minor documentary corrections. RC1 resolved those findings while preserving
+the frozen allocation, ownership, placement, dependencies, gates, and
+documentary-only authority. RC1 Independent Constitutional Confirmation
+identified one remaining minor citation-scope defect, `NEW-1`. RC2 separated
+Portfolio Calculation Rules sections 1–9 from section 10, with section 10
+remaining subject to the pending M43 governance correction. Final Independent
+Constitutional Confirmation confirmed RC2 with no unresolved finding.
+
+**Impact:** The canonical
+[M43-WP7 Constitutional Scope and Implementation Plan](../implementation/M43_WP7_CONSTITUTIONAL_SCOPE_AND_IMPLEMENTATION_PLAN.md)
+is frozen at RC2. Its
+[Independent Constitutional Review](../implementation/M43_WP7_CONSTITUTIONAL_SCOPE_AND_IMPLEMENTATION_PLAN_INDEPENDENT_REVIEW.md),
+[RC1 Independent Constitutional Confirmation](../implementation/M43_WP7_CONSTITUTIONAL_SCOPE_AND_IMPLEMENTATION_PLAN_RC1_INDEPENDENT_CONSTITUTIONAL_CONFIRMATION.md),
+and
+[RC2 Final Independent Constitutional Confirmation](../implementation/M43_WP7_CONSTITUTIONAL_SCOPE_AND_IMPLEMENTATION_PLAN_RC2_FINAL_INDEPENDENT_CONSTITUTIONAL_CONFIRMATION.md)
+preserve the completed review chain. Frozen M43 Architecture, frozen M43-WP1
+through M43-WP6, and every M1–M42 frozen artifact remain unchanged. This
+closeout changes no constitutional substance, ownership, placement,
+dependency, gate, method-family boundary, or authority. It does not close an
+inherited gate, authorize normative method work, claim Advanced Risk Metrics
+are deployed or complete, or begin M43-WP8.
+
+---
+
+## M43-WP8 — Constitutional Scope and Implementation Plan Closeout
+
+**Date:** 2026-07-28
+
+**Decision:** Close M43-WP8 as `COMPLETE`, `CONFIRMED`, and `FROZEN`. Final
+Independent Constitutional Confirmation is `CONFIRMED`, and unresolved
+findings are `NONE`. The completed review chain comprises the Independent
+Constitutional Review, RC1 Required Corrections Response, RC1 confirmation,
+RC2 Documentary Reconciliation Response, and Final Independent Constitutional
+Confirmation. Documentary planning authority is the only authority granted.
+Runtime authority is `NONE`; implementation authority is `NONE`; executable
+authority is `NONE`; production authority is `NONE`. Normative WP8 method work
+is `BLOCKED PENDING INHERITED GATE CLOSURE`.
+
+**Reasoning:** Independent review required three major and eight minor
+constitutional corrections. RC1 resolved every constitutional finding. The
+subsequent confirmation isolated only documentary self-location finding
+`DI-1`; RC2 reconciled that self-location without changing constitutional
+substance. Final Independent Constitutional Confirmation confirmed the
+corrected planning artifact with no unresolved finding.
+
+**Impact:** The canonical
+[M43-WP8 Constitutional Scope and Implementation Plan](../implementation/M43_WP8_CONSTITUTIONAL_SCOPE_AND_IMPLEMENTATION_PLAN.md)
+is frozen. Frozen M43 Architecture and frozen M43-WP1 through M43-WP7 remain
+unchanged. This closeout changes no ownership, authority, dependency, gate,
+validation rule, exclusion, vocabulary, placement, capability, or
+constitutional substance. It introduces no executable semantics, runtime
+behavior, implementation behavior, production logic, or production authority,
+and it closes no inherited gate.
+
+---
+
+## M43 — Portfolio Intelligence Method Specifications Epic Closeout
+
+**Date:** 2026-07-28
+
+**Decision:** Close M43 as `COMPLETE AND FROZEN` in its authorized
+documentary-planning scope. M43 Architecture and M43-WP1 through M43-WP8 are
+complete and frozen. Every final independent constitutional confirmation is
+`CONFIRMED`, unresolved findings are `NONE`, and repository documentary
+closeout is synchronized. M43 is the canonical baseline for future milestones,
+which must consume M43 through its frozen normative contracts only.
+
+**Impact:** The canonical
+[M43 Epic Closeout](../implementation/M43_EPIC_CLOSEOUT.md) grants no runtime,
+implementation, executable, or production authority. Normative
+gate-conditional method work is not declared complete or authorized by this
+epic closeout. Where an inherited gate remains open, it continues to report
+`BLOCKED PENDING INHERITED GATE CLOSURE`. All inherited gates, ownership
+allocations, dependencies, authority boundaries, and frozen artifacts remain
+unchanged. No additional authority is granted.

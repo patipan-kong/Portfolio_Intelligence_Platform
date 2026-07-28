@@ -16,7 +16,27 @@ reader can navigate without re-deriving history from file names and dates.
 
 ## Current Milestone Status
 
-The latest completed milestone is **M42 — Portfolio Intelligence Foundation**.
+The latest completed milestone is **M43 — Portfolio Intelligence Method
+Specifications**. M43 Architecture and M43-WP1 through M43-WP8 are `COMPLETE
+AND FROZEN`; every final independent constitutional confirmation is
+`CONFIRMED`, and unresolved findings are `NONE`. M43 is the canonical baseline
+for future milestones, which must consume M43 through its frozen normative
+contracts only. The canonical repository closeout is
+[M43_EPIC_CLOSEOUT.md](M43_EPIC_CLOSEOUT.md).
+
+The latest closed work package is **M43-WP8**. Its Constitutional Scope and
+Implementation Plan is `COMPLETE AND FROZEN`. Documentary planning authority
+is the only authority granted; runtime, implementation, executable, and
+production authority are `NONE`. Normative WP8 method work remains `BLOCKED
+PENDING INHERITED GATE CLOSURE`. The completed review chain comprises the
+Independent Constitutional Review, RC1 Required Corrections Response, RC1
+confirmation, RC2 Documentary Reconciliation Response, and Final Independent
+Constitutional Confirmation. The WP8 and M43 epic closeout decisions are
+recorded in the
+[Decision Log](../engineering/DECISION_LOG.md#m43-wp8--constitutional-scope-and-implementation-plan-closeout).
+This repository synchronization grants no new constitutional or production
+authority.
+
 M42 Architecture and every approved artifact are canonical and frozen.
 M42-WP1, M42-WP2, M42-WP3, M42-WP5, M42-WP6, and M42-WP7 are complete;
 M42-WP4 is permanently `COMPLETE — REJECT`. All constitutional reviews and
@@ -79,6 +99,11 @@ those frozen designs.
 | M42-WP6 | `COMPLETE`; Portfolio Lifecycle State Reuse & Provenance Contract; Independent Review `APPROVED`; no corrections required; no implementation or runtime authority; M42-WP7 not activated | [Ownership Validation](M42_WP6_Proposed_Architectural_Specification.md) `AU`; [Portfolio Lifecycle State Reuse & Provenance Contract Specification](M42_WP6_PORTFOLIO_LIFECYCLE_STATE_REUSE_AND_PROVENANCE_CONTRACT_SPECIFICATION.md) `CAD` | [M42_WP6_CLOSEOUT.md](M42_WP6_CLOSEOUT.md) `CO` | [§M42-WP6 Closeout](../engineering/DECISION_LOG.md#m42-wp6--portfolio-lifecycle-state-reuse--provenance-contract-closeout) |
 | M42-WP7 | `COMPLETE`; Portfolio Composition Contract; Independent Constitutional Review `APPROVED`; Constitutional Confirmation `APPROVED`; approved artifacts canonical and frozen; no unresolved findings; M42 Epic ready for closeout | [Portfolio Composition Contract Specification](M42_WP7_PORTFOLIO_COMPOSITION_CONTRACT_SPECIFICATION.md) `CAD`; approved Architecture Investigation and review/confirmation outcomes recorded in the canonical closeout | [M42_WP7_CLOSEOUT.md](M42_WP7_CLOSEOUT.md) `CO` | [§M42-WP7 Closeout](../engineering/DECISION_LOG.md#m42-wp7--portfolio-composition-contract-closeout) |
 
+| M43-WP6 | `COMPLETE`, `CONFIRMED`, `FROZEN`; Constitutional Scope and Implementation Plan; Independent Constitutional Review, RC1, Independent Constitutional Confirmation, RC2, and Final Independent Constitutional Confirmation complete; no unresolved review or correction references; documentary-only authority unchanged | [Constitutional Scope and Implementation Plan](M43_WP6_CONSTITUTIONAL_SCOPE_AND_IMPLEMENTATION_PLAN.md) `CAD`; completed review, correction, and confirmation chain recorded in the Decision Log | — | [M43-WP6 Closeout](../engineering/DECISION_LOG.md#m43-wp6--constitutional-scope-and-implementation-plan-closeout) |
+| M43-WP7 | `COMPLETE`, `CONFIRMED`, `FROZEN`; Constitutional Scope and Implementation Plan at RC2; Final Independent Constitutional Confirmation `CONFIRMED`; unresolved findings `NONE`; normative WP7 method work remains `BLOCKED PENDING INHERITED GATE CLOSURE`; runtime, implementation, and production authority `NONE` | [Constitutional Scope and Implementation Plan](M43_WP7_CONSTITUTIONAL_SCOPE_AND_IMPLEMENTATION_PLAN.md) `CAD`; [Independent Constitutional Review](M43_WP7_CONSTITUTIONAL_SCOPE_AND_IMPLEMENTATION_PLAN_INDEPENDENT_REVIEW.md) `AU`; [RC1 Independent Constitutional Confirmation](M43_WP7_CONSTITUTIONAL_SCOPE_AND_IMPLEMENTATION_PLAN_RC1_INDEPENDENT_CONSTITUTIONAL_CONFIRMATION.md) `AU`; [RC2 Final Independent Constitutional Confirmation](M43_WP7_CONSTITUTIONAL_SCOPE_AND_IMPLEMENTATION_PLAN_RC2_FINAL_INDEPENDENT_CONSTITUTIONAL_CONFIRMATION.md) `AU` | — | [M43-WP7 Closeout](../engineering/DECISION_LOG.md#m43-wp7--constitutional-scope-and-implementation-plan-closeout) |
+| M43-WP8 | `COMPLETE AND FROZEN`; Final Independent Constitutional Confirmation `CONFIRMED`; unresolved findings `NONE`; documentary planning authority only; runtime, implementation, executable, and production authority `NONE`; normative WP8 method work `BLOCKED PENDING INHERITED GATE CLOSURE` | [Constitutional Scope and Implementation Plan](M43_WP8_CONSTITUTIONAL_SCOPE_AND_IMPLEMENTATION_PLAN.md) `CAD`; completed Independent Review, RC1, RC1 confirmation, RC2, and Final Independent Constitutional Confirmation chain recorded in the frozen plan and Decision Log | — | [M43-WP8 Closeout](../engineering/DECISION_LOG.md#m43-wp8--constitutional-scope-and-implementation-plan-closeout) |
+| M43 | `COMPLETE AND FROZEN`; M43 Architecture and WP1–WP8 complete and frozen; all final independent constitutional confirmations `CONFIRMED`; unresolved findings `NONE`; canonical baseline for future milestones; documentary-planning scope only; runtime, implementation, and production authority `NONE` | [Architecture and Implementation Plan](M43_ARCHITECTURE_AND_IMPLEMENTATION_PLAN.md) `CAD`; frozen WP1–WP8 documentary corpus | [M43_EPIC_CLOSEOUT.md](M43_EPIC_CLOSEOUT.md) `CO` | [M43 Epic Closeout](../engineering/DECISION_LOG.md#m43--portfolio-intelligence-method-specifications-epic-closeout) |
+
 **M34 status detail** (a single "Complete" label does not hold for the whole
 milestone — its two governance tracks diverge):
 
@@ -126,6 +151,8 @@ any earlier draft of the same subject:
 - [M42_WP6_Proposed_Architectural_Specification.md](M42_WP6_Proposed_Architectural_Specification.md)
 - [M42_WP6_PORTFOLIO_LIFECYCLE_STATE_REUSE_AND_PROVENANCE_CONTRACT_SPECIFICATION.md](M42_WP6_PORTFOLIO_LIFECYCLE_STATE_REUSE_AND_PROVENANCE_CONTRACT_SPECIFICATION.md)
 - [M42_WP7_PORTFOLIO_COMPOSITION_CONTRACT_SPECIFICATION.md](M42_WP7_PORTFOLIO_COMPOSITION_CONTRACT_SPECIFICATION.md)
+- [M43_WP6_CONSTITUTIONAL_SCOPE_AND_IMPLEMENTATION_PLAN.md](M43_WP6_CONSTITUTIONAL_SCOPE_AND_IMPLEMENTATION_PLAN.md)
+- [M43_WP8_CONSTITUTIONAL_SCOPE_AND_IMPLEMENTATION_PLAN.md](M43_WP8_CONSTITUTIONAL_SCOPE_AND_IMPLEMENTATION_PLAN.md)
 - [ASSET_REGISTRY_IMPLEMENTATION_PLAN.md](ASSET_REGISTRY_IMPLEMENTATION_PLAN.md) (Status: Complete, 2026-07-09)
 
 [M36_1_Runtime_Foundation.md](M36_1_Runtime_Foundation.md) is deliberately
@@ -155,6 +182,7 @@ Broader architecture documents (not milestone-scoped) live under
 - [M42_WP6_CLOSEOUT.md](M42_WP6_CLOSEOUT.md) — Portfolio Lifecycle State Reuse & Provenance Contract; complete after approved Independent Review with no corrections required, closed 2026-07-27; grants no implementation or runtime authority, transfers no ownership, and does not activate M42-WP7
 - [M42_WP7_CLOSEOUT.md](M42_WP7_CLOSEOUT.md) — Portfolio Composition Contract; complete after Independent Constitutional Review `APPROVED` and Constitutional Confirmation `APPROVED`, closed 2026-07-28; approved artifacts canonical and frozen, no unresolved findings, and M42 Epic ready for closeout
 - [M42_EPIC_CLOSEOUT.md](M42_EPIC_CLOSEOUT.md) — Portfolio Intelligence Foundation; M42 Architecture and all approved artifacts canonical and frozen, WP1/WP2/WP3/WP5/WP6/WP7 complete, WP4 permanently `COMPLETE — REJECT`, all constitutional gates approved, repository synchronized, and ready for M43
+- [M43_EPIC_CLOSEOUT.md](M43_EPIC_CLOSEOUT.md) — Portfolio Intelligence Method Specifications; M43 Architecture and WP1–WP8 complete and frozen, constitutional review chains preserved, repository synchronized, and canonical baseline established without runtime, implementation, or production authority
 
 ## Active Governance
 
