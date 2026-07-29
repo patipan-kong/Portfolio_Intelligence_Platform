@@ -2526,3 +2526,51 @@ epic closeout. Where an inherited gate remains open, it continues to report
 `BLOCKED PENDING INHERITED GATE CLOSURE`. All inherited gates, ownership
 allocations, dependencies, authority boundaries, and frozen artifacts remain
 unchanged. No additional authority is granted.
+
+---
+
+## M44-WP4 — Portfolio Composition Canonical Byte Representation Contract Closeout
+
+**Date:** 2026-07-29
+
+**Decision:** Close and freeze M44-WP4 as `COMPLETE AND FROZEN` at candidate
+`RC4`. The frozen M44 Architecture §12.5 point-4 independent constitutional
+confirmation is `ISSUED` for
+[M44_WP4_PORTFOLIO_COMPOSITION_CANONICAL_BYTE_REPRESENTATION_CONTRACT.md](../implementation/M44_WP4_PORTFOLIO_COMPOSITION_CANONICAL_BYTE_REPRESENTATION_CONTRACT.md)
+and its two documentary fixtures, recorded at
+[M44_WP4_INDEPENDENT_CONSTITUTIONAL_CONFIRMATION.md](../implementation/M44_WP4_INDEPENDENT_CONSTITUTIONAL_CONFIRMATION.md)
+(commit `a815ba23c88af7b25f4ddbdc337aa8482a03a5d0`). The independent
+constitutional contract review chain reached `APPROVED` at RC3; the
+independent serialization review chain reached `APPROVED` at RC4; an
+independent RC3-to-RC4 constitutional equivalence verification found the RC4
+changes `CONSTITUTIONALLY EQUIVALENT` to the approved RC3 result; and the
+complete evidence chain was stabilized at commit
+`0c6d7d2efa898758026a80b2ce59cb5caf865772`. Constitutional and serialization
+findings unresolved are `NONE`. The canonical closeout and freeze records are
+[M44_WP4_EPIC_CLOSEOUT.md](../implementation/M44_WP4_EPIC_CLOSEOUT.md) and
+[M44_WP4_FREEZE_RECORD.md](../implementation/M44_WP4_FREEZE_RECORD.md).
+
+**Reasoning:** M44-WP4 defines only the Portfolio Composition container's
+canonical byte representation — schema tag framing, `u32`/`lp` primitives,
+fixed field order, and the Owner-Attribution and Provenance-Association
+envelopes — treating every source-owned nested coordinate as opaque,
+owner-supplied bytes. Three independent review disciplines each reached a
+final `APPROVED` result before confirmation was issued: the architecture-stage
+review (planning-artifact lifecycle only), the constitutional contract review
+(RC1 and RC2 `NOT APPROVED`, RC3 `APPROVED` after withdrawing an
+unconstitutional field-8 byte-encoding selection introduced and then reverted
+across RC1–RC3), and the serialization review (RC3 `NOT APPROVED` on two
+`MAJOR` findings, RC4 `APPROVED` after both were resolved). A distinct
+constitutional-equivalence verification confirmed the RC3-to-RC4 serialization
+corrections changed no constitutional statement, authority boundary, or
+emitted grammar.
+
+**Impact:** This closeout transfers no ownership, changes no constitutional
+contract, and grants no runtime, implementation, persistence, database, API,
+UI, service, calculation, valuation, analytics, optimization, recommendation,
+policy, workflow, provider, production, executable-validation,
+serialization-implementation, or operational authority. `G-3` remains `OPEN —
+PARTIAL` and is not closed by this decision. The M44 §12.1.1 checkpoint
+remains `NOT DISPOSITIONED`. M44-WP6 and M44-WP7 remain `NOT AUTHORIZED`.
+Freezing M44-WP4 does not close M44 as a milestone/epic; the M44 architecture
+and other work packages are governed by their own separate records.
