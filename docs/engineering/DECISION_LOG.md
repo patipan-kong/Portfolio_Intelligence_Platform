@@ -2574,3 +2574,48 @@ PARTIAL` and is not closed by this decision. The M44 §12.1.1 checkpoint
 remains `NOT DISPOSITIONED`. M44-WP6 and M44-WP7 remain `NOT AUTHORIZED`.
 Freezing M44-WP4 does not close M44 as a milestone/epic; the M44 architecture
 and other work packages are governed by their own separate records.
+
+---
+
+## M44-WP5 — Planning Governance Freeze
+
+**Date:** 2026-07-29
+
+**Decision:** Close and freeze the M44-WP5 planning-governance lifecycle as
+`COMPLETE AND FROZEN` at candidate `RC3`. The independent constitutional
+architecture review chain reached `APPROVED` at RC3 after RC1 and RC2 were
+`NOT APPROVED`. The independent constitutional confirmation is `ISSUED`, the
+three review records are filed at distinct repository paths, and the confirmed
+non-normative planning artifact remains unchanged at blob
+`c8cb5cbe7d0f5c0e118e5bdebc7e819fda78ffb9`. The canonical planning closeout
+and freeze records are
+[M44_WP5_PLANNING_CLOSEOUT.md](../implementation/M44_WP5_PLANNING_CLOSEOUT.md)
+and
+[M44_WP5_PLANNING_FREEZE_RECORD.md](../implementation/M44_WP5_PLANNING_FREEZE_RECORD.md).
+
+**Reasoning:** RC1 identified one critical, eight major, seven minor, and
+three editorial findings. RC2 verified eighteen of the nineteen RC1 findings
+as correctly resolved and confined its remaining two critical and three major
+findings to the ownership-proof-failure branch. RC3 approved the corrected
+planning document with no critical, major, or blocking finding. Its three
+non-blocking minor findings and two editorial observations remain preserved in
+the filed RC3 review record. The independent confirmation verified the
+document's constitutional suitability, unchanged authority ceiling,
+non-normative status, frozen-artifact immutability, and downstream boundaries,
+and recommended only filing the three planning-stage review records before
+freeze. Commit `7daf017f1237524d55df1a798e958986134d1d57` completed that
+documentary filing without changing any review outcome or the confirmed
+planning artifact.
+
+**Impact:** This decision freezes only the M44-WP5 planning-governance corpus.
+M44-WP5 remains `OPEN`; ownership remains `NOT DETERMINED`; `G-4` remains
+`NOT DETERMINED`; and `G-3` remains `OPEN — PARTIAL`. The M44 §12.1.1
+checkpoint remains `NOT DISPOSITIONED`. M44-WP6 and M44-WP7 remain
+`NOT AUTHORIZED`. This decision grants no normative-specification,
+contract-authoring, implementation, source-code, runtime, persistence, schema,
+migration, API, transport, UI, presentation, provider, production-method,
+executable-validation, serialization, capability-completion,
+vocabulary-admission, ownership-determination, or gate-disposition authority.
+The frozen planning corpus is ready to serve as the baseline for a separately
+authorized normative-authoring lifecycle; this freeze is not that
+authorization and does not close M44 as a milestone/epic.
