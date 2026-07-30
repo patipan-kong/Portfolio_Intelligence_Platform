@@ -4,8 +4,9 @@
 
 **Work package:** M44-WP5 only
 
-**Candidate:** `RC5` — corrected after the independent constitutional reviews
-recorded in §2.2
+**Candidate:** `RC6.3` — owner-corpus boundary and RC6 review-chain
+evidence-completion correction for `RC6.2-MAJOR-1` and `RC6.2-MAJOR-2`,
+preserving the RC6.1 and RC6.2 evidence corrections recorded in §12.1
 
 **Artifact class:** Architectural deliverable, in the sense frozen M44
 Architecture §11 M44-WP5 uses under **Architectural deliverables**
@@ -16,11 +17,13 @@ specification allocated by frozen M44 Architecture §11 and §13.1
 **Ownership-determination and requirement-specification authority:** `LIMITED
 TO THE FROZEN M44 ARCHITECTURE §8.4 AND §11 ALLOCATION`
 
-**Ownership determined by this RC5 candidate:** No
+**Ownership proposed by this RC6.3 candidate:** `MARKET INTELLIGENCE — NOT
+EFFECTIVE BEFORE §13 COMPLETES`
 
 **G-3 disposition authority:** `NONE`
 
-**G-4 disposition authority exercised by this RC5 candidate:** `NONE`
+**G-4 terminal state proposed by this RC6.3 candidate:** `OPEN — NOT EFFECTIVE
+BEFORE §13 COMPLETES`
 
 **§12.1.1 checkpoint disposition authority:** `NONE`
 
@@ -78,13 +81,14 @@ Annualization Basis. It defines:
 - the constitutional outputs required before any proposed determination may
   become effective.
 
-This corrected RC5 candidate does not yet apply that process to select, name,
-assign, infer, or imply an owner. It does not decide any ownership hypothesis.
-It does not search any presumptive owner's corpus as though ownership had
-already been proved. It does not establish a terminal state for `G-4`. Any
-later applied determination and any resulting requirement statement MUST be
-incorporated into this same file; no separate WP5 determination,
-requirement-specification, or constitutional-process artifact is permitted.
+This corrected RC6.3 candidate applies that process through frozen WP5.5 in the
+integrated determination record at §12.1. It proposes Market Intelligence as
+the proved owner, records the exhaustive search of that proved owner's frozen
+corpus, and proposes `G-4 OPEN` because no conforming exact existing governed
+Annualization Basis contract kind is present. Those are candidate conclusions
+only. They have no constitutional effect unless and until §13 completes. No
+separate WP5 determination, requirement-specification, or
+constitutional-process artifact is permitted.
 
 The governing posture is determination-only and fail-closed. Consumption of an
 Annualization Basis by Portfolio Analytics does not transfer ownership to
@@ -128,6 +132,8 @@ This specification is also bounded by, and must be read with:
 - the frozen [M44-WP1 Inherited Gate Inventory and Closure
   Register](M44_WP1_INHERITED_GATE_INVENTORY_AND_CLOSURE_REGISTER.md)
   §4.4;
+- the frozen [Platform
+  Architecture](../architecture/platform_architecture.md) §§6.2 and 6.5;
 - frozen [M43-WP2 Portfolio Measure Definition, Method Version, and
   Applicability Contract
   Specification](M43_WP2_PORTFOLIO_MEASURE_DEFINITION_METHOD_VERSION_AND_APPLICABILITY_CONTRACT_SPECIFICATION.md)
@@ -148,9 +154,10 @@ immutable. This specification does not convert any planning statement into an
 ownership result and does not amend or reinterpret any frozen statement.
 
 The authority exercised here is limited to ownership determination and
-requirement specification within the frozen allocation. This RC5 candidate
-does not perform or confirm the determination. The allocation is not authority
-to author an owner-domain governance instrument, disposition a gate or
+requirement specification within the frozen allocation. This RC6.3 candidate
+performs the pre-confirmation determination recorded at §12.1 but does not
+confirm, freeze, or make it effective. The allocation is not authority to
+author an owner-domain governance instrument, disposition the §12.1.1
 checkpoint, or authorize downstream work.
 
 ### 2.1 Extension basis
@@ -273,8 +280,49 @@ from filed records. The state of that chain for this deliverable is:
   records all three `RC4` findings `ADDRESSED — REQUIRES RE-VALIDATION`, none
   `RESOLVED` and none `INTENTIONALLY UNCHANGED`, claims no independent
   validation, and states that it discharges no finding;
-- this `RC5` candidate is the correction of the `RC4` review's findings; and
-- no independent constitutional review of this `RC5` candidate is filed at any
+- the `RC5` candidate is the correction of the `RC4` review's findings;
+- the `RC5` independent constitutional review is repository-filed at
+  [M44_WP5_RC5_INDEPENDENT_CONSTITUTIONAL_REVIEW.md](M44_WP5_RC5_INDEPENDENT_CONSTITUTIONAL_REVIEW.md),
+  determination `NOT APPROVED`. It independently records
+  `RC4-CRITICAL-1`, `RC4-MAJOR-1`, and `RC3-MINOR-4` as `RESOLVED` and raises
+  `RC5-CRITICAL-1` and `RC5-MAJOR-1`;
+- the `RC5` constitutional corrections response is repository-filed at
+  [M44_WP5_RC5_FORMAL_CONSTITUTIONAL_CORRECTIONS_RESPONSE.md](M44_WP5_RC5_FORMAL_CONSTITUTIONAL_CORRECTIONS_RESPONSE.md).
+  It accepts `RC5-CRITICAL-1` for correction and records that the separate
+  constitutional challenge concluded that no exact frozen authority requires
+  explicit §8.1 → §10.1 routing and recommended treating `RC5-MAJOR-1` as
+  non-blocking architectural guidance. That author response is not independent
+  validation, creates no lifecycle stage, and does not itself amend or
+  disposition frozen authority;
+- the `RC6` candidate corrected accepted `RC5-CRITICAL-1` by incorporating the
+  applied determination through frozen WP5.5 into this sole deliverable and
+  made no normative change for `RC5-MAJOR-1`;
+- the `RC6` independent constitutional review is repository-filed at
+  [M44_WP5_RC6_INDEPENDENT_CONSTITUTIONAL_REVIEW.md](M44_WP5_RC6_INDEPENDENT_CONSTITUTIONAL_REVIEW.md),
+  blob `a828170ed3ab4e68015ddc9ffa98f91e613a0330`. It reviewed the
+  uncommitted RC6 working-tree blob
+  `b10d755805f827a47ab3e337017279ad4f0af6c4` over base commit
+  `052358fb7b93985b34a4c9a156d5fc92b4293e60`, returned `NOT APPROVED`,
+  recorded `RC5-CRITICAL-1` as resolved as to the identified method-only
+  defect, and raised `RC6-CRITICAL-1` and `RC6-MAJOR-1`;
+- the `RC6` formal constitutional corrections response is repository-filed at
+  [M44_WP5_RC6_FORMAL_CONSTITUTIONAL_CORRECTIONS_RESPONSE.md](M44_WP5_RC6_FORMAL_CONSTITUTIONAL_CORRECTIONS_RESPONSE.md),
+  blob `36dce6ce0c45b06e35182e256396c57460a8a1f2`. It records both
+  `RC6-CRITICAL-1` and `RC6-MAJOR-1` as `ACCEPTED FOR CORRECTION` and
+  `NOT DISCHARGED`. It grants no approval, confirmation, freeze, lifecycle,
+  implementation, or downstream authority; the response does not
+  constitutionally discharge either finding, and both remain subject to later
+  author-independent whole-record re-validation;
+- the `RC6.1` candidate completed the repository review-chain account and the
+  initially identified M41 proved-owner corpus evidence for
+  `RC6-CRITICAL-1` and `RC6-MAJOR-1`;
+- the `RC6.2` candidate completed the additional M40 owner-corpus evidence for
+  `RC6-MAJOR-1` by inspecting and recording M40-WP2 and M40-WP3. It does not
+  reopen the ownership method, lifecycle, review chain, or `RC5-MAJOR-1`;
+- this `RC6.3` candidate completes the M39–M41 corpus-boundary proof and the
+  RC6 review-chain account without changing any review disposition or
+  conferring lifecycle authority; and
+- no independent constitutional review of this `RC6.3` candidate is filed at any
   repository path, and no independent constitutional confirmation of this
   deliverable is filed at any repository path.
 
@@ -499,10 +547,10 @@ The proof is conjunctive. A missing, circular, ambiguous, conflicting, or
 inference-dependent proposition means that ownership is not proved. Strength
 in one proposition cannot compensate for failure in another.
 
-No owner name is supplied by this specification. Market Intelligence MUST be
-treated only as the first hypothesis required by frozen OQ-3; it MUST be proved
-or rejected under the same standard as any other materially supported
-hypothesis.
+No owner name is supplied in advance by the determination method. Market
+Intelligence MUST be treated only as the first hypothesis required by frozen
+OQ-3; it MUST be proved or rejected under the same standard as any other
+materially supported hypothesis.
 
 ## 8. Ordered determination workflow
 
@@ -1041,8 +1089,9 @@ required when applicable to the branch reached:
    preserving hypothesis status until proof.
 5. **Four-proof matrix** — every proposition in §7 and its exact evidence.
 6. **Ownership conclusion** — either one constitutionally proved owner or a
-   fail-closed statement that ownership was not proved. This specification
-   supplies neither conclusion.
+   fail-closed statement that ownership was not proved. The method supplies
+   neither conclusion in advance; the applied record in §12.1 supplies the
+   candidate conclusion only after completing the required proof.
 7. **Corpus assessment** — required only if an owner is proved; exact boundary,
    inventory, search, and completeness evidence.
 8. **Existing-contract assessment** — required only if §8.6 is reached.
@@ -1059,6 +1108,484 @@ These are required sections of the bounded determination record. This
 specification does not authorize creation of additional packages, procedures,
 contracts, registries, APIs, schemas, fixtures, source files, or decision
 records.
+
+### 12.1 RC6.3 applied determination record — WP5.1 through WP5.5
+
+This subsection applies §§6–8 to repository evidence through frozen WP5.5. It
+is the determination record incorporated into this sole deliverable. It does
+not perform WP5.6, does not supply its own review or confirmation evidence, and
+does not make its proposed ownership conclusion or `G-4` state effective.
+
+#### Boundary lock and frozen-baseline identity
+
+The repository evidence baseline examined by this determination is commit
+`052358fb7b93985b34a4c9a156d5fc92b4293e60`. The pre-correction working tree
+was clean. At that commit this specification was blob
+`39a55733a2f114cc9a77bd26d79b18637446705b`. RC6.3 changes only this unfrozen
+WP5 deliverable; it changes no frozen artifact.
+
+The controlling frozen artifacts and their exact blobs at the examined commit
+are below. Every bare filename in this applied record denotes the exact
+repository path `docs/implementation/<filename>`; paths outside that directory
+are written in full.
+
+| Controlling artifact | Exact blob | Controlling scope |
+| --- | --- | --- |
+| `docs/architecture/platform_architecture.md` | `e9164fe75e306035321858c58039922b8ec9584c` | §§6.2 and 6.5 domain ownership |
+| `M43_WP2_PORTFOLIO_MEASURE_DEFINITION_METHOD_VERSION_AND_APPLICABILITY_CONTRACT_SPECIFICATION.md` | `d673c5bf3099716bd2043fef6856e20133a2309b` | §4 ownership; §§6.2, 6.6, and 8 dependency identity, caller rejection, and closure |
+| `M43_WP4_CONSTITUTIONAL_SCOPE_AND_IMPLEMENTATION_PLAN.md` | `d6bcc609faa3e1a5a61c2f2175669e21939657a5` | §§5.2 and 6.7 |
+| `M44_ARCHITECTURE_AND_IMPLEMENTATION_PLAN.md` | `088a28dbf9655f234ef8c0e6ef2c1391e2ef2116` | §§5–6, 8.4, 11, 12, 16.2, and OQ-3 |
+| `M44_ARCHITECTURE_FREEZE_RECORD.md` | `bd2644753db270e1a4cc45805ef8f2bf86428fc1` | frozen M44 authority and amendment boundary |
+| `M44_WP1_INHERITED_GATE_INVENTORY_AND_CLOSURE_REGISTER.md` | `3e952e014007ec0f9237760b6038e5d2ae528f96` | §4.4 `G-4` evidence requirements and repository evidence |
+| `M44_WP1_FREEZE_RECORD.md` | `038d844801aadb423b7ec5a6aac3fe2a5a65ed34` | WP1 confirmed and frozen status |
+| `M44_WP5_ARCHITECTURE_AND_IMPLEMENTATION_PLAN.md` | `c8cb5cbe7d0f5c0e118e5bdebc7e819fda78ffb9` | frozen non-normative WP5 planning constraints |
+| `M44_WP5_INDEPENDENT_CONSTITUTIONAL_CONFIRMATION.md` | `42575fde02b12d930c5669194e1543d789de6fd1` | confirmation of the planning basis only |
+| `M44_WP5_PLANNING_FREEZE_RECORD.md` | `8f9e6c5a52d39c546880f4ae60a1f87ef2a0024e` | exact frozen planning corpus and authority ceiling |
+| `M44_WP5_PLANNING_CLOSEOUT.md` | `cc74458f294174a7ef2c3fb779876f4cea6c8205` | planning closeout and downstream boundary |
+| `M44_WP4_FREEZE_RECORD.md` | `8623bbdabbb4fd35318e125173cd99c48ffd9c2e` | frozen `G-3 OPEN — PARTIAL` state |
+
+Every authority ceiling in the header remains in force. Before this
+determination, Annualization Basis ownership and `G-4` were `NOT DETERMINED`;
+`G-3` was and remains `OPEN — PARTIAL`; and the frozen §12.1.1 checkpoint was
+and remains `NOT DISPOSITIONED`. The exclusions in §14 remain unchanged. This
+boundary lock establishes no implementation, runtime, provider, contract,
+checkpoint, WP6, or WP7 authority.
+
+#### Evidence manifest and admissibility
+
+| Evidence | Commit and blob identity | Status and constitutional owner | Proposition assessed | Admissibility |
+| --- | --- | --- | --- | --- |
+| Platform Architecture §§6.2 and 6.5 | examined commit; blob `e9164fe75e306035321858c58039922b8ec9584c` | frozen; Platform Architecture constitutional governance | Market Intelligence owns canonical calendars and market context; Portfolio Intelligence owns derived-measure meaning and consumes Market Intelligence inputs | `ADMISSIBLE — OWNERSHIP` |
+| M43-WP2 §4 and §§8.1–8.3 | examined commit; blob `d673c5bf3099716bd2043fef6856e20133a2309b` | frozen; Portfolio Intelligence | Calendars remain Market Intelligence-owned; a calculation dependency requires exact owner, existing kind, identifier, and immutable version; governed evidence is not a dependency declaration | `ADMISSIBLE — OWNERSHIP AND AVAILABILITY` |
+| M43-WP4 §§5.2 and 6.7 | examined commit; blob `d6bcc609faa3e1a5a61c2f2175669e21939657a5` | frozen; Portfolio Intelligence planning authority | Four-proof requirement; no artificial dependency kind; frozen-corpus absence statement; exact information required before admission | `ADMISSIBLE — PROOF AND AVAILABILITY` |
+| M44 Architecture §§5.1, 8.4, 11, 16.2, and OQ-3 | examined commit; blob `088a28dbf9655f234ef8c0e6ef2c1391e2ef2116` | frozen; M44 constitutional governance | WP5 determination allocation, Market Intelligence first hypothesis, two `G-4` outcomes, completion and downstream consequences | `ADMISSIBLE — AUTHORITY AND PROOF` |
+| M44-WP1 §4.4 | examined commit; blob `3e952e014007ec0f9237760b6038e5d2ae528f96` | confirmed and frozen; M44-WP1 | Required disposition evidence and repository-wide absence of an Annualization Basis governance instrument | `ADMISSIBLE — AVAILABILITY` |
+| `M40_WP2_Canonical_Market_Measure_Vocabulary_Admission_Review.md` §§1, 2.2–2.3, 6, and 7 | examined commit; blob `262aab1ffd1f41617a9850706a315d988f3977dc` | complete and frozen by M40 closeout; seven admitted concepts are Market Intelligence-owned and Mechanical Boundary Rules is Repository Architecture Governance-owned | Whether its binary canonical-vocabulary admissions, rejections, owner mappings, or versioned-semantic composition publish, admit, or establish an Annualization Basis governing contract | `ADMISSIBLE — CORPUS AVAILABILITY; NOT USED TO SELECT OWNER` |
+| `M40_WP3_CANONICAL_GLOSSARY_SYNCHRONIZATION.md` §§1, 3, and 6–8 | examined commit; blob `f4a43b444196764ace04ebf381ca183cd5d9b040` | complete, independently approved, and frozen by M40 closeout; synchronized canonical vocabulary with seven Market Intelligence-owned concepts and one Repository Architecture Governance-owned concept | Whether its synchronization of admitted meanings into canonical vocabulary establishes an Annualization Basis governing contract | `ADMISSIBLE — CORPUS AVAILABILITY; NOT USED TO SELECT OWNER` |
+| `M41_WP1_CANDIDATE_VOCABULARY_AND_OWNERSHIP_REGISTER.md` §§3, 6.0, 6.2, and 6.5 | examined commit; blob `d0d5ffa15ab99037ffacf0963c8b2e3648d15327` | confirmed and frozen by M41-WP1 closeout; Market Intelligence owner-governed register | Whether its candidate ownership, Method Version dependency, or Measurement Window surfaces publish or establish an Annualization Basis governing contract | `ADMISSIBLE — CORPUS AVAILABILITY; NOT USED TO SELECT OWNER` |
+| `M41_WP2_STAGE_A_CANDIDATE_VOCABULARY_REGISTER.md` §§1 and 3 | examined commit; blob `4cb27ce95f13e08ac15d86d1c7ec809b05bbc1d0` | confirmed and treated as frozen by the M41-WP2 confirmation chain; owner-governed Stage A register | Whether its Subject, ordering, or Manifest Entry ownership dispositions publish or establish an Annualization Basis governing contract | `ADMISSIBLE — CORPUS AVAILABILITY; NOT USED TO SELECT OWNER` |
+| `M41_WP3_STAGE_A_VOCABULARY_AND_SEMANTIC_SURFACE_REGISTER.md` §§2.2–2.3, 4 Component C/H, and 7.5 | examined commit; blob `ec1c420d099bc7828e716607bb6ac37a5100761a` | approved and immutable within frozen M41-WP3; Market Intelligence owner-governed Stage A register | Whether its session/count-basis, calendar, and dependency surfaces publish or establish an Annualization Basis governing contract | `ADMISSIBLE — CORPUS AVAILABILITY; NOT USED TO SELECT OWNER` |
+| `M41_WP4_STAGE_A_VOCABULARY_AND_SEMANTIC_SURFACE_REGISTER.md` §§0, 4, and 4.1 | examined commit; blob `867ed1c91977152686614507f85f4544e0f264d9` | confirmed and frozen by the M41-WP4 Stage A confirmation and closeout; Market Intelligence owner-governed Stage A register | Whether its Result, provenance, or dependency-surface dispositions publish or establish an Annualization Basis governing contract | `ADMISSIBLE — CORPUS AVAILABILITY; NOT USED TO SELECT OWNER` |
+| Remaining frozen M39–M41 Market Intelligence corpus bounded below | examined commit; exact per-artifact blobs below | frozen; Market Intelligence | Whether an exact existing Annualization Basis governed contract kind is already owner-published | `ADMISSIBLE — AVAILABILITY ONLY AFTER OWNERSHIP PROOF` |
+| WP5 planning §§3, 5, and 7 | examined commit; blob `c8cb5cbe7d0f5c0e118e5bdebc7e819fda78ffb9` | frozen non-normative; M44-WP5 planning governance | Ordered workflow, evidence sequence, and review-entry condition | `ADMISSIBLE — PROCESS CONSTRAINT; NOT OWNERSHIP EVIDENCE` |
+| Source code, provider behavior, libraries, configuration, current implementations, examples, fixtures, and repository material outside the bounded owner corpus | examined repository state | non-constitutional or not controlled by the proved owner | Possible convenient or conventional values and mechanisms | `INADMISSIBLE — §6.2; NO AFFIRMATIVE RELIANCE` |
+
+No planning statement, corpus absence, implementation fact, provider datum,
+example, or desired downstream outcome participates in the ownership proof.
+The six required M40–M41 admission, synchronization, Stage A, and register
+artifacts above were inspected only after the ownership proof and cannot be
+used circularly to select the corpus owner.
+
+#### Hypothesis record
+
+Market Intelligence is tested first because frozen OQ-3 requires that order.
+The tested hypotheses and materially plausible alternatives are:
+
+| Hypothesis or alternative | Admissible basis for testing | Determination |
+| --- | --- | --- |
+| Market Intelligence | Platform Architecture §6.2 expressly allocates market calendars, rates, histories, and market context to Market Intelligence; M43-WP2 §4 preserves that allocation; frozen OQ-3 directs this hypothesis to be tested first | `PROVED` by the conjunctive matrix below |
+| Portfolio Intelligence | Platform Architecture §6.5 allocates derived measures and their semantics to Portfolio Intelligence | `REJECTED` as owner of the dependency: consumption and measure semantics do not transfer source-calendar meaning, and M43-WP4 §6.7 requires placement without expansion of Portfolio Intelligence authority |
+| Ledger & Accounting | Platform Architecture §6.3 owns financial truth and canonical formula inputs | `REJECTED`: it owns recorded financial truth and ledger-derived inputs, not calendars, market context, or a calendar-derived Annualization Basis |
+| Asset Foundation | Platform Architecture allocates asset identity, classification, and currency dimension to Asset Foundation | `REJECTED`: no frozen allocation gives it calendar meaning or Annualization Basis dependency ownership |
+| Caller, provider, library, registry, or shared ownership | none | `REJECTED AS INADMISSIBLE`: each would violate §§6–7, M43-WP2, or singular ownership |
+
+No additional supported owner hypothesis appears in the frozen allocations.
+The absence of an owner-domain contract is not used to select the owner.
+
+#### Four-proof ownership matrix
+
+| Required proposition | Exact constitutional reasoning | Result |
+| --- | --- | --- |
+| `VERSIONED_CALCULATION_DEPENDENCY` is correct | An Annualization Basis is an output-affecting calculation control that a Portfolio Method Version must bind by exact owner, contract kind, identifier, and immutable version under M43-WP2 §8.1. M43-WP4 §§5.2 and 6.7 expressly place a representable Annualization Basis in the calculation-dependency path and prohibit an ambient or artificial substitute. Its value must therefore be exact and version-bound rather than invocation evidence. | `PROVED` |
+| `GOVERNED_EVIDENCE` is incorrect | M43-WP2 §8.3 separates invocation evidence—observations, Market Measure Results, Ledger evidence, and references—from an exact governed calculation dependency. Calendar observations may be evidence owned by Market Intelligence, but the Annualization Basis is the versioned rule/dependency consumed by the calculation; treating it as evidence would evade the exact dependency declaration and closure required by §8. | `PROVED` |
+| Caller override is rejected | M43-WP2 §6.6 denies permission to select an Annualization Basis at invocation time; §7.6 forbids a caller-supplied governed value; and §12 item 7 declares a request-supplied Annualization Basis constitutionally invalid. M43-WP4 §6.7 independently requires caller-override rejection and prohibits ambient constants. | `PROVED` |
+| Owner and placement expand no Portfolio Intelligence authority and transfer no calendar meaning | Platform Architecture §6.2 assigns canonical calendars and market context exclusively to Market Intelligence, and frozen M44 OQ-3 states that the Annualization Basis is derived from session-calendar facts already allocated there. Determining Market Intelligence as owner preserves that allocation; Portfolio Intelligence remains only the consumer of an exact dependency. This determination grants Market Intelligence no new instrument-authoring authority: D-7 would require a future, separately authorized owner-domain governance act. Source calendar identity and version remain Market Intelligence-owned and distinct from the separately versioned dependency record. | `PROVED` |
+
+The proof does not rely on contract availability. Market Intelligence is the
+only hypothesis satisfying all four propositions. Portfolio Intelligence would
+acquire source-owned calendar meaning; Ledger & Accounting and Asset Foundation
+lack the relevant frozen allocation; and shared, provider, caller, or inferred
+ownership is prohibited. Two readers applying the same explicit domain
+allocations and the same M43-WP2/M43-WP4 distinctions therefore reach the same
+owner without a tie-break, fallback, or new precedence rule.
+
+**Proposed ownership conclusion:** `MARKET INTELLIGENCE`.
+
+This conclusion is not effective until §13 completes.
+
+#### Proved-owner frozen-corpus boundary and inventory
+
+The boundary universe is every repository artifact at the examined commit
+whose filename begins `M39_`, `M40_`, or `M41_` under
+`docs/implementation/`: 79 artifacts in total. The searched owner corpus is
+the 17-artifact subset of frozen, Market Intelligence-governed M39–M41
+specifications, admission/synchronization records, and constitutional
+registers that can publish or establish owner-governed contract meaning. A
+corpus member need not itself be an exact dependency contract kind:
+candidate-vocabulary and semantic-surface registers are included because they
+can establish governed meaning, ownership, placement, or dependency
+constraints that bear on whether such a kind exists.
+
+The remaining 62 artifacts are accounted for individually below. They are
+outside the candidate-contract corpus only where frozen authority establishes
+their constitutional role as planning or architecture proposal, lifecycle
+evidence, closeout, governance reconciliation, or non-frozen empty-scope
+proposal/review. They are not excluded because their names or contents appear
+unlikely to mention Annualization Basis. Boundary-role inspection establishes
+whether an artifact has owner-domain publication authority; it is not used as
+a substitute for including and searching every artifact that has that
+authority. Examples, fixtures, source code, implementations, and artifacts
+owned by other domains remain outside the candidate-contract boundary.
+
+The complete owner-authored specification inventory assessed for an exact
+existing Annualization Basis governed contract kind is:
+
+| Owner-corpus artifact | Exact blob | Assessment |
+| --- | --- | --- |
+| `M39_WP1_Canonical_Boundary_Specification.md` | `50dda30ed8b471cba964627438e6a543d7b32aff` | Market Observation boundary; no Annualization Basis contract kind |
+| `M39_WP2_market_observation_source_boundary_specification.md` | `5a8958fcf647e15e0fd9920daf0acd1e56086b9c` | Observation-source semantics; no Annualization Basis contract kind |
+| `M39_WP3_market_observation_classification_specification.md` | `3d3a0e5cb063821448260efd80c9534ffec51ab6` | Observation classification; no Annualization Basis contract kind |
+| `M39_WP4_market_observation_payload_specification.md` | `de8632c5ac7fa9bff9f50b1ca5217a5e131160eb` | Observation payload; no Annualization Basis contract kind |
+| `M39_WP5_market_observation_relationship_specification.md` | `0db1d69d13a3050281c0ed76b7cd84ff5bbd8c55` | Observation relationships; no Annualization Basis contract kind |
+| `M39_WP6_market_observation_identity_specification.md` | `a20d0ea55a3703cb5131a7b721019e9c7222eb30` | Observation identity; no Annualization Basis contract kind |
+| `M40_WP1_Canonical_Market_Measure_Vocabulary_and_Ownership_Specification.md` | `d610c32fc2a4eadfdd136a86533708cd29090f25` | Market Measure vocabulary and ownership; no Annualization Basis contract kind |
+| [`M40_WP2_Canonical_Market_Measure_Vocabulary_Admission_Review.md`](M40_WP2_Canonical_Market_Measure_Vocabulary_Admission_Review.md) | `262aab1ffd1f41617a9850706a315d988f3977dc` | §§1, 2.2–2.3, 6, and 7 apply binary canonical-vocabulary admission, preserve sole owner mappings, and admit semantic composition containing explicit semantic and dependency versions. The artifact admits seven Market Intelligence-owned concepts and one Repository Architecture Governance-owned concept, but at issuance does not itself register effective Glossary vocabulary. It publishes or establishes no exact Annualization Basis governed contract kind, identifier, immutable version, or canonical value bytes |
+| [`M40_WP3_CANONICAL_GLOSSARY_SYNCHRONIZATION.md`](M40_WP3_CANONICAL_GLOSSARY_SYNCHRONIZATION.md) | `f4a43b444196764ace04ebf381ca183cd5d9b040` | §§1, 3, and 6–8 synchronize the eight admitted meanings and sole-owner mappings into the Canonical Glossary; M40 closeout records the synchronization as independently approved, making the terms shared canonical meaning. Its authority is semantic vocabulary only, and it establishes no exact Annualization Basis governed contract kind, identifier, immutable version, or canonical value bytes |
+| [`M41_WP1_CANDIDATE_VOCABULARY_AND_OWNERSHIP_REGISTER.md`](M41_WP1_CANDIDATE_VOCABULARY_AND_OWNERSHIP_REGISTER.md) | `d0d5ffa15ab99037ffacf0963c8b2e3648d15327` | §§3, 6.0, 6.2, and 6.5 govern candidate ownership, Method Version dependencies, and Measurement Window calendar references, while §3 defers the contract text itself. No exact Annualization Basis governed contract kind, identifier, immutable version, or canonical value bytes are published or established |
+| `M41_WP1_DEFINITION_METHOD_VERSION_APPLICABILITY_CONTRACT_SPECIFICATION.md` | `6e19d41934e6679f2d3ef846a8b0b33c0ddd073f` | Market Measure Definition/Method Version; no Annualization Basis contract kind |
+| [`M41_WP2_STAGE_A_CANDIDATE_VOCABULARY_REGISTER.md`](M41_WP2_STAGE_A_CANDIDATE_VOCABULARY_REGISTER.md) | `4cb27ce95f13e08ac15d86d1c7ec809b05bbc1d0` | §§1 and 3 govern Subject Reference, Subject Ordering Key, and Manifest Entry vocabulary and ownership. No Annualization Basis contract kind, field set, identifier, immutable version, or canonical value bytes are published or established |
+| `M41_WP2_STAGE_B_SUBJECT_AND_MANIFEST_CONTRACT_SPECIFICATION.md` | `f3a7168a3b684426e6770341caf034bbf3427e7b` | Market Measure subject and manifest; no Annualization Basis contract kind |
+| [`M41_WP3_STAGE_A_VOCABULARY_AND_SEMANTIC_SURFACE_REGISTER.md`](M41_WP3_STAGE_A_VOCABULARY_AND_SEMANTIC_SURFACE_REGISTER.md) | `ec1c420d099bc7828e716607bb6ac37a5100761a` | §4 Component C classifies elapsed/civil/session/count basis and exact calendar rules as Method Version semantics with exact dependencies; Component H preserves the sole version-bound dependency list; §7.5 expressly rejects a default calendar and a `252`-session assumption. These constraints publish or establish no exact Annualization Basis governed contract kind, identifier, immutable version, or canonical value bytes |
+| `M41_WP3_STAGE_B_TEMPORAL_UNIT_ADJUSTMENT_ARITHMETIC_CONTRACT_SPECIFICATION.md` | `5afb26e3b3e34fb825a56277ed56bbce96c5ad29` | Temporal/calendar consumption semantics. Its §5.1 `session count` is a method-declared duration amount using an exact named calendar dependency; it supplies no Annualization Basis kind, identifier, immutable version, or canonical value bytes |
+| [`M41_WP4_STAGE_A_VOCABULARY_AND_SEMANTIC_SURFACE_REGISTER.md`](M41_WP4_STAGE_A_VOCABULARY_AND_SEMANTIC_SURFACE_REGISTER.md) | `867ed1c91977152686614507f85f4544e0f264d9` | §§0 and 4 govern Result, provenance, identity, and handoff surfaces; §4.1 finds no new governed dependency and preserves the Method Version dependency list as sole inventory. No Annualization Basis contract kind, identifier, immutable version, or canonical value bytes are published or established |
+| `M41_WP4_STAGE_B_RESULT_STATE_AND_PROVENANCE_CONTRACT_SPECIFICATION.md` | `0a05b925b77b86d7a57de0d47c6d3743e15b95d8` | Market Measure result/state/provenance; no Annualization Basis contract kind |
+
+The complete boundary accounting is:
+
+| Boundary disposition | Count | Record |
+| --- | ---: | --- |
+| `INCLUDED — SEARCHED OWNER CORPUS` | 17 | the exact inventory above |
+| `EXCLUDED — CONSTITUTIONALLY ACCOUNTED` | 62 | the exact exclusion ledger below |
+| **Total M39–M41 prefixed artifacts** | **79** | no unclassified artifact |
+
+The exclusion-authority keys used below are exact and role-specific:
+
+- **`X-LIFECYCLE`** — frozen
+  [M44-WP5 plan](M44_WP5_ARCHITECTURE_AND_IMPLEMENTATION_PLAN.md) §6, blob
+  `c8cb5cbe7d0f5c0e118e5bdebc7e819fda78ffb9`, states that separately
+  named review, response, confirmation, freeze, and closeout records are
+  governance evidence only and authorize no owner-domain contract artifact.
+  Frozen M44 Architecture §§12.4 and 13.1, blob
+  `088a28dbf9655f234ef8c0e6ef2c1391e2ef2116`, separately allocates those
+  lifecycle roles.
+- **`X-M39-CLOSEOUT`** — frozen
+  [M39 closeout](M39_EPIC_CLOSEOUT.md) §§1 and 3, blob
+  `d766779d2884d1504a38f43d3ddf7250f3d1877a`, identifies WP1–WP6 as
+  the six canonical frozen corpus paths and states that the closeout only
+  reconciles the repository and creates no new architecture or semantic
+  concept.
+- **`X-M40-PLAN`** — frozen
+  [M40 closeout](M40_EPIC_CLOSEOUT.md) §§1–3, blob
+  `f94503d38fc03248897aa91fcaae309af8ecaf2f`, separates the M40 plan and
+  architecture review cycle from the completed WP1–WP4 outputs and states
+  that closeout does not convert the planning document into implementation
+  authority or approve a formula or production method. The final
+  candidate-publication outputs are the included M40-WP1 through M40-WP3
+  artifacts.
+- **`X-M40-CHAIN`** — M40 closeout §3, same blob, identifies every M40
+  review, response, and confirmation as a lifecycle companion to a separately
+  named substantive output; `X-LIFECYCLE` fixes the constitutional effect of
+  that role.
+- **`X-M40-CLOSEOUT`** — M40 closeout §§1 and 6, same blob, classifies itself
+  as governance closeout and grants no production method, formula, model,
+  implementation, runtime, provider, persistence, or API authority.
+- **`X-M40-RECONCILIATION`** — frozen
+  [M40-WP4 Decision Log Reconciliation](M40_WP4_DECISION_LOG_RECONCILIATION.md)
+  §§1 and 3–4, blob `11aadb89b8c43bf5d3ff50e5372aa79e3b3cc16b`, states that it
+  summarizes already-completed M40-WP1 through M40-WP3 decisions without
+  reopening, redesigning, or reproducing their specifications and creates no
+  formula, method, model, or contract authority.
+- **`X-M41-ARCHITECTURE`** — frozen
+  [M41-WP1 closeout](M41_WP1_CLOSEOUT.md) **Scope Completed** and
+  **Canonical Deliverables**, blob
+  `c16baaff939977c14f14bba9ab6ab09f71b611bf`, classifies the confirmed,
+  frozen M41 architecture as the architecture dependency and separately names
+  the Stage 1 register and Stage 2 specification as the canonical substantive
+  outputs. The proposal and its review chain therefore allocate and validate
+  work; they do not replace those owner-domain publications.
+- **`X-M41-WP1`** — M41-WP1 closeout **Canonical Deliverables**,
+  **Authority after Closeout**, and **Non-Reopening Statement**, same blob,
+  identifies the included Stage 1 register and Stage 2 specification as the
+  normative authority and every review, response, confirmation, and the
+  closeout as historical lifecycle/status evidence.
+- **`X-M41-WP2`** — confirmed
+  [M41-WP2 Architecture Proposal](M41_WP2_ARCHITECTURE_PROPOSAL.md) §11,
+  blob `6c77d8786035c9d5f4b121fc3c08b3987dc3c670`, separately allocates the
+  Stage A register, the Stage B actual contract text, and their review
+  artifacts. [Final Architecture Confirmation](M41_WP2_FINAL_ARCHITECTURE_CONFIRMATION.md),
+  blob `96391f36aa5adbfa8dc5f590714c70a673efe508`, confirms that allocation.
+  The included Stage A and Stage B artifacts are the candidate-publication
+  outputs; the architecture proposal and lifecycle companions are not.
+- **`X-M41-WP2-STAGE-C`** — the confirmed M41-WP2 architecture §11 and its
+  final confirmation, the two `X-M41-WP2` blobs above, allocate only Stage A
+  and Stage B substantive outputs. The Stage C proposal records an empty
+  semantic scope and its review returns `APPROVED`, but neither artifact has an
+  independent confirmation or freeze record. They are non-frozen and cannot
+  enlarge the confirmed two-stage allocation.
+- **`X-M41-WP3`** — frozen
+  [M41-WP3 closeout](M41_WP3_CLOSEOUT.md) **Final Document Chain** and
+  **Final Authority Status**, blob
+  `e715dbe5a6a5b3142d23bb8a2b5fe113fc88e10a`, distinguishes the approved
+  architecture and lifecycle records from the approved Stage A register and
+  confirmed, frozen Stage B specification. The latter two are included; the
+  former records only allocate, review, correct, confirm, or close them.
+- **`X-M41-WP4`** — frozen
+  [M41-WP4 closeout](M41_WP4_CLOSEOUT.md) **Reconciled Governance Chain** and
+  **Final Authority Status**, blob
+  `727d352c61ba3db0e4a340437b829ae94d5b230f`, distinguishes the confirmed
+  architecture and lifecycle records from the confirmed, frozen Stage A
+  register and Stage B contract specification. The latter two are included;
+  the former records only allocate, review, correct, confirm, or close them.
+
+Every excluded artifact is classified below. `OUTSIDE` means outside the
+candidate owner-domain contract-publication corpus, not absent from the
+repository and not ignored.
+
+| Excluded artifact | Exact blob | Constitutional role and disposition | Exact exclusion authority |
+| --- | --- | --- | --- |
+| `M39_EPIC_CLOSEOUT.md` | `d766779d2884d1504a38f43d3ddf7250f3d1877a` | `LIFECYCLE CLOSEOUT — OUTSIDE` | `X-M39-CLOSEOUT` |
+| `M40_Canonical_Asset_Market_Measure_Foundation_Plan.md` | `6dc356c9f3c0aa22736657f32eed720ed62dfb7c` | `PLANNING/PROPOSAL — OUTSIDE` | `X-M40-PLAN` |
+| `M40_EPIC_CLOSEOUT.md` | `f94503d38fc03248897aa91fcaae309af8ecaf2f` | `LIFECYCLE CLOSEOUT — OUTSIDE` | `X-M40-CLOSEOUT` |
+| `M40_EPIC_CLOSEOUT_INDEPENDENT_REVIEW.md` | `a3f24ea8a5b1a07c6004e454627029b56c407f16` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M40-CHAIN` |
+| `M40_INDEPENDENT_CONFIRMATION.md` | `07efecc48f8a3575d73dd78e3379693d3dc3af6f` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M40-CHAIN` |
+| `M40_INDEPENDENT_CONSTITUTIONAL_ARCHITECTURE_REVIEW.md` | `9efbd6c5c3df7f638e27a4424d9e01be449adba3` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M40-CHAIN` |
+| `M40_REVIEW_RESPONSE.md` | `2ff12489fdd7168fb1ab02238496b4bd178cb2aa` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M40-CHAIN` |
+| `M40_WP1_INDEPENDENT_CONFIRMATION.md` | `7730ca45c398c6e9557225be41accac906692c1a` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M40-CHAIN` |
+| `M40_WP1_INDEPENDENT_REVIEW.md` | `12e2c9342f3aa5222a5c4207ba30623d8b932f07` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M40-CHAIN` |
+| `M40_WP1_REVIEW_RESPONSE.md` | `2274d353a0218d4d26d45a939f6fa7bd2f473555` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M40-CHAIN` |
+| `M40_WP2_INDEPENDENT_CONFIRMATION.md` | `d297c711354f642cb98b9f66c9da476de1b0d5c3` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M40-CHAIN` |
+| `M40_WP2_INDEPENDENT_CONSTITUTIONAL_REVIEW.md` | `30f3539f12589bf19d6bfc6d0a1a4239dd09ffcf` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M40-CHAIN` |
+| `M40_WP2_REVIEW_RESPONSE.md` | `c619f86476d3816f63b62082bd10f8aad300cb9b` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M40-CHAIN` |
+| `M40_WP3_INDEPENDENT_CONSTITUTIONAL_REVIEW.md` | `d1009ebd97954f038e7de85579a9424f25eab82f` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M40-CHAIN` |
+| `M40_WP4_DECISION_LOG_RECONCILIATION.md` | `11aadb89b8c43bf5d3ff50e5372aa79e3b3cc16b` | `GOVERNANCE RECONCILIATION — OUTSIDE` | `X-M40-RECONCILIATION` |
+| `M40_WP5_INDEPENDENT_CONFIRMATION.md` | `3f6ef073cee8357a7622e92626bee94340b96869` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M40-CHAIN` |
+| `M40_WP5_REVIEW_RESPONSE.md` | `be87fa535daec45ff31dc9d77a3b3f9c7d75f00c` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M40-CHAIN` |
+| `M41_ARCHITECTURE_INDEPENDENT_CONFIRMATION.md` | `8c09beefdf2e1236e4f82d8c1801d38340aee1d9` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M41-ARCHITECTURE` |
+| `M41_ARCHITECTURE_INDEPENDENT_REVIEW.md` | `d6b252fdfdb5578d3fa97dde07d05c8c5a6bafed` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M41-ARCHITECTURE` |
+| `M41_ARCHITECTURE_PROPOSAL.md` | `7996ea640534aadebcccb1864055a503ed87844b` | `FROZEN ARCHITECTURE PROPOSAL — OUTSIDE` | `X-M41-ARCHITECTURE` |
+| `M41_ARCHITECTURE_PROPOSAL_REVIEW_RESPONSE.md` | `5b8e453825c5af9666d7cd863ada28dc40c48588` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M41-ARCHITECTURE` |
+| `M41_ARCHITECTURE_REQUIRED_CORRECTIONS_RESPONSE.md` | `1765c1cc0ca9888a22b6b8dcc69d285ce8b859d5` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M41-ARCHITECTURE` |
+| `M41_WP1_CLOSEOUT.md` | `c16baaff939977c14f14bba9ab6ab09f71b611bf` | `LIFECYCLE CLOSEOUT — OUTSIDE` | `X-M41-WP1` |
+| `M41_WP1_INDEPENDENT_CONFIRMATION.md` | `53a35b448d2e16b9425455cf3f3bcb0ca11108a2` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M41-WP1` |
+| `M41_WP1_INDEPENDENT_REVIEW.md` | `6b455b3e61e7b9f116257e189ad4b4a86389cc30` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M41-WP1` |
+| `M41_WP1_REQUIRED_CORRECTIONS_RESPONSE.md` | `e7f83602059748003fd4dff1f25b84e89a2ea98f` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M41-WP1` |
+| `M41_WP1_STAGE2_FINAL_INDEPENDENT_CONFIRMATION.md` | `949f3d089f84d8d4a86d403b8ad5e840c015b1e7` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M41-WP1` |
+| `M41_WP1_STAGE2_FINAL_REQUIRED_CORRECTIONS_RESPONSE.md` | `36e541c920bdb6c0d98cc12abf0175581b316023` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M41-WP1` |
+| `M41_WP1_STAGE2_FINAL2_INDEPENDENT_CONFIRMATION.md` | `b09d2d87133cef79fe624279bb31ac56766ce106` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M41-WP1` |
+| `M41_WP1_STAGE2_FINAL2_REQUIRED_CORRECTIONS_RESPONSE.md` | `2c1cd3f7657855710b5baea1427e5f6112d5dfdc` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M41-WP1` |
+| `M41_WP1_STAGE2_INDEPENDENT_CONFIRMATION.md` | `2f06c7c672f0e8e8efe6be518d209349dcd030f4` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M41-WP1` |
+| `M41_WP1_STAGE2_INDEPENDENT_REVIEW.md` | `6308e68c7222f205b9b6d5bda755abe32a716517` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M41-WP1` |
+| `M41_WP1_STAGE2_REQUIRED_CORRECTIONS_RESPONSE.md` | `9865c85dc5c8b487c256b88e5c11176dd50ad4fe` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M41-WP1` |
+| `M41_WP2_ARCHITECTURE_CONFIRMATION.md` | `9869d46a9bc8b1b2b38a02fda5236076eb26cd33` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M41-WP2` |
+| `M41_WP2_ARCHITECTURE_CONFIRMATION_CORRECTIONS_RESPONSE.md` | `8f1decebb38c7d2d986eecd472dba505d66227e1` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M41-WP2` |
+| `M41_WP2_ARCHITECTURE_INDEPENDENT_REVIEW.md` | `f0cc6112b5197557906df56f1a861ba2fc75a21d` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M41-WP2` |
+| `M41_WP2_ARCHITECTURE_PROPOSAL.md` | `6c77d8786035c9d5f4b121fc3c08b3987dc3c670` | `FROZEN ARCHITECTURE PROPOSAL — OUTSIDE` | `X-M41-WP2` |
+| `M41_WP2_FINAL_ARCHITECTURE_CONFIRMATION.md` | `96391f36aa5adbfa8dc5f590714c70a673efe508` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M41-WP2` |
+| `M41_WP2_REQUIRED_CORRECTIONS_RESPONSE.md` | `d6bd743d7ecea5d283abdaf252c0a4848b8afac5` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M41-WP2` |
+| `M41_WP2_STAGE_A_INDEPENDENT_CONFIRMATION.md` | `a9a1a334e6b4e263204c9e88a158300456f7a8b1` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M41-WP2` |
+| `M41_WP2_STAGE_A_INDEPENDENT_REVIEW.md` | `044be2e57236c88dcb53d8fb42ade84ba07f91f9` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M41-WP2` |
+| `M41_WP2_STAGE_A_REQUIRED_CORRECTIONS_RESPONSE.md` | `97fa8df21e5733d5a78c825d9505e447a500f331` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M41-WP2` |
+| `M41_WP2_STAGE_B_INDEPENDENT_CONFIRMATION.md` | `3132d8bc6dfa8c826f5753ee45ce260f629fe05d` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M41-WP2` |
+| `M41_WP2_STAGE_B_INDEPENDENT_REVIEW.md` | `10f4601889d583dec349c5e5247e1584401f2637` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M41-WP2` |
+| `M41_WP2_STAGE_B_REQUIRED_CORRECTIONS_RESPONSE.md` | `f6e03b3965369a94420d193e49ef91abe8e1c4e1` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M41-WP2` |
+| `M41_WP2_STAGE_C_ARCHITECTURE_PROPOSAL.md` | `2e8aa653b182ad8f5ec8454416711a7b926010a1` | `NON-FROZEN PROPOSAL; EMPTY SEMANTIC SCOPE — OUTSIDE` | `X-M41-WP2-STAGE-C` |
+| `M41_WP2_STAGE_C_INDEPENDENT_ARCHITECTURE_REVIEW.md` | `01c37c600d09b1ea4d4f076c95c8a913263c2e71` | `NON-FROZEN LIFECYCLE EVIDENCE — OUTSIDE` | `X-M41-WP2-STAGE-C` |
+| `M41_WP3_ARCHITECTURE_PROPOSAL.md` | `ecc651df2465c7a350d7fc71d3c63b6befde5532` | `APPROVED IMMUTABLE ARCHITECTURE PROPOSAL — OUTSIDE` | `X-M41-WP3` |
+| `M41_WP3_CLOSEOUT.md` | `e715dbe5a6a5b3142d23bb8a2b5fe113fc88e10a` | `LIFECYCLE CLOSEOUT — OUTSIDE` | `X-M41-WP3` |
+| `M41_WP3_INDEPENDENT_ARCHITECTURE_REVIEW.md` | `90a99aae63ebc5f51fb33412332cc100da6d3565` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M41-WP3` |
+| `M41_WP3_STAGE_A_INDEPENDENT_REVIEW.md` | `cc474e1362a3ac9564bb3d7be3a0a3f9403bf26f` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M41-WP3` |
+| `M41_WP3_STAGE_B_INDEPENDENT_CONFIRMATION.md` | `73fc7b94f7cf21d31ce8355b2905bdab49615ae8` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M41-WP3` |
+| `M41_WP3_STAGE_B_INDEPENDENT_REVIEW.md` | `8c547fea4d3d726e4607b7e0820f65d9567eda7e` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M41-WP3` |
+| `M41_WP3_STAGE_B_REQUIRED_CORRECTIONS_RESPONSE.md` | `d2b9ccf8b89b47ac17620ea3f55e0ea15b6a58a6` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M41-WP3` |
+| `M41_WP4_ARCHITECTURE_INDEPENDENT_CONFIRMATION.md` | `8c7fcc48da39d63b759ac5017bc086c7d7826d50` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M41-WP4` |
+| `M41_WP4_ARCHITECTURE_INDEPENDENT_REVIEW.md` | `12ccc9d6e1165615d290ec7917cc865f8a7b5fd9` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M41-WP4` |
+| `M41_WP4_ARCHITECTURE_PROPOSAL.md` | `9e804c3cf05e6f81c52d24702a7df18ec12128a3` | `FROZEN ARCHITECTURE PROPOSAL — OUTSIDE` | `X-M41-WP4` |
+| `M41_WP4_ARCHITECTURE_REQUIRED_CORRECTIONS_RESPONSE.md` | `b2622f3c1261d0cb4536202f308d709cb707afa6` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M41-WP4` |
+| `M41_WP4_CLOSEOUT.md` | `727d352c61ba3db0e4a340437b829ae94d5b230f` | `LIFECYCLE CLOSEOUT — OUTSIDE` | `X-M41-WP4` |
+| `M41_WP4_STAGE_A_INDEPENDENT_CONFIRMATION.md` | `4c5d436a8f78079954e80dbeb36f615698ad9524` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M41-WP4` |
+| `M41_WP4_STAGE_A_INDEPENDENT_REVIEW.md` | `1f3a30be2c42e86047a37fa5b202caa6417164fe` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M41-WP4` |
+| `M41_WP4_STAGE_B_INDEPENDENT_REVIEW.md` | `5fd5d9c2ca280e53ef1f1be501459cc5016c6bd8` | `LIFECYCLE EVIDENCE — OUTSIDE` | `X-LIFECYCLE`; `X-M41-WP4` |
+
+Frozen status is established by `M39_EPIC_CLOSEOUT.md` blob
+`d766779d2884d1504a38f43d3ddf7250f3d1877a`, `M40_EPIC_CLOSEOUT.md` blob
+`f94503d38fc03248897aa91fcaae309af8ecaf2f`,
+`M41_WP1_CLOSEOUT.md` blob
+`c16baaff939977c14f14bba9ab6ab09f71b611bf`,
+`M41_WP2_STAGE_A_INDEPENDENT_CONFIRMATION.md` blob
+`a9a1a334e6b4e263204c9e88a158300456f7a8b1`,
+`M41_WP2_STAGE_B_INDEPENDENT_CONFIRMATION.md` blob
+`3132d8bc6dfa8c826f5753ee45ce260f629fe05d`,
+`M41_WP3_CLOSEOUT.md` blob
+`e715dbe5a6a5b3142d23bb8a2b5fe113fc88e10a`,
+`M41_WP4_STAGE_A_INDEPENDENT_CONFIRMATION.md` blob
+`4c5d436a8f78079954e80dbeb36f615698ad9524`, and
+`M41_WP4_CLOSEOUT.md` blob
+`727d352c61ba3db0e4a340437b829ae94d5b230f`.
+The M41-WP3 closeout records Stage A as `APPROVED`, preserves it as immutable,
+and freezes M41-WP3 as a complete corpus; it is not restated here as having an
+artifact-specific confirmation that its lifecycle did not use.
+
+The M40 closeout records M40-WP2 as complete with `8_ADMIT_2_REJECT` frozen,
+M40-WP3 as complete and independently approved, and the earlier
+stage-specific effectiveness text as historical after the later approval and
+closeout satisfied those gates.
+
+The evidence-completion disposition of each required member added across RC6.1
+and RC6.2 is:
+
+| Required owner-corpus member | Annualization Basis governing contract | Effect on proposed ownership | Effect on corpus determination | Effect on proposed `G-4` |
+| --- | --- | --- | --- | --- |
+| `M40_WP2_Canonical_Market_Measure_Vocabulary_Admission_Review.md` | `ABSENT` — it admits and governs canonical semantic meanings and sole-owner mappings, but no Annualization Basis contract tuple | `UNCHANGED` — seven admitted Market Intelligence concepts are consistent with the proof; the one governance-owned predicate neither competes for nor transfers Annualization Basis ownership | `CHANGED — REQUIRED MEMBER NOW INSPECTED AND RECORDED` | `UNCHANGED — OPEN` |
+| `M40_WP3_CANONICAL_GLOSSARY_SYNCHRONIZATION.md` | `ABSENT` — it synchronizes admitted meanings into effective shared canonical vocabulary, but no Annualization Basis contract tuple | `UNCHANGED` — it preserves the frozen owner mappings and establishes no competing Annualization Basis owner | `CHANGED — REQUIRED MEMBER NOW INSPECTED AND RECORDED` | `UNCHANGED — OPEN` |
+| `M41_WP1_CANDIDATE_VOCABULARY_AND_OWNERSHIP_REGISTER.md` | `ABSENT` — it establishes owner-governed vocabulary and dependency/window constraints, but no Annualization Basis contract tuple | `UNCHANGED` — consistent with Market Intelligence ownership; not used to derive ownership from absence | `PRESERVED — REQUIRED MEMBER INSPECTED AND RECORDED IN RC6.1` | `UNCHANGED — OPEN` |
+| `M41_WP2_STAGE_A_CANDIDATE_VOCABULARY_REGISTER.md` | `ABSENT` — its Subject/Manifest vocabulary and ownership dispositions establish no Annualization Basis contract tuple | `UNCHANGED` — no competing owner or ownership transfer relevant to Annualization Basis | `PRESERVED — REQUIRED MEMBER INSPECTED AND RECORDED IN RC6.1` | `UNCHANGED — OPEN` |
+| `M41_WP3_STAGE_A_VOCABULARY_AND_SEMANTIC_SURFACE_REGISTER.md` | `ABSENT` — it establishes exact-rule and dependency constraints and rejects ambient/default `252`, but publishes no Annualization Basis contract tuple | `UNCHANGED` — its Market Intelligence calculation-rule allocation is consistent with, but does not replace, the four-proof determination | `PRESERVED — REQUIRED MEMBER INSPECTED AND RECORDED IN RC6.1` | `UNCHANGED — OPEN` |
+| `M41_WP4_STAGE_A_VOCABULARY_AND_SEMANTIC_SURFACE_REGISTER.md` | `ABSENT` — its Result/provenance/dependency surfaces establish no Annualization Basis contract tuple | `UNCHANGED` — no competing owner or ownership transfer relevant to Annualization Basis | `PRESERVED — REQUIRED MEMBER INSPECTED AND RECORDED IN RC6.1` | `UNCHANGED — OPEN` |
+
+The search evaluated every candidate artifact by role and by the complete §8.6
+field set, not by filename or keyword alone. A case-insensitive whole-corpus
+scan for `annualization`, `annualisation`, `annualized`, `annualised`,
+`per annum`, year-basis and day-count variants, `365`, `365.25`, `252`, and
+session-count variants found no Annualization Basis declaration. M40-WP2's
+role-and-field inspection found binary admissions and rejections, semantic and
+dependency-version composition, and sole-owner mappings, but no Annualization
+Basis tuple. M40-WP3's role-and-field inspection found synchronization of those
+meanings into canonical vocabulary, but no Annualization Basis tuple. The
+material temporal/basis surfaces are M41-WP3 Stage A §4 Component C and §7.5,
+and M41-WP3 Stage B §5.1. Stage A classifies exact method/calendar rules and
+rejects the ambient `252` assumption; Stage B's `session count` is a
+method-declared duration amount using an exact named calendar dependency. None
+of these surfaces supplies a governed Annualization Basis contract kind,
+identifier, immutable version, or canonical value bytes. This agrees with
+frozen M43-WP4 §6.7 and frozen M44-WP1 §4.4, each of which records that no such
+instrument exists. No owner-corpus surface was left unsearched. No excluded
+artifact is used as substantive absence evidence: each exclusion rests only on
+the constitutional role and exact authority recorded in the boundary ledger,
+and all 79 artifacts are classified.
+
+#### Existing-contract assessment
+
+No owner-corpus artifact supplies a candidate tuple to which dependency closure
+could lawfully be applied:
+
+| §8.6 requirement | Owner-corpus result |
+| --- | --- |
+| M43-WP2 §8.1 Dependency key | `ABSENT` |
+| Exact owning domain | `MARKET INTELLIGENCE — PROVED`, but no published dependency declaration |
+| Exact existing governed dependency contract kind | `ABSENT` |
+| Exact dependency identifier | `ABSENT` |
+| Exact immutable dependency version | `ABSENT` |
+| Canonical value bytes required by M43-WP4 §6.7 | `ABSENT` |
+| Complete M43-WP2 §8.2 transitive closure | `NOT FORMABLE — NO CANDIDATE TUPLE` |
+| Caller-override rejection on an existing candidate | `NOT FORMABLE — NO CANDIDATE` |
+| Version non-substitutability on an existing candidate | `NOT FORMABLE — NO CANDIDATE` |
+
+The canonical vocabulary admission and synchronization in M40-WP2 and
+M40-WP3, and the ordinary calendar references and session-count semantics in
+M41-WP3, do not supply the missing Annualization Basis dependency and are
+rejected as substitutes. No field is inferred, and no M44-authored requirement
+is treated as an existing owner-domain publication.
+
+#### Proposed `G-4` record and requirement statement
+
+The exhaustive result satisfies the `OPEN` branch of §8.7.
+
+**Proposed terminal state:** `G-4 OPEN`.
+
+**Proved exact owner:** `Market Intelligence`.
+
+**Exact missing element:** an exact existing Market Intelligence-governed
+Annualization Basis calculation-dependency contract kind, together with the
+exact dependency identifier, immutable version, and canonical value bytes that
+the owner publishes.
+
+Before any Annualization Basis can be declared or consumed, a future,
+separately authorized Market Intelligence governance instrument must supply:
+
+1. the exact owner, `Market Intelligence`;
+2. an exact governed dependency contract kind published in that owner's
+   corpus;
+3. an exact stable identifier under that contract kind;
+4. an exact immutable version; and
+5. exact canonical value bytes.
+
+This requirement statement is not that instrument, does not name or create its
+contract kind, and does not define annualization arithmetic. The optional
+semantic-information checklist quoted in §8.7 remains addressed only to the
+future normative specification identified there and is not added to this
+requirement.
+
+`D-2b` remains behind `D-1`, the confirmed and frozen WP5 determination, `D-7`,
+and every other separately governed prerequisite. `D-7` remains the absent
+owner-domain instrument and could be discharged only if Market Intelligence
+later acts under separately granted authority. WP5 and D-7 are necessary in
+the open case and never sufficient by themselves. `D-3` consumes this outcome
+only if an attribution method requires annualization. `G-3` remains
+`OPEN — PARTIAL`; the §12.1.1 checkpoint remains `NOT DISPOSITIONED`; and WP6
+and WP7 remain unauthorized.
+
+The proposed ownership conclusion and `G-4 OPEN` state have no constitutional
+effect until §13 completes.
+
+#### Documentary vectors
+
+Every vector below is documentary only. `V-POS-1` and the governed side of
+`V-BND-1` are `ARTIFICIAL`, `NON-EFFECTIVE`, and **incapable of passing the
+future gate**, because the owner corpus presently supplies no conforming kind.
+
+| Vector | Documentary input | Required result |
+| --- | --- | --- |
+| `V-POS-1` | Shape containing `<stable dependency key>`, `owner=Market Intelligence`, `<exact owner-published contract kind>`, `<exact identifier>`, `<exact immutable version>`, `<exact canonical value bytes>`, complete deterministic transitive closure, caller-override rejection, and no version substitution | Illustrates the complete §8.6 shape only; admits nothing and closes no gate |
+| `V-BND-1` | Side A: an artificial, owner-published, exact-version dependency whose governed derived session-count value is `252`; Side B: ambient literal `252` | Side A remains non-effective pending a real owner publication and closure; Side B is rejected unconditionally |
+| `V-NEG-1` | Ambient or unversioned `252`, `365`, or `365.25` | Reject; no default or inference |
+| `V-NEG-2` | Caller supplies or overrides the Annualization Basis | Reject under M43-WP2 and M43-WP4 |
+| `V-NEG-3` | Dependency version is a range, alias, `latest`, compatible selector, or mutable reference | Reject as non-exact and substitutable |
+| `V-NEG-4` | Provider field, library frequency, configuration value, or live calendar service is presented as the dependency | Reject; origin or implementation does not establish a governed kind |
+| `V-NEG-5` | Portfolio Intelligence, Ledger & Accounting, Asset Foundation, a caller, or a shared owner is substituted for Market Intelligence | Reject as wrong-owner or inferred ownership |
+| `V-NEG-6` | This requirement statement, an M44 label, or an illustrative example is presented as the owner-domain contract kind | Reject; M44 authors no kind |
+| `V-DC-1` | Direct dependency reference does not resolve to one immutable governed version | Reject closure |
+| `V-DC-2` | Owner or contract kind differs from controlling frozen authority | Reject closure |
+| `V-DC-3` | A transitive dependency declaration is not itself closed | Reject closure |
+| `V-DC-4` | Closure contains a cycle or repeated node | Reject closure |
+| `V-DC-5` | Closure contains a range, alias, `latest`, provider identifier, or ambient resolution | Reject closure |
+| `V-DC-6` | Two independent traversals produce different exact dependency tuples | Reject closure |
+
+#### Coverage ledger and failure scan
+
+| Requirement surface | Applied-record coverage |
+| --- | --- |
+| §§1–5 authority, identity, extension basis, ambiguity, and invariants | boundary lock; evidence manifest; hypothesis record; four-proof matrix; proposed record non-effect statement |
+| §6 admissible and inadmissible evidence | evidence manifest and explicit non-reliance statement |
+| §7 ownership proof | hypothesis record and four-proof ownership matrix |
+| §§8.1–8.4 / WP5.1–WP5.2 | boundary lock, manifest, hypotheses, and proved ownership conclusion |
+| §§8.5–8.6 / WP5.3–WP5.4 | 79-artifact M39–M41 boundary derivation; exact 17-member owner-corpus inventory; exact 62-member exclusion ledger with per-artifact blobs, roles, and frozen-authority keys; exhaustive role-and-field search of every included member; per-artifact disposition; candidate rejection; and five-part assessment |
+| §8.7 / WP5.4–WP5.5 | proposed `G-4 OPEN` record, exact missing element, requirement statement, and consequences |
+| §9 items 1–6 | baseline commit, blobs, frozen diff scope, manifest, proof matrix, and hypothesis assessment |
+| §9 items 7–9 | owner-corpus boundary, exhaustive assessment, and complete `OPEN` evidence |
+| §9 items 10–11 | `V-POS-1`, `V-BND-1`, `V-NEG-1`–`V-NEG-6`, and `V-DC-1`–`V-DC-6` |
+| §9 item 12 | this coverage ledger |
+| §10.1 | not reached: one owner is proved; subsection remains unchanged |
+| §10.2 | not reached: the exact frozen corpus is established and exhaustively inspected; subsection remains unchanged |
+| §10.3 and §13 / WP5.6 | not yet applicable; independent review, any required correction, renewed review, confirmation, and freeze remain pending |
+| §11 failure conditions | no implicit owner, inadmissible affirmative evidence, presumptive corpus, field conflation, ambient value, caller override, version substitution, authored kind, false closure, checkpoint disposition, or downstream authority is used; effectiveness remains withheld pending review |
+| §12 required outputs | all branch-applicable items 1–11 are contained above; item 12 accrues only through §13 |
+| §§14–15 exclusions and conformance | all authority exclusions remain unchanged; the candidate result is documentary and non-effective |
+| Frozen M44-WP1 §4.4 items 1–7 | four proofs; corpus search; `OPEN` evidence; ambient and `252` boundary vectors; M44-kind rejection; independent confirmation pending under §13 |
+| Frozen M44 Architecture §11 required-test categories | dependency closure `V-DC-1`–`V-DC-6`; version rejection `V-NEG-3`; caller rejection `V-NEG-2`; ambient constants `V-NEG-1`; governed/ambient `252` boundary `V-BND-1`; M44-kind rejection `V-NEG-6` |
+
+The applied record therefore completes frozen WP5.1 through WP5.5 and is
+eligible to enter WP5.6. Eligibility is not approval, confirmation, freeze, or
+effectiveness.
 
 ## 13. Independent constitutional lifecycle
 
@@ -1094,14 +1621,15 @@ formally re-scope”; WP6 and WP7 remain unauthorized.
 
 This specification does not:
 
-- determine, assign, presume, or imply ownership of the Annualization Basis;
+- make Annualization Basis ownership effective by self-declaration; the proved
+  candidate conclusion in §12.1 remains a proposal unless and until §13
+  completes;
 - create shared ownership or transfer source calendar meaning;
 - disposition `G-3`, `G-4`, `G-5`, or §12.1.1. A proposed `G-4` terminal state
-  that a later candidate of this deliverable, before confirmation and freeze,
-  may carry under §8.7 is a proposal only, and has no dispositional effect
-  unless and until §13 is complete. Once confirmed, this deliverable is frozen
-  on confirmation under frozen M44 Architecture §11 M44-WP5 and is not edited
-  in place; "later candidate" means a pre-confirmation candidate only;
+  that a pre-confirmation candidate of this deliverable carries under §8.7 is
+  a proposal only, and has no dispositional effect unless and until §13 is
+  complete. Once confirmed, this deliverable is frozen on confirmation under
+  frozen M44 Architecture §11 M44-WP5 and is not edited in place;
 - define annualization arithmetic or select an annualization basis, factor,
   market, calendar, session count, default, or fallback;
 - author, name, register, extend, version, or serialize an owner-domain
@@ -1132,7 +1660,9 @@ A determination conforms to this specification only if:
   confirmation complete with unresolved blocking findings `NONE`; and
 - no implementation or downstream authority is introduced.
 
-This corrected RC5 candidate establishes the constitutional method for
-determining Annualization Basis ownership within the sole frozen WP5
-deliverable. It deliberately leaves ownership and `G-4` unresolved. It grants
-no implementation authority.
+This corrected RC6.3 candidate preserves the constitutional method and
+incorporates its application through frozen WP5.5 into the sole WP5
+deliverable. It proposes Market Intelligence as the proved owner and proposes
+`G-4 OPEN` on the complete owner-corpus absence record in §12.1. Neither
+proposal is effective before §13 completes. It grants no implementation
+authority.
