@@ -4,7 +4,7 @@
 
 **Work package:** M44-WP5 only
 
-**Candidate:** `RC4` — corrected after the independent constitutional reviews
+**Candidate:** `RC5` — corrected after the independent constitutional reviews
 recorded in §2.2
 
 **Artifact class:** Architectural deliverable, in the sense frozen M44
@@ -16,11 +16,11 @@ specification allocated by frozen M44 Architecture §11 and §13.1
 **Ownership-determination and requirement-specification authority:** `LIMITED
 TO THE FROZEN M44 ARCHITECTURE §8.4 AND §11 ALLOCATION`
 
-**Ownership determined by this RC4 candidate:** No
+**Ownership determined by this RC5 candidate:** No
 
 **G-3 disposition authority:** `NONE`
 
-**G-4 disposition authority exercised by this RC4 candidate:** `NONE`
+**G-4 disposition authority exercised by this RC5 candidate:** `NONE`
 
 **§12.1.1 checkpoint disposition authority:** `NONE`
 
@@ -78,7 +78,7 @@ Annualization Basis. It defines:
 - the constitutional outputs required before any proposed determination may
   become effective.
 
-This corrected RC4 candidate does not yet apply that process to select, name,
+This corrected RC5 candidate does not yet apply that process to select, name,
 assign, infer, or imply an owner. It does not decide any ownership hypothesis.
 It does not search any presumptive owner's corpus as though ownership had
 already been proved. It does not establish a terminal state for `G-4`. Any
@@ -148,7 +148,7 @@ immutable. This specification does not convert any planning statement into an
 ownership result and does not amend or reinterpret any frozen statement.
 
 The authority exercised here is limited to ownership determination and
-requirement specification within the frozen allocation. This RC4 candidate
+requirement specification within the frozen allocation. This RC5 candidate
 does not perform or confirm the determination. The allocation is not authority
 to author an owner-domain governance instrument, disposition a gate or
 checkpoint, or authorize downstream work.
@@ -243,13 +243,49 @@ from filed records. The state of that chain for this deliverable is:
   was not preserved and that its per-finding rationale is a disclosed
   reconstruction; that limit is a property of the filed record and is neither
   cured nor enlarged here;
-- the `RC3` candidate of this deliverable was independently reviewed and
-  returned `NOT APPROVED`, and this `RC4` candidate is the correction of that
-  review's findings; and
-- the `RC3` independent constitutional review is not itself filed at a
-  repository path. Until it is filed, the review chain for this deliverable
-  MUST NOT be treated as complete, and this candidate MUST NOT be treated as
-  reviewed to conclusion, independently confirmed, or frozen.
+- the disposition of every `RC2` finding is filed at
+  [M44_WP5_RC2_FORMAL_CONSTITUTIONAL_CORRECTIONS_RESPONSE.md](M44_WP5_RC2_FORMAL_CONSTITUTIONAL_CORRECTIONS_RESPONSE.md),
+  added at commit `e02a50bfe929c3a2ccfbce8455f47d812595ba67`. That record
+  discloses that it inherits the `RC2` review record's reconstruction limit;
+- the `RC3` independent constitutional review of this deliverable is filed at
+  [M44_WP5_RC3_INDEPENDENT_CONSTITUTIONAL_REVIEW.md](M44_WP5_RC3_INDEPENDENT_CONSTITUTIONAL_REVIEW.md),
+  added at commit `6cb7e1a461d70e9cc7c7a762640f5585e3248777`, determination
+  `NOT APPROVED`, and the `RC4` candidate corrected that review's findings;
+- the disposition of every `RC3` finding is filed at
+  [M44_WP5_RC3_FORMAL_CONSTITUTIONAL_CORRECTIONS_RESPONSE.md](M44_WP5_RC3_FORMAL_CONSTITUTIONAL_CORRECTIONS_RESPONSE.md),
+  added at the same commit `e02a50bfe929c3a2ccfbce8455f47d812595ba67`. That
+  record claims no independent validation and records six of the nine `RC3`
+  findings `ADDRESSED — REQUIRES RE-VALIDATION`;
+- the `RC4` independent constitutional review of the `RC4` candidate is filed at
+  [M44_WP5_RC4_INDEPENDENT_CONSTITUTIONAL_REVIEW.md](M44_WP5_RC4_INDEPENDENT_CONSTITUTIONAL_REVIEW.md),
+  added at commit `5c4e587c43c931791e69aca403c70873d1a27d86`, determination
+  `NOT APPROVED`, on three active findings — one `CRITICAL`, one `MAJOR`, one
+  `MINOR`, none `EDITORIAL`. That record discloses at its §3.1 and §11 that the
+  original `RC4` narrative was not preserved, that its per-finding rationale is
+  a disclosed reconstruction, and that the filing act was not
+  author-independent; those limits are properties of the filed record and are
+  neither cured nor enlarged here. The record states at its §9 that the
+  specification is "NOT READY" for Independent Constitutional Confirmation, and
+  this candidate does not disturb that statement;
+- the disposition of every `RC4` finding is filed at
+  [M44_WP5_RC4_FORMAL_CONSTITUTIONAL_CORRECTIONS_RESPONSE.md](M44_WP5_RC4_FORMAL_CONSTITUTIONAL_CORRECTIONS_RESPONSE.md),
+  added at commit `f32c33ba2ec694327f6014d08b3d8d4d8e8df565`. That record
+  records all three `RC4` findings `ADDRESSED — REQUIRES RE-VALIDATION`, none
+  `RESOLVED` and none `INTENTIONALLY UNCHANGED`, claims no independent
+  validation, and states that it discharges no finding;
+- this `RC5` candidate is the correction of the `RC4` review's findings; and
+- no independent constitutional review of this `RC5` candidate is filed at any
+  repository path, and no independent constitutional confirmation of this
+  deliverable is filed at any repository path.
+
+The bullets above state the repository state of the review chain and nothing
+further. They record no approval, no completion of review, and no confirmation
+readiness. Because no independent review of this candidate and no independent
+confirmation are filed, the review chain for this deliverable MUST NOT be
+treated as complete, and this candidate MUST NOT be treated as approved,
+reviewed to conclusion, independently confirmed, or frozen. A claim of
+corrected status made by this candidate about itself is an author statement
+under §6.1 and is not lifecycle evidence.
 
 Those records are review-chain governance records under frozen §13.1. They are
 not WP5 determination, requirement-specification, or constitutional-process
@@ -677,7 +713,9 @@ occurs; §10.1, §10.2, and §13 forbid review on the stopping branches:
       below; a positive vector admits nothing and closes no gate. On the §10.1
       branch no owner is proved and §§8.5–8.7 MUST NOT begin, so no positive
       vector is produced; producing one there would state an instrument shape
-      without a proved owner;
+      without a proved owner. On the §10.2 branch the positive vector is
+      produced if and only if §8.6 was lawfully entered before the stop, on the
+      terms stated below;
     - dependency-closure vectors under frozen M43-WP2 §8.2, including
       unconditional transitive-closure rejection independent of any proposed
       terminal state;
@@ -692,6 +730,45 @@ occurs; §10.1, §10.2, and §13 forbid review on the stopping branches:
     and rejection vectors in this item are required on every branch, including
     the §10.1 and §10.2 stopping branches; only the positive vector is
     branch-conditioned.
+
+    **Early and within-§8.6 §10.2 stops are distinguished, and the distinction
+    is stated exhaustively.** A §10.2 stop is *early* when it occurs before
+    lawful entry into §8.6, and is *within §8.6* when it occurs after that
+    entry. Both labels are descriptive readings of the single §10.2 branch. They
+    are not governed status tokens, terminal states, process-local terms of the
+    kind §3 enumerates, or a second stopping branch, and they MUST NOT be
+    emitted as any of those. Which case obtains is fixed by the stage the
+    record's own evidence establishes was reached, never by the order of the
+    triggers listed in §10.2 and never by the fact that ownership was proved: a
+    proved owner is not by itself entry into §8.6, because §8.5 stands between
+    them. The §10.2 triggers are not uniform in this respect — the
+    corpus-boundary, searchability, artifact-identity, and
+    absence-versus-unsearched-surface triggers can arise at §8.5, before §8.6 is
+    entered, while the mutable-, ranged-, aliased-, provider-, or ambient-value
+    trigger, the caller-override trigger, and the owner-published-fields and
+    canonical-bytes trigger arise within §8.6.
+
+    On an **early §10.2 stop**, all of the following hold and none is
+    discretionary:
+
+    - rejection of ambient or unversioned `252`, `365`, and `365.25` remains
+      required;
+    - every other negative and rejection vector in this item — dependency
+      closure, version non-substitutability, caller override, wrong-owner and
+      provider-derived claims, and rejection of an M44-authored contract kind
+      or of a requirement statement presented as a contract kind — remains
+      required;
+    - the item 12 coverage-ledger obligations remain required in full, on the
+      stopping-branch terms item 12 states;
+    - no positive vector is produced or evaluated;
+    - no owner-published evidence is evaluated; and
+    - no owner-side conclusion is produced.
+
+    An early §10.2 stop is therefore treated for this item exactly as the §10.1
+    branch is treated, notwithstanding that ownership was proved. On a §10.2
+    stop **within §8.6**, the positive vector is produced, §8.6 having been
+    lawfully entered; the negative, rejection, and coverage-ledger obligations
+    above are unchanged and remain required.
 11. A boundary example distinguishing an already owner-published,
     version-bound derived session count equal to `252` from ambient `252`,
     without admitting either by example. **If §8.6 is lawfully reached,** the
@@ -699,6 +776,17 @@ occurs; §10.1, §10.2, and §13 forbid review on the stopping branches:
     the item is discharged by the ambient-`252` rejection alone; the
     owner-published side MUST NOT be supplied, because no proved owner exists
     to attribute a publication to.
+
+    This item in its two-sided form applies only after lawful entry into §8.6.
+    On the §10.2 branch it follows that entry and not the proof of ownership.
+    On an **early §10.2 stop**, occurring before lawful entry into §8.6, the
+    item is discharged by the ambient-`252` rejection alone and the
+    owner-published side MUST NOT be supplied — no owner-published evidence
+    having been evaluated and no owner-side conclusion having been produced —
+    exactly as on the §10.1 branch, and notwithstanding that an owner was
+    proved. A proved owner is not a proved publication, and the owner-published
+    side MUST NOT be supplied on the strength of ownership alone. On a §10.2
+    stop **within §8.6**, the example carries both sides.
 12. A coverage ledger mapping every rule in this specification, every frozen
     M44-WP1 §4.4 evidence item, and every frozen M44 Architecture §11 M44-WP5
     Required-tests category to at least one cited record section and
@@ -835,7 +923,10 @@ On this branch:
 - M44-WP5 does not complete, confirm, or freeze;
 - the §12.1.1 checkpoint is neither evaluated nor dispositioned by M44-WP5 or
   by this record, under either frozen reading recorded in §10.1;
-- no Component G binding is formable; and
+- no Component G binding is formable;
+- the §9 evidence applicable to the branch remains required, including the
+  item 12 coverage ledger and the item 10 negative and rejection vectors, on
+  the early and within-§8.6 terms §9 items 10 and 11 state; and
 - WP6 and WP7 remain unauthorized.
 
 The two frozen readings of how §12.1.1 relates to an unestablished gate state,
@@ -847,6 +938,41 @@ and frozen WP5.6 — MUST NOT begin. The four frozen WP5.4 tests reached inside
 §8.6 — M43-WP2 §8.2 closure, the distinct M43-WP4 §6.7 information,
 caller-override rejection, and version non-substitutability — yield no terminal
 state on this branch.
+
+The record MUST classify which defect it has established, and the classes MUST
+NOT be conflated. A defect in the repository evidence supporting the attempted
+determination is a work-package defect, of the same class §10.1 addresses and
+differing only in the evidence it concerns. It is distinct from a defect or
+ambiguity in frozen architecture, for which this subsection creates no remedy,
+no route, and no amendment authority. A repository-evidence defect is corrected
+within M44-WP5 by correcting the determination record and re-attempting the
+determination from §8.1 under this same specification, on the evidence,
+ordering, and proof standard already stated in §§6 through 8, which this
+subsection leaves unchanged and does not relax, waive, or partially apply. That
+correction is an authoring act within M44-WP5, performed within this same
+deliverable; it is not a review, confirmation, or freeze stage, it does not
+enter or invoke §10.3, it does not enter or invoke §13, and it does not begin
+WP5.6. Re-attempt begins at §8.1 and at no later stage: the boundary lock,
+evidence manifest, hypothesis record, and ownership proof are re-established in
+full, and a proof established in the stopped attempt is not carried forward as
+established, though its reasoning remains preserved in the record. A re-attempt
+whose repository evidence is again incomplete stops again under this subsection.
+The record enters review, confirmation, or freeze only if and when §8.6
+completes on verified evidence, §8.7 lawfully yields one of the two frozen
+terminal states, and the stages through WP5.5 lawfully complete.
+
+This mechanism creates no fallback and no default. It does not permit the
+determination to proceed on unverified evidence, to treat an unproved corpus
+boundary as proved, to treat an unsearched surface as absence, or to admit any
+value, version, contract kind, or caller override that §6, §8, or this
+subsection excludes. It implies no eventual success: nothing in it states,
+predicts, or reserves that a re-attempt will succeed, no number of re-attempts
+is guaranteed to yield a terminal state, and a determination may stop under this
+subsection without limit. It creates no lifecycle, no lifecycle state, no
+governed status token, no stage, no recursion into §13, and no review-stage
+routing of any kind; correction under this subsection is an authoring act and
+nothing else. §10.3 is unchanged by this subsection and remains inapplicable to
+this branch.
 
 ### 10.3 Constitutional review stop
 
@@ -1006,7 +1132,7 @@ A determination conforms to this specification only if:
   confirmation complete with unresolved blocking findings `NONE`; and
 - no implementation or downstream authority is introduced.
 
-This corrected RC4 candidate establishes the constitutional method for
+This corrected RC5 candidate establishes the constitutional method for
 determining Annualization Basis ownership within the sole frozen WP5
 deliverable. It deliberately leaves ownership and `G-4` unresolved. It grants
 no implementation authority.
