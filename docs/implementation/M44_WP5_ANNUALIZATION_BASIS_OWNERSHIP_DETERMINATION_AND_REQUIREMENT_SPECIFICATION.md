@@ -4,7 +4,11 @@
 
 **Work package:** M44-WP5 only
 
-**Candidate:** RC2 — corrected after independent constitutional review
+**Candidate:** `RC3` — corrected after the independent constitutional reviews
+recorded in §2.2
+
+**Artifact class:** Architectural deliverable, in the sense frozen M44
+Architecture §11 M44-WP5 uses under **Architectural deliverables**
 
 **Artifact identity:** The single M44-WP5 determination and requirement
 specification allocated by frozen M44 Architecture §11 and §13.1
@@ -12,11 +16,11 @@ specification allocated by frozen M44 Architecture §11 and §13.1
 **Ownership-determination and requirement-specification authority:** `LIMITED
 TO THE FROZEN M44 ARCHITECTURE §8.4 AND §11 ALLOCATION`
 
-**Ownership determined by this RC2 candidate:** No
+**Ownership determined by this RC3 candidate:** No
 
 **G-3 disposition authority:** `NONE`
 
-**G-4 disposition authority exercised by this specification:** `NONE`
+**G-4 disposition authority exercised by this RC3 candidate:** `NONE`
 
 **§12.1.1 checkpoint disposition authority:** `NONE`
 
@@ -74,7 +78,7 @@ Annualization Basis. It defines:
 - the constitutional outputs required before any proposed determination may
   become effective.
 
-This corrected RC2 candidate does not yet apply that process to select, name,
+This corrected RC3 candidate does not yet apply that process to select, name,
 assign, infer, or imply an owner. It does not decide any ownership hypothesis.
 It does not search any presumptive owner's corpus as though ownership had
 already been proved. It does not establish a terminal state for `G-4`. Any
@@ -104,14 +108,14 @@ Plan](M44_ARCHITECTURE_AND_IMPLEMENTATION_PLAN.md):
 - §13.1 fixes this exact path.
 
 That grant is confirmed by [M44 Architecture Freeze Record
-§3.1](M44_ARCHITECTURE_FREEZE_RECORD.md), which confirms authority to author
-the artifacts enumerated in frozen §11. The planning freeze, planning
-closeout, Decision Log, this candidate, and any author instruction grant no
-additional authority.
-
-M44 Architecture §5.3 extension bases `E-1`, `E-2`, and `E-3` are not invoked.
-This deliverable extends no frozen contract; it exercises the direct §1.5,
-§8.4, §11, and §13.1 allocation. Silence is not used as authority.
+§3.1](M44_ARCHITECTURE_FREEZE_RECORD.md), which grants "[a]uthority to author
+the documentary governance, contract, and normative-specification artifacts
+enumerated in frozen RC2 §11, in `docs/` only, after each passes its own
+independent review and confirmation chain." The final clause is part of the
+grant, not a gloss on it; it is carried into §13 of this specification and is
+not satisfied by this candidate. The planning freeze, planning closeout,
+Decision Log, this candidate, and any author instruction grant no additional
+authority.
 
 This specification is also bounded by, and must be read with:
 
@@ -136,16 +140,107 @@ This specification is also bounded by, and must be read with:
   constraint baseline and never as the source of normative-authoring
   authority.
 
-The planning-governance corpus supplies architectural intent and constraints.
-It remains non-normative and immutable. This specification does not convert
-any planning statement into an ownership result and does not amend or
-reinterpret any frozen statement.
+The M44-WP5 planning-governance corpus is exactly the set enumerated in
+[M44-WP5 Planning Freeze Record](M44_WP5_PLANNING_FREEZE_RECORD.md) §1, which
+records that corpus `COMPLETE AND FROZEN` at planning candidate `RC3`. It
+supplies architectural intent and constraints. It remains non-normative and
+immutable. This specification does not convert any planning statement into an
+ownership result and does not amend or reinterpret any frozen statement.
 
 The authority exercised here is limited to ownership determination and
-requirement specification within the frozen allocation. This RC2 candidate
+requirement specification within the frozen allocation. This RC3 candidate
 does not perform or confirm the determination. The allocation is not authority
 to author an owner-domain governance instrument, disposition a gate or
 checkpoint, or authorize downstream work.
+
+### 2.1 Extension basis
+
+Frozen M44 Architecture §5.3 requires that "every M44 artifact must name which
+basis it relies on and quote the frozen sentence that supplies it." Frozen
+`INV-C2` states the same duty: "Every M44 addition rests on exactly one of the
+extension bases E-1, E-2, or E-3 in §5.3, names which one, and quotes the exact
+frozen sentence that supplies it. No addition is justified by unstated silence."
+Frozen §14 makes it falsifiable as "an extension-basis check confirming every
+M44 addition names E-1, E-2, or E-3 and quotes its frozen sentence." Following
+the pattern of frozen [M44-WP2 §1.3](M44_WP2_M43_ARCHITECTURE_CONFIRMATION_RECORD.md),
+this deliverable rests on exactly one basis:
+
+> **E-3 — Addition into declared silence, under constitution G3.** Residual and
+> subordinate to E-1 and E-2. "It supports supplying a repository-local record
+> where a frozen governance chain required one and none was written (G-1), and
+> supplying a superseding ruling that names a defective frozen row (G-2)."
+
+The declared silence is ownership. Frozen M43-WP4 §6.7 requires the owner of
+the annualization basis to be proved and names no owner. Frozen M44
+Architecture §17 OQ-3 records the ownership question as open. Frozen M44-WP1
+§4.4 records that "[n]o annualization-basis governance instrument exists at any
+path in the repository." This deliverable adds the determination and
+requirement-specification process into that silence, and adds nothing else.
+
+The quoted `E-3` sentence names `G-1` and `G-2` and does not name `G-4`. Whether
+that sentence enumerates `E-3`'s only supported cases or illustrates a residual
+basis stated by its own defining clause is a question the frozen text does not
+settle, and this specification does not settle it either. Both readings are
+recorded; neither is ranked, and neither is used to widen or narrow `E-3`. Under
+the enumerative reading no frozen basis is named for this deliverable, which
+would be a defect in the frozen corpus and not a matter this specification may
+cure — §10.1 states the only route for such a defect, and §4's preserved
+ambiguity is not enlarged by this paragraph. Under the residual reading, `E-3`
+is the basis named above. This declaration is made so that no addition rests on
+unstated silence under either reading.
+
+**`E-1` is inapplicable.** `E-1` requires a frozen contract that "states the
+conditions under which the extension is conforming" and "that its own silence
+on the mechanism does not extinguish the obligation." No frozen contract states
+conditions of conformance for an annualization-basis ownership determination,
+and this deliverable adds no coordinate, field, form, or state to any frozen
+contract.
+
+**`E-2` is inapplicable.** `E-2` requires "[a] remedy the frozen corpus names
+but does not supply," where a frozen artifact "identifies the instrument
+required to discharge an obligation and declines to produce it." The instrument
+frozen M43-WP4 §6.7 names and declines to produce is the separately authorized
+owner-domain governance instrument recorded as deferred obligation `D-7`. This
+deliverable is not that instrument, may never become it, and is forbidden by §14
+from authoring it.
+
+This deliverable extends no frozen contract and reaches into no other domain's
+corpus (`INV-C4`). No addition is justified by unstated silence.
+
+Frozen §5.3's opening clause states the naming duty for extending "a frozen
+contract," while `INV-C2` and the frozen §14 check state it for "every M44
+addition." Those two frozen statements differ in reach, and this specification
+ranks neither. This section is written to satisfy the wider reading, and is
+sufficient under the narrower one. No precedence is created; no provision is
+waived, narrowed, or generalized.
+
+### 2.2 Review-chain provenance
+
+Frozen M44 Architecture §12.4 fixes the lifecycle as "independent
+constitutional review → required-corrections response if findings exist →
+independent confirmation → freeze," and frozen §13.1 allocates
+"[p]er-work-package independent review, corrections-response, and confirmation
+artifacts" to the review chain. A claim of corrected status is inspectable only
+from filed records. The state of that chain for this deliverable is:
+
+- the `RC1` independent constitutional review of this deliverable is filed at
+  [M44_WP5_RC1_INDEPENDENT_CONSTITUTIONAL_REVIEW.md](M44_WP5_RC1_INDEPENDENT_CONSTITUTIONAL_REVIEW.md),
+  determination `NOT APPROVED`;
+- the disposition of every `RC1` finding is filed at
+  [M44_WP5_RC1_FORMAL_CONSTITUTIONAL_CORRECTIONS_RESPONSE.md](M44_WP5_RC1_FORMAL_CONSTITUTIONAL_CORRECTIONS_RESPONSE.md);
+- the `RC2` candidate of this deliverable was independently reviewed and
+  returned `NOT APPROVED`, and this `RC3` candidate is the correction of that
+  review's findings; and
+- the `RC2` independent constitutional review is not itself filed at a
+  repository path. Until it is filed, the review chain for this deliverable
+  MUST NOT be treated as complete, and this candidate MUST NOT be treated as
+  reviewed to conclusion, independently confirmed, or frozen.
+
+Those records are review-chain governance records under frozen §13.1. They are
+not WP5 determination, requirement-specification, or constitutional-process
+artifacts, and §1 and §12 continue to permit no additional artifact of those
+classes. Filing a review-chain record grants no authority and dispositions
+nothing; a filed review is lifecycle evidence only, under §6.1.
 
 ## 3. Normative language and process-local terms
 
@@ -192,16 +287,23 @@ Accordingly, the process MUST stop under §10.1. It MUST NOT characterize that
 stop as `G-4 OPEN`, `G-4 CLOSED`, a variant of `OPEN`, or a third terminal
 state.
 
-The active §12.1.1 checkpoint is not reached on that branch because M44-WP5
-has not completed, confirmed, or frozen. The frozen checkpoint's
-unestablished-state row remains a governing constraint on any future
-checkpoint evaluation; it is not a checkpoint disposition performed by this
+The frozen corpus states two things about the §12.1.1 checkpoint on that branch
+that do not sit together, and this specification ranks neither. Frozen M44
+Architecture §12.1.1 opens "After M44-WP4 and M44-WP5 are confirmed and before
+M44-WP6 begins," which on its own terms is not reached by an M44-WP5 that has
+not completed, confirmed, or frozen. Frozen M44-WP5 plan §3, §5 `WP5.2` exit,
+and §5.1 characterize ownership-proof failure as stopping "under §12.1.1's third
+outcome." Both are frozen text. §10.1 carries both citations and the
+consequences that hold under either reading. The frozen checkpoint's
+unestablished-state row remains a governing constraint on any future checkpoint
+evaluation; nothing here is a checkpoint disposition performed by this
 specification.
 
 A defect in the attempted M44-WP5 determination and an ambiguity in frozen
 architecture are distinct constitutional matters. A determination record MUST
 identify each precisely and MUST NOT silently convert one into the other. This
-specification creates no remedy or amendment authority for either.
+specification creates no remedy or amendment authority for either, and documents
+the frozen correction route in §10.1 without exercising it.
 
 ## 5. Determination invariants
 
@@ -260,6 +362,7 @@ limited to:
    search terms, inspected paths, exclusions, and evidence that the boundary
    is complete. Absence from an undefined or incomplete corpus is not
    admissible absence evidence.
+
 An evidence item MUST be assessed at its frozen meaning. Citation does not make
 an artifact relevant; the cited text must state the proposition for which it
 is offered.
@@ -335,7 +438,10 @@ In addition, the record MUST:
   versioned calculation dependency; and
 - show that two independent readers applying the cited rules to the same
   frozen evidence would reach the same ownership conclusion, as required by
-  frozen M44 Architecture `INV-D2` and M43-WP2 §8.2(6).
+  frozen M44 Architecture `INV-D2`: "Two independent readers applying an M44
+  normative rule to the same inputs reach the same result." No dependency-closure
+  rule is relied on at this stage; ownership proof is independent of contract
+  availability (§5 invariant 2).
 
 The proof is conjunctive. A missing, circular, ambiguous, conflicting, or
 inference-dependent proposition means that ownership is not proved. Strength
@@ -359,8 +465,8 @@ package or stage:
 | §8.1 | WP5.1 | Authority intake and boundary lock |
 | §§8.2–8.3 | WP5.1 outputs | Evidence manifest and hypothesis record |
 | §8.4 | WP5.2 | Ownership proof |
-| §§8.5–8.6 | WP5.3 | Proved-owner corpus inventory and existing-contract assessment |
-| §8.7 | WP5.4–WP5.5 | Admissibility, terminal-state analysis, requirement, and consequence record |
+| §§8.5–8.6 | WP5.3–WP5.4 | Proved-owner corpus inventory and existing-contract assessment, together with the frozen M43-WP2 §8.2 closure and version non-substitutability tests that frozen WP5.4 assigns |
+| §8.7 | WP5.4–WP5.5 | Terminal-state proposal, and the requirement and consequence record |
 | §13 | WP5.6 | Independent governance lifecycle, only after WP5.5 completes |
 
 ### 8.1 Boundary lock
@@ -445,7 +551,8 @@ The assessment MUST keep these requirements separate:
    - Dependency contract kind;
    - Dependency identifier; and
    - Dependency version.
-2. Frozen M43-WP2 §8.2 transitive closure.
+2. Frozen M43-WP2 §8.2 transitive closure, including §8.2(6): "two independent
+   traversals produce the same set of exact dependency tuples."
 3. Frozen M43-WP4 §6.7 owner-published information:
    - exact owner;
    - existing governed contract kind;
@@ -468,13 +575,35 @@ record may propose exactly one of the two frozen `G-4` terminal states:
   the proved exact owner.
 
 A proposed `OPEN` record MUST state exactly what a future owner-domain
-governance instrument would have to supply. Under frozen M44 Architecture §8.4
-C4, it MUST enumerate the exact owner, contract kind, identifier, immutable
-version, and canonical value bytes. Separately, under frozen M43-WP4 §6.7, it
-MUST enumerate source calendar identity and version, finite-decimal or
+governance instrument would have to supply. The authority that fixes that
+content, and its whole extent, is frozen M44 Architecture §8.4 C4 and §11
+M44-WP5, with frozen M44-WP1 §4.4 evidence item (4). Accordingly the record
+MUST enumerate the exact owner, contract kind, identifier, immutable version,
+and canonical value bytes, and MUST state the named missing element and the
+consequences for `D-2b` and `D-7`. No item may be inferred, omitted, or treated
+as an existing instrument.
+
+Frozen M43-WP4 §6.7 states a separate and different thing, in a different
+modality, to a different addressee: "The future normative specification may
+state the semantic information that a separately governed dependency would have
+to make exact—source calendar identity/version, finite decimal or
 reduced-rational representation, canonical bytes, compatibility, and Method
-Version change effects. No item in either list may be inferred, omitted, or
-treated as an existing instrument.
+Version change effects—but may not define the missing contract or treat that
+checklist as one." Its addressee is the future normative specification, which
+frozen M44 Architecture §13.1 allocates to M44-WP6 at
+`docs/implementation/M43_WP4_TEMPORAL_CURRENCY_CALENDAR_BENCHMARK_AND_ARITHMETIC_SEMANTICS_CONTRACT_SPECIFICATION.md`.
+Therefore:
+
+- this specification MUST NOT restate that permission as an M44-WP5 obligation
+  and MUST NOT attribute a `MUST` to frozen §6.7;
+- a determination record MAY reproduce the checklist only as a quoted frozen
+  §6.7 permission addressed to that future specification, marked as neither an
+  M44-WP5 requirement nor a contract, consistent with frozen §6.7's own bar on
+  treating the checklist as a contract; and
+- reproducing it MUST NOT define annualization arithmetic, a numeric
+  representation, or a Method Version effect, none of which lies within the
+  M44-WP5 allocation under frozen §11 M44-WP5 or under §14 of this
+  specification.
 
 The `OPEN` record MUST also state that D-2b remains behind D-1, the confirmed
 WP5 determination, D-7 when the owner-domain instrument is absent, and every
@@ -489,8 +618,9 @@ No proposed state is effective until §13 is complete.
 
 ## 9. Required repository evidence
 
-A determination record is constitutionally reviewable only when it contains
-all evidence applicable to the branch reached before review:
+A determination record MUST contain every item below that is applicable to the
+branch it reaches. Applicability is fixed by the branch, not by whether review
+occurs; §10.1, §10.2, and §13 forbid review on the stopping branches:
 
 1. A clean pre-analysis repository status and the exact examined commit.
 2. Blob identities for every controlling frozen artifact.
@@ -506,11 +636,17 @@ all evidence applicable to the branch reached before review:
    immutable version, canonical value bytes, the five M43-WP2 §8.1 declaration
    fields, and the complete §8.2 closure proof.
 9. If `OPEN` is proposed, the proved owner, exact missing element, complete
-   absence evidence, both enumerated future-instrument requirement lists from
-   §8.7, and the complete D-1, D-2b, conditional D-3, and D-7 consequence
-   statement from §8.7.
-10. Documentary vectors carrying every category required by frozen M44
-    Architecture §11 M44-WP5:
+   absence evidence, the enumerated future-instrument requirement statement
+   required by §8.7, and the complete D-1, D-2b, conditional D-3, and D-7
+   consequence statement from §8.7.
+10. Documentary positive, boundary, and negative vectors, all three categories
+    being required by frozen M44-WP5 plan §4.1, carrying every category
+    required by frozen M44 Architecture §11 M44-WP5:
+    - at least one positive vector showing the shape a conforming
+      owner-published governed contract kind would have to take to satisfy §8.6
+      unchanged. Because the frozen corpus supplies no such kind, every positive
+      vector is illustrative and MUST carry the marking below; a positive vector
+      admits nothing and closes no gate;
     - dependency-closure vectors under frozen M43-WP2 §8.2, including
       unconditional transitive-closure rejection independent of any proposed
       terminal state;
@@ -562,16 +698,57 @@ On this branch:
 - §13, corresponding to frozen WP5.6, MUST NOT begin;
 - no `G-4` terminal state is proposed;
 - M44-WP5 does not complete, confirm, or freeze;
-- the §12.1.1 checkpoint is not reached;
+- the §12.1.1 checkpoint is neither evaluated nor dispositioned, under either
+  frozen reading recorded below;
 - no Component G binding is formable; and
 - WP6 and WP7 remain unauthorized.
 
-The record may identify a frozen-architecture ambiguity, but it MUST NOT
-resolve it or prescribe an amendment. A defect in the attempted determination
-remains a work-package defect. If and only if the evidence instead establishes
-a defect in frozen architecture, its correction lies outside M44-WP5 under
-M44 Architecture Freeze Record §9 and M44 Architecture §1.6. This deliverable
-does not invoke, authorize, draft, or prescribe that correction.
+The record MUST classify which defect it has established, and the two classes
+MUST NOT be conflated. A defect in the attempted determination is a work-package
+defect, corrected within M44-WP5 under §10.3.
+
+Where the evidence establishes that the frozen ownership ambiguity preserved in
+§4 is what prevents the determination, the frozen planning baseline supplies a
+mandatory onward route, and the record MUST document it. Frozen M44-WP5 plan §3
+states that WP5 "stops under §12.1.1's third outcome pending the M44
+Architecture Freeze Record's required new independently confirmed architecture
+revision that names the defect." The frozen §5 `WP5.2` exit condition requires
+WP5 to "stop under §12.1.1's third outcome and route the frozen ambiguity
+through the M44 Architecture Freeze Record's process for a new independently
+confirmed architecture revision that names the defect." Frozen §5.1 states that
+"a new independently confirmed architecture revision that names the defect must
+first correct the ambiguity, after which WP5 and then the checkpoint may be
+re-evaluated." The process itself is fixed by frozen M44 Architecture Freeze
+Record §9 — "[a] defect in it is corrected only by a new independently confirmed
+architecture revision that names the defect (constitution G5), never by editing
+it in place" — and by frozen M44 Architecture §1.6 rule 3.
+
+Documenting that required route is not exercising it, and the distinction is
+constitutive. Documenting it means citing the frozen text that supplies the
+route and recording that M44-WP5 cannot proceed until that route completes.
+Exercising it would mean initiating, requesting, authorizing, drafting,
+prescribing, naming the defect on the architecture's behalf, or supplying any
+part of the revision. This deliverable MUST do only the former. It MUST NOT
+resolve the §4 ambiguity, MUST NOT amend or reinterpret any frozen artifact, and
+MUST NOT treat the route's existence as a prediction that it will be taken, as
+authority already granted, or as a stage of M44-WP5.
+
+Until such a separately authorized and independently confirmed architecture
+revision exists, M44-WP5 remains incomplete, no `G-4` terminal state is
+formable, the §12.1.1 checkpoint is not evaluated or dispositioned, and M44-WP6
+and M44-WP7 remain unauthorized.
+
+The two frozen readings of how §12.1.1 relates to this branch, preserved in §4,
+MUST both be cited here and neither ranked. Frozen M44-WP5 plan §3, §5 `WP5.2`,
+and §5.1 characterize the stop as occurring "under §12.1.1's third outcome,"
+whose frozen row reads "[e]ither gate's state not established | **Stop.** An
+unestablished gate state is a review defect in the producing work package and is
+corrected before the checkpoint is re-evaluated." Frozen M44 Architecture
+§12.1.1 opens "After M44-WP4 and M44-WP5 are confirmed and before M44-WP6
+begins," which on its own terms is not reached by an unconfirmed M44-WP5. The
+record MUST NOT resolve that difference. Under either reading the outcome for
+this branch is the same: the process stops, no gate or checkpoint is
+dispositioned, and the route above is the only stated means of correction.
 
 ### 10.2 Repository proof incomplete
 
@@ -594,12 +771,14 @@ On this branch:
   constitutional effect under §13, while its reasoning is preserved in the
   record;
 - M44-WP5 does not complete, confirm, or freeze;
-- the §12.1.1 checkpoint is not reached;
+- the §12.1.1 checkpoint is neither evaluated nor dispositioned;
 - no Component G binding is formable; and
 - WP6 and WP7 remain unauthorized.
 
-Sections §8.7 and §13, corresponding to frozen WP5.4 through WP5.6, MUST NOT
-begin.
+Sections §8.7 and §13 — the frozen WP5.4 terminal-state proposal, frozen WP5.5,
+and frozen WP5.6 — MUST NOT begin. The frozen WP5.4 closure and
+non-substitutability tests reached inside §8.6 yield no terminal state on this
+branch.
 
 ### 10.3 Constitutional review stop
 
@@ -723,7 +902,9 @@ This specification does not:
 
 - determine, assign, presume, or imply ownership of the Annualization Basis;
 - create shared ownership or transfer source calendar meaning;
-- disposition `G-3`, `G-4`, `G-5`, or §12.1.1;
+- disposition `G-3`, `G-4`, `G-5`, or §12.1.1. A proposed `G-4` terminal state
+  that a later revision of this file may carry under §8.7 is a proposal only,
+  and has no dispositional effect unless and until §13 is complete;
 - define annualization arithmetic or select an annualization basis, factor,
   market, calendar, session count, default, or fallback;
 - author, name, register, extend, version, or serialize an owner-domain
@@ -754,7 +935,7 @@ A determination conforms to this specification only if:
   confirmation complete with unresolved blocking findings `NONE`; and
 - no implementation or downstream authority is introduced.
 
-This corrected RC2 candidate establishes the constitutional method for
+This corrected RC3 candidate establishes the constitutional method for
 determining Annualization Basis ownership within the sole frozen WP5
 deliverable. It deliberately leaves ownership and `G-4` unresolved. It grants
 no implementation authority.
