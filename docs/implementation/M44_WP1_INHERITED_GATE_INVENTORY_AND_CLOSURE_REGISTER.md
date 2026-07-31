@@ -775,15 +775,72 @@ This section is that carrier. It is reserved and currently unpopulated.
 
 | Field | Value at register date |
 | --- | --- |
-| Observed `G-3` terminal state | `NOT YET DISPOSITIONED` |
-| Observed `G-4` terminal state | `NOT YET DISPOSITIONED` |
-| Checkpoint outcome | `NOT REACHED` |
-| Independent checkpoint confirmation | `NOT REACHED` |
-| Recorded by | — |
+| Observed `G-3` terminal state | `OPEN — PARTIAL` |
+| Observed `G-4` terminal state | `OPEN` |
+| Checkpoint outcome | `STOP` |
+| Independent checkpoint confirmation | `CONFIRMED` — unresolved findings `NONE` |
+| Recorded by | Independent §12.1.1 gate-state checkpoint confirmation under frozen RC2 §12.5 point 5, 2026-07-30 |
 
 Populating this table requires the independent confirmation named at frozen RC2
 §12.5 point 5. It is not populated by `M44-WP4`, `M44-WP5`, or this register
 acting alone.
+
+**Carrier population — additive record, 2026-07-30.** The five values above were
+written by the independent §12.1.1 gate-state checkpoint confirmation required by
+frozen RC2 §12.5 point 5, performed by a confirmer distinct from the author of the
+checkpoint disposition. They are the confirmed terminal states and outcome as of
+that confirmation date. The column heading "Value at register date" and the
+sentence "It is reserved and currently unpopulated." above describe this carrier's
+pre-population state at the register's own date; as to this carrier only, both are
+superseded by this additive record, and neither is edited — in keeping with the
+repository convention that a superseded in-file statement in a frozen artifact is
+corrected by an additive record and never by amendment (frozen
+[M44_WP1_FREEZE_RECORD.md](M44_WP1_FREEZE_RECORD.md) §7.3; frozen RC2 §1.6 rule 3).
+No other statement, section, or table in this register is altered, superseded, or
+reinterpreted.
+
+Exact evidence basis:
+
+- `G-3` `OPEN — PARTIAL` — frozen
+  [M44_WP4_FREEZE_RECORD.md](M44_WP4_FREEZE_RECORD.md) §5 "Final Freeze Status" and
+  §6, blob `8623bbdabbb4fd35318e125173cd99c48ffd9c2e`; underlying determination
+  frozen
+  [M44_WP4_PORTFOLIO_COMPOSITION_CANONICAL_BYTE_REPRESENTATION_CONTRACT.md](M44_WP4_PORTFOLIO_COMPOSITION_CANONICAL_BYTE_REPRESENTATION_CONTRACT.md)
+  §10 `WP4-NR-030`; the eight unsupplied elements and their exact frozen owning
+  domains are recorded at that contract's §3.3, which states "This map is a record,
+  not a request." They are recorded open elements, not requests to those owners and
+  not obligations imposed on them (frozen RC2 `INV-C4`, §4.5).
+- `G-4` `OPEN` — frozen [M44_WP5_FREEZE_RECORD.md](M44_WP5_FREEZE_RECORD.md) §5
+  "Effective frozen determination" and §10, blob
+  `1dc63389227cfb323820fe774554fb810eb389ef`; owning domain `MARKET INTELLIGENCE`,
+  effective and frozen; missing element named there.
+- Checkpoint outcome `STOP` — frozen RC2 §12.1.1 second row, applied to the two
+  established states above; frozen RC2 §12.3, under which `G-3 OPEN — PARTIAL` is a
+  prerequisite failure for M44-WP6 and M44-WP7 "without exception" while `G-4 OPEN`
+  is expressly not a prerequisite failure. The outcome turns on `G-3` alone.
+- Confirmed disposition —
+  [M44_GATE_STATE_CHECKPOINT_DISPOSITION.md](M44_GATE_STATE_CHECKPOINT_DISPOSITION.md).
+  Per the repository convention above, that record's own header and §11 continue to
+  read as authored, before confirmation; this carrier is the record of the
+  confirmation act, exactly as frozen RC2 §12.1.1 directs.
+
+Downstream consequence, recorded under frozen RC2 §16.5 with this checkpoint
+outcome cited as cause:
+
+| Downstream item | State |
+| --- | --- |
+| `M44-WP6` | `NOT REACHED — WITHHELD BY CHECKPOINT` |
+| `M44-WP7` | `NOT REACHED — WITHHELD BY CHECKPOINT` |
+
+`G-5` remains `OPEN` with the checkpoint outcome as its cause (frozen RC2 §13.1).
+The referred question `RQ-1` (§8.2) is not decided here; it remains referred to the
+M44 epic closeout.
+
+Neither `G-3` nor `G-4` is closed, released, deferred, or reinterpreted by this
+population. `OPEN — PARTIAL` and `OPEN` are non-closure states under frozen RC2
+§16.2 and §8.1 of this register. This population authorizes no work package to
+begin, authors no architecture re-scope, and does not author or perform the M44
+Epic Closeout.
 
 ---
 

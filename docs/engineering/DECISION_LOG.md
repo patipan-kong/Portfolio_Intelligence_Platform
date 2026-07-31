@@ -2526,3 +2526,134 @@ epic closeout. Where an inherited gate remains open, it continues to report
 `BLOCKED PENDING INHERITED GATE CLOSURE`. All inherited gates, ownership
 allocations, dependencies, authority boundaries, and frozen artifacts remain
 unchanged. No additional authority is granted.
+
+---
+
+## M44-WP4 — Portfolio Composition Canonical Byte Representation Contract Closeout
+
+**Date:** 2026-07-29
+
+**Decision:** Close and freeze M44-WP4 as `COMPLETE AND FROZEN` at candidate
+`RC4`. The frozen M44 Architecture §12.5 point-4 independent constitutional
+confirmation is `ISSUED` for
+[M44_WP4_PORTFOLIO_COMPOSITION_CANONICAL_BYTE_REPRESENTATION_CONTRACT.md](../implementation/M44_WP4_PORTFOLIO_COMPOSITION_CANONICAL_BYTE_REPRESENTATION_CONTRACT.md)
+and its two documentary fixtures, recorded at
+[M44_WP4_INDEPENDENT_CONSTITUTIONAL_CONFIRMATION.md](../implementation/M44_WP4_INDEPENDENT_CONSTITUTIONAL_CONFIRMATION.md)
+(commit `a815ba23c88af7b25f4ddbdc337aa8482a03a5d0`). The independent
+constitutional contract review chain reached `APPROVED` at RC3; the
+independent serialization review chain reached `APPROVED` at RC4; an
+independent RC3-to-RC4 constitutional equivalence verification found the RC4
+changes `CONSTITUTIONALLY EQUIVALENT` to the approved RC3 result; and the
+complete evidence chain was stabilized at commit
+`0c6d7d2efa898758026a80b2ce59cb5caf865772`. Constitutional and serialization
+findings unresolved are `NONE`. The canonical closeout and freeze records are
+[M44_WP4_EPIC_CLOSEOUT.md](../implementation/M44_WP4_EPIC_CLOSEOUT.md) and
+[M44_WP4_FREEZE_RECORD.md](../implementation/M44_WP4_FREEZE_RECORD.md).
+
+**Reasoning:** M44-WP4 defines only the Portfolio Composition container's
+canonical byte representation — schema tag framing, `u32`/`lp` primitives,
+fixed field order, and the Owner-Attribution and Provenance-Association
+envelopes — treating every source-owned nested coordinate as opaque,
+owner-supplied bytes. Three independent review disciplines each reached a
+final `APPROVED` result before confirmation was issued: the architecture-stage
+review (planning-artifact lifecycle only), the constitutional contract review
+(RC1 and RC2 `NOT APPROVED`, RC3 `APPROVED` after withdrawing an
+unconstitutional field-8 byte-encoding selection introduced and then reverted
+across RC1–RC3), and the serialization review (RC3 `NOT APPROVED` on two
+`MAJOR` findings, RC4 `APPROVED` after both were resolved). A distinct
+constitutional-equivalence verification confirmed the RC3-to-RC4 serialization
+corrections changed no constitutional statement, authority boundary, or
+emitted grammar.
+
+**Impact:** This closeout transfers no ownership, changes no constitutional
+contract, and grants no runtime, implementation, persistence, database, API,
+UI, service, calculation, valuation, analytics, optimization, recommendation,
+policy, workflow, provider, production, executable-validation,
+serialization-implementation, or operational authority. `G-3` remains `OPEN —
+PARTIAL` and is not closed by this decision. The M44 §12.1.1 checkpoint
+remains `NOT DISPOSITIONED`. M44-WP6 and M44-WP7 remain `NOT AUTHORIZED`.
+Freezing M44-WP4 does not close M44 as a milestone/epic; the M44 architecture
+and other work packages are governed by their own separate records.
+
+---
+
+## M44-WP5 — Planning Governance Freeze
+
+**Date:** 2026-07-29
+
+**Decision:** Close and freeze the M44-WP5 planning-governance lifecycle as
+`COMPLETE AND FROZEN` at candidate `RC3`. The independent constitutional
+architecture review chain reached `APPROVED` at RC3 after RC1 and RC2 were
+`NOT APPROVED`. The independent constitutional confirmation is `ISSUED`, the
+three review records are filed at distinct repository paths, and the confirmed
+non-normative planning artifact remains unchanged at blob
+`c8cb5cbe7d0f5c0e118e5bdebc7e819fda78ffb9`. The canonical planning closeout
+and freeze records are
+[M44_WP5_PLANNING_CLOSEOUT.md](../implementation/M44_WP5_PLANNING_CLOSEOUT.md)
+and
+[M44_WP5_PLANNING_FREEZE_RECORD.md](../implementation/M44_WP5_PLANNING_FREEZE_RECORD.md).
+
+**Reasoning:** RC1 identified one critical, eight major, seven minor, and
+three editorial findings. RC2 verified eighteen of the nineteen RC1 findings
+as correctly resolved and confined its remaining two critical and three major
+findings to the ownership-proof-failure branch. RC3 approved the corrected
+planning document with no critical, major, or blocking finding. Its three
+non-blocking minor findings and two editorial observations remain preserved in
+the filed RC3 review record. The independent confirmation verified the
+document's constitutional suitability, unchanged authority ceiling,
+non-normative status, frozen-artifact immutability, and downstream boundaries,
+and recommended only filing the three planning-stage review records before
+freeze. Commit `7daf017f1237524d55df1a798e958986134d1d57` completed that
+documentary filing without changing any review outcome or the confirmed
+planning artifact.
+
+**Impact:** This decision freezes only the M44-WP5 planning-governance corpus.
+M44-WP5 remains `OPEN`; ownership remains `NOT DETERMINED`; `G-4` remains
+`NOT DETERMINED`; and `G-3` remains `OPEN — PARTIAL`. The M44 §12.1.1
+checkpoint remains `NOT DISPOSITIONED`. M44-WP6 and M44-WP7 remain
+`NOT AUTHORIZED`. This decision grants no normative-specification,
+contract-authoring, implementation, source-code, runtime, persistence, schema,
+migration, API, transport, UI, presentation, provider, production-method,
+executable-validation, serialization, capability-completion,
+vocabulary-admission, ownership-determination, or gate-disposition authority.
+The frozen planning corpus is ready to serve as the baseline for a separately
+authorized normative-authoring lifecycle; this freeze is not that
+authorization and does not close M44 as a milestone/epic.
+
+---
+
+## M44 — Portfolio Analytics Gate Closure and Normative Semantics Foundation — Epic Closeout Synchronization
+
+**Date:** 2026-07-30
+
+**Decision:** Record the separately authorized repository synchronization for
+the independently confirmed M44 Epic Closeout. The closeout candidate,
+corrections response, and independent constitutional confirmation are
+[M44_EPIC_CLOSEOUT.md](../implementation/M44_EPIC_CLOSEOUT.md),
+[M44_EPIC_CLOSEOUT_RC1_FORMAL_CONSTITUTIONAL_CORRECTIONS_RESPONSE.md](../implementation/M44_EPIC_CLOSEOUT_RC1_FORMAL_CONSTITUTIONAL_CORRECTIONS_RESPONSE.md),
+and
+[M44_EPIC_CLOSEOUT_INDEPENDENT_CONSTITUTIONAL_CONFIRMATION.md](../implementation/M44_EPIC_CLOSEOUT_INDEPENDENT_CONSTITUTIONAL_CONFIRMATION.md).
+The independent closeout review is `APPROVED`, the independent confirmation is
+`CONFIRMED`, and unresolved constitutional findings are `NONE`.
+
+**Reasoning:** Frozen RC2 §12.7 step 7 authorizes one consolidated Decision
+Log entry and the Implementation INDEX update after the candidate, corrections,
+independent review, and confirmation sequence. The independently confirmed
+§12.1.1 checkpoint outcome is `STOP`. M44-WP1 through M44-WP5 are completed
+and frozen at their respective recorded lifecycles; M44-WP6 and M44-WP7 are
+`NOT REACHED — WITHHELD BY CHECKPOINT`. Gate states remain: `G-1` `CLOSED`;
+`G-2` `RELEASED — FINAL RECORDING PENDING AUTHORIZED VEHICLE`; `G-3` `OPEN —
+PARTIAL`; `G-4` `OPEN`; and `G-5` `OPEN`. No successor milestone number is
+assigned.
+
+**Impact:** This synchronization does not freeze M44. M44 is not yet
+`COMPLETE AND FROZEN`; the separate freeze act remains pending, and terminal
+authority exhaustion is not yet effective. Implementation and runtime
+authority remain `NONE`. This entry records G-2's current state but does not
+perform frozen M43-WP1 §7.4 step-4 final recording, does not act as an
+authorized substitute recording vehicle, does not close G-2, and does not
+imply that RC2 §17 OQ-5's recommendation has been authorized. G-2's
+outstanding final-recording obligation remains pending an authorized vehicle.
+This synchronization also does not close G-3, G-4, or G-5; authorize M44-WP6
+or M44-WP7; assign a successor milestone; or grant implementation or runtime
+authority.
