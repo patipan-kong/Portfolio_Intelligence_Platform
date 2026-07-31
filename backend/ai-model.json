@@ -127,12 +127,12 @@
       "label": "GPT-5.6 Luna",
       "apiModel": "gpt-5.6-luna",
       "provider": "openai",
-      "memo":"คู่หูจัดการportfolio: เหมาะทำ production challenger , daily optimization",
+      "memo":"สายประหยัด: ทำงานทั่วไป/อ่านงบ: เหมาะทำ Analyst : Second Opinion ลด80%",
       "cost": {
         "token_1m": {
-          "input": 1.00,
-          "output": 6,
-          "caching": 0.10
+          "input": 0.20,
+          "output": 1.20,
+          "caching": 0.02
         }
       }
     },
@@ -144,8 +144,8 @@
       "memo":"คู่หูจัดการportfolio: เหมาะทำ Stretegic / production challenger , daily optimization",
       "cost": {
         "token_1m": {
-          "input": 2.50,
-          "output": 15,
+          "input": 2.0,
+          "output": 12,
           "caching": 0.25
         }
       }
