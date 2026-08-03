@@ -69,6 +69,31 @@ repository; their frozen implementation authorities are represented by their
 individual Decision Log entries. Neither closeout recreates or reinterprets
 those frozen designs.
 
+## Asset Foundation — AF-WP1
+
+The Asset Foundation Planning corpus is `COMPLETE`, `FROZEN`, and `CLOSED`.
+AF-WP1 is `COMPLETE`, `FROZEN`, and `CLOSED`; AF-WP2 remains `NOT ALLOCATED`.
+This section is navigation-only and grants no authority.
+
+### Frozen implementation artifacts
+
+- [AF-1 Asset Identity Canonical Lexical Form](ASSET_FOUNDATION_AF_WP1_AF_1_CANONICAL_LEXICAL_FORM.md)
+- [AF-WP1 Package-Local Vector Annex](ASSET_FOUNDATION_AF_WP1_VECTOR_ANNEX.md)
+
+### Governance records
+
+- [AF-WP1 Independent Review](../governance/ASSET_FOUNDATION_AF_WP1_INDEPENDENT_REVIEW.md)
+- [AF-WP1 Correction Response](../governance/ASSET_FOUNDATION_AF_WP1_CORRECTION_RESPONSE.md)
+- [AF-WP1 Focused Re-review](../governance/ASSET_FOUNDATION_AF_WP1_FOCUSED_REREVIEW.md)
+- [AF-WP1 Independent Confirmation](../governance/ASSET_FOUNDATION_AF_WP1_CONFIRMATION.md)
+- [AF-WP1 Content Identity Validation](../governance/ASSET_FOUNDATION_AF_WP1_CONTENT_IDENTITY_VALIDATION.md)
+- [AF-WP1 Freeze Record](../governance/ASSET_FOUNDATION_AF_WP1_FREEZE_RECORD.md)
+- [AF-WP1 Closeout Record](../governance/ASSET_FOUNDATION_AF_WP1_CLOSEOUT_RECORD.md)
+- [AF-WP1 Epic Closeout](../governance/ASSET_FOUNDATION_AF_WP1_EPIC_CLOSEOUT.md)
+
+The completion decision is recorded in the
+[Decision Log](../engineering/DECISION_LOG.md#asset-foundation--af-wp1-implementation-governance-epic-closeout).
+
 ## Milestone Navigation (M0–current)
 
 | Milestone | Status (as declared in-document) | Primary document(s) | Closeout | Decision Log |
