@@ -69,6 +69,120 @@ repository; their frozen implementation authorities are represented by their
 individual Decision Log entries. Neither closeout recreates or reinterprets
 those frozen designs.
 
+## Asset Foundation — AF-WP1
+
+The Asset Foundation Planning corpus is `COMPLETE`, `FROZEN`, and `CLOSED`.
+AF-WP1 is `COMPLETE`, `FROZEN`, and `CLOSED`; AF-WP2 is `COMPLETE`, `FROZEN`,
+and `CLOSED`; AF-WP3 has an allocated and authorized implementation candidate.
+Its initial independent review is `FAIL`, additive correction is applied,
+focused independent re-review is `PASS`, independent confirmation is
+`CONFIRMED`, and content identity is `VALIDATED`. Its current state is
+`BLOCKED — GOVERNANCE` for the remaining exact-byte freeze gate; it is not
+frozen or closed.
+This section is navigation-only and grants no authority.
+
+### Frozen implementation artifacts
+
+- [AF-1 Asset Identity Canonical Lexical Form](ASSET_FOUNDATION_AF_WP1_AF_1_CANONICAL_LEXICAL_FORM.md)
+- [AF-WP1 Package-Local Vector Annex](ASSET_FOUNDATION_AF_WP1_VECTOR_ANNEX.md)
+
+### Governance records
+
+- [AF-WP1 Independent Review](../governance/ASSET_FOUNDATION_AF_WP1_INDEPENDENT_REVIEW.md)
+- [AF-WP1 Correction Response](../governance/ASSET_FOUNDATION_AF_WP1_CORRECTION_RESPONSE.md)
+- [AF-WP1 Focused Re-review](../governance/ASSET_FOUNDATION_AF_WP1_FOCUSED_REREVIEW.md)
+- [AF-WP1 Independent Confirmation](../governance/ASSET_FOUNDATION_AF_WP1_CONFIRMATION.md)
+- [AF-WP1 Content Identity Validation](../governance/ASSET_FOUNDATION_AF_WP1_CONTENT_IDENTITY_VALIDATION.md)
+- [AF-WP1 Freeze Record](../governance/ASSET_FOUNDATION_AF_WP1_FREEZE_RECORD.md)
+- [AF-WP1 Closeout Record](../governance/ASSET_FOUNDATION_AF_WP1_CLOSEOUT_RECORD.md)
+- [AF-WP1 Epic Closeout](../governance/ASSET_FOUNDATION_AF_WP1_EPIC_CLOSEOUT.md)
+
+The completion decision is recorded in the
+[Decision Log](../engineering/DECISION_LOG.md#asset-foundation--af-wp1-implementation-governance-epic-closeout).
+
+## Asset Foundation — AF-WP2
+
+The Asset Foundation Planning corpus is `COMPLETE`, `FROZEN`, and `CLOSED`.
+AF-WP2 is `COMPLETE`, `FROZEN`, and `CLOSED`. AF-WP3 has an allocated and
+authorized implementation candidate. Its initial independent review is `FAIL`,
+additive correction is applied, focused independent re-review is `PASS`,
+independent confirmation is `CONFIRMED`, and content identity is `VALIDATED`.
+Its current state is `BLOCKED — GOVERNANCE` for the remaining exact-byte freeze
+gate; it is not frozen or closed.
+This section is navigation-only and grants no authority.
+
+### Implementation artifacts
+
+- [ASSET_FOUNDATION_AF_WP2_AF_2_DENOMINATION_IDENTIFIER_DIMENSION_CANONICAL_FORM.md](ASSET_FOUNDATION_AF_WP2_AF_2_DENOMINATION_IDENTIFIER_DIMENSION_CANONICAL_FORM.md)
+- [ASSET_FOUNDATION_AF_WP2_VECTOR_ANNEX.md](ASSET_FOUNDATION_AF_WP2_VECTOR_ANNEX.md)
+
+### Governance artifacts
+
+- [ASSET_FOUNDATION_AF_WP2_INDEPENDENT_REVIEW.md](../governance/ASSET_FOUNDATION_AF_WP2_INDEPENDENT_REVIEW.md)
+- [ASSET_FOUNDATION_AF_WP2_CORRECTION_RESPONSE.md](../governance/ASSET_FOUNDATION_AF_WP2_CORRECTION_RESPONSE.md)
+- [ASSET_FOUNDATION_AF_WP2_FOCUSED_REREVIEW.md](../governance/ASSET_FOUNDATION_AF_WP2_FOCUSED_REREVIEW.md)
+- [ASSET_FOUNDATION_AF_WP2_CONFIRMATION.md](../governance/ASSET_FOUNDATION_AF_WP2_CONFIRMATION.md)
+- [ASSET_FOUNDATION_AF_WP2_CONTENT_IDENTITY_VALIDATION.md](../governance/ASSET_FOUNDATION_AF_WP2_CONTENT_IDENTITY_VALIDATION.md)
+- [ASSET_FOUNDATION_AF_WP2_FREEZE_RECORD.md](../governance/ASSET_FOUNDATION_AF_WP2_FREEZE_RECORD.md)
+- [ASSET_FOUNDATION_AF_WP2_CLOSEOUT_RECORD.md](../governance/ASSET_FOUNDATION_AF_WP2_CLOSEOUT_RECORD.md)
+- [ASSET_FOUNDATION_AF_WP2_EPIC_CLOSEOUT.md](../governance/ASSET_FOUNDATION_AF_WP2_EPIC_CLOSEOUT.md)
+
+The completion decision is recorded in the
+[Decision Log](../engineering/DECISION_LOG.md#asset-foundation--af-wp2-implementation-governance-epic-closeout).
+
+## Asset Foundation — AF-WP3
+
+The Asset Foundation Planning corpus is `COMPLETE`, `FROZEN`, and `CLOSED`.
+AF-WP1 and AF-WP2 are both `COMPLETE`, `FROZEN`, and `CLOSED`. AF-WP3 has an
+allocated and authorized implementation candidate for the AF-3 Owner Evidence
+Manifest and Conformance-Annex Index. Its initial independent review is
+`FAIL`, additive correction is applied, focused independent re-review is
+`PASS`, independent confirmation is `CONFIRMED`, and content identity is
+`VALIDATED`; exact-byte freeze is `COMPLETE`; closeout is `COMPLETE`; and
+release is `NOT PERFORMED`. Its current governance state is `COMPLETE`,
+`FROZEN`, and `CLOSED`. It is not released, and no successor authority is
+created. The [AF-WP3 Freeze Record](../governance/ASSET_FOUNDATION_AF_WP3_FREEZE_RECORD.md)
+records the exact frozen identity, and the [AF-WP3 Closeout
+Record](../governance/ASSET_FOUNDATION_AF_WP3_CLOSEOUT_RECORD.md) records
+governance closure. This section remains navigation-only and grants no
+authority.
+
+### Implementation artifact
+
+- [ASSET_FOUNDATION_AF_WP3_OWNER_EVIDENCE_MANIFEST_AND_CONFORMANCE_ANNEX_INDEX.md](ASSET_FOUNDATION_AF_WP3_OWNER_EVIDENCE_MANIFEST_AND_CONFORMANCE_ANNEX_INDEX.md)
+
+### Governance artifacts
+
+- [AF-WP3 Allocation and Authorization Record](../governance/ASSET_FOUNDATION_AF_WP3_ALLOCATION_AND_AUTHORIZATION_RECORD.md)
+- [AF-WP3 Independent Confirmation](../governance/ASSET_FOUNDATION_AF_WP3_INDEPENDENT_CONFIRMATION.md)
+- [AF-WP3 Content Identity Validation](../governance/ASSET_FOUNDATION_AF_WP3_CONTENT_IDENTITY_VALIDATION.md)
+- [AF-WP3 Freeze Record](../governance/ASSET_FOUNDATION_AF_WP3_FREEZE_RECORD.md)
+- [AF-WP3 Closeout Record](../governance/ASSET_FOUNDATION_AF_WP3_CLOSEOUT_RECORD.md)
+
+## Asset Foundation - AF-WP4
+
+The Asset Foundation Planning corpus and AF-WP1 through AF-WP3 are
+`COMPLETE`, `FROZEN`, and `CLOSED`. AF-WP4 is an authorized bounded
+documentary implementation package for the AF-4 Asset Foundation Release
+Attestation and owner-domain closeout. Its independent review is `PASS`; no
+correction or focused re-review was required. Independent confirmation is
+`CONFIRMED`. Content-identity validation is `CONTENT IDENTITY VALIDATED`;
+exact-byte freeze is `COMPLETE`; release attestation is `RELEASE ATTESTED`;
+closeout is `AF-WP4 CLOSEOUT: COMPLETE`.
+This section is navigation-only and grants no authority.
+
+### Implementation artifact
+
+- [AF-WP4 Release Attestation Candidate](ASSET_FOUNDATION_AF_WP4_RELEASE_ATTESTATION.md)
+
+### Governance artifact
+
+- [AF-WP4 Independent Review](../governance/ASSET_FOUNDATION_AF_WP4_INDEPENDENT_REVIEW.md)
+- [AF-WP4 Content Identity Validation](../governance/ASSET_FOUNDATION_AF_WP4_CONTENT_IDENTITY_VALIDATION.md)
+- [AF-WP4 Freeze Record](../governance/ASSET_FOUNDATION_AF_WP4_FREEZE_RECORD.md)
+- [AF-WP4 Release Attestation](../governance/ASSET_FOUNDATION_AF_WP4_RELEASE_ATTESTATION.md)
+- [AF-WP4 Closeout Record](../governance/ASSET_FOUNDATION_AF_WP4_CLOSEOUT_RECORD.md)
+
 ## Milestone Navigation (M0–current)
 
 | Milestone | Status (as declared in-document) | Primary document(s) | Closeout | Decision Log |

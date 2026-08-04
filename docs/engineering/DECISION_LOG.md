@@ -2657,3 +2657,182 @@ outstanding final-recording obligation remains pending an authorized vehicle.
 This synchronization also does not close G-3, G-4, or G-5; authorize M44-WP6
 or M44-WP7; assign a successor milestone; or grant implementation or runtime
 authority.
+
+---
+
+## Asset Foundation — AF-WP1 Implementation Governance Epic Closeout
+
+**Date:** 2026-08-03
+
+**Decision:** Record repository synchronization for the completed AF-WP1
+implementation governance lifecycle. Asset Foundation Planning is
+`COMPLETE`, `FROZEN`, and `CLOSED`. AF-WP1 is `COMPLETE`, `FROZEN`, and
+`CLOSED`.
+
+The completed AF-WP1 lifecycle is recorded by the [Independent
+Review](../governance/ASSET_FOUNDATION_AF_WP1_INDEPENDENT_REVIEW.md),
+[Correction Response](../governance/ASSET_FOUNDATION_AF_WP1_CORRECTION_RESPONSE.md),
+[Focused Re-review](../governance/ASSET_FOUNDATION_AF_WP1_FOCUSED_REREVIEW.md),
+[Independent Confirmation](../governance/ASSET_FOUNDATION_AF_WP1_CONFIRMATION.md),
+[Content Identity Validation](../governance/ASSET_FOUNDATION_AF_WP1_CONTENT_IDENTITY_VALIDATION.md),
+[Freeze Record](../governance/ASSET_FOUNDATION_AF_WP1_FREEZE_RECORD.md),
+[Closeout Record](../governance/ASSET_FOUNDATION_AF_WP1_CLOSEOUT_RECORD.md),
+and [Epic Closeout](../governance/ASSET_FOUNDATION_AF_WP1_EPIC_CLOSEOUT.md).
+The recorded outcomes are Independent Review `PASS`, Required Correction
+`COMPLETE`, Focused Re-review `PASS`, Independent Confirmation `CONFIRMED`,
+Content Identity Validation `VERIFIED`, Freeze `FROZEN`, and Closeout
+`COMPLETE`.
+
+The frozen implementation corpus consists exactly of the [AF-1 Asset Identity
+Canonical Lexical Form](../implementation/ASSET_FOUNDATION_AF_WP1_AF_1_CANONICAL_LEXICAL_FORM.md)
+and the [AF-WP1 Package-Local Vector
+Annex](../implementation/ASSET_FOUNDATION_AF_WP1_VECTOR_ANNEX.md).
+
+**Reasoning:** This entry records the already-completed AF-WP1 state and
+reconciles the Decision Log with the existing frozen implementation and
+governance records. It changes repository synchronization state only; it does
+not reinterpret any disposition or alter any implementation, planning, frozen
+governance, hash, or identity content.
+
+**Impact:** AF-WP1's repository disposition is `COMPLETE`, `FROZEN`, and
+`CLOSED`. AF-WP2 remains `NOT ALLOCATED`. This synchronization creates no
+implementation, runtime, allocation, authorization, or downstream authority.
+No implementation artifact, planning artifact, or frozen governance artifact
+is modified by this entry.
+
+---
+
+## Asset Foundation — AF-WP2 Implementation Governance Epic Closeout
+
+**Date:** 2026-08-04
+
+**Decision:** Record repository synchronization for the completed AF-WP2
+implementation governance lifecycle. Asset Foundation Planning is
+`COMPLETE`, `FROZEN`, and `CLOSED`. AF-WP2 is `COMPLETE`, `FROZEN`, and
+`CLOSED`.
+
+The completed AF-WP2 lifecycle is recorded by the [Independent
+Review](../governance/ASSET_FOUNDATION_AF_WP2_INDEPENDENT_REVIEW.md),
+[Correction Response](../governance/ASSET_FOUNDATION_AF_WP2_CORRECTION_RESPONSE.md),
+[Focused Re-review](../governance/ASSET_FOUNDATION_AF_WP2_FOCUSED_REREVIEW.md),
+[Independent Confirmation](../governance/ASSET_FOUNDATION_AF_WP2_CONFIRMATION.md),
+[Content Identity Validation](../governance/ASSET_FOUNDATION_AF_WP2_CONTENT_IDENTITY_VALIDATION.md),
+[Freeze Record](../governance/ASSET_FOUNDATION_AF_WP2_FREEZE_RECORD.md),
+[Closeout Record](../governance/ASSET_FOUNDATION_AF_WP2_CLOSEOUT_RECORD.md),
+and [Epic Closeout](../governance/ASSET_FOUNDATION_AF_WP2_EPIC_CLOSEOUT.md).
+The recorded outcomes are AF-WP2 Implementation `COMPLETE`, Independent
+Review `PASS`, Optional Correction `COMPLETE`, Focused Re-review `PASS`,
+Independent Confirmation `CONFIRMED`, Content Identity Validation `VERIFIED`,
+Freeze `COMPLETE` / `FROZEN`, Closeout `COMPLETE`, and Epic Closeout
+`COMPLETE`.
+
+The frozen implementation corpus consists exactly of the [AF-2 Denomination
+Identifier Dimension Canonical Form](../implementation/ASSET_FOUNDATION_AF_WP2_AF_2_DENOMINATION_IDENTIFIER_DIMENSION_CANONICAL_FORM.md)
+and the [AF-WP2 Package-Local Vector
+Annex](../implementation/ASSET_FOUNDATION_AF_WP2_VECTOR_ANNEX.md).
+
+**Reasoning:** This entry records the already-completed AF-WP2 state and
+reconciles the Decision Log with the existing frozen implementation and
+governance records. It changes repository synchronization state only; it does
+not reinterpret any disposition or alter any implementation, planning, frozen
+governance, hash, or identity content.
+
+**Impact:** AF-WP2's repository disposition is `COMPLETE`, `FROZEN`, and
+`CLOSED`. AF-WP3 remains `NOT ALLOCATED`. This synchronization creates no
+implementation, runtime, allocation, authorization, release, governance,
+planning, or downstream authority. No implementation artifact, planning
+artifact, or frozen governance artifact is modified by this entry.
+
+---
+
+## Asset Foundation — AF-WP3 Implementation Governance Epic Closeout
+
+**Date:** 2026-08-04
+
+**Decision:** Record repository synchronization for the completed AF-WP3
+implementation governance lifecycle. Asset Foundation Planning is
+`COMPLETE`, `FROZEN`, and `CLOSED`. AF-WP3 is `COMPLETE`, `FROZEN`, and
+`CLOSED`.
+
+The completed AF-WP3 lifecycle is recorded by the [Allocation and
+Authorization Record](../governance/ASSET_FOUNDATION_AF_WP3_ALLOCATION_AND_AUTHORIZATION_RECORD.md),
+[Independent Confirmation](../governance/ASSET_FOUNDATION_AF_WP3_INDEPENDENT_CONFIRMATION.md),
+[Content Identity Validation](../governance/ASSET_FOUNDATION_AF_WP3_CONTENT_IDENTITY_VALIDATION.md),
+[Freeze Record](../governance/ASSET_FOUNDATION_AF_WP3_FREEZE_RECORD.md), and
+[Closeout Record](../governance/ASSET_FOUNDATION_AF_WP3_CLOSEOUT_RECORD.md).
+The AF-WP3 implementation candidate preserves the historical initial
+independent-review `FAIL`, additive correction, and focused independent
+re-review `PASS`. The recorded outcomes are Independent Confirmation
+`CONFIRMED`, Content Identity Validation `VALIDATED`, Exact-byte Freeze
+`COMPLETE`, and Closeout `COMPLETE`.
+
+The frozen implementation corpus consists exactly of the [AF-3 Owner Evidence
+Manifest and Conformance-Annex Index](../implementation/ASSET_FOUNDATION_AF_WP3_OWNER_EVIDENCE_MANIFEST_AND_CONFORMANCE_ANNEX_INDEX.md).
+Its recorded identity is working-tree Git blob
+`4f8cae8e17be4f8e743a6d0a43b5c43a6dec851a`, SHA-256
+`095c081746fcf00fce27c8b9bcfd2e6e37482e28028b93943a3b3a9a938fe67f`, 332
+lines, and 25,735 bytes.
+
+**Reasoning:** This additive entry reconciles the Decision Log with the
+already-completed AF-WP3 implementation and governance records. It records
+repository synchronization only; it does not create a lifecycle stage,
+reinterpret any disposition, or alter any implementation, planning, frozen
+governance, hash, or identity content. The Implementation INDEX was already
+synchronized and is intentionally unchanged.
+
+**Impact:** AF-WP3's repository disposition is `COMPLETE`, `FROZEN`, and
+`CLOSED`; release is `NOT PERFORMED`; and successor authority is `NONE`.
+This synchronization creates no implementation, runtime, release,
+downstream, AF-WP4, allocation, authorization, or successor authority. No
+implementation artifact, planning artifact, frozen governance artifact, or
+Implementation INDEX entry is modified by this entry.
+
+---
+
+## Asset Foundation — AF-WP4 Implementation Governance Epic Closeout
+
+**Date:** 2026-08-04
+
+**Decision:** Record repository synchronization for the completed AF-WP4
+implementation governance lifecycle. Asset Foundation Planning and AF-WP1
+through AF-WP3 are `COMPLETE`, `FROZEN`, and `CLOSED`. AF-WP4 is `COMPLETE`,
+`FROZEN`, `RELEASE ATTESTED`, and `CLOSED`.
+
+The completed AF-WP4 lifecycle is recorded by the [Allocation
+Record](../governance/ASSET_FOUNDATION_AF_WP4_ALLOCATION_RECORD.md),
+[Authorization Record](../governance/ASSET_FOUNDATION_AF_WP4_AUTHORIZATION_RECORD.md),
+[Independent Review](../governance/ASSET_FOUNDATION_AF_WP4_INDEPENDENT_REVIEW.md),
+[Content Identity Validation](../governance/ASSET_FOUNDATION_AF_WP4_CONTENT_IDENTITY_VALIDATION.md),
+[Freeze Record](../governance/ASSET_FOUNDATION_AF_WP4_FREEZE_RECORD.md),
+[Release Attestation](../governance/ASSET_FOUNDATION_AF_WP4_RELEASE_ATTESTATION.md),
+and [Closeout Record](../governance/ASSET_FOUNDATION_AF_WP4_CLOSEOUT_RECORD.md).
+The recorded outcomes are AF-WP4 allocation `ALLOCATED`, authorization
+`AUTHORIZED FOR BOUNDED DOCUMENTARY IMPLEMENTATION`, Documentary
+Implementation `COMPLETE`, Independent Review `PASS` with material findings
+`NONE`, Independent Confirmation `CONFIRMED`, Content Identity Validation
+`VALIDATED`, Exact-byte Freeze `COMPLETE`, Release Attestation `RELEASE
+ATTESTED`, and Closeout `COMPLETE`.
+
+The frozen implementation corpus consists exactly of the [AF-WP4 Release
+Attestation Candidate](../implementation/ASSET_FOUNDATION_AF_WP4_RELEASE_ATTESTATION.md).
+Its recorded identity is working-tree Git blob
+`372ebf8680c3a4654ae65d769723c0bb6bd2a8de`, SHA-256
+`5a3b3ce7a4a8874cc78c2a98fd0a2d64b6b5624f1d04a16b2272b5ba02c825cb`, 350
+lines, and 30,145 bytes. The candidate remains an untracked frozen
+working-tree artifact; no committed `HEAD` blob is asserted.
+
+**Reasoning:** This additive entry reconciles the Decision Log with the
+already-completed AF-WP4 implementation and governance records. It records
+repository synchronization only; it does not create a lifecycle stage,
+reinterpret any disposition, or alter any implementation, planning, frozen
+governance, hash, or identity content. The Implementation INDEX was already
+synchronized and is intentionally unchanged.
+
+**Impact:** AF-WP4's repository disposition is `COMPLETE`, `FROZEN`, `RELEASE
+ATTESTED`, and `CLOSED`; runtime release is `NOT PERFORMED`; downstream
+authority is `NONE`; Ledger authority is `NONE`; M45 authority is `NONE`; and
+successor authority is `NONE`. This synchronization creates no implementation,
+runtime, downstream, Ledger, M45, allocation, authorization, or successor
+authority. No implementation artifact, planning artifact, governance
+evidence, freeze record, release-attestation record, closeout record, or
+Implementation INDEX entry is modified by this entry.
