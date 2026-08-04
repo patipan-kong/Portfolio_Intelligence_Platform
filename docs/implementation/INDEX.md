@@ -72,7 +72,8 @@ those frozen designs.
 ## Asset Foundation — AF-WP1
 
 The Asset Foundation Planning corpus is `COMPLETE`, `FROZEN`, and `CLOSED`.
-AF-WP1 is `COMPLETE`, `FROZEN`, and `CLOSED`; AF-WP2 remains `NOT ALLOCATED`.
+AF-WP1 is `COMPLETE`, `FROZEN`, and `CLOSED`; AF-WP2 is `COMPLETE`, `FROZEN`,
+and `CLOSED`; AF-WP3 remains `NOT ALLOCATED`.
 This section is navigation-only and grants no authority.
 
 ### Frozen implementation artifacts
@@ -93,6 +94,31 @@ This section is navigation-only and grants no authority.
 
 The completion decision is recorded in the
 [Decision Log](../engineering/DECISION_LOG.md#asset-foundation--af-wp1-implementation-governance-epic-closeout).
+
+## Asset Foundation — AF-WP2
+
+The Asset Foundation Planning corpus is `COMPLETE`, `FROZEN`, and `CLOSED`.
+AF-WP2 is `COMPLETE`, `FROZEN`, and `CLOSED`. AF-WP3 remains `NOT ALLOCATED`.
+This section is navigation-only and grants no authority.
+
+### Implementation artifacts
+
+- [ASSET_FOUNDATION_AF_WP2_AF_2_DENOMINATION_IDENTIFIER_DIMENSION_CANONICAL_FORM.md](ASSET_FOUNDATION_AF_WP2_AF_2_DENOMINATION_IDENTIFIER_DIMENSION_CANONICAL_FORM.md)
+- [ASSET_FOUNDATION_AF_WP2_VECTOR_ANNEX.md](ASSET_FOUNDATION_AF_WP2_VECTOR_ANNEX.md)
+
+### Governance artifacts
+
+- [ASSET_FOUNDATION_AF_WP2_INDEPENDENT_REVIEW.md](../governance/ASSET_FOUNDATION_AF_WP2_INDEPENDENT_REVIEW.md)
+- [ASSET_FOUNDATION_AF_WP2_CORRECTION_RESPONSE.md](../governance/ASSET_FOUNDATION_AF_WP2_CORRECTION_RESPONSE.md)
+- [ASSET_FOUNDATION_AF_WP2_FOCUSED_REREVIEW.md](../governance/ASSET_FOUNDATION_AF_WP2_FOCUSED_REREVIEW.md)
+- [ASSET_FOUNDATION_AF_WP2_CONFIRMATION.md](../governance/ASSET_FOUNDATION_AF_WP2_CONFIRMATION.md)
+- [ASSET_FOUNDATION_AF_WP2_CONTENT_IDENTITY_VALIDATION.md](../governance/ASSET_FOUNDATION_AF_WP2_CONTENT_IDENTITY_VALIDATION.md)
+- [ASSET_FOUNDATION_AF_WP2_FREEZE_RECORD.md](../governance/ASSET_FOUNDATION_AF_WP2_FREEZE_RECORD.md)
+- [ASSET_FOUNDATION_AF_WP2_CLOSEOUT_RECORD.md](../governance/ASSET_FOUNDATION_AF_WP2_CLOSEOUT_RECORD.md)
+- [ASSET_FOUNDATION_AF_WP2_EPIC_CLOSEOUT.md](../governance/ASSET_FOUNDATION_AF_WP2_EPIC_CLOSEOUT.md)
+
+The completion decision is recorded in the
+[Decision Log](../engineering/DECISION_LOG.md#asset-foundation--af-wp2-implementation-governance-epic-closeout).
 
 ## Milestone Navigation (M0–current)
 
