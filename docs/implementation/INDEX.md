@@ -159,6 +159,30 @@ authority.
 - [AF-WP3 Freeze Record](../governance/ASSET_FOUNDATION_AF_WP3_FREEZE_RECORD.md)
 - [AF-WP3 Closeout Record](../governance/ASSET_FOUNDATION_AF_WP3_CLOSEOUT_RECORD.md)
 
+## Asset Foundation - AF-WP4
+
+The Asset Foundation Planning corpus and AF-WP1 through AF-WP3 are
+`COMPLETE`, `FROZEN`, and `CLOSED`. AF-WP4 is an authorized bounded
+documentary implementation package for the AF-4 Asset Foundation Release
+Attestation and owner-domain closeout. Its independent review is `PASS`; no
+correction or focused re-review was required. Independent confirmation is
+`CONFIRMED`. Content-identity validation is `CONTENT IDENTITY VALIDATED`;
+exact-byte freeze is `COMPLETE`; release attestation is `RELEASE ATTESTED`;
+closeout is `AF-WP4 CLOSEOUT: COMPLETE`.
+This section is navigation-only and grants no authority.
+
+### Implementation artifact
+
+- [AF-WP4 Release Attestation Candidate](ASSET_FOUNDATION_AF_WP4_RELEASE_ATTESTATION.md)
+
+### Governance artifact
+
+- [AF-WP4 Independent Review](../governance/ASSET_FOUNDATION_AF_WP4_INDEPENDENT_REVIEW.md)
+- [AF-WP4 Content Identity Validation](../governance/ASSET_FOUNDATION_AF_WP4_CONTENT_IDENTITY_VALIDATION.md)
+- [AF-WP4 Freeze Record](../governance/ASSET_FOUNDATION_AF_WP4_FREEZE_RECORD.md)
+- [AF-WP4 Release Attestation](../governance/ASSET_FOUNDATION_AF_WP4_RELEASE_ATTESTATION.md)
+- [AF-WP4 Closeout Record](../governance/ASSET_FOUNDATION_AF_WP4_CLOSEOUT_RECORD.md)
+
 ## Milestone Navigation (M0–current)
 
 | Milestone | Status (as declared in-document) | Primary document(s) | Closeout | Decision Log |

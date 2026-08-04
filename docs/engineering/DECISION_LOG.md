@@ -2786,3 +2786,53 @@ This synchronization creates no implementation, runtime, release,
 downstream, AF-WP4, allocation, authorization, or successor authority. No
 implementation artifact, planning artifact, frozen governance artifact, or
 Implementation INDEX entry is modified by this entry.
+
+---
+
+## Asset Foundation — AF-WP4 Implementation Governance Epic Closeout
+
+**Date:** 2026-08-04
+
+**Decision:** Record repository synchronization for the completed AF-WP4
+implementation governance lifecycle. Asset Foundation Planning and AF-WP1
+through AF-WP3 are `COMPLETE`, `FROZEN`, and `CLOSED`. AF-WP4 is `COMPLETE`,
+`FROZEN`, `RELEASE ATTESTED`, and `CLOSED`.
+
+The completed AF-WP4 lifecycle is recorded by the [Allocation
+Record](../governance/ASSET_FOUNDATION_AF_WP4_ALLOCATION_RECORD.md),
+[Authorization Record](../governance/ASSET_FOUNDATION_AF_WP4_AUTHORIZATION_RECORD.md),
+[Independent Review](../governance/ASSET_FOUNDATION_AF_WP4_INDEPENDENT_REVIEW.md),
+[Content Identity Validation](../governance/ASSET_FOUNDATION_AF_WP4_CONTENT_IDENTITY_VALIDATION.md),
+[Freeze Record](../governance/ASSET_FOUNDATION_AF_WP4_FREEZE_RECORD.md),
+[Release Attestation](../governance/ASSET_FOUNDATION_AF_WP4_RELEASE_ATTESTATION.md),
+and [Closeout Record](../governance/ASSET_FOUNDATION_AF_WP4_CLOSEOUT_RECORD.md).
+The recorded outcomes are AF-WP4 allocation `ALLOCATED`, authorization
+`AUTHORIZED FOR BOUNDED DOCUMENTARY IMPLEMENTATION`, Documentary
+Implementation `COMPLETE`, Independent Review `PASS` with material findings
+`NONE`, Independent Confirmation `CONFIRMED`, Content Identity Validation
+`VALIDATED`, Exact-byte Freeze `COMPLETE`, Release Attestation `RELEASE
+ATTESTED`, and Closeout `COMPLETE`.
+
+The frozen implementation corpus consists exactly of the [AF-WP4 Release
+Attestation Candidate](../implementation/ASSET_FOUNDATION_AF_WP4_RELEASE_ATTESTATION.md).
+Its recorded identity is working-tree Git blob
+`372ebf8680c3a4654ae65d769723c0bb6bd2a8de`, SHA-256
+`5a3b3ce7a4a8874cc78c2a98fd0a2d64b6b5624f1d04a16b2272b5ba02c825cb`, 350
+lines, and 30,145 bytes. The candidate remains an untracked frozen
+working-tree artifact; no committed `HEAD` blob is asserted.
+
+**Reasoning:** This additive entry reconciles the Decision Log with the
+already-completed AF-WP4 implementation and governance records. It records
+repository synchronization only; it does not create a lifecycle stage,
+reinterpret any disposition, or alter any implementation, planning, frozen
+governance, hash, or identity content. The Implementation INDEX was already
+synchronized and is intentionally unchanged.
+
+**Impact:** AF-WP4's repository disposition is `COMPLETE`, `FROZEN`, `RELEASE
+ATTESTED`, and `CLOSED`; runtime release is `NOT PERFORMED`; downstream
+authority is `NONE`; Ledger authority is `NONE`; M45 authority is `NONE`; and
+successor authority is `NONE`. This synchronization creates no implementation,
+runtime, downstream, Ledger, M45, allocation, authorization, or successor
+authority. No implementation artifact, planning artifact, governance
+evidence, freeze record, release-attestation record, closeout record, or
+Implementation INDEX entry is modified by this entry.
