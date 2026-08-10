@@ -1,7 +1,9 @@
 from sqlalchemy import (
     create_engine, Column, Integer, String, Float, DateTime,
-    Text, ForeignKey, UniqueConstraint, Boolean,
+    Text, ForeignKey, UniqueConstraint, Boolean, JSON, Index, CheckConstraint,
+    text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
@@ -29,6 +31,29 @@ else:
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
+
+
+_POSITION_CONVERSION_TYPE = "POSITION_CONVERSION"
+_POSITION_CONVERSION_CONSTRAINT = "ck_tx_position_conversion_identity_date"
+_SQLITE_POSITION_CONVERSION_MIDNIGHT = """
+(
+    typeof(transaction_date) = 'text'
+    AND (
+        transaction_date GLOB
+            '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] 00:00:00'
+        OR transaction_date GLOB
+            '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] 00:00:00.000000'
+    )
+    AND date(transaction_date) = substr(transaction_date, 1, 10)
+)
+""".strip()
+_SQLITE_POSITION_CONVERSION_VALID = f"""
+(
+    asset_id IS NOT NULL
+    AND transaction_date IS NOT NULL
+    AND {_SQLITE_POSITION_CONVERSION_MIDNIGHT}
+)
+""".strip()
 
 
 class Workspace(Base):
@@ -216,12 +241,16 @@ class AnalysisHistory(Base):
 class Transaction(Base):
     """Records individual transactions for a portfolio.
 
+    POSITION_CONVERSION is an append-only whole-position predecessor-to-
+    successor conversion; its authoritative values live in conversion_payload.
+
     transaction_type values:
       BUY, SELL             — equity transactions (symbol required)
       DEPOSIT, WITHDRAW     — cash movements (symbol is null)
       INITIAL_POSITION      — onboarding: import existing holding (symbol required)
       INITIAL_CASH          — onboarding: set starting cash (symbol is null)
       QUANTITY_CORRECTION   — manual share-count adjustment (symbol required)
+      POSITION_CONVERSION   — whole-position successor conversion (symbol required)
     """
     __tablename__ = "transactions"
 
@@ -248,7 +277,38 @@ class Transaction(Base):
     # M5 Track B Stage 2 — see PortfolioItem.asset_id docstring above.
     asset_id = Column(Integer, ForeignKey("assets.id"), nullable=True, index=True)
 
+    # Authoritative structured POSITION_CONVERSION contract. Existing
+    # transaction types leave this null; PostgreSQL stores JSONB while SQLite
+    # uses SQLAlchemy's portable JSON type.
+    conversion_payload = Column(
+        JSON().with_variant(JSONB(), "postgresql"),
+        nullable=True,
+    )
+
     portfolio = relationship("Portfolio", back_populates="transactions")
+
+    __table_args__ = (
+        Index(
+            "uq_tx_position_conversion_portfolio_predecessor_date",
+            "portfolio_id",
+            "asset_id",
+            "transaction_date",
+            unique=True,
+            sqlite_where=text("transaction_type = 'POSITION_CONVERSION'"),
+            postgresql_where=text("transaction_type = 'POSITION_CONVERSION'"),
+        ),
+        CheckConstraint(
+            "transaction_type <> 'POSITION_CONVERSION' OR "
+            "(asset_id IS NOT NULL AND transaction_date IS NOT NULL AND "
+            "transaction_date = date_trunc('day', transaction_date))",
+            name=_POSITION_CONVERSION_CONSTRAINT,
+        ).ddl_if(dialect="postgresql"),
+        CheckConstraint(
+            "transaction_type <> 'POSITION_CONVERSION' OR "
+            f"{_SQLITE_POSITION_CONVERSION_VALID}",
+            name=_POSITION_CONVERSION_CONSTRAINT,
+        ).ddl_if(dialect="sqlite"),
+    )
 
 
 class PortfolioSnapshot(Base):
@@ -832,6 +892,43 @@ def migrate_legacy_data() -> None:
                         conn.execute(text("ALTER TABLE transactions ADD COLUMN currency TEXT DEFAULT 'THB'"))
                     if "exchange_rate" not in tx_cols:
                         conn.execute(text("ALTER TABLE transactions ADD COLUMN exchange_rate REAL DEFAULT 1.0"))
+                    if "conversion_payload" not in tx_cols:
+                        conn.execute(text("ALTER TABLE transactions ADD COLUMN conversion_payload JSON"))
+                    conn.execute(text(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS "
+                        "uq_tx_position_conversion_portfolio_predecessor_date "
+                        "ON transactions (portfolio_id, asset_id, transaction_date) "
+                        "WHERE transaction_type = 'POSITION_CONVERSION'"
+                    ))
+                    invalid_conversion = conn.execute(text(
+                        "SELECT id FROM transactions "
+                        "WHERE transaction_type = 'POSITION_CONVERSION' "
+                        "AND (asset_id IS NULL OR transaction_date IS NULL OR "
+                        f"COALESCE({_SQLITE_POSITION_CONVERSION_MIDNIGHT}, 0) = 0) "
+                        "LIMIT 1"
+                    )).scalar()
+                    if invalid_conversion is not None:
+                        raise RuntimeError(
+                            "Cannot install POSITION_CONVERSION identity/date "
+                            f"enforcement: transaction {invalid_conversion} is invalid"
+                        )
+                    invalid_new = (
+                        "NEW.asset_id IS NULL OR NEW.transaction_date IS NULL OR "
+                        f"COALESCE({_SQLITE_POSITION_CONVERSION_MIDNIGHT.replace('transaction_date', 'NEW.transaction_date')}, 0) = 0"
+                    )
+                    for action in ("INSERT", "UPDATE"):
+                        trigger_name = (
+                            f"{_POSITION_CONVERSION_CONSTRAINT}_{action.lower()}"
+                        )
+                        conn.execute(text(
+                            f"CREATE TRIGGER IF NOT EXISTS {trigger_name} "
+                            f"BEFORE {action} ON transactions "
+                            f"WHEN NEW.transaction_type = '{_POSITION_CONVERSION_TYPE}' "
+                            f"AND ({invalid_new}) "
+                            "BEGIN "
+                            f"SELECT RAISE(ABORT, '{_POSITION_CONVERSION_CONSTRAINT}'); "
+                            "END"
+                        ))
 
             # market_data_cache: production-grade yfinance response cache
             if "market_data_cache" not in tables:

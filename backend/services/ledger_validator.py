@@ -635,9 +635,435 @@ def _check_duplicate_fingerprints(
 class _ReplayState:
     holdings: dict[str, Decimal]
     cash:     Decimal
+    # BANPU-WP2 Step 6: per-raw-holding-key exact cost basis (shares × avg
+    # cost) and identity metadata (canonical_symbol, asset_id), tracked in
+    # parallel with `holdings` for every symbol — not only conversion-related
+    # ones — so a later POSITION_CONVERSION can independently resolve and
+    # verify its predecessor/successor without importing portfolio_rebuilder's
+    # own _PortfolioState/_HoldingState (Implementation Specification §5.2).
+    # A key absent from `basis`/`identity` but present in `holdings` cannot
+    # occur within one replay run: every branch that creates or updates a
+    # holdings entry also writes basis/identity in the same step.
+    basis:    dict[str, Decimal]              = field(default_factory=dict)
+    identity: dict[str, tuple[str | None, int | None]] = field(default_factory=dict)
 
     def copy(self) -> "_ReplayState":
-        return _ReplayState(holdings=dict(self.holdings), cash=self.cash)
+        return _ReplayState(
+            holdings = dict(self.holdings),
+            cash     = self.cash,
+            basis    = dict(self.basis),
+            identity = dict(self.identity),
+        )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# BANPU-WP2 Step 6 — independent POSITION_CONVERSION validation
+#
+# Owns its own replay entirely separate from portfolio_rebuilder.py: no import
+# of _PortfolioState, _HoldingState, _apply_transaction, replay_key(), or any
+# rebuilder helper (Implementation Specification §5.2/§6.2). Candidate
+# resolution, duplicate detection, and cash-in-lieu accounting are each
+# reimplemented here against this module's own raw-keyed _ReplayState.
+# ══════════════════════════════════════════════════════════════════════════════
+
+_CONVERSION_BASIS_TOLERANCE      = Decimal("0.01")
+_CONVERSION_PROJECTION_TOLERANCE = Decimal("0.000001")
+
+# Transaction types whose presence on a conversion's transition calendar date,
+# targeting the predecessor or successor asset, is a same-day conflict
+# (Implementation Specification §4.1/§9.2). Independent of
+# portfolio_rebuilder.py's own _SAME_DAY_CONFLICT_TYPES constant.
+_CONVERSION_SAME_DAY_TYPES = frozenset({
+    "BUY", "SELL", "INITIAL_POSITION", "QUANTITY_CORRECTION", "POSITION_CONVERSION",
+})
+
+
+def _conversion_finding(
+    check_id:       str,
+    severity:       FindingSeverity,
+    portfolio_id:   int,
+    ctx:            CanonicalTransaction,
+    title:          str,
+    explanation:    str,
+    recommendation: str,
+    details:        dict[str, Any],
+) -> LedgerFinding:
+    return LedgerFinding(
+        check_id=check_id, severity=severity, portfolio_id=portfolio_id,
+        transaction_ids=[ctx.id], symbol=ctx.raw_symbol, normalized_symbol=ctx.canonical_symbol,
+        title=title, explanation=explanation, recommendation=recommendation, details=details,
+    )
+
+
+def _resolve_conversion_candidates(
+    state:    _ReplayState,
+    asset_id: int,
+    symbol:   str,
+) -> set[str]:
+    """Deterministic raw-holding-key candidate resolution (Implementation
+    Specification §5.2/§7.2/§7.3), independent of portfolio_rebuilder.py's own
+    replay_key()-based resolution.
+
+    Asset-ID matches and canonical-symbol matches are unioned and deduplicated
+    by actual raw holding key. In legacy mode every tracked asset_id is None,
+    so the asset-ID set is always empty and this degenerates to pure
+    canonical-symbol matching — one formula serves both legacy and native
+    validator replay without a mode flag.
+    """
+    candidates: set[str] = set()
+    for key in state.holdings:
+        key_canon, key_asset_id = state.identity.get(key, (None, None))
+        if key_asset_id is not None and key_asset_id == asset_id:
+            candidates.add(key)
+        if key_canon == symbol:
+            candidates.add(key)
+    return candidates
+
+
+def _apply_position_conversion(
+    portfolio_id:      int,
+    ctx:               CanonicalTransaction,
+    all_ctxs:          list[CanonicalTransaction],
+    state:             _ReplayState,
+    conversion_seen:   set,
+    raw_asset_id_by_id: dict[int, int | None] | None = None,
+) -> list[LedgerFinding]:
+    """Independent, validator-owned POSITION_CONVERSION handling.
+
+    Mutates `state` in place only when every check passes; a failing check
+    returns exactly one finding for `ctx` and leaves `state` untouched
+    (Implementation Specification §10: "do not choose a winner", "do not
+    coerce, round into tolerance, or repair the payload").
+
+    raw_asset_id_by_id (BANPU-WP2 Step 7 fix): the top-level identity check
+    below must compare the payload against the transaction row's OWN
+    persisted asset_id — not CanonicalTransaction.asset_id, which WP1's
+    canonicalizer deliberately sets to None for every row when a portfolio
+    is on legacy replay keying (Portfolio.replay_asset_id_native=False, the
+    default). portfolio_rebuilder.py's own preflight
+    (_preflight_position_conversions) reads the raw Transaction row for
+    exactly this reason, with an explicit comment explaining why ctx.asset_id
+    is wrong for this specific check. Falls back to ctx.asset_id when the map
+    is absent (existing direct _replay_and_check() callers in tests that
+    construct ctxs without going through validate_portfolio_ledger()).
+    """
+    parsed = ctx.position_conversion
+    if parsed is None or not parsed.is_valid or parsed.value is None:
+        return [_conversion_finding(
+            "POSITION_CONVERSION_PAYLOAD_INVALID", FindingSeverity.CRITICAL, portfolio_id, ctx,
+            title=f"tx{ctx.id}: POSITION_CONVERSION payload invalid",
+            explanation=(
+                f"tx{ctx.id}'s conversion payload failed WP1 parse validation "
+                f"({len(parsed.errors) if parsed else 0} error(s)). Replay cannot "
+                "apply an unparseable conversion."
+            ),
+            recommendation="Correct the conversion payload per the version-1 schema.",
+            details={"transaction_id": ctx.id,
+                     "errors": [e.code for e in (parsed.errors if parsed else [])]},
+        )]
+
+    payload = parsed.value
+
+    raw_asset_id = raw_asset_id_by_id.get(ctx.id) if raw_asset_id_by_id is not None else ctx.asset_id
+    raw_asset_id_mismatch = (
+        raw_asset_id != payload.predecessor.asset_id
+        if raw_asset_id_by_id is not None
+        else raw_asset_id is not None and raw_asset_id != payload.predecessor.asset_id
+    )
+    if (
+        ctx.canonical_symbol != payload.predecessor.symbol
+        or ctx.transaction_date != payload.dates.valuation_transition_date
+        or raw_asset_id_mismatch
+    ):
+        return [_conversion_finding(
+            "POSITION_CONVERSION_IDENTITY_INVALID", FindingSeverity.CRITICAL, portfolio_id, ctx,
+            title=f"tx{ctx.id}: POSITION_CONVERSION top-level identity disagrees with payload",
+            explanation=(
+                f"tx{ctx.id}'s own symbol/date/asset_id do not agree with its payload "
+                f"predecessor identity (payload symbol={payload.predecessor.symbol}, "
+                f"transition_date={payload.dates.valuation_transition_date})."
+            ),
+            recommendation="Verify the transaction row's symbol, date, and asset_id match the payload predecessor.",
+            details={
+                "transaction_id": ctx.id,
+                "row_symbol":     ctx.canonical_symbol,
+                "row_date":       str(ctx.transaction_date),
+                "payload_symbol": payload.predecessor.symbol,
+                "payload_date":   str(payload.dates.valuation_transition_date),
+            },
+        )]
+
+    dup_key = (payload.predecessor.asset_id, payload.dates.valuation_transition_date)
+    if dup_key in conversion_seen:
+        return [_conversion_finding(
+            "POSITION_CONVERSION_DUPLICATE", FindingSeverity.CRITICAL, portfolio_id, ctx,
+            title=f"tx{ctx.id}: duplicate POSITION_CONVERSION for the same predecessor/date",
+            explanation=(
+                f"Another POSITION_CONVERSION already replayed for predecessor "
+                f"asset_id={payload.predecessor.asset_id} on "
+                f"{payload.dates.valuation_transition_date}. Exactly one conversion key "
+                "is permitted per portfolio, predecessor asset, and transition date."
+            ),
+            recommendation="Identify and remove the duplicate conversion row.",
+            details={
+                "transaction_id":       ctx.id,
+                "predecessor_asset_id": payload.predecessor.asset_id,
+                "transition_date":      str(payload.dates.valuation_transition_date),
+            },
+        )]
+    conversion_seen.add(dup_key)
+
+    transition_date = payload.dates.valuation_transition_date
+    for other in all_ctxs:
+        if other.id == ctx.id or other.transaction_type not in _CONVERSION_SAME_DAY_TYPES:
+            continue
+        if other.transaction_date != transition_date:
+            continue
+        if other.transaction_type == "POSITION_CONVERSION":
+            other_parsed = other.position_conversion
+            if other_parsed is not None and other_parsed.is_valid and other_parsed.value is not None:
+                other_payload = other_parsed.value
+                other_key = (
+                    other_payload.predecessor.asset_id,
+                    other_payload.dates.valuation_transition_date,
+                )
+                if other_key == dup_key:
+                    continue
+        other_symbols = {other.canonical_symbol}
+        other_asset_ids = {other.asset_id}
+        if other.transaction_type == "POSITION_CONVERSION":
+            other_parsed = other.position_conversion
+            if other_parsed is not None and other_parsed.is_valid and other_parsed.value is not None:
+                other_payload = other_parsed.value
+                other_symbols.update({
+                    other_payload.predecessor.symbol,
+                    other_payload.successor.symbol,
+                })
+                other_asset_ids.update({
+                    other_payload.predecessor.asset_id,
+                    other_payload.successor.asset_id,
+                })
+        targets_predecessor = (
+            payload.predecessor.symbol in other_symbols
+            or payload.predecessor.asset_id in other_asset_ids
+        )
+        targets_successor = (
+            payload.successor.symbol in other_symbols
+            or payload.successor.asset_id in other_asset_ids
+        )
+        if targets_predecessor or targets_successor:
+            return [_conversion_finding(
+                "POSITION_CONVERSION_SAME_DAY_CONFLICT", FindingSeverity.ERROR, portfolio_id, ctx,
+                title=f"tx{ctx.id}: another equity transaction affects the predecessor/successor on the transition date",
+                explanation=(
+                    f"tx{other.id} ({other.transaction_type} {other.raw_symbol or ''}) also "
+                    f"falls on {transition_date}, the conversion's valuation transition date, "
+                    "and targets the predecessor or successor asset."
+                ),
+                recommendation="Move the conflicting transaction off the transition date, or verify the conversion date.",
+                details={
+                    "transaction_id":             ctx.id,
+                    "conflicting_transaction_id": other.id,
+                    "transition_date":            str(transition_date),
+                },
+            )]
+
+    predecessor_candidates = _resolve_conversion_candidates(
+        state, payload.predecessor.asset_id, payload.predecessor.symbol,
+    )
+    if len(predecessor_candidates) == 0:
+        return [_conversion_finding(
+            "POSITION_CONVERSION_WITHOUT_HOLDING", FindingSeverity.CRITICAL, portfolio_id, ctx,
+            title=f"tx{ctx.id}: no predecessor holding found for POSITION_CONVERSION",
+            explanation=(
+                f"No replayed holding matches predecessor asset_id="
+                f"{payload.predecessor.asset_id} / symbol={payload.predecessor.symbol}."
+            ),
+            recommendation="Verify the predecessor was actually held before the conversion.",
+            details={"transaction_id": ctx.id, "predecessor_symbol": payload.predecessor.symbol},
+        )]
+    if len(predecessor_candidates) > 1:
+        return [_conversion_finding(
+            "POSITION_CONVERSION_AMBIGUOUS_HOLDING", FindingSeverity.CRITICAL, portfolio_id, ctx,
+            title=f"tx{ctx.id}: multiple holdings match the POSITION_CONVERSION predecessor identity",
+            explanation=(
+                f"{len(predecessor_candidates)} distinct replayed holdings "
+                f"({sorted(predecessor_candidates)}) match predecessor asset_id="
+                f"{payload.predecessor.asset_id} / symbol={payload.predecessor.symbol}."
+            ),
+            recommendation="Resolve the symbol/asset-ID ambiguity before replaying this conversion.",
+            details={"transaction_id": ctx.id, "candidates": sorted(predecessor_candidates)},
+        )]
+    predecessor_key = next(iter(predecessor_candidates))
+
+    replayed_shares = state.holdings[predecessor_key]
+    if replayed_shares != payload.predecessor.shares_surrendered:
+        return [_conversion_finding(
+            "POSITION_CONVERSION_SHARE_MISMATCH", FindingSeverity.CRITICAL, portfolio_id, ctx,
+            title=f"tx{ctx.id}: predecessor shares disagree with payload shares_surrendered",
+            explanation=(
+                f"Replayed predecessor holding has {replayed_shares} shares, but "
+                f"payload.predecessor.shares_surrendered={payload.predecessor.shares_surrendered}."
+            ),
+            recommendation="Verify the surrendered share count against the replayed holding.",
+            details={
+                "transaction_id":              ctx.id,
+                "replayed_shares":              str(replayed_shares),
+                "payload_shares_surrendered":   str(payload.predecessor.shares_surrendered),
+            },
+        )]
+
+    if abs(ctx.shares - payload.successor.shares_received) > _CONVERSION_PROJECTION_TOLERANCE:
+        return [_conversion_finding(
+            "POSITION_CONVERSION_SHARE_MISMATCH", FindingSeverity.CRITICAL, portfolio_id, ctx,
+            title=f"tx{ctx.id}: top-level shares disagree with successor shares_received",
+            explanation=(
+                f"Top-level shares={ctx.shares}, but payload.successor.shares_received="
+                f"{payload.successor.shares_received} (tolerance {_CONVERSION_PROJECTION_TOLERANCE})."
+            ),
+            recommendation="Correct the top-level shares projection or the payload.",
+            details={
+                "transaction_id": ctx.id,
+                "row_shares": str(ctx.shares),
+                "payload_shares_received": str(payload.successor.shares_received),
+            },
+        )]
+
+    replayed_basis = state.basis.get(predecessor_key, Decimal("0"))
+    if abs(replayed_basis - payload.basis.before) > _CONVERSION_BASIS_TOLERANCE:
+        return [_conversion_finding(
+            "POSITION_CONVERSION_BASIS_MISMATCH", FindingSeverity.CRITICAL, portfolio_id, ctx,
+            title=f"tx{ctx.id}: predecessor basis disagrees with payload basis.before",
+            explanation=(
+                f"Replayed predecessor basis is {replayed_basis}, but "
+                f"payload.basis.before={payload.basis.before} "
+                f"(tolerance {_CONVERSION_BASIS_TOLERANCE})."
+            ),
+            recommendation="Verify the predecessor's replayed cost basis against the payload.",
+            details={
+                "transaction_id":      ctx.id,
+                "replayed_basis":      str(replayed_basis),
+                "payload_basis_before": str(payload.basis.before),
+            },
+        )]
+
+    expected_avg_cost = payload.basis.carried_to_successor / payload.successor.shares_received
+    basis_projection_mismatches: list[str] = []
+    if abs(ctx.price_per_share - expected_avg_cost) > _CONVERSION_PROJECTION_TOLERANCE:
+        basis_projection_mismatches.append("price_per_share")
+    if (
+        abs(ctx.total_amount - payload.basis.carried_to_successor)
+        > _CONVERSION_PROJECTION_TOLERANCE
+    ):
+        basis_projection_mismatches.append("total_amount")
+    if basis_projection_mismatches:
+        return [_conversion_finding(
+            "POSITION_CONVERSION_BASIS_MISMATCH", FindingSeverity.CRITICAL, portfolio_id, ctx,
+            title=f"tx{ctx.id}: top-level basis projection disagrees with payload",
+            explanation=(
+                f"Top-level field(s) {basis_projection_mismatches} do not match the payload "
+                f"within tolerance {_CONVERSION_PROJECTION_TOLERANCE}."
+            ),
+            recommendation="Correct the top-level basis projections or the payload.",
+            details={
+                "transaction_id": ctx.id,
+                "mismatched_fields": basis_projection_mismatches,
+                "row_price_per_share": str(ctx.price_per_share),
+                "payload_average_cost": str(expected_avg_cost),
+                "row_total_amount": str(ctx.total_amount),
+                "payload_basis_carried": str(payload.basis.carried_to_successor),
+            },
+        )]
+
+    cil = payload.cash_in_lieu
+    expected_fees = cil.fees if cil is not None else Decimal("0")
+    expected_taxes = cil.taxes if cil is not None else Decimal("0")
+    cil_projection_mismatches: list[str] = []
+    if abs(ctx.fees - expected_fees) > _CONVERSION_PROJECTION_TOLERANCE:
+        cil_projection_mismatches.append("fees")
+    if abs(ctx.taxes - expected_taxes) > _CONVERSION_PROJECTION_TOLERANCE:
+        cil_projection_mismatches.append("taxes")
+    if cil_projection_mismatches:
+        return [_conversion_finding(
+            "POSITION_CONVERSION_CIL_INVALID", FindingSeverity.CRITICAL, portfolio_id, ctx,
+            title=f"tx{ctx.id}: top-level cash-in-lieu projection disagrees with payload",
+            explanation=(
+                f"Top-level field(s) {cil_projection_mismatches} do not match "
+                f"the {'cash-in-lieu payload' if cil is not None else 'required null-leg zero'} "
+                f"within tolerance {_CONVERSION_PROJECTION_TOLERANCE}."
+            ),
+            recommendation="Correct the top-level cash-in-lieu projections or the payload.",
+            details={
+                "transaction_id":    ctx.id,
+                "mismatched_fields": cil_projection_mismatches,
+                "row_fees":          str(ctx.fees),
+                "payload_fees":      str(expected_fees),
+                "row_taxes":         str(ctx.taxes),
+                "payload_taxes":     str(expected_taxes),
+            },
+        )]
+
+    successor_candidates = _resolve_conversion_candidates(
+        state, payload.successor.asset_id, payload.successor.symbol,
+    )
+    if len(successor_candidates) > 1:
+        return [_conversion_finding(
+            "POSITION_CONVERSION_AMBIGUOUS_HOLDING", FindingSeverity.CRITICAL, portfolio_id, ctx,
+            title=f"tx{ctx.id}: multiple holdings match the POSITION_CONVERSION successor identity",
+            explanation=(
+                f"{len(successor_candidates)} distinct replayed holdings "
+                f"({sorted(successor_candidates)}) match successor asset_id="
+                f"{payload.successor.asset_id} / symbol={payload.successor.symbol}."
+            ),
+            recommendation="Resolve the symbol/asset-ID ambiguity before replaying this conversion.",
+            details={"transaction_id": ctx.id, "candidates": sorted(successor_candidates)},
+        )]
+
+    # ── Every check passed — apply atomically ───────────────────────────────
+    del state.holdings[predecessor_key]
+    state.basis.pop(predecessor_key, None)
+    state.identity.pop(predecessor_key, None)
+
+    received_shares = payload.successor.shares_received
+    carried_basis   = payload.basis.carried_to_successor
+    net_cash        = payload.cash_in_lieu.net_cash if payload.cash_in_lieu else Decimal("0")
+
+    if successor_candidates:
+        successor_key  = next(iter(successor_candidates))
+        existing_basis = state.basis.get(successor_key, Decimal("0"))
+        state.holdings[successor_key] = state.holdings[successor_key] + received_shares
+        state.basis[successor_key]    = existing_basis + carried_basis
+    else:
+        successor_key = payload.successor.symbol
+        state.holdings[successor_key] = received_shares
+        state.basis[successor_key]    = carried_basis
+    state.identity[successor_key] = (payload.successor.symbol, payload.successor.asset_id)
+
+    state.cash += net_cash
+    return []
+
+
+def _reinstate_excluded_conversions(
+    all_ctxs:       list[CanonicalTransaction],
+    effective_ctxs: list[CanonicalTransaction],
+) -> list[CanonicalTransaction]:
+    """An EXCLUDE repair targeting POSITION_CONVERSION is ineffective — the
+    conversion remains in the effective canonical sequence and its findings
+    are still produced (Implementation Specification §7.1/§9.3).
+
+    Independent of portfolio_rebuilder.py's own
+    _reinstate_excluded_conversions(); neither imports the other.
+    """
+    effective_ids = {ctx.id for ctx in effective_ctxs}
+    missing = [
+        ctx for ctx in all_ctxs
+        if ctx.transaction_type == "POSITION_CONVERSION" and ctx.id not in effective_ids
+    ]
+    if not missing:
+        return effective_ctxs
+    merged = list(effective_ctxs) + missing
+    merged.sort(key=lambda c: (c.transaction_date, c.id))
+    return merged
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -645,9 +1071,10 @@ class _ReplayState:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _replay_and_check(
-    portfolio_id:   int,
-    ctxs:           list[CanonicalTransaction],
-    snapshot_dates: list[str] | None = None,
+    portfolio_id:       int,
+    ctxs:               list[CanonicalTransaction],
+    snapshot_dates:     list[str] | None = None,
+    raw_asset_id_by_id: dict[int, int | None] | None = None,
 ) -> tuple[_ReplayState, list[LedgerFinding], dict[str, _ReplayState]]:
     """Single-pass replay that detects balance anomalies and captures snapshot states.
 
@@ -667,6 +1094,11 @@ def _replay_and_check(
     snap_sorted = sorted(snapshot_dates or [])
     snap_idx    = 0
     state_by_date: dict[str, _ReplayState] = {}
+
+    # BANPU-WP2 Step 6: local, replay-scoped duplicate-conversion-key tracking
+    # (Implementation Specification §9.2 "repeated predecessor/date conversion
+    # key"). Never persisted or shared across calls.
+    conversion_seen: set = set()
 
     for ctx in ctxs:
         tx_type = ctx.transaction_type
@@ -718,6 +1150,11 @@ def _replay_and_check(
                     },
                 ))
             state.holdings[sym] = state.holdings.get(sym, Decimal("0")) + shares
+            # BANPU-WP2 Step 6: net buy amount is this holding's cost-basis
+            # contribution, mirroring portfolio_rebuilder.py's own avg_cost
+            # accumulation formula (independently reimplemented here).
+            state.basis[sym]    = state.basis.get(sym, Decimal("0")) + amount
+            state.identity[sym] = (ctx.canonical_symbol, ctx.asset_id)
 
         elif tx_type == "SELL":
             if not sym or ctx.shares <= 0:
@@ -753,7 +1190,9 @@ def _replay_and_check(
                 continue
 
             state.cash += amount
-            new_shares = state.holdings[sym] - shares
+            old_shares = state.holdings[sym]
+            old_basis  = state.basis.get(sym, Decimal("0"))
+            new_shares = old_shares - shares
 
             if new_shares < Decimal("-0.001"):
                 findings.append(LedgerFinding(
@@ -787,13 +1226,21 @@ def _replay_and_check(
 
             if new_shares <= Decimal("0.001"):
                 del state.holdings[sym]
+                state.basis.pop(sym, None)
+                state.identity.pop(sym, None)
             else:
                 state.holdings[sym] = new_shares
+                # Avg cost is unchanged by a SELL (mirrors portfolio_rebuilder.py);
+                # basis scales proportionally with the remaining shares.
+                if old_shares != 0:
+                    state.basis[sym] = old_basis * new_shares / old_shares
 
         elif tx_type == "INITIAL_POSITION":
             if not sym or ctx.shares <= 0:
                 continue
             state.holdings[sym] = state.holdings.get(sym, Decimal("0")) + ctx.shares
+            state.basis[sym]    = state.basis.get(sym, Decimal("0")) + ctx.shares * ctx.price_per_share
+            state.identity[sym] = (ctx.canonical_symbol, ctx.asset_id)
 
         elif tx_type == "QUANTITY_CORRECTION":
             if not sym:
@@ -827,7 +1274,17 @@ def _replay_and_check(
                 ))
                 continue
 
-            new_shares = state.holdings[sym] + delta
+            old_shares = state.holdings[sym]
+            old_basis  = state.basis.get(sym, Decimal("0"))
+            new_shares = old_shares + delta
+            if delta > 0:
+                # Avg cost recomputed on an increase (mirrors portfolio_rebuilder.py).
+                new_basis = old_basis + delta * ctx.price_per_share
+            elif old_shares != 0:
+                # Avg cost unchanged on a decrease; basis scales proportionally.
+                new_basis = old_basis * new_shares / old_shares
+            else:
+                new_basis = old_basis
             if new_shares < Decimal("-0.001"):
                 findings.append(LedgerFinding(
                     check_id          = "NEG_SHARE_BALANCE",
@@ -853,8 +1310,16 @@ def _replay_and_check(
 
             if new_shares <= Decimal("0.001"):
                 del state.holdings[sym]
+                state.basis.pop(sym, None)
+                state.identity.pop(sym, None)
             else:
                 state.holdings[sym] = new_shares
+                state.basis[sym]    = new_basis
+
+        elif tx_type == "POSITION_CONVERSION":
+            findings.extend(_apply_position_conversion(
+                portfolio_id, ctx, ctxs, state, conversion_seen, raw_asset_id_by_id,
+            ))
 
     # Capture remaining snapshot dates (on or after last transaction)
     while snap_idx < len(snap_sorted):
@@ -914,8 +1379,14 @@ def _check_holdings_consistency(
     portfolio_items: list[Any],
     replay_state:    _ReplayState,
     shares_tol:      float = _SHARES_TOLERANCE,
+    conversion_aware: bool = False,
 ) -> list[LedgerFinding]:
     """CHECK 9 — Replayed final holdings vs current PortfolioItem rows."""
+    if conversion_aware:
+        return _check_conversion_holdings_consistency(
+            portfolio_id, portfolio_items, replay_state, shares_tol,
+        )
+
     findings: list[LedgerFinding] = []
     current = {item.symbol.strip().upper(): item for item in portfolio_items}
     replay  = replay_state.holdings
@@ -983,6 +1454,110 @@ def _check_holdings_consistency(
                         "difference":    round(diff, 6),
                     },
                 ))
+
+    return findings
+
+
+def _check_conversion_holdings_consistency(
+    portfolio_id:    int,
+    portfolio_items: list[Any],
+    replay_state:    _ReplayState,
+    shares_tol:      float,
+) -> list[LedgerFinding]:
+    """Five-field DB comparison for a conversion-bearing replay.
+
+    Pair by authoritative asset ID first and canonical symbol second, then
+    expose asset_id, symbol, shares, average cost, and basis independently.
+    The legacy symbol-only CHECK 9 path remains byte-for-byte unchanged.
+    """
+    findings: list[LedgerFinding] = []
+    current_by_symbol = {item.symbol.strip().upper(): item for item in portfolio_items}
+    current_by_asset_id = {
+        item.asset_id: item
+        for item in portfolio_items
+        if getattr(item, "asset_id", None) is not None
+    }
+    paired_item_ids: set[int] = set()
+
+    def add_finding(symbol: str, field_name: str, current_value: Any, replay_value: Any) -> None:
+        findings.append(LedgerFinding(
+            check_id="HOLDINGS_MISMATCH",
+            severity=FindingSeverity.ERROR,
+            portfolio_id=portfolio_id,
+            transaction_ids=[],
+            symbol=symbol,
+            normalized_symbol=symbol,
+            title=f"Holdings mismatch: {symbol} {field_name} differs",
+            explanation=(
+                f"{symbol}: DB {field_name}={current_value!r}, "
+                f"replay {field_name}={replay_value!r}."
+            ),
+            recommendation="Run rebuild_portfolio to resync holdings.",
+            details={
+                "symbol": symbol,
+                "field": field_name,
+                "db_value": current_value,
+                "replay_value": replay_value,
+            },
+        ))
+
+    for raw_key in sorted(replay_state.holdings):
+        replay_shares = replay_state.holdings[raw_key]
+        replay_basis = replay_state.basis.get(raw_key, Decimal("0"))
+        canonical_symbol, replay_asset_id = replay_state.identity.get(raw_key, (raw_key, None))
+        replay_symbol = (canonical_symbol or raw_key).strip().upper()
+        current_item = (
+            current_by_asset_id.get(replay_asset_id)
+            if replay_asset_id is not None
+            else None
+        ) or current_by_symbol.get(replay_symbol)
+
+        if current_item is None:
+            add_finding(replay_symbol, "*", None, {
+                "asset_id": replay_asset_id,
+                "symbol": replay_symbol,
+                "shares": str(replay_shares),
+                "average_cost": str(replay_basis / replay_shares),
+                "basis": str(replay_basis),
+            })
+            continue
+
+        paired_item_ids.add(id(current_item))
+        current_symbol = current_item.symbol.strip().upper()
+        current_shares = Decimal(str(current_item.shares))
+        current_avg_cost = Decimal(str(current_item.avg_cost))
+        current_basis = current_shares * current_avg_cost
+        replay_avg_cost = replay_basis / replay_shares
+
+        comparisons = [
+            ("asset_id", getattr(current_item, "asset_id", None), replay_asset_id, Decimal("0")),
+            ("symbol", current_symbol, replay_symbol, Decimal("0")),
+            ("shares", current_shares, replay_shares, Decimal(str(shares_tol))),
+            ("average_cost", current_avg_cost, replay_avg_cost, _CONVERSION_BASIS_TOLERANCE),
+            ("basis", current_basis, replay_basis, _CONVERSION_BASIS_TOLERANCE),
+        ]
+        for field_name, current_value, replay_value, tolerance in comparisons:
+            if isinstance(current_value, Decimal) and isinstance(replay_value, Decimal):
+                matches = abs(current_value - replay_value) <= tolerance
+            else:
+                matches = current_value == replay_value
+            if not matches:
+                add_finding(
+                    replay_symbol,
+                    field_name,
+                    str(current_value) if isinstance(current_value, Decimal) else current_value,
+                    str(replay_value) if isinstance(replay_value, Decimal) else replay_value,
+                )
+
+    for current_item in portfolio_items:
+        if id(current_item) not in paired_item_ids:
+            symbol = current_item.symbol.strip().upper()
+            add_finding(symbol, "*", {
+                "asset_id": getattr(current_item, "asset_id", None),
+                "symbol": symbol,
+                "shares": current_item.shares,
+                "average_cost": current_item.avg_cost,
+            }, None)
 
     return findings
 
@@ -1429,8 +2004,14 @@ async def validate_portfolio_ledger(
     _suppress_keys: set[tuple[str, int]] = set()
 
     if _effective:
+        _raw_ctxs = ctxs
         effective_tuple, _provenance = apply_repair_overlay(tuple(ctxs), repairs)
-        ctxs = list(effective_tuple)
+        # BANPU-WP2 §7.1/§9.3: an EXCLUDE repair targeting a POSITION_CONVERSION
+        # is ineffective — the conversion remains in the effective canonical
+        # sequence regardless of any repair overlay. ledger_repair.py itself is
+        # unchanged; this is the validator's own consumer-boundary enforcement,
+        # independent of portfolio_rebuilder.py's equivalent guarantee.
+        ctxs = _reinstate_excluded_conversions(_raw_ctxs, list(effective_tuple))
         for r in repairs:  # type: ignore[union-attr]
             if (
                 getattr(r, "repair_type", None) == "SUPPRESS_FINDING"
@@ -1467,10 +2048,17 @@ async def validate_portfolio_ledger(
     findings.extend(_check_duplicate_fingerprints(portfolio_id, ctxs))
 
     # ── Replay-based checks ───────────────────────────────────────────────────
+    # BANPU-WP2 Step 7: raw asset_id map, independent of CanonicalTransaction's
+    # legacy-mode-gated asset_id, so POSITION_CONVERSION identity validation
+    # can compare against the transaction row's own persisted asset_id exactly
+    # as portfolio_rebuilder.py's preflight does (see _apply_position_conversion's
+    # docstring). raw_txs is the same already-loaded query result used above.
+    _raw_asset_id_by_id = {tx.id: getattr(tx, "asset_id", None) for tx in raw_txs}
     final_state, replay_findings, state_by_date = _replay_and_check(
-        portfolio_id   = portfolio_id,
-        ctxs           = ctxs,
-        snapshot_dates = snap_dates,
+        portfolio_id       = portfolio_id,
+        ctxs               = ctxs,
+        snapshot_dates     = snap_dates,
+        raw_asset_id_by_id = _raw_asset_id_by_id,
     )
     findings.extend(replay_findings)
 
@@ -1486,6 +2074,9 @@ async def validate_portfolio_ledger(
         portfolio_items = portfolio_items,
         replay_state    = final_state,
         shares_tol      = shares_tolerance,
+        conversion_aware = any(
+            ctx.transaction_type == "POSITION_CONVERSION" for ctx in ctxs
+        ),
     ))
     findings.extend(_check_snapshot_cash_consistency(
         portfolio_id  = portfolio_id,
@@ -1527,8 +2118,11 @@ async def validate_portfolio_ledger(
     if _effective:
         tagged: list[LedgerFinding] = []
         for f in findings:
+            # BANPU-WP2 §9.3: a SUPPRESS_FINDING repair must never silence an
+            # active POSITION_CONVERSION finding.
             is_suppressed = bool(
                 _suppress_keys
+                and not f.check_id.startswith("POSITION_CONVERSION_")
                 and any(
                     (f.check_id, tx_id) in _suppress_keys
                     for tx_id in f.transaction_ids

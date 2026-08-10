@@ -32,6 +32,8 @@ Coverage
 """
 from __future__ import annotations
 
+import ast
+import inspect
 import sys
 import os
 from datetime import date, datetime
@@ -43,10 +45,14 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from services.transaction_canonicalizer import canonicalize_transactions
+import services.ledger_validator as ledger_validator_module
+import services.portfolio_rebuilder as portfolio_rebuilder_module
+from services.portfolio_rebuilder import PositionConversionReplayError, _preflight_position_conversions
 from services.ledger_validator import (
     FindingSeverity,
     LedgerFinding,
     LedgerValidationReport,
+    _EQUITY_TYPES,
     _ReplayState,
     _check_cash_consistency,
     _check_date_skew,
@@ -785,3 +791,520 @@ class TestReportProperties:
         ])
         assert len(r.warnings) == 1
         assert r.warnings[0].check_id == "C"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# BANPU-WP2 Step 2 — POSITION_CONVERSION validator fixtures (pure _replay_and_check)
+#
+# WP2 production behavior does not exist yet: _replay_and_check() has no
+# POSITION_CONVERSION branch, so a conversion row currently produces no
+# findings and no state mutation at all. Every test below is expected to FAIL
+# until WP2 Step 6 is implemented.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _conv_payload(
+    *,
+    predecessor_asset_id: int,
+    predecessor_symbol: str,
+    shares_surrendered: str,
+    successor_asset_id: int,
+    successor_symbol: str,
+    successor_provider_symbol: str,
+    shares_entitled: str,
+    shares_received: str,
+    conversion_ratio: str,
+    basis_before: str,
+    basis_allocated: str,
+    basis_carried: str,
+    cash_in_lieu: dict | None = None,
+    transition_date: str = "2026-03-02",
+) -> dict:
+    return {
+        "schema_version": 1,
+        "predecessor": {
+            "asset_id": predecessor_asset_id,
+            "symbol": predecessor_symbol,
+            "shares_surrendered": shares_surrendered,
+        },
+        "successor": {
+            "asset_id": successor_asset_id,
+            "symbol": successor_symbol,
+            "provider_symbol": successor_provider_symbol,
+            "shares_entitled": shares_entitled,
+            "shares_received": shares_received,
+        },
+        "conversion_ratio": conversion_ratio,
+        "basis": {
+            "before": basis_before,
+            "allocated_to_cash_in_lieu": basis_allocated,
+            "carried_to_successor": basis_carried,
+        },
+        "cash_in_lieu": cash_in_lieu,
+        "dates": {
+            "legal_effective_date": transition_date,
+            "valuation_transition_date": transition_date,
+            "predecessor_last_price_date": transition_date,
+            "successor_quote_epoch_start_date": transition_date,
+        },
+        "quote_binding": {
+            "provider": "test-provider",
+            "predecessor_provider_symbol": predecessor_symbol,
+            "successor_provider_symbol": successor_provider_symbol,
+        },
+        "boundary_evidence": {
+            "predecessor_reference_price": "1.00",
+            "successor_reference_price": "1.00",
+            "mechanical_nav_tolerance_pct": "1.0",
+            "suspension_gap_annotation": "WP2 fixture — no suspension",
+        },
+        "evidence": {
+            "reference": "WP2-FIXTURE",
+            "source": "unit-test",
+            "captured_at": "2026-03-02T00:00:00Z",
+        },
+    }
+
+
+def _conv_tx(
+    tx_id: int,
+    payload,
+    *,
+    symbol: str | None,
+    date_str: str = "2026-03-02",
+    shares: float | None = None,
+    price: float | None = None,
+    amount: float | None = None,
+    fees: float | None = None,
+    taxes: float | None = None,
+) -> SimpleNamespace:
+    successor = payload.get("successor", {})
+    basis = payload.get("basis", {})
+    cash_in_lieu = payload.get("cash_in_lieu")
+    if successor and basis:
+        received = Decimal(successor["shares_received"])
+        carried = Decimal(basis["carried_to_successor"])
+        shares = float(received) if shares is None else shares
+        price = float(carried / received) if price is None else price
+        amount = float(carried) if amount is None else amount
+    shares = 0.0 if shares is None else shares
+    price = 0.0 if price is None else price
+    amount = 0.0 if amount is None else amount
+    fees = float(Decimal(cash_in_lieu["fees"])) if fees is None and cash_in_lieu else (fees or 0.0)
+    taxes = float(Decimal(cash_in_lieu["taxes"])) if taxes is None and cash_in_lieu else (taxes or 0.0)
+    tx_date = datetime.strptime(date_str, "%Y-%m-%d")
+    return SimpleNamespace(
+        id               = tx_id,
+        transaction_type = "POSITION_CONVERSION",
+        symbol           = symbol,
+        shares           = shares,
+        price_per_share  = price,
+        total_amount     = amount,
+        fees             = fees,
+        taxes            = taxes,
+        sector           = None,
+        transaction_date = tx_date,
+        created_at       = tx_date,
+        notes            = None,
+        conversion_payload = payload,
+    )
+
+
+# ── Finding catalog — one triggering fixture per active WP2 check ID ───────────
+
+def test_position_conversion_payload_invalid_produces_critical_finding():
+    conv = _conv_tx(1, payload={"schema_version": 2}, symbol="PIPRED.BK")  # unsupported version, missing fields
+    ctxs = _canonical([conv])
+    _, findings, _ = _replay_and_check(1, ctxs)
+    matches = _only_findings(findings, "POSITION_CONVERSION_PAYLOAD_INVALID")
+    assert len(matches) == 1
+    assert matches[0].severity == FindingSeverity.CRITICAL
+
+
+def test_position_conversion_identity_invalid_when_top_level_symbol_disagrees():
+    payload = _conv_payload(
+        predecessor_asset_id=401, predecessor_symbol="IIPRED.BK", shares_surrendered="10",
+        successor_asset_id=402, successor_symbol="IISUCC.BK", successor_provider_symbol="IISUCC.BK",
+        shares_entitled="10", shares_received="10", conversion_ratio="1",
+        basis_before="100", basis_allocated="0", basis_carried="100",
+    )
+    pred = _tx(1, "INITIAL_POSITION", symbol="IIPRED.BK", shares=10, price=10, amount=100, date_str="2026-01-01")
+    conv = _conv_tx(2, payload, symbol="WRONG.BK", date_str="2026-03-02")   # disagrees with payload predecessor symbol
+    ctxs = _canonical([pred, conv])
+    _, findings, _ = _replay_and_check(1, ctxs)
+    matches = _only_findings(findings, "POSITION_CONVERSION_IDENTITY_INVALID")
+    assert len(matches) == 1
+
+
+def test_position_conversion_null_raw_asset_id_fails_closed():
+    """MINOR-1: a persisted NULL is not the direct-call test-shim fallback."""
+    payload = _conv_payload(
+        predecessor_asset_id=451, predecessor_symbol="NULLPRED.BK", shares_surrendered="10",
+        successor_asset_id=452, successor_symbol="NULLSUCC.BK", successor_provider_symbol="NULLSUCC.BK",
+        shares_entitled="10", shares_received="10", conversion_ratio="1",
+        basis_before="100", basis_allocated="0", basis_carried="100",
+    )
+    pred = _tx(1, "INITIAL_POSITION", symbol="NULLPRED.BK", shares=10, price=10,
+               amount=100, date_str="2026-01-01")
+    conv = _conv_tx(2, payload, symbol="NULLPRED.BK")
+    ctxs = _canonical([pred, conv])
+
+    _, findings, _ = _replay_and_check(
+        1, ctxs, raw_asset_id_by_id={1: None, 2: None},
+    )
+    matches = _only_findings(findings, "POSITION_CONVERSION_IDENTITY_INVALID")
+    assert len(matches) == 1
+
+
+def test_conversion_holdings_consistency_compares_all_five_fields():
+    """MAJOR-2: asset-first and symbol-fallback pairings expose five fields."""
+    state = _ReplayState(
+        holdings={"RAW": Decimal("10")},
+        cash=Decimal("0"),
+        basis={"RAW": Decimal("100")},
+        identity={"RAW": ("NEWSYM.BK", 5002)},
+    )
+
+    asset_paired = SimpleNamespace(
+        symbol="OLDSYM.BK", asset_id=5002, shares=2.0, avg_cost=5.0,
+    )
+    findings = _check_holdings_consistency(
+        1, [asset_paired], state, conversion_aware=True,
+    )
+    assert {finding.details["field"] for finding in findings} == {
+        "symbol", "shares", "average_cost", "basis",
+    }
+
+    symbol_paired = SimpleNamespace(
+        symbol="NEWSYM.BK", asset_id=9999, shares=10.0, avg_cost=10.0,
+    )
+    findings = _check_holdings_consistency(
+        1, [symbol_paired], state, conversion_aware=True,
+    )
+    assert [finding.details["field"] for finding in findings] == ["asset_id"]
+
+
+def test_deferred_conversion_findings_have_no_wp2_emission_path():
+    """C-3: deferred WP3/WP5 IDs are absent from every WP2 emitter call site."""
+    deferred = {
+        "POSITION_CONVERSION_REBUILD_BOUNDARY",
+        "POSITION_CONVERSION_QUOTE_QUARANTINED",
+    }
+    emitted: set[str] = set()
+    for module, emitter_names in [
+        (portfolio_rebuilder_module, {"PositionConversionReplayError"}),
+        (ledger_validator_module, {"_conversion_finding"}),
+    ]:
+        tree = ast.parse(inspect.getsource(module))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            emitter_name = node.func.id if isinstance(node.func, ast.Name) else None
+            if emitter_name not in emitter_names:
+                continue
+            emitted.update(
+                arg.value
+                for arg in node.args
+                if isinstance(arg, ast.Constant) and isinstance(arg.value, str)
+                and arg.value.startswith("POSITION_CONVERSION_")
+            )
+
+    assert deferred.isdisjoint(emitted)
+
+
+def test_position_conversion_duplicate_key_produces_finding():
+    payload = _conv_payload(
+        predecessor_asset_id=501, predecessor_symbol="DUPRED.BK", shares_surrendered="10",
+        successor_asset_id=502, successor_symbol="DUSUCC.BK", successor_provider_symbol="DUSUCC.BK",
+        shares_entitled="10", shares_received="10", conversion_ratio="1",
+        basis_before="100", basis_allocated="0", basis_carried="100",
+    )
+    pred  = _tx(1, "INITIAL_POSITION", symbol="DUPRED.BK", shares=10, price=10, amount=100, date_str="2026-01-01")
+    conv1 = _conv_tx(2, payload, symbol="DUPRED.BK", date_str="2026-03-02")
+    conv2 = _conv_tx(3, payload, symbol="DUPRED.BK", date_str="2026-03-02")   # same predecessor + date key
+    ctxs = _canonical([pred, conv1, conv2])
+    _, findings, _ = _replay_and_check(1, ctxs)
+    matches = _only_findings(findings, "POSITION_CONVERSION_DUPLICATE")
+    assert len(matches) == 1
+
+
+def test_position_conversion_without_holding_produces_finding():
+    payload = _conv_payload(
+        predecessor_asset_id=601, predecessor_symbol="WHPRED.BK", shares_surrendered="10",
+        successor_asset_id=602, successor_symbol="WHSUCC.BK", successor_provider_symbol="WHSUCC.BK",
+        shares_entitled="10", shares_received="10", conversion_ratio="1",
+        basis_before="100", basis_allocated="0", basis_carried="100",
+    )
+    conv = _conv_tx(1, payload, symbol="WHPRED.BK", date_str="2026-03-02")  # no predecessor holding at all
+    ctxs = _canonical([conv])
+    _, findings, _ = _replay_and_check(1, ctxs)
+    matches = _only_findings(findings, "POSITION_CONVERSION_WITHOUT_HOLDING")
+    assert len(matches) == 1
+
+
+def test_position_conversion_ambiguous_holding_when_multiple_raw_keys_match():
+    payload = _conv_payload(
+        predecessor_asset_id=701, predecessor_symbol="APRED.BK", shares_surrendered="10",
+        successor_asset_id=702, successor_symbol="ASUCC.BK", successor_provider_symbol="ASUCC.BK",
+        shares_entitled="10", shares_received="10", conversion_ratio="1",
+        basis_before="100", basis_allocated="0", basis_carried="100",
+    )
+    # "APRED" and "APRED.BK" are distinct raw-symbol holding keys that both
+    # canonicalize to "APRED.BK" (the payload's predecessor symbol).
+    pred1 = _tx(1, "INITIAL_POSITION", symbol="APRED",    shares=5, price=10, amount=50, date_str="2026-01-01")
+    pred2 = _tx(2, "INITIAL_POSITION", symbol="APRED.BK", shares=5, price=10, amount=50, date_str="2026-01-02")
+    conv  = _conv_tx(3, payload, symbol="APRED.BK", date_str="2026-03-02")
+    ctxs = _canonical([pred1, pred2, conv])
+    _, findings, _ = _replay_and_check(1, ctxs)
+    matches = _only_findings(findings, "POSITION_CONVERSION_AMBIGUOUS_HOLDING")
+    assert len(matches) == 1
+
+
+def test_position_conversion_share_mismatch_produces_finding():
+    # conversion_ratio="1" keeps the payload internally self-consistent
+    # (shares_entitled == shares_surrendered * conversion_ratio, a WP1 parser
+    # invariant) while shares_surrendered still deliberately disagrees with
+    # the real 10-share replayed holding below.
+    payload = _conv_payload(
+        predecessor_asset_id=801, predecessor_symbol="SMPRED.BK", shares_surrendered="999",  # disagrees with holding
+        successor_asset_id=802, successor_symbol="SMSUCC.BK", successor_provider_symbol="SMSUCC.BK",
+        shares_entitled="999", shares_received="999", conversion_ratio="1",
+        basis_before="100", basis_allocated="0", basis_carried="100",
+    )
+    pred = _tx(1, "INITIAL_POSITION", symbol="SMPRED.BK", shares=10, price=10, amount=100, date_str="2026-01-01")
+    conv = _conv_tx(2, payload, symbol="SMPRED.BK", date_str="2026-03-02")
+    ctxs = _canonical([pred, conv])
+    _, findings, _ = _replay_and_check(1, ctxs)
+    matches = _only_findings(findings, "POSITION_CONVERSION_SHARE_MISMATCH")
+    assert len(matches) == 1
+
+
+def test_position_conversion_basis_mismatch_produces_finding():
+    payload = _conv_payload(
+        predecessor_asset_id=901, predecessor_symbol="BMPRED.BK", shares_surrendered="10",
+        successor_asset_id=902, successor_symbol="BMSUCC.BK", successor_provider_symbol="BMSUCC.BK",
+        shares_entitled="10", shares_received="10", conversion_ratio="1",
+        basis_before="999.00", basis_allocated="0", basis_carried="999.00",  # holding's real basis is 100
+    )
+    pred = _tx(1, "INITIAL_POSITION", symbol="BMPRED.BK", shares=10, price=10, amount=100, date_str="2026-01-01")
+    conv = _conv_tx(2, payload, symbol="BMPRED.BK", date_str="2026-03-02")
+    ctxs = _canonical([pred, conv])
+    _, findings, _ = _replay_and_check(1, ctxs)
+    matches = _only_findings(findings, "POSITION_CONVERSION_BASIS_MISMATCH")
+    assert len(matches) == 1
+
+
+def test_position_conversion_cash_in_lieu_invalid_when_top_level_projection_disagrees():
+    payload = _conv_payload(
+        predecessor_asset_id=1001, predecessor_symbol="CIPRED.BK", shares_surrendered="8",
+        successor_asset_id=1002, successor_symbol="CISUCC.BK", successor_provider_symbol="CISUCC.BK",
+        shares_entitled="10", shares_received="9.5", conversion_ratio="1.25",
+        basis_before="240", basis_allocated="12", basis_carried="228",
+        cash_in_lieu={
+            "fractional_entitlement_shares": "0.5", "gross_proceeds": "15",
+            "fees": "1", "taxes": "0.5", "net_cash": "13.5",
+            "basis_allocated": "12", "realized_pnl": "1.5",
+        },
+    )
+    pred = _tx(1, "INITIAL_POSITION", symbol="CIPRED.BK", shares=8, price=30, amount=240, date_str="2026-01-01")
+    # Top-level fees column disagrees with payload cash_in_lieu.fees ("1") beyond the 0.000001 tolerance.
+    conv = _conv_tx(2, payload, symbol="CIPRED.BK", fees=999.0, date_str="2026-03-02")
+    ctxs = _canonical([pred, conv])
+    _, findings, _ = _replay_and_check(1, ctxs)
+    matches = _only_findings(findings, "POSITION_CONVERSION_CIL_INVALID")
+    assert len(matches) == 1
+
+
+def test_position_conversion_same_day_conflict_blocks_with_error_severity():
+    payload = _conv_payload(
+        predecessor_asset_id=1101, predecessor_symbol="SDPRED.BK", shares_surrendered="10",
+        successor_asset_id=1102, successor_symbol="SDSUCC.BK", successor_provider_symbol="SDSUCC.BK",
+        shares_entitled="10", shares_received="10", conversion_ratio="1",
+        basis_before="100", basis_allocated="0", basis_carried="100",
+    )
+    pred      = _tx(1, "INITIAL_POSITION", symbol="SDPRED.BK", shares=10, price=10, amount=100, date_str="2026-01-01")
+    other_buy = _tx(2, "BUY", symbol="SDPRED.BK", shares=1, price=10, amount=10, date_str="2026-03-02")  # same day, targets predecessor
+    conv      = _conv_tx(3, payload, symbol="SDPRED.BK", date_str="2026-03-02")
+    ctxs = _canonical([pred, other_buy, conv])
+    _, findings, _ = _replay_and_check(1, ctxs)
+    matches = _only_findings(findings, "POSITION_CONVERSION_SAME_DAY_CONFLICT")
+    assert len(matches) == 1
+    assert matches[0].severity == FindingSeverity.ERROR
+
+
+def test_position_conversion_not_in_equity_types_and_malformed_row_gets_specific_finding_only():
+    """§9.2: POSITION_CONVERSION is not added to _EQUITY_TYPES, so a malformed
+    conversion must produce its own conversion-specific finding rather than a
+    duplicate generic NULL_SYMBOL/ZERO_SHARES finding."""
+    assert "POSITION_CONVERSION" not in _EQUITY_TYPES
+
+    conv = _conv_tx(1, payload={"schema_version": 2}, symbol=None, shares=0.0, date_str="2026-03-02")
+    ctxs = _canonical([conv])
+
+    assert _check_null_symbols(1, ctxs) == []
+    assert _check_zero_shares(1, ctxs) == []
+
+    _, findings, _ = _replay_and_check(1, ctxs)
+    matches = _only_findings(findings, "POSITION_CONVERSION_PAYLOAD_INVALID")
+    assert len(matches) == 1
+
+
+# ── Identity resolution — legacy/native/raw≠canonical/ambiguous candidates ────
+
+def test_position_conversion_raw_not_equal_canonical_resolves_single_holding():
+    payload = _conv_payload(
+        predecessor_asset_id=1201, predecessor_symbol="RPRED.BK", shares_surrendered="10",
+        successor_asset_id=1202, successor_symbol="RSUCC.BK", successor_provider_symbol="RSUCC.BK",
+        shares_entitled="10", shares_received="10", conversion_ratio="1",
+        basis_before="100", basis_allocated="0", basis_carried="100",
+    )
+    # Raw "RPRED" canonicalizes to "RPRED.BK" (services.symbol_normalization
+    # rule 5) — the raw holding key differs from the payload's predecessor
+    # symbol, exactly the "raw ledger symbol differs from canonical/payload
+    # symbol" case the validator's raw-keyed _ReplayState must resolve.
+    pred = _tx(1, "INITIAL_POSITION", symbol="RPRED", shares=10, price=10, amount=100, date_str="2026-01-01")
+    conv = _conv_tx(2, payload, symbol="RPRED.BK", date_str="2026-03-02")
+    ctxs = _canonical([pred, conv])
+    final_state, findings, _ = _replay_and_check(1, ctxs)
+
+    assert "RPRED" not in final_state.holdings           # predecessor removed
+    assert "RSUCC.BK" in final_state.holdings             # successor created
+    assert final_state.holdings["RSUCC.BK"] == Decimal("10")
+
+
+def test_position_conversion_native_mode_resolves_by_asset_id():
+    payload = _conv_payload(
+        predecessor_asset_id=1301, predecessor_symbol="NPRED.BK", shares_surrendered="10",
+        successor_asset_id=1302, successor_symbol="NSUCC.BK", successor_provider_symbol="NSUCC.BK",
+        shares_entitled="10", shares_received="10", conversion_ratio="1",
+        basis_before="100", basis_allocated="0", basis_carried="100",
+    )
+    pred = _tx(1, "INITIAL_POSITION", symbol="NPRED.BK", shares=10, price=10, amount=100, date_str="2026-01-01")
+    pred.asset_id = 1301
+    conv = _conv_tx(2, payload, symbol="NPRED.BK", date_str="2026-03-02")
+    conv.asset_id = 1301
+    ctxs = list(canonicalize_transactions([pred, conv], prefer_asset_id=True))
+    final_state, findings, _ = _replay_and_check(1, ctxs)
+
+    assert "NSUCC.BK" in final_state.holdings
+    assert final_state.holdings["NSUCC.BK"] == Decimal("10")
+
+
+def test_position_conversion_native_mode_zero_candidates_without_holding():
+    payload = _conv_payload(
+        predecessor_asset_id=1401, predecessor_symbol="ZPRED.BK", shares_surrendered="10",
+        successor_asset_id=1402, successor_symbol="ZSUCC.BK", successor_provider_symbol="ZSUCC.BK",
+        shares_entitled="10", shares_received="10", conversion_ratio="1",
+        basis_before="100", basis_allocated="0", basis_carried="100",
+    )
+    conv = _conv_tx(1, payload, symbol="ZPRED.BK", date_str="2026-03-02")
+    conv.asset_id = 1401
+    ctxs = list(canonicalize_transactions([conv], prefer_asset_id=True))
+    _, findings, _ = _replay_and_check(1, ctxs)
+    matches = _only_findings(findings, "POSITION_CONVERSION_WITHOUT_HOLDING")
+    assert len(matches) == 1
+
+
+def test_position_conversion_conflicting_asset_id_and_symbol_candidates_are_ambiguous():
+    payload = _conv_payload(
+        predecessor_asset_id=1501, predecessor_symbol="XPRED.BK", shares_surrendered="10",
+        successor_asset_id=1502, successor_symbol="XSUCC.BK", successor_provider_symbol="XSUCC.BK",
+        shares_entitled="10", shares_received="10", conversion_ratio="1",
+        basis_before="100", basis_allocated="0", basis_carried="100",
+    )
+    pred_by_id = _tx(1, "INITIAL_POSITION", symbol="OTHER.BK", shares=10, price=10, amount=100, date_str="2026-01-01")
+    pred_by_id.asset_id = 1501   # matches payload predecessor asset_id, different raw symbol
+    pred_by_symbol = _tx(2, "INITIAL_POSITION", symbol="XPRED.BK", shares=5, price=10, amount=50, date_str="2026-01-02")
+    pred_by_symbol.asset_id = 9999   # different asset_id, but canonical symbol matches payload predecessor symbol
+    conv = _conv_tx(3, payload, symbol="XPRED.BK", date_str="2026-03-02")
+    conv.asset_id = 1501
+    ctxs = list(canonicalize_transactions([pred_by_id, pred_by_symbol, conv], prefer_asset_id=True))
+    _, findings, _ = _replay_and_check(1, ctxs)
+    matches = _only_findings(findings, "POSITION_CONVERSION_AMBIGUOUS_HOLDING")
+    assert len(matches) == 1
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# BANPU-WP2 Step 7 — raw asset_id identity fix regression
+#
+# Cross-engine parity testing (test_position_conversion_replay.py) surfaced a
+# real gap: in legacy replay mode CanonicalTransaction.asset_id is always
+# None (WP1 design — see transaction_canonicalizer.py's own docstring), so
+# comparing against ctx.asset_id alone silently skipped a raw asset_id
+# mismatch that portfolio_rebuilder.py's preflight
+# (_preflight_position_conversions) always caught by reading the raw
+# Transaction row directly. validate_portfolio_ledger() now builds and
+# passes raw_asset_id_by_id down to _replay_and_check(); direct
+# _replay_and_check() callers that don't pass it (every other test in this
+# file) keep the prior ctx.asset_id-only behavior.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def test_position_conversion_identity_invalid_uses_raw_asset_id_when_provided():
+    payload = _conv_payload(
+        predecessor_asset_id=1601, predecessor_symbol="RAWID.BK", shares_surrendered="10",
+        successor_asset_id=1602, successor_symbol="RAWIDSUCC.BK", successor_provider_symbol="RAWIDSUCC.BK",
+        shares_entitled="10", shares_received="10", conversion_ratio="1",
+        basis_before="100", basis_allocated="0", basis_carried="100",
+    )
+    pred = _tx(1, "INITIAL_POSITION", symbol="RAWID.BK", shares=10, price=10, amount=100, date_str="2026-01-01")
+    conv = _conv_tx(2, payload, symbol="RAWID.BK", date_str="2026-03-02")
+    ctxs = _canonical([pred, conv])
+    assert ctxs[-1].asset_id is None   # legacy-mode gate confirmed in effect
+
+    # Without the raw map: the raw/payload asset_id disagreement is invisible
+    # (pre-fix behavior, still correct for callers that never pass raw asset
+    # ids — every other direct _replay_and_check() call in this file).
+    _, findings_without_map, _ = _replay_and_check(1, ctxs)
+    assert _only_findings(findings_without_map, "POSITION_CONVERSION_IDENTITY_INVALID") == []
+
+    # With the raw map (what validate_portfolio_ledger() now always builds
+    # and passes): the disagreement between the persisted row's real asset_id
+    # (999) and payload.predecessor.asset_id (1601) must be caught.
+    _, findings_with_map, _ = _replay_and_check(1, ctxs, raw_asset_id_by_id={1: None, 2: 999})
+    matches = _only_findings(findings_with_map, "POSITION_CONVERSION_IDENTITY_INVALID")
+    assert len(matches) == 1
+
+
+def _raw_asset_id_stub(id, asset_id):
+    """Projection-valid stand-in for rebuilder raw-row preflight."""
+    return SimpleNamespace(
+        id=id,
+        asset_id=asset_id,
+        shares=10.0,
+        price_per_share=10.0,
+        total_amount=100.0,
+        fees=0.0,
+        taxes=0.0,
+    )
+
+
+def test_step7_duplicate_conversion_both_engines_agree_no_db():
+    """BANPU-WP2 Step 7 objective 4 (duplicate conversion category): the WP1
+    partial unique index on (portfolio_id, asset_id, transaction_date)
+    already prevents two persisted POSITION_CONVERSION rows sharing a
+    predecessor asset ID and date from ever reaching a real database (see
+    test_position_conversion_duplicate_key_fails_via_preflight in
+    test_portfolio_rebuilder.py, which exercises the same constraint the
+    same way) — so cross-engine parity for this category is proven directly
+    against each engine's own replay entry point on identical, hand-built
+    canonical transactions, never through a committed DB session."""
+    payload = _conv_payload(
+        predecessor_asset_id=1701, predecessor_symbol="S7DUPPRED.BK", shares_surrendered="10",
+        successor_asset_id=1702, successor_symbol="S7DUPSUCC.BK", successor_provider_symbol="S7DUPSUCC.BK",
+        shares_entitled="10", shares_received="10", conversion_ratio="1",
+        basis_before="100", basis_allocated="0", basis_carried="100",
+    )
+    pred  = _tx(1, "INITIAL_POSITION", symbol="S7DUPPRED.BK", shares=10, price=10, amount=100, date_str="2026-01-01")
+    conv1 = _conv_tx(2, payload, symbol="S7DUPPRED.BK", date_str="2026-03-02")
+    conv2 = _conv_tx(3, payload, symbol="S7DUPPRED.BK", date_str="2026-03-02")
+    ctxs = _canonical([pred, conv1, conv2])
+
+    # Rebuilder disposition — preflight, reading the raw row's asset_id directly.
+    raw_txs = [_raw_asset_id_stub(1, None), _raw_asset_id_stub(2, 1701), _raw_asset_id_stub(3, 1701)]
+    with pytest.raises(PositionConversionReplayError) as exc_info:
+        _preflight_position_conversions(raw_txs, ctxs)
+    assert exc_info.value.reason == "POSITION_CONVERSION_DUPLICATE"
+
+    # Validator disposition — same ctxs, independent replay.
+    _, findings, _ = _replay_and_check(1, ctxs)
+    matches = _only_findings(findings, "POSITION_CONVERSION_DUPLICATE")
+    assert len(matches) == 1
