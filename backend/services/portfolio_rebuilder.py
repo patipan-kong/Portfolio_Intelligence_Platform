@@ -356,10 +356,374 @@ class RebuildResult:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# BANPU-WP2 Step 3/4 — POSITION_CONVERSION preflight, identity resolution, and
+# exact accounting application
+#
+# Scope: validate a conversion row before any replay site touches it, resolve
+# which _PortfolioState.holdings key(s) its predecessor/successor identity
+# match (Step 3), and — once every check passes — apply the conversion:
+# remove the predecessor holding, create or merge the successor holding, and
+# apply only the admitted cash/realized-P&L effects (Step 4). Successor
+# asset-ID binding against pre-existing PortfolioItem rows and PortfolioItem
+# preservation across a conversion-driven delete-and-reinsert commit remain
+# BANPU-WP2 Step 5 — this module's replay state has no visibility into stored
+# PortfolioItem rows at all, only the Transaction ledger.
+# ──────────────────────────────────────────────────────────────────────────────
+
+class PositionConversionReplayError(Exception):
+    """Controlled, conversion-specific preflight/replay failure.
+
+    Carries the offending transaction ID and a stable, machine-readable
+    reason. Most reasons are POSITION_CONVERSION_* check IDs matching the
+    WP2 finding catalog (Implementation Specification §9.1); a small number
+    (the Step 5 materialization-identity reasons, e.g.
+    POSITION_CONVERSION_SUCCESSOR_ASSET_ID_CONFLICT) describe a rebuilder-
+    internal concern — comparing replay output against currently stored
+    PortfolioItem rows — with no catalog counterpart, since the catalog
+    describes services/ledger_validator.py's own findings, not this
+    exception's reasons. Raised before any database mutation is staged; the
+    existing outer rebuild_portfolio() exception handler turns this into
+    RebuildResult(success=False, aborted=False, committed=False, error=...) —
+    it is never converted into a success and never suppresses an unrelated
+    exception's own handling.
+    """
+
+    def __init__(self, transaction_id: int, reason: str) -> None:
+        self.transaction_id = transaction_id
+        self.reason = reason
+        super().__init__(f"POSITION_CONVERSION tx{transaction_id}: {reason}")
+
+
+@dataclass(frozen=True)
+class _ConversionSuccessorBinding:
+    """One conversion's independently resolved successor materialization.
+
+    The complete relation set is keyed by conversion transaction ID, never by
+    successor symbol.  A later conversion may legitimately target the same
+    successor across a later date; keeping one binding per conversion prevents
+    that row from replacing an earlier relation before reconciliation/commit.
+    """
+
+    successor_symbol: str
+    paired_item: PortfolioItem | None
+    successor_asset_id: int
+
+
+# Transaction types whose presence on a conversion's transition calendar date,
+# targeting the predecessor or successor asset, constitutes a same-day
+# conflict (Implementation Specification §4.1). Duplicate predecessor/date
+# conversion keys are rejected first in Pass 2, so including conversions here
+# catches distinct same-day chains without changing DUPLICATE precedence.
+_SAME_DAY_CONFLICT_TYPES = frozenset({
+    "BUY", "SELL", "INITIAL_POSITION", "QUANTITY_CORRECTION", "POSITION_CONVERSION",
+})
+_CONVERSION_PROJECTION_TOLERANCE = Decimal("0.000001")
+
+
+def _preflight_position_conversions(
+    raw_txs: list[Transaction],
+    canonical_txs: list[CanonicalTransaction],
+) -> None:
+    """Validate every POSITION_CONVERSION row once, before either replay site.
+
+    Raises PositionConversionReplayError on the first invalid conversion,
+    in the deterministic (transaction_date, id) order canonical_txs is
+    already sorted in. Operates on the raw, un-repaired canonical list (the
+    same list every caller has before any repair overlay is applied) so a
+    repair overlay can never make an invalid conversion look valid, or an
+    excluded conversion disappear from validation — see
+    _reinstate_excluded_conversions() for the complementary guarantee that an
+    excluded conversion still reaches replay.
+
+    Frozen canonicalization intentionally hides CanonicalTransaction.asset_id
+    in legacy replay mode (prefer_asset_id=False), so the raw-row asset_id
+    agreement check below reads the already-loaded raw Transaction row
+    directly rather than ctx.asset_id (Implementation Specification §4).
+    """
+    raw_by_id = {tx.id: tx for tx in raw_txs}
+    conversions = [ctx for ctx in canonical_txs if ctx.transaction_type == "POSITION_CONVERSION"]
+    if not conversions:
+        return
+
+    # Pass 1 — payload validity and raw-row identity/date agreement.
+    for ctx in conversions:
+        parsed = ctx.position_conversion
+        if parsed is None or not parsed.is_valid or parsed.value is None:
+            raise PositionConversionReplayError(ctx.id, "POSITION_CONVERSION_PAYLOAD_INVALID")
+        payload = parsed.value
+        raw = raw_by_id.get(ctx.id)
+        if (
+            raw is None
+            or raw.asset_id != payload.predecessor.asset_id
+            or ctx.canonical_symbol != payload.predecessor.symbol
+            or ctx.transaction_date != payload.dates.valuation_transition_date
+        ):
+            raise PositionConversionReplayError(ctx.id, "POSITION_CONVERSION_IDENTITY_INVALID")
+
+        expected_avg_cost = (
+            payload.basis.carried_to_successor / payload.successor.shares_received
+        )
+        if (
+            raw.shares is None
+            or abs(_d(raw.shares) - payload.successor.shares_received)
+            > _CONVERSION_PROJECTION_TOLERANCE
+        ):
+            raise PositionConversionReplayError(ctx.id, "POSITION_CONVERSION_SHARE_MISMATCH")
+        if (
+            raw.price_per_share is None
+            or raw.total_amount is None
+            or abs(_d(raw.price_per_share) - expected_avg_cost)
+            > _CONVERSION_PROJECTION_TOLERANCE
+            or abs(_d(raw.total_amount) - payload.basis.carried_to_successor)
+            > _CONVERSION_PROJECTION_TOLERANCE
+        ):
+            raise PositionConversionReplayError(ctx.id, "POSITION_CONVERSION_BASIS_MISMATCH")
+
+        expected_fees = payload.cash_in_lieu.fees if payload.cash_in_lieu else Decimal("0")
+        expected_taxes = payload.cash_in_lieu.taxes if payload.cash_in_lieu else Decimal("0")
+        if (
+            raw.fees is None
+            or raw.taxes is None
+            or abs(_d(raw.fees) - expected_fees) > _CONVERSION_PROJECTION_TOLERANCE
+            or abs(_d(raw.taxes) - expected_taxes) > _CONVERSION_PROJECTION_TOLERANCE
+        ):
+            raise PositionConversionReplayError(ctx.id, "POSITION_CONVERSION_CIL_INVALID")
+
+    # Pass 2 — duplicate conversion key: exactly one conversion per portfolio,
+    # predecessor asset ID, and valuation transition calendar date. The WP1
+    # partial unique index already enforces this for persisted rows sharing
+    # the same raw transaction_date; this pass is the defensive, schema-
+    # independent equivalent (e.g. a legacy pre-index database, or any
+    # already-loaded canonical list).
+    key_counts: dict[tuple, int] = {}
+    for ctx in conversions:
+        payload = ctx.position_conversion.value  # validated non-None by Pass 1
+        key = (payload.predecessor.asset_id, payload.dates.valuation_transition_date)
+        key_counts[key] = key_counts.get(key, 0) + 1
+    for ctx in conversions:
+        payload = ctx.position_conversion.value
+        key = (payload.predecessor.asset_id, payload.dates.valuation_transition_date)
+        if key_counts[key] > 1:
+            raise PositionConversionReplayError(ctx.id, "POSITION_CONVERSION_DUPLICATE")
+
+    # Pass 3 — same-day affected-asset conflict against ordinary equity rows.
+    for ctx in conversions:
+        payload = ctx.position_conversion.value
+        transition_date = payload.dates.valuation_transition_date
+        for other in canonical_txs:
+            if other.id == ctx.id or other.transaction_type not in _SAME_DAY_CONFLICT_TYPES:
+                continue
+            if other.transaction_date != transition_date:
+                continue
+            other_symbols = {other.canonical_symbol}
+            other_asset_ids = {other.asset_id}
+            if other.transaction_type == "POSITION_CONVERSION":
+                other_parsed = other.position_conversion
+                if other_parsed is not None and other_parsed.is_valid and other_parsed.value is not None:
+                    other_payload = other_parsed.value
+                    other_symbols.update({
+                        other_payload.predecessor.symbol,
+                        other_payload.successor.symbol,
+                    })
+                    other_asset_ids.update({
+                        other_payload.predecessor.asset_id,
+                        other_payload.successor.asset_id,
+                    })
+            targets_predecessor = (
+                payload.predecessor.symbol in other_symbols
+                or payload.predecessor.asset_id in other_asset_ids
+            )
+            targets_successor = (
+                payload.successor.symbol in other_symbols
+                or payload.successor.asset_id in other_asset_ids
+            )
+            if targets_predecessor or targets_successor:
+                raise PositionConversionReplayError(ctx.id, "POSITION_CONVERSION_SAME_DAY_CONFLICT")
+
+
+def _reinstate_excluded_conversions(
+    all_txs: list[CanonicalTransaction],
+    canonical_txs: list[CanonicalTransaction],
+) -> list[CanonicalTransaction]:
+    """A LedgerRepair EXCLUDE targeting POSITION_CONVERSION is ineffective: the
+    conversion remains in the effective canonical sequence regardless of
+    apply_repairs or any repair overlay (Implementation Specification §7.1).
+    ledger_repair.py itself is not modified — this is the rebuilder consumer
+    boundary the frozen plan requires instead.
+    """
+    effective_ids = {ctx.id for ctx in all_txs}
+    missing = [
+        ctx for ctx in canonical_txs
+        if ctx.transaction_type == "POSITION_CONVERSION" and ctx.id not in effective_ids
+    ]
+    if not missing:
+        return all_txs
+    merged = list(all_txs) + missing
+    merged.sort(key=lambda c: (c.transaction_date, c.id))
+    return merged
+
+
+def _resolve_conversion_predecessor_key(state: _PortfolioState, payload) -> set:
+    """Local, replay_key()-compatible candidate resolution for the predecessor
+    holding — legacy mode matches only the canonical-symbol tier (asset_id is
+    never a dict key there); native mode also admits the payload's predecessor
+    asset ID, including the canonical-symbol fallback for a historical holding
+    whose creating transaction was never asset-ID backfilled. Does not call or
+    modify replay_key() itself."""
+    candidates: set = set()
+    if payload.predecessor.symbol in state.holdings:
+        candidates.add(payload.predecessor.symbol)
+    if payload.predecessor.asset_id in state.holdings:
+        candidates.add(payload.predecessor.asset_id)
+    return candidates
+
+
+def _resolve_conversion_successor_key(state: _PortfolioState, payload) -> set:
+    """Local candidate resolution for an existing successor holding eligible
+    for merge. Zero candidates is not an error (Step 4 creates a fresh
+    holding); more than one — including asset-ID and symbol paths resolving
+    to different existing holdings — is ambiguous and must fail closed."""
+    candidates: set = set()
+    if payload.successor.symbol in state.holdings:
+        candidates.add(payload.successor.symbol)
+    if payload.successor.asset_id in state.holdings:
+        candidates.add(payload.successor.asset_id)
+    return candidates
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# BANPU-WP2 Step 5 — conversion materialization identity resolution
+#
+# Distinct from _resolve_conversion_successor_key() above: that function
+# resolves candidates against the in-memory _PortfolioState.holdings built
+# purely from the Transaction ledger during replay (Step 3/4, no DB
+# awareness). This function resolves the SAME conversion's successor against
+# currently STORED PortfolioItem rows — the denormalized materialization
+# cache replay has no visibility into — using the frozen asset-ID-precedence/
+# canonical-symbol-fallback pairing rule (Implementation Specification §8).
+# Runs once, after Stage 1 replay succeeds and before any reconciliation or
+# persistent mutation, so both Stage 4 (reconciliation) and Stage 8 (commit)
+# consume one already-validated result rather than re-deriving it.
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _resolve_conversion_successors(
+    db: Session,
+    portfolio_id: int,
+    all_txs: list[CanonicalTransaction],
+) -> dict[int, _ConversionSuccessorBinding]:
+    """Pair every conversion's authoritative successor identity against
+    currently stored PortfolioItem rows for this portfolio.
+
+    Returns {conversion_transaction_id: _ConversionSuccessorBinding}.  A
+    `None` paired item means no pre-existing row exists — the successor will
+    be newly created, not a conflict.  The transaction-keyed representation
+    deliberately retains every conversion relation when several dated rows
+    share one successor symbol.  Raises
+    PositionConversionReplayError (fail-closed) when the asset-ID and
+    canonical-symbol candidates identify two different stored rows, or when
+    a uniquely paired row already carries a different non-null asset_id.  A
+    shared successor symbol with conflicting payload asset IDs is likewise
+    ambiguous because materialization cannot choose one authoritative identity.
+    Read-only: issues one PortfolioItem query, no registry or Asset-table
+    access, no general identity backfill (scope note in the WP2 governance
+    corpus — asset-ID preservation is authorized only to keep a conversion-
+    bearing rebuild lossless for this portfolio, nothing broader).
+    """
+    conversions = [ctx for ctx in all_txs if ctx.transaction_type == "POSITION_CONVERSION"]
+    if not conversions:
+        return {}
+
+    current_by_symbol = {
+        item.symbol: item
+        for item in db.query(PortfolioItem).filter_by(portfolio_id=portfolio_id).all()
+    }
+
+    pairings: dict[int, _ConversionSuccessorBinding] = {}
+    successor_asset_ids: dict[str, int] = {}
+    for ctx in conversions:
+        payload = ctx.position_conversion.value  # already preflight-validated
+
+        by_asset_id = next(
+            (item for item in current_by_symbol.values()
+             if item.asset_id is not None and item.asset_id == payload.successor.asset_id),
+            None,
+        )
+        by_symbol = current_by_symbol.get(payload.successor.symbol)
+
+        if by_asset_id is not None and by_symbol is not None and by_asset_id.id != by_symbol.id:
+            raise PositionConversionReplayError(
+                ctx.id, "POSITION_CONVERSION_SUCCESSOR_IDENTITY_AMBIGUOUS"
+            )
+
+        paired = by_asset_id if by_asset_id is not None else by_symbol
+        if paired is not None and paired.asset_id is not None and paired.asset_id != payload.successor.asset_id:
+            raise PositionConversionReplayError(
+                ctx.id, "POSITION_CONVERSION_SUCCESSOR_ASSET_ID_CONFLICT"
+            )
+
+        previous_asset_id = successor_asset_ids.get(payload.successor.symbol)
+        if previous_asset_id is not None and previous_asset_id != payload.successor.asset_id:
+            raise PositionConversionReplayError(
+                ctx.id, "POSITION_CONVERSION_SUCCESSOR_IDENTITY_AMBIGUOUS"
+            )
+        successor_asset_ids[payload.successor.symbol] = payload.successor.asset_id
+        pairings[ctx.id] = _ConversionSuccessorBinding(
+            successor_symbol=payload.successor.symbol,
+            paired_item=paired,
+            successor_asset_id=payload.successor.asset_id,
+        )
+
+    return pairings
+
+
+def _conversion_successors_by_symbol(
+    conversion_successors: dict[int, _ConversionSuccessorBinding] | None,
+) -> dict[str, tuple[_ConversionSuccessorBinding, ...]]:
+    """Group preserved transaction-keyed bindings for final projection.
+
+    Grouping is intentionally a downstream view: the source mapping still
+    contains one independently auditable binding per conversion transaction.
+    Every binding for a shared successor must carry the same authoritative
+    asset ID (enforced by _resolve_conversion_successors), so reconciliation
+    and commit can consume the first deterministic binding without losing the
+    other relations.
+    """
+    grouped: dict[str, list[_ConversionSuccessorBinding]] = {}
+    for transaction_id in sorted((conversion_successors or {})):
+        binding = conversion_successors[transaction_id]
+        grouped.setdefault(binding.successor_symbol, []).append(binding)
+    return {symbol: tuple(bindings) for symbol, bindings in grouped.items()}
+
+
+# Extends Stage 5's ledger validation gate (§7.1/§9): the generic
+# `if result.ledger_criticals > 0` rule already blocks on any conversion
+# CRITICAL finding regardless of check_id, so no change is needed for that
+# half of the frozen policy. POSITION_CONVERSION_SAME_DAY_CONFLICT is the one
+# WP2-catalogued finding with a fixed ERROR severity that must still block —
+# every other ERROR finding keeps its current (non-blocking) treatment.
+# Rebuilder preflight is the primary detector. This Stage 5 gate independently
+# corroborates the validator boundary and closes the generic CRITICAL-only
+# severity hole if the validator reports the conflict there.
+_CONVERSION_STAGE5_BLOCKING_ERROR_CHECK_IDS = frozenset({"POSITION_CONVERSION_SAME_DAY_CONFLICT"})
+
+
+def _has_conversion_blocking_error(validation_report: LedgerValidationReport) -> bool:
+    return any(
+        f.check_id in _CONVERSION_STAGE5_BLOCKING_ERROR_CHECK_IDS
+        for f in validation_report.errors
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Stage 1 — Transaction replay
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _apply_transaction(state: _PortfolioState, ctx: CanonicalTransaction) -> None:
+def _apply_transaction(
+    state: _PortfolioState,
+    ctx: CanonicalTransaction,
+    *,
+    conversion_seen: set | None = None,
+) -> None:
     """Apply one canonical transaction to the mutable portfolio state in-place."""
     tx_type = ctx.transaction_type
     amount  = ctx.total_amount  # already Decimal
@@ -457,6 +821,102 @@ def _apply_transaction(state: _PortfolioState, ctx: CanonicalTransaction) -> Non
             h.shares = new_shares
         # QUANTITY_CORRECTION does NOT affect cash balance
 
+    elif tx_type == "POSITION_CONVERSION":
+        # BANPU-WP2 Step 4 scope: everything through successor-candidate
+        # resolution is unchanged Step 3 preflight/identity logic — every
+        # raw-row/payload/duplicate/same-day fact was already verified once
+        # by _preflight_position_conversions() before replay started. What
+        # follows the candidate checks is new: exact-Decimal accounting
+        # application (predecessor removal, successor create/merge, admitted
+        # cash/realized-P&L effects). No mutation happens above this point,
+        # so a raise anywhere before it leaves state untouched.
+        parsed = ctx.position_conversion
+        if parsed is None or not parsed.is_valid or parsed.value is None:
+            raise PositionConversionReplayError(ctx.id, "POSITION_CONVERSION_PAYLOAD_INVALID")
+        payload = parsed.value
+
+        if conversion_seen is not None:
+            key = (payload.predecessor.asset_id, payload.dates.valuation_transition_date)
+            if key in conversion_seen:
+                raise PositionConversionReplayError(ctx.id, "POSITION_CONVERSION_DUPLICATE")
+            conversion_seen.add(key)
+
+        predecessor_candidates = _resolve_conversion_predecessor_key(state, payload)
+        if len(predecessor_candidates) == 0:
+            raise PositionConversionReplayError(ctx.id, "POSITION_CONVERSION_WITHOUT_HOLDING")
+        if len(predecessor_candidates) > 1:
+            raise PositionConversionReplayError(ctx.id, "POSITION_CONVERSION_AMBIGUOUS_HOLDING")
+        predecessor_key = next(iter(predecessor_candidates))
+        predecessor = state.holdings[predecessor_key]
+
+        successor_candidates = _resolve_conversion_successor_key(state, payload)
+        if len(successor_candidates) > 1:
+            raise PositionConversionReplayError(ctx.id, "POSITION_CONVERSION_AMBIGUOUS_HOLDING")
+
+        # Qp / B0 reconciliation — the replayed predecessor holding must
+        # actually be the position the payload describes converting. Shares
+        # are compared exactly (both sides are payload- or ledger-derived
+        # Decimals with no independent rounding); basis is compared with the
+        # spec's documented THB 0.01 tolerance to absorb float→Decimal
+        # round-trip noise already present in upstream price_per_share
+        # parsing (see transaction_canonicalizer), not to hide a real
+        # mismatch.
+        if predecessor.shares != payload.predecessor.shares_surrendered:
+            raise PositionConversionReplayError(ctx.id, "POSITION_CONVERSION_SHARE_MISMATCH")
+        replayed_basis = predecessor.shares * predecessor.avg_cost
+        if abs(replayed_basis - payload.basis.before) > Decimal("0.01"):
+            raise PositionConversionReplayError(ctx.id, "POSITION_CONVERSION_BASIS_MISMATCH")
+
+        # Admitted values come only from the payload — never re-derived from
+        # predecessor.avg_cost/shares — so cash-in-lieu fees/taxes/rounding
+        # already reconciled once by parse_position_conversion_payload()'s
+        # own invariant checks are not silently redone here (Requirement 4).
+        received_shares    = payload.successor.shares_received      # Qr
+        carried_basis      = payload.basis.carried_to_successor     # Bs
+        net_cash            = payload.cash_in_lieu.net_cash if payload.cash_in_lieu else Decimal("0")        # Cn
+        realized_pnl        = payload.cash_in_lieu.realized_pnl if payload.cash_in_lieu else Decimal("0")    # RP
+        predecessor_sector  = predecessor.sector
+
+        del state.holdings[predecessor_key]
+
+        if successor_candidates:
+            successor_key = next(iter(successor_candidates))
+            successor      = state.holdings[successor_key]
+            existing_basis  = successor.shares * successor.avg_cost
+            combined_shares = successor.shares + received_shares
+            combined_basis  = existing_basis + carried_basis
+            successor.shares   = combined_shares
+            successor.avg_cost = combined_basis / combined_shares
+            if not successor.sector:
+                successor.sector = predecessor_sector
+            # Step 5 (Implementation Specification §7.3.5): the successor's
+            # reported symbol is always bound from the payload, on merge as
+            # well as on create — never left at whatever report_symbol the
+            # pre-existing holding happened to carry.
+            successor.report_symbol = payload.successor.symbol
+        else:
+            # New holding's merge key follows the replay run's canonical mode,
+            # not the tier that happened to resolve the predecessor. In native
+            # mode the conversion ctx retains its top-level asset_id even when
+            # the historical predecessor itself required the null-asset symbol
+            # fallback. A later native successor trade therefore resolves to
+            # this same asset-ID key.
+            successor_key = (
+                payload.successor.asset_id if ctx.asset_id is not None
+                else payload.successor.symbol
+            )
+            state.holdings[successor_key] = _HoldingState(
+                symbol        = successor_key,
+                report_symbol = payload.successor.symbol,
+                shares        = received_shares,
+                avg_cost      = carried_basis / received_shares,
+                sector        = predecessor_sector,
+                price_symbol  = payload.successor.symbol,
+            )
+
+        state.cash_balance            += net_cash
+        state.cumulative_realized_pnl += realized_pnl
+
 
 def _replay_with_date_snapshots(
     txs:   list[CanonicalTransaction],
@@ -466,6 +926,11 @@ def _replay_with_date_snapshots(
 
     Returns {date: _PortfolioState} for every date in `dates`.
     Complexity: O(N + D) where N = transactions, D = distinct dates.
+
+    Owns its own fresh conversion-key duplicate-tracking set (BANPU-WP2 Step 3)
+    — this is Stage 2's replay invocation, entirely independent of Stage 1's
+    (rebuild_portfolio()'s own sequential loop, which creates its own set).
+    Neither site treats the other's application as a duplicate.
     """
     state = _PortfolioState(
         cash_balance            = Decimal("0"),
@@ -475,6 +940,7 @@ def _replay_with_date_snapshots(
     result: dict[str, _PortfolioState] = {}
     tx_idx = 0
     n_txs  = len(txs)
+    conversion_seen: set = set()
 
     for snap_date in dates:
         # Advance: apply every transaction with tx_date <= snap_date
@@ -482,7 +948,7 @@ def _replay_with_date_snapshots(
             ctx     = txs[tx_idx]
             tx_date = ctx.transaction_date.strftime("%Y-%m-%d")
             if tx_date <= snap_date:
-                _apply_transaction(state, ctx)
+                _apply_transaction(state, ctx, conversion_seen=conversion_seen)
                 tx_idx += 1
             else:
                 break
@@ -733,11 +1199,22 @@ def _populate_return_fields(
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _reconcile_portfolio_items(
-    db:           Session,
-    portfolio_id: int,
-    final_state:  _PortfolioState,
+    db:                    Session,
+    portfolio_id:          int,
+    final_state:           _PortfolioState,
+    conversion_successors: dict[int, _ConversionSuccessorBinding] | None = None,
 ) -> list[ReconciliationRow]:
-    """Compare existing PortfolioItem rows against the reconstructed final state."""
+    """Compare existing PortfolioItem rows against the reconstructed final state.
+
+    conversion_successors (BANPU-WP2 Step 5, from _resolve_conversion_successors,
+    already fail-closed-validated before Stage 4 runs) keeps one relation per
+    conversion transaction.  The symbol-grouped view below marks which final
+    reconstructed symbols are conversion successors.  Only those symbols get
+    the extended five-field (asset_id, symbol, shares, avg_cost, basis)
+    reconciliation path — every ordinary symbol keeps the existing two-field
+    shares/avg_cost behavior unchanged (Implementation Specification §8).
+    """
+    conversion_by_symbol = _conversion_successors_by_symbol(conversion_successors)
     current = {
         item.symbol: item
         for item in db.query(PortfolioItem).filter_by(portfolio_id=portfolio_id).all()
@@ -752,8 +1229,18 @@ def _reconcile_portfolio_items(
 
     rows: list[ReconciliationRow] = []
 
-    for sym in sorted(set(current) | set(recon)):
-        curr_item  = current.get(sym)
+    paired_current_symbols = {
+        binding.paired_item.symbol
+        for bindings in conversion_by_symbol.values()
+        for binding in bindings
+        if binding.paired_item is not None
+    }
+    symbols = (set(current) - paired_current_symbols) | set(recon)
+
+    for sym in sorted(symbols):
+        successor_bindings = conversion_by_symbol.get(sym, ())
+        paired_item = successor_bindings[0].paired_item if successor_bindings else None
+        curr_item  = paired_item if paired_item is not None else current.get(sym)
         recon_item = recon.get(sym)
 
         if curr_item is None:
@@ -781,7 +1268,38 @@ def _reconcile_portfolio_items(
             ))
             continue
 
-        # Both exist — compare field by field
+        # Both exist and sym is a conversion successor with an actual
+        # pre-existing comparand — five independent fields instead of the
+        # ordinary two. A brand-new successor (no pre-existing row) took the
+        # MISSING branch above instead; no fabricated comparand here.
+        if successor_bindings:
+            successor_asset_id = successor_bindings[0].successor_asset_id
+            recon_shares   = _f(recon_item.shares)
+            recon_avg_cost = _f(recon_item.avg_cost)
+            for col, curr_val, recon_val, tol in [
+                ("asset_id", curr_item.asset_id, successor_asset_id,             0),
+                ("symbol",   curr_item.symbol,   recon_item.report_symbol,       0),
+                ("shares",   curr_item.shares,   recon_shares,                   0.0001),
+                ("avg_cost", curr_item.avg_cost, recon_avg_cost,                 0.01),
+                ("basis",    (curr_item.shares or 0.0) * (curr_item.avg_cost or 0.0),
+                              recon_shares * recon_avg_cost,                     0.01),
+            ]:
+                if isinstance(curr_val, (int, float)) and isinstance(recon_val, (int, float)):
+                    matches = abs(curr_val - recon_val) <= tol
+                else:
+                    matches = curr_val == recon_val
+                rows.append(ReconciliationRow(
+                    entity_type         = "portfolio_item",
+                    identifier          = sym,
+                    field               = col,
+                    current_value       = curr_val,
+                    reconstructed_value = recon_val,
+                    status              = ReconciliationStatus.MATCH if matches
+                                          else ReconciliationStatus.DIFFERENT,
+                ))
+            continue
+
+        # Both exist — compare field by field (ordinary items, unchanged)
         for col, tol in [("shares", 0.0001), ("avg_cost", 0.01)]:
             curr_val  = getattr(curr_item, col)
             recon_val = _f(getattr(recon_item, col))
@@ -1289,28 +1807,51 @@ def _snap_day_to_db_dict(day: _SnapshotDay) -> dict:
 
 
 def _commit_rebuild(
-    db:             Session,
-    portfolio_id:   int,
-    workspace_id:   int,
-    portfolio:      Portfolio,
-    final_state:    _PortfolioState,
-    snapshot_days:  list[_SnapshotDay],
-    skip_snapshots: bool,
+    db:                    Session,
+    portfolio_id:          int,
+    workspace_id:          int,
+    portfolio:             Portfolio,
+    final_state:           _PortfolioState,
+    snapshot_days:         list[_SnapshotDay],
+    skip_snapshots:        bool,
+    conversion_successors: dict[int, _ConversionSuccessorBinding] | None = None,
 ) -> None:
     """Write the reconstructed state to the database atomically.
 
     Caller is responsible for calling db.commit() / db.rollback().
     This function performs NO commit — it only stages ORM changes.
+
+    conversion_successors (BANPU-WP2 Step 5): asset_id preservation is scoped
+    to conversion-bearing rebuilds only (Implementation Specification §8 /
+    governance scope note — lossless for THIS portfolio's conversion, not a
+    general registry backfill).  The mapping is keyed by conversion
+    transaction ID; the symbol-grouped view is used only to bind the final
+    materialized successor identity. When empty (the overwhelming majority of
+    rebuilds — no POSITION_CONVERSION in the ledger), commit behavior is
+    byte-identical to before Step 5: every inserted PortfolioItem gets
+    asset_id=None, exactly the pre-existing behavior.
     """
+    conversion_by_symbol = _conversion_successors_by_symbol(conversion_successors)
+    is_conversion_bearing = bool(conversion_by_symbol)
+
     # ── 1. Update Portfolio.cash_balance ─────────────────────────────────────
     portfolio.cash_balance = _f(final_state.cash_balance)
 
     # ── 2. Replace PortfolioItem rows ─────────────────────────────────────────
-    # Preserve user-configurable allow_swap before deleting
-    allow_swap_map: dict[str, bool] = {
-        item.symbol: item.allow_swap
-        for item in db.query(PortfolioItem).filter_by(portfolio_id=portfolio_id).all()
-    }
+    # Deterministic pre-delete preservation map, keyed by the current stored
+    # symbol — an existing DB-constraint-backed unique key
+    # (uq_portfolio_symbol) per portfolio, so a duplicate/ambiguous key here
+    # can only mean a data-integrity anomaly, never legitimate ledger state;
+    # fail closed rather than guess. Captures allow_swap (pre-existing
+    # behavior, unconditional) and asset_id (Step 5, conversion-scoped only).
+    existing_items_by_symbol: dict[str, PortfolioItem] = {}
+    for item in db.query(PortfolioItem).filter_by(portfolio_id=portfolio_id).all():
+        if item.symbol in existing_items_by_symbol:
+            raise RuntimeError(
+                f"PortfolioItem preservation key ambiguous: portfolio_id={portfolio_id} "
+                f"symbol={item.symbol!r} — uq_portfolio_symbol should make this unreachable"
+            )
+        existing_items_by_symbol[item.symbol] = item
 
     db.query(PortfolioItem).filter_by(portfolio_id=portfolio_id).delete(
         synchronize_session=False
@@ -1321,6 +1862,20 @@ def _commit_rebuild(
         # latter is an int (asset_id) under native keying, and
         # PortfolioItem.symbol is a String column (TDD Stage 4; see
         # _HoldingState's own docstring).
+        existing = existing_items_by_symbol.get(h.report_symbol)
+
+        if h.report_symbol in conversion_by_symbol:
+            # Authoritative binding — never the preserved value for this
+            # symbol, which (per _resolve_conversion_successors) is either
+            # absent, already correct, or legitimately NULL pre-commit.  All
+            # dated bindings for one shared successor carry the same ID.
+            asset_id = conversion_by_symbol[h.report_symbol][0].successor_asset_id
+        elif is_conversion_bearing:
+            asset_id = existing.asset_id if existing else None
+        else:
+            # No-conversion rebuild — unchanged pre-Step-5 behavior.
+            asset_id = None
+
         db.add(PortfolioItem(
             workspace_id = workspace_id,
             portfolio_id = portfolio_id,
@@ -1328,7 +1883,8 @@ def _commit_rebuild(
             shares       = _f(h.shares),
             avg_cost     = _f(h.avg_cost),
             sector       = h.sector,
-            allow_swap   = allow_swap_map.get(h.report_symbol, True),
+            allow_swap   = existing.allow_swap if existing else True,
+            asset_id     = asset_id,
         ))
 
     # ── 3. Upsert snapshot rows ────────────────────────────────────────────────
@@ -1613,6 +2169,13 @@ async def rebuild_portfolio(
         )
         raw_canonical_count = len(canonical_txs)
 
+        # ── BANPU-WP2 Step 3: POSITION_CONVERSION preflight ────────────────────
+        # Runs once, on the raw (un-repaired) canonical list, before either
+        # replay site and before the repair overlay below — so a repair can
+        # never make an invalid conversion look valid. A failure here aborts
+        # the whole rebuild before any replay or database mutation.
+        _preflight_position_conversions(raw_txs, canonical_txs)
+
         # ── Repair overlay (Phase 6.7C) ────────────────────────────────────────
         active_repairs: list = []
         if apply_repairs:
@@ -1654,6 +2217,12 @@ async def rebuild_portfolio(
         else:
             all_txs = canonical_txs
 
+        # A LedgerRepair EXCLUDE targeting a POSITION_CONVERSION row is
+        # ineffective — the conversion is authoritative regardless of
+        # apply_repairs or any repair overlay (§7.1). This is a no-op when
+        # apply_repairs=False or no repair touched a conversion row.
+        all_txs = _reinstate_excluded_conversions(all_txs, canonical_txs)
+
         result.effective_transaction_count = len(all_txs)
         result.transactions_replayed = len(all_txs)
         _progress(f"Stage 1: replaying {len(all_txs)} transactions...")
@@ -1666,8 +2235,9 @@ async def rebuild_portfolio(
         print("initial holdings =", final_state.holdings)
         print("id =", id(final_state.holdings))
 
+        conversion_seen: set = set()   # Stage 1's own fresh duplicate-tracking set (Step 3)
         for ctx in all_txs:
-            _apply_transaction(final_state, ctx)
+            _apply_transaction(final_state, ctx, conversion_seen=conversion_seen)
             print(ctx)
             # print(ctx.id, ctx.transaction_type, ctx.symbol)            
 
@@ -1678,6 +2248,15 @@ async def rebuild_portfolio(
             f"  → cash={result.reconstructed_cash:,.2f}  "
             f"holdings={result.reconstructed_holdings_count}"
         )
+
+        # ── BANPU-WP2 Step 5: conversion successor materialization identity ────
+        # Resolved once, right after Stage 1 replay succeeds and before any
+        # reconciliation or persistent mutation — Stage 4 and Stage 8 below
+        # both consume this same already-validated pairing rather than each
+        # re-deriving it. Empty for every no-conversion rebuild (the common
+        # case). Raises fail-closed on a genuine stored-identity conflict or
+        # ambiguity, aborting before any reconciliation row or DB write.
+        conversion_successors = _resolve_conversion_successors(db, portfolio_id, all_txs)
 
         # ── Stages 2–3: historical snapshots ──────────────────────────────────
         snapshot_days: list[_SnapshotDay] = []
@@ -1812,7 +2391,9 @@ async def rebuild_portfolio(
         _progress("Stage 4: reconciling...")
 
         recon_rows: list[ReconciliationRow] = []
-        recon_rows.extend(_reconcile_portfolio_items(db, portfolio_id, final_state))
+        recon_rows.extend(
+            _reconcile_portfolio_items(db, portfolio_id, final_state, conversion_successors)
+        )
         if not skip_snapshots and snapshot_days:
             recon_rows.extend(
                 _reconcile_snapshots(db, portfolio_id, snapshot_days, from_date)
@@ -1854,12 +2435,24 @@ async def rebuild_portfolio(
         result.ledger_errors     = len(validation_report.errors)
         result.ledger_warnings   = len(validation_report.warnings)
 
-        if result.ledger_criticals > 0:
+        # BANPU-WP2 Step 5: POSITION_CONVERSION_SAME_DAY_CONFLICT is the one
+        # WP2-catalogued finding with a fixed ERROR severity that must still
+        # block commit (§7.1/§9) — every other ERROR finding keeps the
+        # existing (non-blocking) policy unchanged.
+        conversion_blocking_error = _has_conversion_blocking_error(validation_report)
+
+        if result.ledger_criticals > 0 or conversion_blocking_error:
             result.aborted = True
-            _progress(
-                f"  → ABORTED: {result.ledger_criticals} CRITICAL finding(s) — "
-                "commit blocked until ledger is corrected"
-            )
+            if conversion_blocking_error and result.ledger_criticals == 0:
+                _progress(
+                    "  → ABORTED: POSITION_CONVERSION_SAME_DAY_CONFLICT (ERROR) — "
+                    "commit blocked despite non-CRITICAL severity"
+                )
+            else:
+                _progress(
+                    f"  → ABORTED: {result.ledger_criticals} CRITICAL finding(s) — "
+                    "commit blocked until ledger is corrected"
+                )
         else:
             _progress(
                 f"  → clean  (C={result.ledger_criticals} "
@@ -1945,13 +2538,14 @@ async def rebuild_portfolio(
             _progress("Stage 8: committing...")
             try:
                 _commit_rebuild(
-                    db             = db,
-                    portfolio_id   = portfolio_id,
-                    workspace_id   = workspace_id,
-                    portfolio      = portfolio,
-                    final_state    = final_state,
-                    snapshot_days  = snapshot_days,
-                    skip_snapshots = skip_snapshots,
+                    db                    = db,
+                    portfolio_id          = portfolio_id,
+                    workspace_id          = workspace_id,
+                    portfolio             = portfolio,
+                    final_state           = final_state,
+                    snapshot_days         = snapshot_days,
+                    skip_snapshots        = skip_snapshots,
+                    conversion_successors = conversion_successors,
                 )
                 db.commit()
                 result.committed = True

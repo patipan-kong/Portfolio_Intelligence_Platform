@@ -19,6 +19,8 @@ These principles are extracted from the existing engine docstrings (`portfolio_s
 6. **Fees are real costs, gains are real gains — neither is stripped.** Only *capital structure* events (money/equity entering or leaving without market risk) are stripped from return. Anything that happened *to* invested capital (price moves, dividends, trading costs, realized P/L) stays in.
 7. **Transparency columns must never feed back into the return formula.** `period_realized_pnl`, `period_dividend_income`, and `period_fees_paid` exist so a user can see *why* a return looks the way it does. They are display-only derivatives of values already embedded in NAV — adding or subtracting them again would double-count.
 
+The authoritative transaction vocabulary is `BUY`, `SELL`, `INITIAL_POSITION`, `DEPOSIT`, `WITHDRAW`, `DIVIDEND`, `INITIAL_CASH`, `QUANTITY_CORRECTION`, and `POSITION_CONVERSION`. `POSITION_CONVERSION` is an append-only predecessor-to-successor ledger contract governed by the BANPU canonical implementation design. Its replay and accounting behavior is activated only by its later authorized work packages; documenting the vocabulary here does not pull that behavior into WP1.
+
 ---
 
 ## 2. Time Attribution Policy

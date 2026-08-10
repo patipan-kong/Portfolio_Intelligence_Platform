@@ -63,10 +63,12 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from services.transaction_canonicalizer import CanonicalTransaction
+from services.transaction_canonicalizer import CanonicalTransaction, parse_position_conversion_payload
 from services.ledger_validator import LedgerFinding, LedgerValidationReport
 from services.portfolio_rebuilder import (
     _apply_transaction,
+    _preflight_position_conversions,
+    PositionConversionReplayError,
     _replay_with_date_snapshots,
     _populate_return_fields,
     _compute_confidence_score,
@@ -1423,3 +1425,548 @@ def test_rebuild_all_passes_apply_repairs():
     mock_rebuild.assert_awaited_once()
     kw = mock_rebuild.call_args.kwargs
     assert kw.get("apply_repairs") is False
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# BANPU-WP2 Step 2 — POSITION_CONVERSION replay fixtures (pure _apply_transaction)
+#
+# Written at Step 2, when _apply_transaction() had no POSITION_CONVERSION
+# branch and every fixture below correctly failed (a no-op: predecessor
+# untouched, no successor created). As of Step 4's accounting-application
+# branch, these now exercise real production behavior and pass.
+#
+# Numbers for the full-share and generic fixtures are taken verbatim from
+# BANPU_WP2_IMPLEMENTATION_SPECIFICATION.md §11, acceptance criteria 3 and 4,
+# so expected values are independently defined by the frozen planning corpus,
+# not derived from any WP2 production helper.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _conversion_payload(
+    *,
+    predecessor_asset_id: int,
+    predecessor_symbol: str,
+    shares_surrendered: str,
+    successor_asset_id: int,
+    successor_symbol: str,
+    successor_provider_symbol: str,
+    shares_entitled: str,
+    shares_received: str,
+    conversion_ratio: str,
+    basis_before: str,
+    basis_allocated: str,
+    basis_carried: str,
+    cash_in_lieu: dict | None = None,
+    transition_date: str = "2026-03-02",
+) -> dict:
+    return {
+        "schema_version": 1,
+        "predecessor": {
+            "asset_id": predecessor_asset_id,
+            "symbol": predecessor_symbol,
+            "shares_surrendered": shares_surrendered,
+        },
+        "successor": {
+            "asset_id": successor_asset_id,
+            "symbol": successor_symbol,
+            "provider_symbol": successor_provider_symbol,
+            "shares_entitled": shares_entitled,
+            "shares_received": shares_received,
+        },
+        "conversion_ratio": conversion_ratio,
+        "basis": {
+            "before": basis_before,
+            "allocated_to_cash_in_lieu": basis_allocated,
+            "carried_to_successor": basis_carried,
+        },
+        "cash_in_lieu": cash_in_lieu,
+        "dates": {
+            "legal_effective_date": transition_date,
+            "valuation_transition_date": transition_date,
+            "predecessor_last_price_date": transition_date,
+            "successor_quote_epoch_start_date": transition_date,
+        },
+        "quote_binding": {
+            "provider": "test-provider",
+            "predecessor_provider_symbol": predecessor_symbol,
+            "successor_provider_symbol": successor_provider_symbol,
+        },
+        "boundary_evidence": {
+            "predecessor_reference_price": "1.00",
+            "successor_reference_price": "1.00",
+            "mechanical_nav_tolerance_pct": "1.0",
+            "suspension_gap_annotation": "WP2 fixture — no suspension",
+        },
+        "evidence": {
+            "reference": "WP2-FIXTURE",
+            "source": "unit-test",
+            "captured_at": "2026-03-02T00:00:00Z",
+        },
+    }
+
+
+def _cil(fractional: str, gross: str, fees: str, taxes: str, net: str,
+         basis_allocated: str, pnl: str) -> dict:
+    return {
+        "fractional_entitlement_shares": fractional,
+        "gross_proceeds":                gross,
+        "fees":                          fees,
+        "taxes":                         taxes,
+        "net_cash":                      net,
+        "basis_allocated":               basis_allocated,
+        "realized_pnl":                  pnl,
+    }
+
+
+def _conv_ctx(
+    id: int,
+    payload: dict,
+    *,
+    raw_symbol: str,
+    canonical_symbol: str | None = None,
+    asset_id: int | None = None,
+    transaction_date: date = date(2026, 3, 2),
+) -> CanonicalTransaction:
+    parsed = parse_position_conversion_payload(payload)
+    assert parsed.is_valid, parsed.errors   # fixture sanity check — not a WP2 assertion
+    return CanonicalTransaction(
+        id                   = id,
+        transaction_type     = "POSITION_CONVERSION",
+        raw_symbol           = raw_symbol,
+        canonical_symbol     = canonical_symbol or raw_symbol,
+        shares               = Decimal("0"),
+        price_per_share      = Decimal("0"),
+        total_amount         = Decimal("0"),
+        fees                 = Decimal("0"),
+        taxes                = Decimal("0"),
+        transaction_date     = transaction_date,
+        created_at           = None,
+        sector               = None,
+        notes                = None,
+        qty_correction_delta = None,
+        realized_pnl         = None,
+        asset_id             = asset_id,
+        position_conversion  = parsed,
+    )
+
+
+# ── 1. BANPU full-share conversion, no cash-in-lieu ────────────────────────────
+
+def test_position_conversion_banpu_full_share_no_cash_in_lieu():
+    """Spec §11 criterion 3: Qp=6700, R=0.38242, Qe=Qr=2562.214, B0=Bs=48709.00."""
+    pred_sym = "PCONV1.BK"
+    succ_sym = "SCONV1.BK"
+    payload = _conversion_payload(
+        predecessor_asset_id=101, predecessor_symbol=pred_sym, shares_surrendered="6700",
+        successor_asset_id=102, successor_symbol=succ_sym, successor_provider_symbol=succ_sym,
+        shares_entitled="2562.214", shares_received="2562.214", conversion_ratio="0.38242",
+        basis_before="48709.00", basis_allocated="0", basis_carried="48709.00",
+        cash_in_lieu=None,
+    )
+
+    s = _state(cash=10_000.0)
+    s.cumulative_realized_pnl = Decimal("500.00")
+    s.holdings[pred_sym] = _HoldingState(
+        symbol=pred_sym, report_symbol=pred_sym,
+        shares=Decimal("6700"), avg_cost=Decimal("48709.00") / Decimal("6700"),
+        sector="Energy", price_symbol=pred_sym,
+    )
+
+    _apply_transaction(s, _conv_ctx(99, payload, raw_symbol=pred_sym, canonical_symbol=pred_sym))
+
+    assert pred_sym not in s.holdings
+    assert succ_sym in s.holdings
+    successor = s.holdings[succ_sym]
+    assert successor.shares == Decimal("2562.214")
+    assert successor.avg_cost == Decimal("48709.00") / Decimal("2562.214")
+    assert s.cash_balance == Decimal("10000.0")             # unchanged — no cash-in-lieu
+    assert s.cumulative_realized_pnl == Decimal("500.00")   # unchanged — no cash-in-lieu
+
+
+# ── 2. Incident-independent generic conversion, with cash-in-lieu ──────────────
+
+def test_position_conversion_generic_fixture_with_cash_in_lieu():
+    """Spec §11 criterion 4: Qp=8, R=1.25, Qe=10, Qr=9.5, B0=240, Bf=12, Bs=228,
+    Cg=15, F=1, T=0.5, Cn=13.5, RP=1.5 — arbitrary identities, no BANPU numbers."""
+    pred_sym = "GPRED.BK"
+    succ_sym = "GSUCC.BK"
+    payload = _conversion_payload(
+        predecessor_asset_id=201, predecessor_symbol=pred_sym, shares_surrendered="8",
+        successor_asset_id=202, successor_symbol=succ_sym, successor_provider_symbol=succ_sym,
+        shares_entitled="10", shares_received="9.5", conversion_ratio="1.25",
+        basis_before="240", basis_allocated="12", basis_carried="228",
+        cash_in_lieu=_cil(fractional="0.5", gross="15", fees="1", taxes="0.5",
+                           net="13.5", basis_allocated="12", pnl="1.5"),
+    )
+
+    s = _state(cash=1_000.0)
+    s.cumulative_realized_pnl = Decimal("0")
+    s.holdings[pred_sym] = _HoldingState(
+        symbol=pred_sym, report_symbol=pred_sym,
+        shares=Decimal("8"), avg_cost=Decimal("240") / Decimal("8"),
+        sector=None, price_symbol=pred_sym,
+    )
+
+    _apply_transaction(s, _conv_ctx(199, payload, raw_symbol=pred_sym, canonical_symbol=pred_sym))
+
+    assert pred_sym not in s.holdings
+    assert succ_sym in s.holdings
+    successor = s.holdings[succ_sym]
+    assert successor.shares == Decimal("9.5")
+    assert successor.avg_cost == Decimal("24")                    # 228 / 9.5
+    assert s.cash_balance == Decimal("1000.0") + Decimal("13.5")           # +Cn only
+    assert s.cumulative_realized_pnl == Decimal("0") + Decimal("1.5")      # +RP only
+
+
+# ── 3. No-cash-in-lieu must leave cash and realized P/L byte-equivalent ────────
+
+def test_position_conversion_no_cash_in_lieu_preserves_cash_and_pnl_exactly():
+    """Spec §7.3: 'No-cash-in-lieu conversions must leave cash and realized P/L
+    byte-equivalent to their pre-conversion values.' Distinct nonzero starting
+    values make this a non-vacuous assertion."""
+    pred_sym = "IPRED.BK"
+    succ_sym = "ISUCC.BK"
+    payload = _conversion_payload(
+        predecessor_asset_id=301, predecessor_symbol=pred_sym, shares_surrendered="6700",
+        successor_asset_id=302, successor_symbol=succ_sym, successor_provider_symbol=succ_sym,
+        shares_entitled="2562.214", shares_received="2562.214", conversion_ratio="0.38242",
+        basis_before="48709.00", basis_allocated="0", basis_carried="48709.00",
+        cash_in_lieu=None,
+    )
+    starting_cash = Decimal("73914.271")
+    starting_pnl  = Decimal("-812.44")
+
+    s = _state(cash=float(starting_cash))
+    s.cash_balance = starting_cash          # exact Decimal, not the float round-trip
+    s.cumulative_realized_pnl = starting_pnl
+    s.holdings[pred_sym] = _HoldingState(
+        symbol=pred_sym, report_symbol=pred_sym,
+        shares=Decimal("6700"), avg_cost=Decimal("48709.00") / Decimal("6700"),
+        sector=None, price_symbol=pred_sym,
+    )
+
+    _apply_transaction(s, _conv_ctx(299, payload, raw_symbol=pred_sym, canonical_symbol=pred_sym))
+
+    # The conversion must actually have applied (otherwise "unchanged" is vacuous)
+    assert pred_sym not in s.holdings
+    assert succ_sym in s.holdings
+    assert s.holdings[succ_sym].shares == Decimal("2562.214")
+
+    assert s.cash_balance == starting_cash
+    assert s.cumulative_realized_pnl == starting_pnl
+
+
+# ── 4. Existing-successor merge conserves combined basis exactly ──────────────
+
+def test_position_conversion_existing_successor_merge_combines_basis_and_shares():
+    """Spec §7.3 acceptance invariants:
+    combined_basis = existing_basis + converted_basis
+    combined_shares = existing_shares + Qr
+    combined_avg_cost = combined_basis / combined_shares
+    Clean-division numbers (800 / 20 = 40 exactly) so the test does not depend
+    on any particular Decimal rounding/precision behavior."""
+    pred_sym = "MPRED.BK"
+    succ_sym = "MSUCC.BK"
+    payload = _conversion_payload(
+        predecessor_asset_id=401, predecessor_symbol=pred_sym, shares_surrendered="15",
+        successor_asset_id=402, successor_symbol=succ_sym, successor_provider_symbol=succ_sym,
+        shares_entitled="15", shares_received="15", conversion_ratio="1",
+        basis_before="300", basis_allocated="0", basis_carried="300",
+        cash_in_lieu=None,
+    )
+
+    s = _state(cash=0.0)
+    s.holdings[pred_sym] = _HoldingState(
+        symbol=pred_sym, report_symbol=pred_sym,
+        shares=Decimal("15"), avg_cost=Decimal("300") / Decimal("15"),
+        sector=None, price_symbol=pred_sym,
+    )
+    existing_shares  = Decimal("5")
+    existing_avg     = Decimal("100")
+    existing_basis   = existing_shares * existing_avg   # 500
+    s.holdings[succ_sym] = _HoldingState(
+        symbol=succ_sym, report_symbol=succ_sym,
+        shares=existing_shares, avg_cost=existing_avg,
+        sector=None, price_symbol=succ_sym,
+    )
+
+    _apply_transaction(s, _conv_ctx(399, payload, raw_symbol=pred_sym, canonical_symbol=pred_sym))
+
+    assert pred_sym not in s.holdings
+    merged = s.holdings[succ_sym]
+    converted_basis  = Decimal("300")   # Bs
+    combined_basis   = existing_basis + converted_basis
+    combined_shares  = existing_shares + Decimal("15")   # Qr
+    assert merged.shares == combined_shares == Decimal("20")
+    assert merged.avg_cost == combined_basis / combined_shares == Decimal("40")
+    assert merged.shares * merged.avg_cost == combined_basis == Decimal("800")
+
+
+# ── 5. Dual replay-site equality: Stage 1 final state vs Stage 2 terminal date ─
+
+def test_position_conversion_stage1_final_state_equals_stage2_terminal_state():
+    """Spec §7.4 / Implementation Sequence Step 4: 'Stage 1 final state and the
+    terminal Stage 2 per-date state for the same terminal date must also be
+    equal.' Runs the identical canonical transaction list through both existing
+    application sites (a manual sequential _apply_transaction loop for Stage 1,
+    and _replay_with_date_snapshots for Stage 2) and checks both against the
+    same independently-computed expected values."""
+    pred_sym = "DPRED.BK"
+    succ_sym = "DSUCC.BK"
+    payload = _conversion_payload(
+        predecessor_asset_id=501, predecessor_symbol=pred_sym, shares_surrendered="6700",
+        successor_asset_id=502, successor_symbol=succ_sym, successor_provider_symbol=succ_sym,
+        shares_entitled="2562.214", shares_received="2562.214", conversion_ratio="0.38242",
+        basis_before="48709.00", basis_allocated="0", basis_carried="48709.00",
+        cash_in_lieu=None,
+        transition_date="2026-03-02",
+    )
+    ctxs = [
+        _ctx(id=1, transaction_type="DEPOSIT", raw_symbol=None, canonical_symbol=None,
+             shares=0.0, total_amount=100_000.0, transaction_date=date(2026, 1, 1)),
+        _ctx(id=2, transaction_type="INITIAL_POSITION", raw_symbol=pred_sym, canonical_symbol=pred_sym,
+             shares=6700.0, price_per_share=float(Decimal("48709.00") / Decimal("6700")),
+             total_amount=0.0, fees=0.0, taxes=0.0, transaction_date=date(2026, 1, 2)),
+        _conv_ctx(3, payload, raw_symbol=pred_sym, canonical_symbol=pred_sym,
+                  transaction_date=date(2026, 3, 2)),
+    ]
+    expected_cash    = Decimal("100000.0")
+    expected_shares  = Decimal("2562.214")
+    expected_avg     = Decimal("48709.00") / Decimal("2562.214")
+
+    # Stage 1 — single sequential pass over the whole run
+    stage1 = _state(cash=0.0)
+    for ctx in ctxs:
+        _apply_transaction(stage1, ctx)
+
+    # Stage 2 — per-date snapshot replay, terminal date == last transaction date
+    stage2_by_date = _replay_with_date_snapshots(ctxs, ["2026-03-02"])
+    stage2 = stage2_by_date["2026-03-02"]
+
+    for label, state in (("stage1", stage1), ("stage2", stage2)):
+        assert pred_sym not in state.holdings, label
+        assert succ_sym in state.holdings, label
+        assert state.holdings[succ_sym].shares == expected_shares, label
+        assert state.holdings[succ_sym].avg_cost == expected_avg, label
+        assert state.cash_balance == expected_cash, label
+
+    # Explicit cross-site equality (not just both matching the same expectation)
+    assert stage1.holdings.keys() == stage2.holdings.keys()
+    assert stage1.holdings[succ_sym].shares   == stage2.holdings[succ_sym].shares
+    assert stage1.holdings[succ_sym].avg_cost == stage2.holdings[succ_sym].avg_cost
+    assert stage1.cash_balance == stage2.cash_balance
+
+
+# ── 6. Successor holding accepts a subsequent ordinary trade (Observation) ────
+
+def test_position_conversion_successor_holding_accepts_subsequent_trade():
+    """Recorded observation: once a conversion creates the successor holding,
+    an ordinary later BUY on the successor's raw symbol must merge into that
+    same holding (weighted-average cost) like any other repeat BUY — the
+    successor is not a special holding after creation."""
+    pred_sym = "TPRED.BK"
+    succ_sym = "TSUCC.BK"
+    payload = _conversion_payload(
+        predecessor_asset_id=601, predecessor_symbol=pred_sym, shares_surrendered="15",
+        successor_asset_id=602, successor_symbol=succ_sym, successor_provider_symbol=succ_sym,
+        shares_entitled="15", shares_received="15", conversion_ratio="1",
+        basis_before="300", basis_allocated="0", basis_carried="300",
+        cash_in_lieu=None,
+    )
+
+    s = _state(cash=10_000.0)
+    s.holdings[pred_sym] = _HoldingState(
+        symbol=pred_sym, report_symbol=pred_sym,
+        shares=Decimal("15"), avg_cost=Decimal("300") / Decimal("15"),
+        sector=None, price_symbol=pred_sym,
+    )
+    _apply_transaction(s, _conv_ctx(699, payload, raw_symbol=pred_sym, canonical_symbol=pred_sym,
+                                     transaction_date=date(2026, 3, 2)))
+
+    # Subsequent ordinary BUY of 5 more shares @ 50/share, after the conversion
+    _apply_transaction(s, _ctx(
+        id=700, transaction_type="BUY", raw_symbol=succ_sym, canonical_symbol=succ_sym,
+        shares=5.0, total_amount=250.0, transaction_date=date(2026, 3, 5),
+    ))
+
+    assert succ_sym in s.holdings
+    merged = s.holdings[succ_sym]
+    expected_shares = Decimal("15") + Decimal("5")
+    expected_basis  = Decimal("300") + Decimal("250")
+    assert merged.shares == expected_shares
+    assert merged.avg_cost == expected_basis / expected_shares
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# BANPU-WP2 Step 3 — preflight and identity resolution (pure, no DB)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _raw_row(id: int, asset_id: int | None):
+    """Projection-valid stand-in for raw Transaction preflight."""
+    return SimpleNamespace(
+        id=id,
+        asset_id=asset_id,
+        shares=10.0,
+        price_per_share=10.0,
+        total_amount=100.0,
+        fees=0.0,
+        taxes=0.0,
+    )
+
+
+def test_position_conversion_duplicate_key_fails_via_preflight():
+    """The WP1 partial unique index on (portfolio_id, asset_id, transaction_date)
+    already prevents two persisted POSITION_CONVERSION rows from sharing a
+    predecessor asset ID and date, so this condition cannot be constructed
+    against a schema-compliant committed database — it is exercised directly
+    against _preflight_position_conversions(), the defensive, schema-
+    independent equivalent (Implementation Specification §7.1 item 5)."""
+    pred_sym = "DKPRED.BK"
+    payload = _conversion_payload(
+        predecessor_asset_id=801, predecessor_symbol=pred_sym, shares_surrendered="10",
+        successor_asset_id=802, successor_symbol="DKSUCC.BK", successor_provider_symbol="DKSUCC.BK",
+        shares_entitled="10", shares_received="10", conversion_ratio="1",
+        basis_before="100", basis_allocated="0", basis_carried="100",
+    )
+    pred  = _ctx(id=1, transaction_type="INITIAL_POSITION", raw_symbol=pred_sym, canonical_symbol=pred_sym,
+                 shares=10.0, price_per_share=10.0, total_amount=0.0, transaction_date=date(2026, 1, 1))
+    conv1 = _conv_ctx(2, payload, raw_symbol=pred_sym, canonical_symbol=pred_sym, asset_id=801,
+                       transaction_date=date(2026, 3, 2))
+    conv2 = _conv_ctx(3, payload, raw_symbol=pred_sym, canonical_symbol=pred_sym, asset_id=801,
+                       transaction_date=date(2026, 3, 2))
+    raw_txs = [_raw_row(1, None), _raw_row(2, 801), _raw_row(3, 801)]
+
+    with pytest.raises(PositionConversionReplayError) as exc_info:
+        _preflight_position_conversions(raw_txs, [pred, conv1, conv2])
+    assert exc_info.value.reason == "POSITION_CONVERSION_DUPLICATE"
+    assert exc_info.value.transaction_id in (2, 3)   # both occurrences of the key are invalid
+
+
+def test_position_conversion_stage_replay_invocations_have_independent_duplicate_tracking():
+    """Each _replay_with_date_snapshots() invocation must own a fresh
+    conversion-key duplicate-tracking set, never reused across calls — the
+    same requirement that keeps Stage 1's own sequential loop from treating
+    Stage 2's application (or vice versa) as a duplicate. A classic Python
+    mutable-default-argument bug (a set created once, at function-definition
+    time, and reused across calls) would make the SECOND identical call below
+    raise DUPLICATE; this test fails loudly (via an unhandled exception) if
+    that ever regresses."""
+    pred_sym = "SIPRED.BK"
+    payload = _conversion_payload(
+        predecessor_asset_id=901, predecessor_symbol=pred_sym, shares_surrendered="15",
+        successor_asset_id=902, successor_symbol="SISUCC.BK", successor_provider_symbol="SISUCC.BK",
+        shares_entitled="15", shares_received="15", conversion_ratio="1",
+        basis_before="300", basis_allocated="0", basis_carried="300",
+    )
+    ctxs = [
+        _ctx(id=1, transaction_type="INITIAL_POSITION", raw_symbol=pred_sym, canonical_symbol=pred_sym,
+             shares=15.0, price_per_share=20.0, total_amount=0.0, transaction_date=date(2026, 1, 1)),
+        _conv_ctx(2, payload, raw_symbol=pred_sym, canonical_symbol=pred_sym,
+                  transaction_date=date(2026, 3, 2)),
+    ]
+
+    # "Stage 1" — one full sequential pass with its own fresh set.
+    stage1 = _state(cash=0.0)
+    stage1_seen: set = set()
+    for ctx in ctxs:
+        _apply_transaction(stage1, ctx, conversion_seen=stage1_seen)
+
+    # "Stage 2" — two independent invocations of the same function over the
+    # identical input. Neither may see the other's (or Stage 1's) tracking.
+    _replay_with_date_snapshots(ctxs, ["2026-03-02"])
+    _replay_with_date_snapshots(ctxs, ["2026-03-02"])
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# BANPU-WP2 Step 5 — Stage 5 blocking policy for conversion findings
+#
+# services/ledger_validator.py does not implement POSITION_CONVERSION findings
+# yet (Step 6) — a real end-to-end run can never produce one today. These
+# tests exercise the Stage 5 gate directly by injecting a constructed
+# LedgerValidationReport, the same established idiom test #42
+# (test_rebuild_confidence_derived_from_effective_validator_report) already
+# uses for CASH_MISMATCH. Uses skip_snapshots=True, dry_run=False against the
+# MagicMock DB harness so committed can be observed (dry_run=True, this
+# file's _run() default, never reaches Stage 8 at all).
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _report_with_finding(check_id: str, severity, portfolio_id: int = 1) -> LedgerValidationReport:
+    finding = LedgerFinding(
+        check_id=check_id, severity=severity,
+        portfolio_id=portfolio_id, transaction_ids=[], symbol=None, normalized_symbol=None,
+        title="test", explanation="", recommendation="",
+    )
+    return LedgerValidationReport(
+        portfolio_id=portfolio_id, portfolio_name="Test",
+        transactions_inspected=1, findings=[finding],
+    )
+
+
+def test_rebuild_conversion_critical_finding_blocks_stage5():
+    """The pre-existing generic 'any CRITICAL aborts' rule already covers
+    conversion CRITICAL findings by check_id namespace alone — no new code
+    needed for this half of the frozen policy, but the explicit fixture is
+    required Step 5 coverage."""
+    from services.ledger_validator import FindingSeverity
+    portfolio = _make_portfolio_obj(cash=0.0)
+    db        = _make_rebuild_mock_db(portfolio, [_make_raw_tx_mock(1)])
+    ctxs = [_ctx(id=1, transaction_type="DEPOSIT", raw_symbol=None, canonical_symbol=None,
+                 shares=0.0, total_amount=50_000.0)]
+    report = _report_with_finding("POSITION_CONVERSION_PAYLOAD_INVALID", FindingSeverity.CRITICAL)
+
+    with patch("services.portfolio_rebuilder.canonicalize_transactions", return_value=ctxs), \
+         patch("services.portfolio_rebuilder.load_active_repairs", return_value=[]), \
+         patch("services.portfolio_rebuilder.validate_portfolio_ledger",
+               new=AsyncMock(return_value=report)):
+        r = _run(db, apply_repairs=True, dry_run=False)
+
+    assert r.ledger_criticals == 1
+    assert r.aborted is True
+    assert r.committed is False
+
+
+def test_rebuild_conversion_same_day_conflict_error_blocks_stage5():
+    """POSITION_CONVERSION_SAME_DAY_CONFLICT has a fixed ERROR severity
+    (Implementation Specification §9.1) but must still block commit — the one
+    Stage 5-specific rule this step adds. Distinct evidence path from Step
+    3's rebuilder preflight (which fires earlier, before Stage 5 ever runs,
+    for the same underlying business rule via a different mechanism); this
+    test proves the Stage 5 gate itself, independent of preflight."""
+    from services.ledger_validator import FindingSeverity
+    portfolio = _make_portfolio_obj(cash=0.0)
+    db        = _make_rebuild_mock_db(portfolio, [_make_raw_tx_mock(1)])
+    ctxs = [_ctx(id=1, transaction_type="DEPOSIT", raw_symbol=None, canonical_symbol=None,
+                 shares=0.0, total_amount=50_000.0)]
+    report = _report_with_finding("POSITION_CONVERSION_SAME_DAY_CONFLICT", FindingSeverity.ERROR)
+
+    with patch("services.portfolio_rebuilder.canonicalize_transactions", return_value=ctxs), \
+         patch("services.portfolio_rebuilder.load_active_repairs", return_value=[]), \
+         patch("services.portfolio_rebuilder.validate_portfolio_ledger",
+               new=AsyncMock(return_value=report)):
+        r = _run(db, apply_repairs=True, dry_run=False)
+
+    assert r.success is True
+    assert r.ledger_criticals == 0        # ERROR, not CRITICAL
+    assert r.aborted is True              # still blocks
+    assert r.committed is False
+
+
+def test_rebuild_unrelated_error_finding_does_not_block_stage5():
+    """An ordinary ERROR finding unrelated to conversions must keep its
+    existing (non-blocking) policy — the special case is scoped exactly to
+    POSITION_CONVERSION_SAME_DAY_CONFLICT, nothing broader."""
+    from services.ledger_validator import FindingSeverity
+    portfolio = _make_portfolio_obj(cash=0.0)
+    db        = _make_rebuild_mock_db(portfolio, [_make_raw_tx_mock(1)])
+    ctxs = [_ctx(id=1, transaction_type="DEPOSIT", raw_symbol=None, canonical_symbol=None,
+                 shares=0.0, total_amount=50_000.0)]
+    report = _report_with_finding("CASH_MISMATCH", FindingSeverity.ERROR)
+
+    with patch("services.portfolio_rebuilder.canonicalize_transactions", return_value=ctxs), \
+         patch("services.portfolio_rebuilder.load_active_repairs", return_value=[]), \
+         patch("services.portfolio_rebuilder.validate_portfolio_ledger",
+               new=AsyncMock(return_value=report)):
+        r = _run(db, apply_repairs=True, dry_run=False)
+
+    assert r.ledger_criticals == 0
+    assert r.aborted is False
+    assert r.committed is True

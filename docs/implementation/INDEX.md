@@ -183,6 +183,23 @@ This section is navigation-only and grants no authority.
 - [AF-WP4 Release Attestation](../governance/ASSET_FOUNDATION_AF_WP4_RELEASE_ATTESTATION.md)
 - [AF-WP4 Closeout Record](../governance/ASSET_FOUNDATION_AF_WP4_CLOSEOUT_RECORD.md)
 
+## BANPU-WP2 — Replay and Independent Validator
+
+This navigation entry records the final BANPU-WP2 repository state. It grants
+no authority and does not duplicate the Decision Log narrative.
+
+| Lifecycle stage | Final state | Record |
+|---|---|---|
+| BANPU-WP2 Planning | `COMPLETE AND FROZEN` | [Planning Freeze Record](BANPU_WP2_PLANNING_FREEZE_RECORD.md) |
+| BANPU-WP2 Allocation | `COMPLETE` | [Allocation Record](BANPU_WP2_ALLOCATION_RECORD.md) |
+| BANPU-WP2 Implementation | `COMPLETE` | [Epic Closeout](BANPU_WP2_EPIC_CLOSEOUT.md) |
+| Implementation Confirmation | `IMPLEMENTATION CONFIRMED` | [Implementation Confirmation](BANPU_WP2_IMPLEMENTATION_CONFIRMATION.md) |
+| Implementation Freeze | `IMPLEMENTATION FROZEN` | [Implementation Freeze Record](BANPU_WP2_IMPLEMENTATION_FREEZE_RECORD.md) |
+| Epic Closeout | `BANPU-WP2 EPIC CLOSED` | [Epic Closeout](BANPU_WP2_EPIC_CLOSEOUT.md) |
+
+The corresponding final decision is recorded in the [Decision
+Log](../engineering/DECISION_LOG.md#banpu-wp2-implementation-governance-epic-closeout).
+
 ## Milestone Navigation (M0–current)
 
 | Milestone | Status (as declared in-document) | Primary document(s) | Closeout | Decision Log |
