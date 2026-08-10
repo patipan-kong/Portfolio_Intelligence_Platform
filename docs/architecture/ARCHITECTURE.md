@@ -34,7 +34,7 @@ Badge hex colors: ACCUMULATE=#0F6E56, BUY=#27500A, WATCH=#0C447C, HOLD=#444441, 
 | `Portfolio` | Named portfolio (id, name, strategy_persona) |
 | `PortfolioItem` | Holdings (symbol, shares, avg_cost, allow_swap, sector) |
 | `Watchlist` | Watchlist symbols (sector stored at add-time) |
-| `Transaction` | Full transaction ledger: BUY/SELL/INITIAL_POSITION/DEPOSIT/WITHDRAW/DIVIDEND/INITIAL_CASH/QUANTITY_CORRECTION. `fees` = pre-VAT subtotal; `taxes` = VAT amount. |
+| `Transaction` | Full transaction ledger: BUY/SELL/INITIAL_POSITION/DEPOSIT/WITHDRAW/DIVIDEND/INITIAL_CASH/QUANTITY_CORRECTION/POSITION_CONVERSION. `POSITION_CONVERSION` is the append-only predecessor-to-successor contract governed by the BANPU canonical implementation design; later work packages own replay and materialization. `fees` = pre-VAT subtotal; `taxes` = VAT amount. |
 | `PortfolioSnapshot` | Daily NAV snapshots with return decomposition columns |
 | `AnalysisCache` | Latest signal per symbol (upserted, 12h staleness) |
 | `AnalysisHistory` | Append-only analysis log (latency_ms, total_latency_ms) |

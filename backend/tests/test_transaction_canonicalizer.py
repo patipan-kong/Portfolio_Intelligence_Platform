@@ -67,6 +67,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from services.transaction_canonicalizer import (
     CanonicalTransaction,
     canonicalize_transactions,
+    parse_position_conversion_payload,
 )
 
 
@@ -85,6 +86,7 @@ def _tx(
     created_at: datetime = datetime(2025, 1, 15, 10, 0),
     sector: str | None = "Transport",
     notes: str | None = None,
+    conversion_payload: dict | None = None,
 ) -> SimpleNamespace:
     """Factory for mock Transaction ORM objects."""
     return SimpleNamespace(
@@ -100,7 +102,55 @@ def _tx(
         created_at       = created_at,
         sector           = sector,
         notes            = notes,
+        conversion_payload = conversion_payload,
     )
+
+
+def _conversion_payload() -> dict:
+    return {
+        "schema_version": 1,
+        "predecessor": {
+            "asset_id": 27,
+            "symbol": "BANPU.BK",
+            "shares_surrendered": "6700",
+        },
+        "successor": {
+            "asset_id": 123,
+            "symbol": "BANPUU.BK",
+            "provider_symbol": "BANPUU.BK",
+            "shares_entitled": "2562.214",
+            "shares_received": "2562.214",
+        },
+        "conversion_ratio": "0.38242",
+        "basis": {
+            "before": "48709.00",
+            "allocated_to_cash_in_lieu": "0.00",
+            "carried_to_successor": "48709.00",
+        },
+        "cash_in_lieu": None,
+        "dates": {
+            "legal_effective_date": "2025-10-01",
+            "valuation_transition_date": "2025-10-01",
+            "predecessor_last_price_date": "2025-09-30",
+            "successor_quote_epoch_start_date": "2025-10-01",
+        },
+        "quote_binding": {
+            "provider": "YAHOO",
+            "predecessor_provider_symbol": "BANPU.BK",
+            "successor_provider_symbol": "BANPUU.BK",
+        },
+        "boundary_evidence": {
+            "predecessor_reference_price": "5.60",
+            "successor_reference_price": "14.64",
+            "mechanical_nav_tolerance_pct": "0.50",
+            "suspension_gap_annotation": "Official transition boundary",
+        },
+        "evidence": {
+            "reference": "BROKER-STATEMENT-1",
+            "source": "Broker statement",
+            "captured_at": "2026-08-06T10:00:00+07:00",
+        },
+    }
 
 
 # ── Field mapping ─────────────────────────────────────────────────────────────
@@ -423,3 +473,262 @@ def test_integer_total_amount_converts_to_decimal():
     (ctx,) = canonicalize_transactions([tx])
     assert ctx.total_amount == Decimal("10000")
     assert isinstance(ctx.total_amount, Decimal)
+
+
+# POSITION_CONVERSION contract
+
+def test_valid_position_conversion_payload_uses_exact_decimals():
+    result = parse_position_conversion_payload(_conversion_payload())
+
+    assert result.is_valid
+    assert result.errors == ()
+    assert result.value is not None
+    assert result.value.predecessor.shares_surrendered == Decimal("6700")
+    assert result.value.successor.shares_entitled == Decimal("2562.214")
+    assert result.value.conversion_ratio == Decimal("0.38242")
+    assert result.value.basis.before == Decimal("48709.00")
+    assert len(result.value.fingerprint) == 64
+
+
+def test_position_conversion_fingerprint_is_deterministic_for_key_order():
+    payload = _conversion_payload()
+    reordered = dict(reversed(list(payload.items())))
+
+    first = parse_position_conversion_payload(payload)
+    second = parse_position_conversion_payload(reordered)
+
+    assert first.is_valid and second.is_valid
+    assert first.value is not None and second.value is not None
+    assert first.value.fingerprint == second.value.fingerprint
+
+
+def test_position_conversion_fingerprint_normalizes_decimal_and_timestamp_forms():
+    first_payload = _conversion_payload()
+    second_payload = _conversion_payload()
+    second_payload["predecessor"]["shares_surrendered"] = "6700.0"
+    second_payload["successor"]["shares_entitled"] = "2562.2140"
+    second_payload["successor"]["shares_received"] = "2562.21400"
+    second_payload["conversion_ratio"] = "0.382420"
+    second_payload["basis"]["before"] = "48709.0"
+    second_payload["basis"]["allocated_to_cash_in_lieu"] = "0.000"
+    second_payload["basis"]["carried_to_successor"] = "48709.000"
+    second_payload["evidence"]["captured_at"] = "2026-08-06T03:00:00Z"
+
+    first = parse_position_conversion_payload(first_payload)
+    second = parse_position_conversion_payload(second_payload)
+
+    assert first.is_valid and second.is_valid
+    assert first.value is not None and second.value is not None
+    assert first.value.fingerprint == second.value.fingerprint
+
+
+def test_position_conversion_value_is_immutable():
+    result = parse_position_conversion_payload(_conversion_payload())
+    assert result.value is not None
+
+    with pytest.raises((TypeError, AttributeError)):
+        result.value.conversion_ratio = Decimal("1")  # type: ignore[misc]
+
+
+def test_position_conversion_with_cash_in_lieu_validates_equations():
+    payload = _conversion_payload()
+    payload["successor"]["shares_received"] = "2562"
+    payload["basis"] = {
+        "before": "48709.00",
+        "allocated_to_cash_in_lieu": "4.00",
+        "carried_to_successor": "48705.00",
+    }
+    payload["cash_in_lieu"] = {
+        "fractional_entitlement_shares": "0.214",
+        "gross_proceeds": "4.50",
+        "fees": "0.10",
+        "taxes": "0.05",
+        "net_cash": "4.35",
+        "basis_allocated": "4.00",
+        "realized_pnl": "0.35",
+    }
+
+    result = parse_position_conversion_payload(payload)
+
+    assert result.is_valid
+    assert result.value is not None
+    assert result.value.cash_in_lieu is not None
+    assert result.value.cash_in_lieu.realized_pnl == Decimal("0.35")
+
+
+@pytest.mark.parametrize(
+    ("mutate", "expected_path"),
+    [
+        (lambda payload: payload.update(schema_version=2), "$.schema_version"),
+        (lambda payload: payload["predecessor"].update(shares_surrendered=6700), "$.predecessor.shares_surrendered"),
+        (lambda payload: payload["successor"].update(shares_entitled="1"), "$.successor.shares_entitled"),
+        (lambda payload: payload["dates"].update(successor_quote_epoch_start_date="2025-10-02"), "$.dates.successor_quote_epoch_start_date"),
+    ],
+)
+def test_invalid_position_conversion_payload_returns_structured_errors(mutate, expected_path):
+    payload = _conversion_payload()
+    mutate(payload)
+
+    result = parse_position_conversion_payload(payload)
+
+    assert not result.is_valid
+    assert result.value is None
+    assert result.errors
+    assert expected_path in {error.path for error in result.errors}
+    assert all(error.code and error.message for error in result.errors)
+
+
+def test_position_conversion_rejects_unknown_nested_field():
+    payload = _conversion_payload()
+    payload["successor"]["exchange_ratio"] = "0.38242"
+
+    result = parse_position_conversion_payload(payload)
+
+    assert not result.is_valid
+    assert any(
+        error.code == "FIELD_UNKNOWN"
+        and error.path == "$.successor.exchange_ratio"
+        for error in result.errors
+    )
+
+
+@pytest.mark.parametrize(
+    ("section", "malformed"),
+    [
+        ("predecessor", None),
+        ("successor", []),
+        ("basis", "not-an-object"),
+        ("dates", 1),
+        ("quote_binding", False),
+        ("boundary_evidence", []),
+        ("evidence", None),
+    ],
+)
+def test_position_conversion_rejects_malformed_sections(section, malformed):
+    payload = _conversion_payload()
+    payload[section] = malformed
+
+    result = parse_position_conversion_payload(payload)
+
+    assert not result.is_valid
+    assert any(
+        error.code == "TYPE_INVALID" and error.path == f"$.{section}"
+        for error in result.errors
+    )
+
+
+@pytest.mark.parametrize(
+    "captured_at",
+    [
+        "2026-08-06T10:00:00",
+        "2026-08-06 10:00:00+07:00",
+        "2026-13-06T10:00:00+07:00",
+    ],
+)
+def test_position_conversion_rejects_malformed_rfc3339_timestamp(captured_at):
+    payload = _conversion_payload()
+    payload["evidence"]["captured_at"] = captured_at
+
+    result = parse_position_conversion_payload(payload)
+
+    assert not result.is_valid
+    assert any(
+        error.code == "TIMESTAMP_INVALID"
+        and error.path == "$.evidence.captured_at"
+        for error in result.errors
+    )
+
+
+@pytest.mark.parametrize("decimal_value", [6700, "NaN", "Infinity", "1e3", "+6700", "06700"])
+def test_position_conversion_rejects_non_contract_decimal_forms(decimal_value):
+    payload = _conversion_payload()
+    payload["predecessor"]["shares_surrendered"] = decimal_value
+
+    result = parse_position_conversion_payload(payload)
+
+    assert not result.is_valid
+    assert any(
+        error.code == "DECIMAL_INVALID"
+        and error.path == "$.predecessor.shares_surrendered"
+        for error in result.errors
+    )
+
+
+def test_position_conversion_rejects_provider_symbol_mismatch():
+    payload = _conversion_payload()
+    payload["quote_binding"]["successor_provider_symbol"] = "WRONG.BK"
+
+    result = parse_position_conversion_payload(payload)
+
+    assert not result.is_valid
+    assert any(
+        error.code == "INVARIANT_VIOLATION"
+        and error.path == "$.quote_binding.successor_provider_symbol"
+        for error in result.errors
+    )
+
+
+def test_position_conversion_rejects_basis_invariant_failure():
+    payload = _conversion_payload()
+    payload["basis"]["carried_to_successor"] = "48000.00"
+
+    result = parse_position_conversion_payload(payload)
+
+    assert not result.is_valid
+    assert any(
+        error.code == "INVARIANT_VIOLATION" and error.path == "$.basis"
+        for error in result.errors
+    )
+
+
+def test_position_conversion_error_order_is_deterministic_for_mapping_order():
+    payload = _conversion_payload()
+    del payload["successor"]["symbol"]
+    payload["successor"]["z_unknown"] = "z"
+    payload["successor"]["a_unknown"] = "a"
+    payload["basis"]["before"] = "not-a-decimal"
+
+    reordered = {
+        key: dict(reversed(list(value.items()))) if isinstance(value, dict) else value
+        for key, value in reversed(list(payload.items()))
+    }
+
+    first = parse_position_conversion_payload(payload)
+    second = parse_position_conversion_payload(reordered)
+
+    assert not first.is_valid and not second.is_valid
+    assert first.errors == second.errors
+
+
+def test_position_conversion_requires_payload_but_existing_types_ignore_it():
+    invalid = {"not": "a conversion"}
+    conversion = canonicalize_transactions([
+        _tx(transaction_type="POSITION_CONVERSION", conversion_payload=None)
+    ])[0]
+    buy = canonicalize_transactions([
+        _tx(transaction_type="BUY", conversion_payload=invalid)
+    ])[0]
+
+    assert conversion.position_conversion is not None
+    assert not conversion.position_conversion.is_valid
+    assert buy.position_conversion is None
+
+
+def test_position_conversion_canonicalization_exposes_typed_contract():
+    tx = _tx(
+        transaction_type="POSITION_CONVERSION",
+        symbol="BANPU.BK",
+        shares=2562.214,
+        price_per_share=19.010512,
+        total_amount=48709.00,
+        fees=0.0,
+        taxes=0.0,
+        conversion_payload=_conversion_payload(),
+    )
+
+    (ctx,) = canonicalize_transactions([tx])
+
+    assert ctx.position_conversion is not None
+    assert ctx.position_conversion.is_valid
+    assert ctx.position_conversion.value is not None
+    assert ctx.position_conversion.value.successor.asset_id == 123
