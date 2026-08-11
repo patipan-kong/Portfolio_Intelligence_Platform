@@ -24,17 +24,29 @@ import json as _json
 import logging
 import threading
 import time
-from datetime import datetime, timedelta
-from typing import Optional
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from typing import Mapping, Optional
 
 import pandas as pd
 
-from models.database import MarketDataCache, SessionLocal
+from models.database import MarketDataCache, SessionLocal, Transaction
 from services.core.runtime_env import allow_market_fetching
 from services.market_data.base import MarketDataProvider
+from services.market_data.position_conversion_quote_contract import (
+    QuarantineReason,
+    QuarantineResult,
+    SuccessorQuoteBinding,
+    build_successor_quote_binding,
+    evaluate_candidate_quarantine,
+    evaluate_request_identity,
+    history_cache_type,
+    quote_cache_type,
+)
 from services.market_data.provider import get_provider
 from services.market_data.yahoo import _is_rate_limit
 from services.symbol_resolver import resolve_yfinance_symbol as _resolve_yf, is_dr as _is_dr
+from services.transaction_canonicalizer import canonicalize_transactions
 
 _log = logging.getLogger(__name__)
 
@@ -53,6 +65,219 @@ _TTL_BENCHMARK   = 15 * 60        # 15 min – index / ETF prices
 _TTL_HIST_INTRA  = 5  * 60        # 5 min  – intraday bars
 _TTL_HIST_SHORT  = 15 * 60        # 15 min – 1mo / 3mo daily
 _TTL_HIST_LONG   = 24 * 3600      # 24 h   – 6mo+ / weekly
+
+
+# WP3.3 cache payloads carry provider identity as private provenance.  The
+# accepted cache namespace remains the existing (symbol, cache_type) pair;
+# this marker prevents a namespaced row written by one provider from being
+# consumed after provider selection changes, without adding a schema or
+# changing public quote/history payloads.
+_BOUND_PROVIDER_KEY = "_wp3_provider"
+
+
+@dataclass(frozen=True)
+class _ConversionGuardProjection:
+    """One read-only projection of canonical POSITION_CONVERSION evidence.
+
+    The projection is deliberately ephemeral.  It is rebuilt for every
+    unbound request, giving it a zero staleness bound and making the G4
+    empty-to-converted transition safe in the same process.  The database
+    rows, canonicalized by the frozen WP1 contract, remain the only authority.
+    """
+
+    available: bool
+    bindings_by_symbol: tuple[tuple[str, SuccessorQuoteBinding], ...]
+    ambiguous_symbols: frozenset[str]
+    boundary_evidence_by_symbol: tuple[tuple[str, object], ...] = ()
+
+    def binding_for(self, symbol: str) -> SuccessorQuoteBinding | None:
+        for candidate_symbol, binding in self.bindings_by_symbol:
+            if candidate_symbol == symbol:
+                return binding
+        return None
+
+    def boundary_evidence_for(
+        self,
+        binding: SuccessorQuoteBinding,
+    ) -> object | None:
+        """Return source-owned boundary evidence for an exact binding."""
+        for symbol, candidate_binding in self.bindings_by_symbol:
+            if candidate_binding != binding:
+                continue
+            for evidence_symbol, evidence in self.boundary_evidence_by_symbol:
+                if evidence_symbol == symbol:
+                    return evidence
+            return None
+        return None
+
+
+def _unavailable_conversion_guard_projection() -> _ConversionGuardProjection:
+    return _ConversionGuardProjection(
+        available=False,
+        bindings_by_symbol=(),
+        ambiguous_symbols=frozenset(),
+    )
+
+
+def _read_conversion_guard_projection() -> _ConversionGuardProjection:
+    """Read and canonicalize the authoritative conversion guard source.
+
+    The only membership source is canonical POSITION_CONVERSION ledger
+    evidence.  A database or parse error is represented as unavailable rather
+    than as an empty set, because G3 requires refusal when membership is
+    undetermined.  No registry lookup, configuration value, or environment
+    setting participates in membership.
+    """
+    db = None
+    projection = _unavailable_conversion_guard_projection()
+    try:
+        # Session construction is part of the guarded source read.  G3 treats
+        # an open failure exactly like a query, canonicalization, or parse
+        # failure: membership is unavailable and must not become an empty
+        # permissive projection.
+        db = SessionLocal()
+        rows = (
+            db.query(Transaction)
+            .filter_by(transaction_type="POSITION_CONVERSION")
+            .all()
+        )
+        canonical = canonicalize_transactions(list(rows))
+        by_symbol: dict[str, SuccessorQuoteBinding] = {}
+        boundary_by_symbol: dict[str, object] = {}
+        ambiguous: set[str] = set()
+        source_invalid = False
+
+        for transaction in canonical:
+            parsed = transaction.position_conversion
+            if parsed is None or not parsed.is_valid or parsed.value is None:
+                _log.warning(
+                    "conversion_guard_unavailable reason=invalid_position_conversion"
+                )
+                source_invalid = True
+                break
+
+            binding = build_successor_quote_binding(
+                parsed.value.successor,
+                parsed.value.quote_binding,
+                parsed.value.dates,
+            )
+            boundary_evidence = parsed.value.boundary_evidence
+            identifier_result = evaluate_request_identity(
+                binding,
+                requested_symbol=binding.provider_symbol,
+            )
+            if identifier_result is not None:
+                _log.warning(
+                    "conversion_guard_unavailable reason=%s affected_asset_id=%s",
+                    identifier_result.reason.value,
+                    identifier_result.affected_asset_id,
+                )
+                source_invalid = True
+                break
+
+            symbol = binding.provider_symbol
+            previous = by_symbol.get(symbol)
+            previous_boundary = boundary_by_symbol.get(symbol)
+            if previous is not None and (
+                previous != binding or previous_boundary != boundary_evidence
+            ):
+                ambiguous.add(symbol)
+                by_symbol.pop(symbol, None)
+                boundary_by_symbol.pop(symbol, None)
+            elif symbol not in ambiguous:
+                by_symbol[symbol] = binding
+                boundary_by_symbol[symbol] = boundary_evidence
+
+        if not source_invalid:
+            projection = _ConversionGuardProjection(
+                available=True,
+                bindings_by_symbol=tuple(sorted(by_symbol.items())),
+                ambiguous_symbols=frozenset(ambiguous),
+                boundary_evidence_by_symbol=tuple(sorted(boundary_by_symbol.items())),
+            )
+    except Exception as exc:
+        _log.warning(
+            "conversion_guard_unavailable error_type=%s",
+            type(exc).__name__,
+        )
+        projection = _unavailable_conversion_guard_projection()
+    finally:
+        if db is not None:
+            try:
+                db.close()
+            except Exception as exc:
+                _log.warning(
+                    "conversion_guard_unavailable error_type=%s",
+                    type(exc).__name__,
+                )
+                projection = _unavailable_conversion_guard_projection()
+    return projection
+
+
+def _guard_result_from_projection(
+    symbol: str,
+    projection: _ConversionGuardProjection,
+) -> QuarantineResult | None:
+    """Apply one already-read projection to one unbound symbol."""
+    if not projection.available:
+        return QuarantineResult(
+            QuarantineReason.MISSING_OR_AMBIGUOUS_IDENTIFIER,
+            0,
+        )
+    if symbol in projection.ambiguous_symbols:
+        return QuarantineResult(
+            QuarantineReason.MISSING_OR_AMBIGUOUS_IDENTIFIER,
+            0,
+        )
+    binding = projection.binding_for(symbol)
+    if binding is None:
+        return None
+    return QuarantineResult(
+        QuarantineReason.MISSING_OR_AMBIGUOUS_IDENTIFIER,
+        binding.asset_id,
+    )
+
+
+def _unbound_guard_result(symbol: str) -> QuarantineResult | None:
+    """Read the guard source once and refuse when membership is known/unknown.
+
+    A successful empty projection is the legacy/unconverted case.  Every
+    other state is fail-closed: a converted symbol lacks its explicit binding,
+    an ambiguous symbol has no uniquely affected identity, and an unavailable
+    source cannot be treated as "not converted".  The caller of a batch path
+    should reuse the returned projection for all symbols in that batch.
+    """
+    return _guard_result_from_projection(
+        symbol,
+        _read_conversion_guard_projection(),
+    )
+
+
+def resolve_successor_bindings(
+    symbols: list[str],
+) -> dict[str, SuccessorQuoteBinding]:
+    """Return the canonical successor binding for each of *symbols* that has one.
+
+    Reads the exact same WP3.3 guard projection consulted to refuse an
+    unbound request for a converted identity (``_unbound_guard_result``).
+    This is a read-only projection over already-canonicalized WP1 evidence —
+    it performs no binding construction, no comparison, and no quarantine
+    decision of its own. It exists so the one call site that owns portfolio
+    identity can supply the binding WP3.3 requires, instead of receiving the
+    unbound refusal. A symbol absent from the result is either unconverted,
+    ambiguous, or the guard source is unavailable; the caller's existing
+    unbound path (which already fails closed for the latter two cases)
+    remains the correct fallback and must not be duplicated here.
+    """
+    projection = _read_conversion_guard_projection()
+    if not projection.available:
+        return {}
+    wanted = set(symbols)
+    return {
+        symbol: binding
+        for symbol, binding in projection.bindings_by_symbol
+        if symbol in wanted and symbol not in projection.ambiguous_symbols
+    }
 
 
 def _history_ttl(period: str, interval: str) -> int:
@@ -211,6 +436,154 @@ def _source_quote_payload(payload: dict) -> dict:
     }
 
 
+def _log_quarantine(
+    result: QuarantineResult,
+    *,
+    symbol: str,
+    kind: str,
+) -> None:
+    """Emit the deterministic, structured fetch-layer quarantine record."""
+    _log.warning(
+        "market_data_quarantine kind=%s symbol=%s reason=%s affected_asset_id=%s",
+        kind,
+        symbol,
+        result.reason.value,
+        result.affected_asset_id,
+    )
+
+
+def _quote_quarantine_response(
+    result: QuarantineResult,
+    *,
+    symbol: str,
+) -> dict:
+    """Return a shape-compatible quote refusal with private diagnostics."""
+    _log_quarantine(result, symbol=symbol, kind="quote")
+    return {
+        "current_price": None,
+        "previous_close": None,
+        "last_updated": None,
+        "_quarantine_reason": result.reason.value,
+        "_quarantine_asset_id": result.affected_asset_id,
+    }
+
+
+def _binding_request_identity_result(
+    symbol: str,
+    binding: SuccessorQuoteBinding,
+) -> QuarantineResult | None:
+    """Delegate all pre-fetch request identity policy to WP3.2."""
+    return evaluate_request_identity(
+        binding,
+        requested_symbol=symbol,
+    )
+
+
+def _history_cache_type_for_binding(
+    binding: SuccessorQuoteBinding,
+    period: str,
+    interval: str,
+) -> str | None:
+    """Return only the WP3.2-approved converted-history namespace.
+
+    The WP3.2 contract defines one binding-aware history namespace.  Legacy
+    period/interval combinations remain valid only on the unconverted path;
+    they must never be projected into a second bound namespace here.
+    """
+    if period != "5y" or interval != "1d":
+        return None
+    return history_cache_type(binding)
+
+
+def _boundary_evidence_for_binding(
+    binding: SuccessorQuoteBinding,
+) -> object | None:
+    """Read boundary evidence only from the canonical conversion projection."""
+    try:
+        return _read_conversion_guard_projection().boundary_evidence_for(binding)
+    except Exception as exc:
+        # The guard projection already fails closed; this defensive envelope
+        # keeps a malformed caller object from escaping into a fetch path.
+        _log.warning(
+            "conversion_guard_unavailable error_type=%s",
+            type(exc).__name__,
+        )
+        return None
+
+
+def _binding_evidence_result(
+    evidence: object,
+    *,
+    symbol: str,
+    binding: SuccessorQuoteBinding,
+    cache_type: str,
+    cache_kind: str,
+) -> QuarantineResult | None:
+    """Consume WP3.2's one authoritative quarantine composition path."""
+    return evaluate_candidate_quarantine(
+        binding=binding,
+        evidence=evidence,
+        boundary_evidence=_boundary_evidence_for_binding(binding),
+        reference_price_field="successor_reference_price",
+        candidate_cache_type=cache_type,
+        cache_kind=cache_kind,
+    )
+
+
+def _fetch_binding_evidence(
+    symbol: str,
+    binding: SuccessorQuoteBinding,
+    *,
+    cache_type: str,
+    cache_kind: str,
+) -> tuple[object | None, QuarantineResult | None]:
+    """Fetch WP3.1 evidence and apply the WP3.2 contract at this layer."""
+    getter = getattr(_provider, "get_quote_evidence", None)
+    if not callable(getter):
+        return None, QuarantineResult(
+            QuarantineReason.EVIDENCE_CONTRACT_NOT_SATISFIED,
+            binding.asset_id,
+        )
+
+    try:
+        evidence = getter(symbol)
+    except Exception as exc:
+        _log.warning(
+            "provider_evidence_unavailable symbol=%s error_type=%s",
+            symbol,
+            type(exc).__name__,
+        )
+        return None, QuarantineResult(
+            QuarantineReason.EVIDENCE_CONTRACT_NOT_SATISFIED,
+            binding.asset_id,
+        )
+
+    result = _binding_evidence_result(
+        evidence,
+        symbol=symbol,
+        binding=binding,
+        cache_type=cache_type,
+        cache_kind=cache_kind,
+    )
+    return evidence, result
+
+
+def _evidence_to_quote_payload(evidence: object) -> dict:
+    """Project accepted provider closes into the legacy quote response shape."""
+    current_close = getattr(evidence, "current_close")
+    previous_close = getattr(evidence, "previous_close")
+    return {
+        "current_price": round(current_close, 4),
+        "previous_close": previous_close,
+        "last_updated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+
+
+def _bound_cache_hit(cached: dict | None, binding: SuccessorQuoteBinding) -> bool:
+    """Accept only a row written by the provider named by the binding."""
+    return bool(cached) and cached.get(_BOUND_PROVIDER_KEY) == binding.provider
+
+
 def _df_to_payload(df: pd.DataFrame) -> dict:
     try:
         return {"json_split": df.to_json(orient="split", date_format="iso", default_handler=str)}
@@ -273,8 +646,108 @@ def _record_yf_error(e: Exception) -> None:
 
 # ── Public API (same signatures as the original data_fetcher.py) ───────────────
 
-def fetch_history(symbol: str, period: str = "6mo", interval: str = "1d") -> Optional[pd.DataFrame]:
+def _fetch_history_bound(
+    symbol: str,
+    period: str,
+    interval: str,
+    binding: SuccessorQuoteBinding,
+) -> Optional[pd.DataFrame]:
+    request_result = _binding_request_identity_result(symbol, binding)
+    if request_result is not None:
+        _log_quarantine(request_result, symbol=symbol, kind="history")
+        return None
+    try:
+        cache_type = _history_cache_type_for_binding(binding, period, interval)
+    except (AttributeError, TypeError, ValueError, ArithmeticError):
+        result = QuarantineResult(
+            QuarantineReason.MISSING_OR_AMBIGUOUS_IDENTIFIER,
+            getattr(binding, "asset_id", 0)
+            if isinstance(getattr(binding, "asset_id", 0), int)
+            else 0,
+        )
+        _log_quarantine(result, symbol=symbol, kind="history")
+        return None
+    if cache_type is None:
+        result = QuarantineResult(
+            QuarantineReason.CACHE_NAMESPACE_MISMATCH,
+            binding.asset_id,
+        )
+        _log_quarantine(result, symbol=symbol, kind="history")
+        return None
+
+    cached = _get_cached(symbol, cache_type)
+    if cached:
+        if _bound_cache_hit(cached, binding):
+            df_cached = _payload_to_df(cached)
+            if df_cached is not None and not df_cached.empty:
+                return df_cached
+        else:
+            _log.warning(
+                "bound_cache_rejected symbol=%s type=%s reason=provider_namespace_mismatch",
+                symbol,
+                cache_type,
+            )
+
+    # A converted/bound history request never serves an expired row.  It must
+    # be revalidated from provider evidence or fail closed.
+    if not allow_market_fetching():
+        result = QuarantineResult(
+            QuarantineReason.EVIDENCE_CONTRACT_NOT_SATISFIED,
+            binding.asset_id,
+        )
+        _log_quarantine(result, symbol=symbol, kind="history")
+        return None
+
+    evidence, evidence_result = _fetch_binding_evidence(
+        symbol,
+        binding,
+        cache_type=cache_type,
+        cache_kind="history",
+    )
+    if evidence_result is not None or evidence is None:
+        result = evidence_result or QuarantineResult(
+            QuarantineReason.EVIDENCE_CONTRACT_NOT_SATISFIED,
+            binding.asset_id,
+        )
+        _log_quarantine(result, symbol=symbol, kind="history")
+        return None
+
+    _inc("yahoo_requests")
+    t0 = time.monotonic()
+    try:
+        df = _provider.get_history(symbol, period, interval)
+        _record_yf_call(t0)
+        _log.info("[LOCAL FETCH] yahoo_fetch symbol=%s type=%s", symbol, cache_type)
+        if df is not None and not df.empty:
+            payload = _df_to_payload(df)
+            payload[_BOUND_PROVIDER_KEY] = getattr(evidence, "provider")
+            _set_cached(symbol, cache_type, payload, _history_ttl(period, interval))
+        return df
+    except Exception as exc:
+        _record_yf_error(exc)
+        result = QuarantineResult(
+            QuarantineReason.EVIDENCE_CONTRACT_NOT_SATISFIED,
+            binding.asset_id,
+        )
+        _log_quarantine(result, symbol=symbol, kind="history")
+        return None
+
+
+def fetch_history(
+    symbol: str,
+    period: str = "6mo",
+    interval: str = "1d",
+    binding: SuccessorQuoteBinding | None = None,
+) -> Optional[pd.DataFrame]:
     #print("fetch_history()", symbol)
+    if binding is not None:
+        return _fetch_history_bound(symbol, period, interval, binding)
+
+    guard_result = _unbound_guard_result(symbol)
+    if guard_result is not None:
+        _log_quarantine(guard_result, symbol=symbol, kind="history")
+        return None
+
     cache_type = f"history:{period}:{interval}"
     ttl        = _history_ttl(period, interval)
 
@@ -356,10 +829,92 @@ def calculate_change_percent(
     )
 
 
-def fetch_price_info(symbol: str) -> dict:
-    """Return {current_price, previous_close, last_updated} for a symbol."""
+def _fetch_price_info_bound(
+    symbol: str,
+    binding: SuccessorQuoteBinding,
+) -> dict:
+    """Fetch a converted quote through provider evidence and WP3.2 checks."""
+    request_result = _binding_request_identity_result(symbol, binding)
+    if request_result is not None:
+        return _quote_quarantine_response(request_result, symbol=symbol)
+    try:
+        cache_type = quote_cache_type(binding)
+    except (AttributeError, TypeError, ValueError, ArithmeticError):
+        return _quote_quarantine_response(
+            QuarantineResult(
+                QuarantineReason.MISSING_OR_AMBIGUOUS_IDENTIFIER,
+                getattr(binding, "asset_id", 0)
+                if isinstance(getattr(binding, "asset_id", 0), int)
+                else 0,
+            ),
+            symbol=symbol,
+        )
+
+    cached = _get_cached(symbol, cache_type)
+    if cached:
+        if _bound_cache_hit(cached, binding):
+            return _source_quote_payload(cached)
+        _log.warning(
+            "bound_cache_rejected symbol=%s type=%s reason=provider_namespace_mismatch",
+            symbol,
+            cache_type,
+        )
+
+    # Converted identities never receive a stale predecessor value.  A
+    # cache miss on the bound path is either refreshed from qualifying
+    # evidence or refused.
+    if not allow_market_fetching():
+        return _quote_quarantine_response(
+            QuarantineResult(
+                QuarantineReason.EVIDENCE_CONTRACT_NOT_SATISFIED,
+                binding.asset_id,
+            ),
+            symbol=symbol,
+        )
+
+    _inc("yahoo_requests")
+    t0 = time.monotonic()
+    evidence, evidence_result = _fetch_binding_evidence(
+        symbol,
+        binding,
+        cache_type=cache_type,
+        cache_kind="quote",
+    )
+    _record_yf_call(t0)
+    if evidence_result is not None or evidence is None:
+        result = evidence_result or QuarantineResult(
+            QuarantineReason.EVIDENCE_CONTRACT_NOT_SATISFIED,
+            binding.asset_id,
+        )
+        return _quote_quarantine_response(result, symbol=symbol)
+
+    try:
+        result = _evidence_to_quote_payload(evidence)
+    except Exception as exc:
+        _log.warning(
+            "provider_evidence_unavailable symbol=%s error_type=%s",
+            symbol,
+            type(exc).__name__,
+        )
+        return _quote_quarantine_response(
+            QuarantineResult(
+                QuarantineReason.EVIDENCE_CONTRACT_NOT_SATISFIED,
+                binding.asset_id,
+            ),
+            symbol=symbol,
+        )
+
+    cache_payload = {**result, _BOUND_PROVIDER_KEY: getattr(evidence, "provider")}
+    _log.info("[LOCAL FETCH] yahoo_fetch symbol=%s type=%s", symbol, cache_type)
+    if result.get("current_price") is not None:
+        _set_cached(symbol, cache_type, cache_payload, _TTL_QUOTE)
+    return result
+
+
+def _fetch_price_info_legacy(symbol: str) -> dict:
+    """The pre-WP3.3 unbound quote path, retained byte-for-byte in behavior."""
     cache_type = "quote"
-    
+
     DEBUG_BYPASS_CACHE = False
     if not DEBUG_BYPASS_CACHE:
         cached = _get_cached(symbol, cache_type)
@@ -390,6 +945,25 @@ def fetch_price_info(symbol: str) -> dict:
         return {"current_price": None, "previous_close": None, "last_updated": None}
 
 
+def fetch_price_info(
+    symbol: str,
+    binding: SuccessorQuoteBinding | None = None,
+) -> dict:
+    """Return {current_price, previous_close, last_updated} for a symbol.
+
+    A binding is the only route to a converted-identity quote.  Symbol-only
+    callers remain on the legacy path while the canonical guard projection is
+    empty; once a conversion row exists, they receive a structured refusal.
+    """
+    if binding is not None:
+        return _fetch_price_info_bound(symbol, binding)
+
+    guard_result = _unbound_guard_result(symbol)
+    if guard_result is not None:
+        return _quote_quarantine_response(guard_result, symbol=symbol)
+    return _fetch_price_info_legacy(symbol)
+
+
 def fetch_news(symbol: str) -> list[dict]:
     """Callers are responsible for normalising DR symbols via normalize_dr_symbol() first."""
     if not allow_market_fetching():
@@ -410,7 +984,10 @@ def fetch_news(symbol: str) -> list[dict]:
 
 
 def prefetch_history_batch(
-    symbols: list[str], period: str = "6mo", interval: str = "1d"
+    symbols: list[str],
+    period: str = "6mo",
+    interval: str = "1d",
+    bindings: Mapping[str, SuccessorQuoteBinding] | None = None,
 ) -> None:
     """Warm the cache for a batch of symbols using yf.download() in chunks.
 
@@ -423,21 +1000,115 @@ def prefetch_history_batch(
         _log.info("[VPS BLOCKED FETCH] prefetch_history_batch — skipped on VPS")
         return
 
-    cache_type = f"history:{period}:{interval}"
-    ttl        = _history_ttl(period, interval)
+    legacy_cache_type = f"history:{period}:{interval}"
+    ttl = _history_ttl(period, interval)
+    bindings = bindings or {}
+    guard_projection = (
+        _read_conversion_guard_projection()
+        if any(symbol not in bindings for symbol in symbols)
+        else None
+    )
 
-    stale = [s for s in symbols if _get_cached(s, cache_type) is None]
-    if not stale:
+    candidates: list[tuple[str, str, SuccessorQuoteBinding | None]] = []
+    for symbol in symbols:
+        binding = bindings.get(symbol)
+        if binding is None:
+            guard_result = _guard_result_from_projection(symbol, guard_projection)
+            if guard_result is not None:
+                _log_quarantine(guard_result, symbol=symbol, kind="history")
+                continue
+            cache_type = legacy_cache_type
+        else:
+            request_result = _binding_request_identity_result(symbol, binding)
+            if request_result is not None:
+                _log_quarantine(request_result, symbol=symbol, kind="history")
+                continue
+            try:
+                cache_type = _history_cache_type_for_binding(binding, period, interval)
+            except (AttributeError, TypeError, ValueError, ArithmeticError):
+                result = QuarantineResult(
+                    QuarantineReason.MISSING_OR_AMBIGUOUS_IDENTIFIER,
+                    getattr(binding, "asset_id", 0)
+                    if isinstance(getattr(binding, "asset_id", 0), int)
+                    else 0,
+                )
+                _log_quarantine(result, symbol=symbol, kind="history")
+                continue
+            if cache_type is None:
+                result = QuarantineResult(
+                    QuarantineReason.CACHE_NAMESPACE_MISMATCH,
+                    binding.asset_id,
+                )
+                _log_quarantine(result, symbol=symbol, kind="history")
+                continue
+
+        cached = _get_cached(symbol, cache_type)
+        if cached is not None and (
+            binding is None or _bound_cache_hit(cached, binding)
+        ):
+            continue
+        if cached is not None and binding is not None:
+            _log.warning(
+                "bound_cache_rejected symbol=%s type=%s reason=provider_namespace_mismatch",
+                symbol,
+                cache_type,
+            )
+        candidates.append((symbol, cache_type, binding))
+
+    if not candidates:
         return
 
-    _log.info("[LOCAL FETCH] prefetch_history_batch symbols=%d period=%s interval=%s", len(stale), period, interval)
-    _inc("yahoo_requests", len(stale))
+    # A binding-aware history read must establish the same provider identity,
+    # served-symbol identity, and successor epoch before the separate history
+    # response is used.  Unbound candidates retain the legacy batch behavior.
+    bound_evidence: dict[str, object] = {}
+    eligible: list[tuple[str, str, SuccessorQuoteBinding | None]] = []
+    for symbol, cache_type, binding in candidates:
+        if binding is None:
+            eligible.append((symbol, cache_type, None))
+            continue
+        evidence, evidence_result = _fetch_binding_evidence(
+            symbol,
+            binding,
+            cache_type=cache_type,
+            cache_kind="history",
+        )
+        if evidence_result is not None or evidence is None:
+            result = evidence_result or QuarantineResult(
+                QuarantineReason.EVIDENCE_CONTRACT_NOT_SATISFIED,
+                binding.asset_id,
+            )
+            _log_quarantine(result, symbol=symbol, kind="history")
+            continue
+        bound_evidence[symbol] = evidence
+        eligible.append((symbol, cache_type, binding))
+
+    if not eligible:
+        return
+
+    fetch_symbols = [symbol for symbol, _, _ in eligible]
+    _log.info(
+        "[LOCAL FETCH] prefetch_history_batch symbols=%d period=%s interval=%s",
+        len(fetch_symbols),
+        period,
+        interval,
+    )
+    _inc("yahoo_requests", len(fetch_symbols))
     t0 = time.monotonic()
     try:
-        batch = _provider.get_history_batch(stale, period, interval)
+        batch = _provider.get_history_batch(fetch_symbols, period, interval)
         _record_yf_call(t0)
-        for sym, df in batch.items():
-            if df is not None and not df.empty:
-                _set_cached(sym, cache_type, _df_to_payload(df), ttl)
+        by_symbol = {
+            symbol: (cache_type, binding)
+            for symbol, cache_type, binding in eligible
+        }
+        for symbol, df in batch.items():
+            if df is None or df.empty or symbol not in by_symbol:
+                continue
+            cache_type, binding = by_symbol[symbol]
+            payload = _df_to_payload(df)
+            if binding is not None:
+                payload[_BOUND_PROVIDER_KEY] = getattr(bound_evidence[symbol], "provider")
+            _set_cached(symbol, cache_type, payload, ttl)
     except Exception as exc:
         _record_yf_error(exc)

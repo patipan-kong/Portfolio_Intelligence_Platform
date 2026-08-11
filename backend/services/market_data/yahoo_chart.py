@@ -32,6 +32,7 @@ import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -167,6 +168,100 @@ def _chart_result_to_df(result: dict) -> Optional[pd.DataFrame]:
     return df if not df.empty else None
 
 
+# ── BANPU-WP3.1 provider evidence (E1-E5) ───────────────────────────────────
+#
+# Provider-neutral, conversion-unaware. This section supplies the raw
+# provider-reported facts named by the WP3 Provider Evidence Contract
+# (docs/implementation/BANPU_WP3_ARCHITECTURE_AND_IMPLEMENTATION_PLAN.md
+# §6.3). It makes no comparison, no binding, and no quarantine decision, and
+# never references PositionConversion or any conversion concept. WP3.2
+# consumes this shape structurally, without importing this module.
+
+_PROVIDER_ID = "yahoo_chart"  # same identity convention already used by
+                               # execution_quote.py's adapt_yahoo_chart_execution_quote()
+
+
+@dataclass(frozen=True)
+class QuoteObservation:
+    """One (timestamp, close) pair from a single provider chart response.
+
+    ``timestamp`` is the provider's raw epoch-seconds value, unmodified, in
+    provider-returned order. ``close`` may be ``None`` (a sparse/no-trade
+    bar) -- carried as-is, never dropped or substituted here.
+    """
+
+    timestamp: int
+    close: Optional[float]
+
+
+@dataclass(frozen=True)
+class ProviderQuoteEvidence:
+    """Provider-neutral, conversion-unaware evidence for one quote response.
+
+    Immutable. Fields correspond 1:1 to the WP3 Provider Evidence Contract:
+
+        E1 provider                  -- the provider identity this adapter acts as
+        E2 served_symbol              -- raw meta.symbol, uncompared against anything
+        E3 observations                -- raw (timestamp, close) pairs, provider order
+        E4 current_close/previous_close -- derived from this one response only
+        E5 exchange_timezone_name       -- raw meta.exchangeTimezoneName
+
+    ``previous_close`` is derived by timestamp-associated matching (skipping
+    sparse/null bars), never by positional indexing -- this is the PD-1
+    corrected derivation, confined to this structure alone. Nothing in this
+    module calls or exposes this derivation through ``get_quote()``, whose
+    existing positional derivation is untouched and numerically unchanged.
+    """
+
+    provider: str
+    requested_symbol: str
+    served_symbol: Optional[str]
+    observations: "tuple[QuoteObservation, ...]"
+    current_close: Optional[float]
+    previous_close: Optional[float]
+    exchange_timezone_name: Optional[str]
+
+
+def _extract_provider_evidence(result: dict, requested_symbol: str) -> ProviderQuoteEvidence:
+    """Build the WP3 provider evidence structure from one raw chart result.
+
+    Pure: no I/O, no clock, no registry lookup, no conversion awareness.
+    ``result`` is the same ``chart.result[0]`` shape ``_fetch_chart_result``
+    returns -- the caller supplies it so evidence and any corrected
+    derivation come from a single fetched response (E4).
+    """
+    meta = result.get("meta") or {}
+    indicators = result.get("indicators") or {}
+    quote_list = indicators.get("quote") or [{}]
+    quote0 = quote_list[0] if quote_list else {}
+    closes = quote0.get("close") or []
+    timestamps = result.get("timestamp") or []
+
+    observations = tuple(
+        QuoteObservation(timestamp=ts, close=c) for ts, c in zip(timestamps, closes)
+    )
+
+    # E4 -- timestamp-associated derivation of previous close: sort by
+    # timestamp, skip sparse (null) bars, take the second most recent
+    # non-null close. Deliberately not `closes[-2]` (positional), which is
+    # get_quote()'s existing, unmodified, unconverted-path behavior.
+    non_null = sorted(
+        (obs for obs in observations if obs.close is not None),
+        key=lambda obs: obs.timestamp,
+    )
+    previous_close = non_null[-2].close if len(non_null) >= 2 else None
+
+    return ProviderQuoteEvidence(
+        provider=_PROVIDER_ID,
+        requested_symbol=requested_symbol,
+        served_symbol=meta.get("symbol"),
+        observations=observations,
+        current_close=meta.get("regularMarketPrice"),
+        previous_close=previous_close,
+        exchange_timezone_name=meta.get("exchangeTimezoneName"),
+    )
+
+
 class YahooChartProvider(MarketDataProvider):
     """MarketDataProvider backed directly by the Yahoo Finance Chart API.
 
@@ -253,6 +348,25 @@ class YahooChartProvider(MarketDataProvider):
                     _log.warning("YahooChartProvider execution quote failed symbol=%s: %s", symbol, exc)
                     results[symbol] = None
         return results
+
+    def get_quote_evidence(self, symbol: str) -> Optional[ProviderQuoteEvidence]:
+        """Fetch one WP3 provider evidence structure (E1-E5).
+
+        Deliberately separate from ``get_quote()``, which keeps its existing
+        three-key dictionary and positional derivation completely unchanged
+        -- the same precedent ``get_execution_quote_envelope()`` already
+        sets for this module. Nothing in this sub-package calls this method;
+        it exists so a later, binding-aware caller (outside this module, not
+        introduced by WP3.1) can obtain provider evidence together with a
+        single-response, timestamp-associated close derivation. This method
+        has no knowledge of PositionConversion, binding, epoch, or
+        quarantine concepts.
+        """
+        with _SEMAPHORE:
+            result = _fetch_chart_result(symbol, range_="5d", interval="1d")
+        if result is None:
+            return None
+        return _extract_provider_evidence(result, requested_symbol=symbol)
 
     def get_history(
         self, symbol: str, period: str = "6mo", interval: str = "1d"

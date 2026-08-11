@@ -200,6 +200,26 @@ no authority and does not duplicate the Decision Log narrative.
 The corresponding final decision is recorded in the [Decision
 Log](../engineering/DECISION_LOG.md#banpu-wp2-implementation-governance-epic-closeout).
 
+## BANPU-WP3 — Quote Identity and Epoch Protection
+
+This navigation entry records the final BANPU-WP3 repository state. It grants
+no authority and does not duplicate the Decision Log narrative.
+
+| Lifecycle stage | Final state | Record |
+|---|---|---|
+| BANPU-WP3 BPA-1 amended planning | `COMPLETE AND FROZEN` | [Amended Planning Freeze Record](BANPU_WP3_AMENDED_PLANNING_FREEZE_RECORD.md) |
+| BANPU-WP3 Allocation | `COMPLETE` | [Amended Allocation Record](BANPU_WP3_AMENDED_ALLOCATION_RECORD.md) |
+| WP3.1–WP3.4 / C1–C4 | `ACCEPTED` | [C4 Acceptance Record](BANPU_WP3_C4_ACCEPTANCE_RECORD.md) |
+| BPA-1 accessor delta | `INDEPENDENTLY ACCEPTED` | [BPA-1 Accessor Delta Acceptance](BANPU_WP3_BPA1_C3_ACCESSOR_DELTA_ACCEPTANCE.md) |
+| BANPU-WP3 Implementation | `COMPLETE` | [Epic Closeout](BANPU_WP3_EPIC_CLOSEOUT.md) |
+| Implementation Confirmation | `BANPU-WP3 IMPLEMENTATION CONFIRMED` | [Implementation Confirmation](BANPU_WP3_IMPLEMENTATION_CONFIRMATION.md) |
+| Implementation Freeze | `BANPU-WP3 IMPLEMENTATION COMPLETE AND FROZEN` | [Implementation Freeze Record](BANPU_WP3_IMPLEMENTATION_FREEZE_RECORD.md) |
+| Epic Closeout | `BANPU-WP3 EPIC CLOSEOUT COMPLETE` | [Epic Closeout](BANPU_WP3_EPIC_CLOSEOUT.md) |
+| Decision Log synchronization | `BANPU-WP3 DECISION LOG SYNCHRONIZED` | [Decision Log](../engineering/DECISION_LOG.md#banpu-wp3-decision-log-synchronization) |
+
+BANPU-WP3 is `COMPLETE`, `FROZEN`, and `CLOSED`. WP4's S7 entry prerequisite
+is satisfied; WP4 remains `NOT ALLOCATED` and `NOT AUTHORIZED`.
+
 ## Milestone Navigation (M0–current)
 
 | Milestone | Status (as declared in-document) | Primary document(s) | Closeout | Decision Log |
