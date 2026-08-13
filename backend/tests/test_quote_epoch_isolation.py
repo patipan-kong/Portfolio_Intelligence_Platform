@@ -805,6 +805,37 @@ def test_legacy_unconverted_quote_cache_and_sparse_behavior_remain_unchanged(mon
     assert provider.evidence_calls == 0
 
 
+def test_legacy_quote_cache_with_missing_previous_close_is_refreshed(monkeypatch):
+    provider = _Provider()
+    provider.quote_result = {
+        "current_price": 248.0,
+        "previous_close": 250.0,
+        "last_updated": "refreshed",
+    }
+    writes = []
+    _patch_common(monkeypatch, provider)
+    monkeypatch.setattr(
+        fetcher,
+        "_get_cached",
+        lambda *_: {
+            "current_price": 248.0,
+            "previous_close": None,
+            "last_updated": "old-normalization",
+        },
+    )
+    monkeypatch.setattr(fetcher, "_set_cached", lambda *args: writes.append(args))
+
+    result = fetcher.fetch_price_info("KBANK.BK")
+
+    assert result == {
+        "current_price": 248.0,
+        "previous_close": 250.0,
+        "last_updated": "refreshed",
+    }
+    assert provider.quote_calls == 1
+    assert writes[0][0:2] == ("KBANK.BK", "quote")
+
+
 def test_legacy_unconverted_stale_fallback_is_preserved(monkeypatch):
     provider = _Provider()
     _patch_common(monkeypatch, provider)

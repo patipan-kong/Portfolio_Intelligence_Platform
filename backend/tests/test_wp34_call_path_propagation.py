@@ -310,6 +310,54 @@ def test_owning_call_site_handles_mixed_converted_and_unconverted_holdings_indep
     assert provider.quote_calls == 1
 
 
+# ── Shared API quote serialization ─────────────────────────────────────────
+
+def test_owning_call_site_serializes_previous_close_and_day_change_for_set_equity(monkeypatch):
+    provider = _Provider(quote={
+        "current_price": 248.0,
+        "previous_close": 250.0,
+        "last_updated": "provider",
+    })
+    monkeypatch.setattr(fetcher, "_provider", provider)
+    monkeypatch.setattr(fetcher, "_read_conversion_guard_projection", _empty_projection)
+
+    db = make_session()
+    portfolio = _add_portfolio(db)
+    _add_item(db, portfolio, "KBANK.BK")
+
+    rows = asyncio.run(main.get_portfolio_prices(portfolio.id, db))
+
+    assert rows == [{
+        "symbol": "KBANK.BK",
+        "current_price": 248.0,
+        "previous_close": 250.0,
+        "change_percent": -0.8,
+        "last_updated": "provider",
+        "upside_pct": None,
+    }]
+
+
+def test_owning_call_site_preserves_previous_close_and_day_change_for_dr_shape(monkeypatch):
+    provider = _Provider(quote={
+        "current_price": 29.5,
+        "previous_close": 30.5,
+        "last_updated": "provider",
+    })
+    monkeypatch.setattr(fetcher, "_provider", provider)
+    monkeypatch.setattr(fetcher, "_read_conversion_guard_projection", _empty_projection)
+
+    db = make_session()
+    portfolio = _add_portfolio(db)
+    _add_item(db, portfolio, "AAPL01.BK")
+
+    rows = asyncio.run(main.get_portfolio_prices(portfolio.id, db))
+
+    assert rows[0]["symbol"] == "AAPL01.BK"
+    assert rows[0]["current_price"] == 29.5
+    assert rows[0]["previous_close"] == 30.5
+    assert rows[0]["change_percent"] == -3.28
+
+
 # ── A second, deliberately unbound caller: GET /watchlist ───────────────────
 
 def test_non_owning_call_site_watchlist_refuses_converted_symbol(monkeypatch):

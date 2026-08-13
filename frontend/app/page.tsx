@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePortfolio } from "@/lib/PortfolioContext";
 import { getHoldings, getPortfolioPrices } from "@/lib/api";
@@ -32,6 +32,7 @@ function DashboardHeatmap({
     symbol: string;
     mv: number;
     cp: number | null;
+    livePrice: number | null;
     priceConfirmed: boolean;
   }>();
 
@@ -43,15 +44,19 @@ function DashboardHeatmap({
       const price = live?.current_price ?? item.current_price ?? item.avg_cost;
       const mv = item.shares * price;
       const cp = live?.change_percent ?? null;
-      const priceConfirmed = pricesLoaded && !!live;
+      // live?.current_price may itself be null (quarantined/no-data quote),
+      // so a truthy `live` lookup alone doesn't mean we have a confirmed price.
+      const livePrice = live?.current_price ?? null;
+      const priceConfirmed = pricesLoaded && livePrice != null;
 
       const existing = aggregated.get(item.symbol);
       if (existing) {
         existing.mv += mv;
         if (cp != null) existing.cp = cp;
+        if (livePrice != null) existing.livePrice = livePrice;
         if (priceConfirmed) existing.priceConfirmed = true;
       } else {
-        aggregated.set(item.symbol, { symbol: item.symbol, mv, cp, priceConfirmed });
+        aggregated.set(item.symbol, { symbol: item.symbol, mv, cp, livePrice, priceConfirmed });
       }
     });
   });
@@ -82,9 +87,15 @@ function DashboardHeatmap({
           if (!pricesLoaded) {
             changeText = "…";
             changeColor = "text-gray-400";
-          } else if (tile.cp == null) {
+          } else if (!tile.priceConfirmed) {
+            // no confirmed current price at all (fetch failed/quarantined) — the only true "no data" case
             changeText = "No price data";
             changeColor = "text-gray-500";
+          } else if (tile.cp == null) {
+            // current price is confirmed but daily change is unavailable (e.g. no previous close) —
+            // fall back to the price itself rather than mislabeling this as "no price data"
+            changeText = tile.livePrice != null ? `฿${tile.livePrice.toFixed(2)}` : "No change data";
+            changeColor = "text-gray-300";
           } else {
             changeText = `${tile.cp > 0 ? "+" : ""}${tile.cp.toFixed(2)}%`;
             changeColor = tile.cp > 0.3 ? "text-green-200" : tile.cp < -0.3 ? "text-red-200" : "text-gray-300";
@@ -124,30 +135,75 @@ export default function DashboardPage() {
   const [loadingHoldings, setLoadingHoldings] = useState(false);
   const [pricesLoaded, setPricesLoaded] = useState(false);
   const [error, setError] = useState("");
+  const holdingsRequestIdRef = useRef(0);
+  const priceRequestIdRef = useRef(0);
 
   // Phase 1: load holdings from DB (fast, no yfinance)
   useEffect(() => {
-    if (ctxLoading || portfolios.length === 0) return;
+    const requestId = ++holdingsRequestIdRef.current;
+    // Any holdings reload invalidates an in-flight price response as well.
+    // The quote set belongs to the holdings request that triggered it.
+    ++priceRequestIdRef.current;
+    let active = true;
+
+    if (ctxLoading || portfolios.length === 0) {
+      setHoldingsMap({});
+      setPriceMap({});
+      setPricesLoaded(false);
+      setLoadingHoldings(false);
+      return () => { active = false; };
+    }
+
     setLoadingHoldings(true);
     setPricesLoaded(false);
+    setPriceMap({});
+    setError("");
     Promise.all(
       portfolios.map((p) => getHoldings(p.id).then((items) => ({ id: p.id, items })))
     )
       .then((results) => {
+        if (!active || holdingsRequestIdRef.current !== requestId) return;
         const map: Record<number, PortfolioItem[]> = {};
         results.forEach(({ id, items }) => { map[id] = items; });
         setHoldingsMap(map);
       })
-      .catch(() => setError("Cannot connect to backend"))
-      .finally(() => setLoadingHoldings(false));
+      .catch(() => {
+        if (active && holdingsRequestIdRef.current === requestId) {
+          setError("Cannot connect to backend");
+        }
+      })
+      .finally(() => {
+        if (active && holdingsRequestIdRef.current === requestId) {
+          setLoadingHoldings(false);
+        }
+      });
+
+    return () => { active = false; };
   }, [portfolios, ctxLoading]);
 
   // Phase 2: fetch live prices once holdings are known (hits yfinance cache)
   useEffect(() => {
-    if (portfolios.length === 0 || Object.keys(holdingsMap).length === 0) return;
+    const requestId = ++priceRequestIdRef.current;
+    const holdingsRequestId = holdingsRequestIdRef.current;
+    let active = true;
+    const holdingsLoaded = portfolios.length > 0 && portfolios.every((p) => (
+      Object.prototype.hasOwnProperty.call(holdingsMap, p.id)
+    ));
+
+    if (!holdingsLoaded) {
+      return () => { active = false; };
+    }
+
+    setPriceMap({});
+    setPricesLoaded(false);
     Promise.allSettled(
       portfolios.map((p) => getPortfolioPrices(p.id).then((prices) => ({ id: p.id, prices })))
     ).then((results) => {
+      if (
+        !active ||
+        priceRequestIdRef.current !== requestId ||
+        holdingsRequestIdRef.current !== holdingsRequestId
+      ) return;
       const map: Record<number, PriceRefreshItem[]> = {};
       results.forEach((result, i) => {
         if (result.status === "fulfilled") {
@@ -161,6 +217,8 @@ export default function DashboardPage() {
       setPriceMap(map);
       setPricesLoaded(true);
     });
+
+    return () => { active = false; };
   }, [holdingsMap, portfolios]);
 
   const isLoading = ctxLoading || loadingHoldings;

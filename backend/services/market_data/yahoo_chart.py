@@ -208,9 +208,10 @@ class ProviderQuoteEvidence:
 
     ``previous_close`` is derived by timestamp-associated matching (skipping
     sparse/null bars), never by positional indexing -- this is the PD-1
-    corrected derivation, confined to this structure alone. Nothing in this
-    module calls or exposes this derivation through ``get_quote()``, whose
-    existing positional derivation is untouched and numerically unchanged.
+    corrected derivation, confined to this structure alone. The legacy
+    ``get_quote()`` dictionary uses Yahoo's provider-reported previous-close
+    metadata instead; the two projections deliberately retain separate
+    contracts.
     """
 
     provider: str
@@ -243,8 +244,8 @@ def _extract_provider_evidence(result: dict, requested_symbol: str) -> ProviderQ
 
     # E4 -- timestamp-associated derivation of previous close: sort by
     # timestamp, skip sparse (null) bars, take the second most recent
-    # non-null close. Deliberately not `closes[-2]` (positional), which is
-    # get_quote()'s existing, unmodified, unconverted-path behavior.
+    # non-null close. This evidence contract is separate from the legacy
+    # quote dictionary, which uses provider-reported metadata.
     non_null = sorted(
         (obs for obs in observations if obs.close is not None),
         key=lambda obs: obs.timestamp,
@@ -296,9 +297,16 @@ class YahooChartProvider(MarketDataProvider):
 
         meta = result.get("meta") or {}
         current_price = meta.get("regularMarketPrice")
-        closes = result["indicators"]["quote"][0]["close"]
-        prev_close = closes[-2] if len(closes) >= 2 else None
-        
+        # Yahoo's chart response carries the previous trading-session close
+        # in metadata. The daily close array may contain a null bar for a
+        # holiday/current session, so positional indexing (for example,
+        # closes[-2]) can discard a valid provider value.
+        prev_close = meta.get("previousClose")
+        if prev_close is None:
+            prev_close = meta.get("chartPreviousClose")
+        if prev_close is None:
+            prev_close = meta.get("regularMarketPreviousClose")
+
         return {
             "current_price": round(current_price, 4) if current_price is not None else None,
             "previous_close": prev_close,
@@ -353,9 +361,8 @@ class YahooChartProvider(MarketDataProvider):
         """Fetch one WP3 provider evidence structure (E1-E5).
 
         Deliberately separate from ``get_quote()``, which keeps its existing
-        three-key dictionary and positional derivation completely unchanged
-        -- the same precedent ``get_execution_quote_envelope()`` already
-        sets for this module. Nothing in this sub-package calls this method;
+        three-key dictionary shape while using provider-reported previous-close
+        metadata. Nothing in this sub-package calls this method;
         it exists so a later, binding-aware caller (outside this module, not
         introduced by WP3.1) can obtain provider evidence together with a
         single-response, timestamp-associated close derivation. This method

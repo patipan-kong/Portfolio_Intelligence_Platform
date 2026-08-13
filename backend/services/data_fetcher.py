@@ -436,6 +436,14 @@ def _source_quote_payload(payload: dict) -> dict:
     }
 
 
+def _quote_cache_needs_previous_close_refresh(payload: Mapping[str, object]) -> bool:
+    """Refresh an old quote row that has a price but lost its reference close."""
+    return (
+        payload.get("current_price") is not None
+        and payload.get("previous_close") is None
+    )
+
+
 def _log_quarantine(
     result: QuarantineResult,
     *,
@@ -919,7 +927,12 @@ def _fetch_price_info_legacy(symbol: str) -> dict:
     if not DEBUG_BYPASS_CACHE:
         cached = _get_cached(symbol, cache_type)
         if cached:
-            return {k: v for k, v in cached.items() if not k.startswith("_")}
+            if not _quote_cache_needs_previous_close_refresh(cached):
+                return {k: v for k, v in cached.items() if not k.startswith("_")}
+            _log.info(
+                "quote_cache_refresh symbol=%s reason=missing_previous_close",
+                symbol,
+            )
 
         if not allow_market_fetching():
             _log.info("[VPS BLOCKED FETCH] fetch_price_info symbol=%s — returning stale cache", symbol)
@@ -936,6 +949,10 @@ def _fetch_price_info_legacy(symbol: str) -> dict:
         _log.info("[LOCAL FETCH] yahoo_fetch symbol=%s type=quote", symbol)
         if result.get("current_price") is not None:
             _set_cached(symbol, cache_type, result, _TTL_QUOTE)
+            return result
+        stale = _get_stale(symbol, cache_type)
+        if stale:
+            return _source_quote_payload(stale)
         return result
     except Exception as exc:
         _record_yf_error(exc)

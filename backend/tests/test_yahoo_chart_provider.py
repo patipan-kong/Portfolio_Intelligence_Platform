@@ -254,6 +254,20 @@ def test_get_quote_returns_previous_close():
     assert quote["last_updated"] is not None
 
 
+def test_get_quote_uses_provider_previous_close_when_latest_chart_bar_is_sparse():
+    result = _make_raw_chart_result(
+        "KBANK.BK",
+        248.0,
+        [250.0, 248.0, 249.0, None, 248.0],
+        meta_extra={"previousClose": None, "chartPreviousClose": 250.0},
+    )
+    with _patched_fetch_chart_result(result):
+        quote = YahooChartProvider().get_quote("KBANK.BK")
+
+    assert quote["current_price"] == 248.0
+    assert quote["previous_close"] == 250.0
+
+
 def test_get_quote_failure_returns_none_fields():
     with _patched_get() as mock_get:
         mock_get.return_value = _MockResponse(404, None)
@@ -299,7 +313,11 @@ def _make_raw_chart_result(
         },
     }
     if include_meta:
-        meta = {"symbol": symbol_meta, "regularMarketPrice": regular_market_price}
+        meta = {
+            "symbol": symbol_meta,
+            "regularMarketPrice": regular_market_price,
+            "chartPreviousClose": closes[-2] if len(closes) >= 2 else None,
+        }
         if meta_extra:
             meta.update(meta_extra)
         result["meta"] = meta
@@ -319,10 +337,8 @@ def test_characterization_f1_dense_matching_symbol():
 
 
 def test_characterization_f2_sparse_latest_bar_absent():
-    # closes[-2] is None even though an earlier, actually observed close
-    # (95.0) exists two positions back. This positional/timestamp-associated
-    # divergence is PD-1's central baseline fact: get_quote() must keep
-    # returning None here forever (unconverted/unbound path, NARROW).
+    # The provider metadata is absent here, so the legacy quote path must not
+    # synthesize a previous close from the sparse chart bars.
     result = _make_raw_chart_result("F2SYM.BK", 100.0, [95.0, None, 100.0])
     with _patched_fetch_chart_result(result):
         quote = YahooChartProvider().get_quote("F2SYM.BK")
@@ -344,7 +360,7 @@ def test_characterization_f4a_meta_absent():
     with _patched_fetch_chart_result(result):
         quote = YahooChartProvider().get_quote("F4SYM.BK")
     assert quote["current_price"] is None
-    assert quote["previous_close"] == 11.0
+    assert quote["previous_close"] is None
 
 
 def test_characterization_f4b_meta_incomplete():
@@ -589,10 +605,10 @@ def test_get_quote_evidence_returns_none_on_fetch_failure():
     assert evidence is None
 
 
-def test_get_quote_evidence_sparse_bar_corrected_while_get_quote_unchanged():
-    # Both paths tested independently against the SAME fixture (Step 1.3
-    # completion criteria): get_quote() keeps the positional bug; the new
-    # evidence method returns the corrected, timestamp-associated value.
+def test_get_quote_evidence_sparse_bar_is_separate_from_metadata_quote_path():
+    # Both paths are tested independently against the SAME fixture: the
+    # evidence method returns the corrected, timestamp-associated value while
+    # the legacy quote path remains metadata-driven and has no metadata here.
     result = _make_raw_chart_result("F2SYM.BK", 100.0, [95.0, None, 100.0])
     with _patched_fetch_chart_result(result):
         quote = YahooChartProvider().get_quote("F2SYM.BK")
