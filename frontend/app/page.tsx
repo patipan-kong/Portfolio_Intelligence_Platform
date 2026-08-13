@@ -145,18 +145,22 @@ export default function DashboardPage() {
   // Phase 2: fetch live prices once holdings are known (hits yfinance cache)
   useEffect(() => {
     if (portfolios.length === 0 || Object.keys(holdingsMap).length === 0) return;
-    Promise.all(
+    Promise.allSettled(
       portfolios.map((p) => getPortfolioPrices(p.id).then((prices) => ({ id: p.id, prices })))
-    )
-      .then((results) => {
-        const map: Record<number, PriceRefreshItem[]> = {};
-        results.forEach(({ id, prices }) => { map[id] = prices; });
-        setPriceMap(map);
-      })
-      .catch(() => {
-        // prices failing is non-fatal — heatmap shows "No price data"
-      })
-      .finally(() => setPricesLoaded(true));
+    ).then((results) => {
+      const map: Record<number, PriceRefreshItem[]> = {};
+      results.forEach((result, i) => {
+        if (result.status === "fulfilled") {
+          map[result.value.id] = result.value.prices;
+        } else {
+          // one portfolio's price fetch failing must not discard the others —
+          // heatmap shows "No price data" for just this portfolio's holdings
+          console.error(`Failed to load prices for portfolio ${portfolios[i].id}:`, result.reason);
+        }
+      });
+      setPriceMap(map);
+      setPricesLoaded(true);
+    });
   }, [holdingsMap, portfolios]);
 
   const isLoading = ctxLoading || loadingHoldings;
