@@ -82,7 +82,9 @@ import textwrap
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
+from decimal import Decimal
 from enum import Enum
+from typing import Any
 
 # Ensure the backend directory is on sys.path when run directly.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -119,6 +121,7 @@ from services.snapshot_return_recovery import (
     recover_all_snapshot_returns,
     recover_portfolio_snapshot_returns,
 )
+from services.transaction_canonicalizer import CanonicalTransaction, canonicalize_transactions
 from services.portfolio_rebuilder import (
     ConfidenceReport,
     PlanOperation,
@@ -798,11 +801,12 @@ class AuditSeverity(Enum):
 
 
 class AuditCheck(Enum):
-    NAV_CONTINUITY     = "nav_continuity"
-    PNL_CONTINUITY     = "pnl_continuity"
-    HOLDINGS_INTEGRITY = "holdings_integrity"
-    PRICE_INTEGRITY    = "price_integrity"
-    RETURN_SANITY      = "return_sanity"
+    NAV_CONTINUITY         = "nav_continuity"
+    PNL_CONTINUITY         = "pnl_continuity"
+    HOLDINGS_INTEGRITY     = "holdings_integrity"
+    PRICE_INTEGRITY        = "price_integrity"
+    RETURN_SANITY          = "return_sanity"
+    MECHANICAL_CONTINUITY  = "mechanical_continuity"
 
 
 @dataclass
@@ -1118,6 +1122,289 @@ def _audit_return_sanity(snap: PortfolioSnapshot) -> list[AuditAnomaly]:
     return anomalies
 
 
+# ── Mechanical continuity (BANPU-WP5-C7 / MINOR-2 WP5 half) ────────────────────
+#
+# Two obligations, each with its own independently invoked/reportable
+# function, sharing only the single authorized AuditCheck identity
+# (AuditCheck.MECHANICAL_CONTINUITY — the amendment authorizes exactly one
+# new enum member, not two):
+#
+#   §10.3 tolerance admissibility (PD-WP5-1) — _assess_tolerance_admissibility()
+#     / _audit_tolerance_admissibility() — is mechanical_nav_tolerance_pct
+#     itself usable (ABSENT/NON_DECIMAL_EXACT/NON_FINITE/NEGATIVE/ADMISSIBLE)?
+#     Independently observable: called on its own, returns its own finding,
+#     testable without going anywhere near D2-D6.
+#   §10.4 reconciliation (D2-D6, BANPU_WP5_WORK_PACKAGE_PLAN_AMENDMENT_
+#     MECHANICAL_CONTINUITY.md) — _evaluate_mechanical_continuity() /
+#     _audit_mechanical_continuity() — does the boundary reconcile within
+#     tolerance?
+#
+# _audit_portfolio() invokes both, alongside (not merged with) each other, for
+# the same class of POSITION_CONVERSION-bearing portfolios (amendment §10).
+# D7's own field-admissibility loop still independently re-checks the
+# tolerance field as one of its four D2-D6 operands — the two obligations may
+# both fire on the same root cause (e.g. a negative tolerance yields both a
+# §10.3 finding and a D7 NOT_EVALUABLE finding); that overlap is exactly what
+# "alongside" means, not a bug to suppress.
+#
+# Fully independent of POSITION_CONVERSION_REBUILD_BOUNDARY (portfolio_
+# rebuilder.py): no shared predicate, no shared result identity, no call path
+# between the two (WP5-A31).
+
+class MechanicalContinuityState(Enum):
+    PASS                              = "PASS"
+    ANNOTATED_BOUNDARY_DISCONTINUITY  = "ANNOTATED_BOUNDARY_DISCONTINUITY"
+    MECHANICAL_CONTINUITY_FAILURE     = "MECHANICAL_CONTINUITY_FAILURE"
+    NOT_EVALUABLE                     = "NOT_EVALUABLE"
+
+
+@dataclass(frozen=True)
+class MechanicalContinuityResult:
+    state          : MechanicalContinuityState
+    metric_pct     : Decimal | None
+    tolerance_pct  : Decimal | None
+    invalid_field  : str | None = None
+    invalid_reason : str | None = None
+
+
+def _decimal_admissibility(
+    value: Any,
+    *,
+    require_positive: bool = False,
+    reject_negative: bool = False,
+) -> str:
+    """Classify one canonical D7 input value.
+
+    Returns ABSENT / NON_DECIMAL_EXACT / NON_FINITE / NON_POSITIVE / NEGATIVE
+    / ADMISSIBLE. Mirrors WP3's assess_reference_price_admissibility() shape
+    (PD-WP5-1) — performs no coercion; a value not already a Decimal is
+    malformed, never parsed or converted here.
+    """
+    if value is None:
+        return "ABSENT"
+    if not isinstance(value, Decimal):
+        return "NON_DECIMAL_EXACT"
+    if not value.is_finite():
+        return "NON_FINITE"
+    if require_positive and value <= 0:
+        return "NON_POSITIVE"
+    if reject_negative and value < 0:
+        return "NEGATIVE"
+    return "ADMISSIBLE"
+
+
+def _assess_tolerance_admissibility(mechanical_nav_tolerance_pct: Any) -> str:
+    """BANPU-WP5 §10.3 (PD-WP5-1) — standalone tolerance-admissibility check.
+
+    Returns ABSENT / NON_DECIMAL_EXACT / NON_FINITE / NEGATIVE / ADMISSIBLE.
+    Zero is ADMISSIBLE for a tolerance (a stricter, not invalid, requirement —
+    unlike price, no require_positive). This is the §10.3 obligation's own
+    entry point, independently invocable and testable without D2-D6; it is
+    not merged into or replaced by D7's own field-admissibility loop, which
+    separately re-checks this same raw value as one of its four D2-D6
+    operands (§10.4 §10 "alongside, not merged").
+    """
+    return _decimal_admissibility(mechanical_nav_tolerance_pct, reject_negative=True)
+
+
+def _audit_tolerance_admissibility(
+    snap: PortfolioSnapshot,
+    conversion_ctx: CanonicalTransaction,
+) -> list[AuditAnomaly]:
+    """§10.3 audit consumer. Read-only; independently observable from D7."""
+    parsed    = conversion_ctx.position_conversion.value if conversion_ctx.position_conversion else None
+    boundary  = parsed.boundary_evidence if parsed else None
+    tolerance = boundary.mechanical_nav_tolerance_pct if boundary else None
+
+    reason = _assess_tolerance_admissibility(tolerance)
+    if reason == "ADMISSIBLE":
+        return []
+
+    return [AuditAnomaly(
+        snapshot_id   = snap.id,
+        snapshot_date = snap.snapshot_date,
+        check         = AuditCheck.MECHANICAL_CONTINUITY,
+        severity      = AuditSeverity.CRITICAL,
+        description   = (
+            f"mechanical_nav_tolerance_pct inadmissible ({reason}) for "
+            f"POSITION_CONVERSION tx{conversion_ctx.id}"
+        ),
+        details       = {
+            "obligation":                "tolerance_admissibility",
+            "conversion_transaction_id": conversion_ctx.id,
+            "reason":                    reason,
+        },
+    )]
+
+
+def _evaluate_mechanical_continuity(
+    *,
+    predecessor_reference_price: Any,
+    successor_reference_price: Any,
+    mechanical_nav_tolerance_pct: Any,
+    conversion_ratio: Any,
+    suspension_gap_annotation: Any,
+) -> MechanicalContinuityResult:
+    """BANPU-WP5-C7 / D7 pure classifier.
+
+    Consumes only the canonical, already-typed WP1 boundary-evidence values
+    plus conversion_ratio; performs no parsing of its own, no re-derivation
+    from ticker/provider/snapshot data, and no mutation (WP5-A32). Decimal-
+    only arithmetic; no intermediate or final quantization; no rounding-mode
+    change (D5, WP5-A27/A28).
+
+    D2: implied_successor_value = R * P_succ
+        absolute_gap             = abs(P_pre - implied_successor_value)
+        metric_pct                = (absolute_gap / P_pre) * 100
+    D4: PASS iff metric_pct <= tolerance (inclusive).
+    D6: absent/empty/whitespace-only annotation -> unannotated; anything else,
+        trimmed non-empty -> annotated. An unannotated above-tolerance result
+        is MECHANICAL_CONTINUITY_FAILURE; an annotated one is
+        ANNOTATED_BOUNDARY_DISCONTINUITY. Annotation never affects PASS,
+        NOT_EVALUABLE, or the computed metric_pct itself.
+    """
+    field_checks: tuple[tuple[str, Any, dict], ...] = (
+        ("predecessor_reference_price",  predecessor_reference_price,  {"require_positive": True}),
+        ("successor_reference_price",    successor_reference_price,    {}),
+        ("conversion_ratio",             conversion_ratio,             {"require_positive": True}),
+        ("mechanical_nav_tolerance_pct", mechanical_nav_tolerance_pct, {"reject_negative": True}),
+    )
+    for field_name, value, kwargs in field_checks:
+        reason = _decimal_admissibility(value, **kwargs)
+        if reason != "ADMISSIBLE":
+            return MechanicalContinuityResult(
+                state          = MechanicalContinuityState.NOT_EVALUABLE,
+                metric_pct     = None,
+                tolerance_pct  = None,
+                invalid_field  = field_name,
+                invalid_reason = reason,
+            )
+
+    p_pre     = predecessor_reference_price
+    p_succ    = successor_reference_price
+    tolerance = mechanical_nav_tolerance_pct
+    ratio     = conversion_ratio
+
+    implied_successor_value = ratio * p_succ
+    absolute_gap            = abs(p_pre - implied_successor_value)
+    metric_pct               = (absolute_gap / p_pre) * 100
+
+    annotated = (
+        isinstance(suspension_gap_annotation, str)
+        and suspension_gap_annotation.strip() != ""
+    )
+
+    if metric_pct <= tolerance:
+        return MechanicalContinuityResult(
+            state         = MechanicalContinuityState.PASS,
+            metric_pct    = metric_pct,
+            tolerance_pct = tolerance,
+        )
+
+    if annotated:
+        return MechanicalContinuityResult(
+            state         = MechanicalContinuityState.ANNOTATED_BOUNDARY_DISCONTINUITY,
+            metric_pct    = metric_pct,
+            tolerance_pct = tolerance,
+        )
+
+    return MechanicalContinuityResult(
+        state         = MechanicalContinuityState.MECHANICAL_CONTINUITY_FAILURE,
+        metric_pct    = metric_pct,
+        tolerance_pct = tolerance,
+    )
+
+
+def _find_position_conversion(db, portfolio_id: int) -> CanonicalTransaction | None:
+    """Return the earliest canonicalized POSITION_CONVERSION for a portfolio.
+
+    Read-only; performs no mutation. A portfolio with no conversion returns
+    None, and the caller skips mechanical-continuity auditing entirely.
+    """
+    raw_txs = (
+        db.query(Transaction)
+        .filter_by(portfolio_id=portfolio_id, transaction_type="POSITION_CONVERSION")
+        .order_by(Transaction.transaction_date, Transaction.id)
+        .all()
+    )
+    if not raw_txs:
+        return None
+    canonical = canonicalize_transactions(raw_txs)
+    return canonical[0] if canonical else None
+
+
+def _audit_mechanical_continuity(
+    snap: PortfolioSnapshot,
+    conversion_ctx: CanonicalTransaction,
+) -> list[AuditAnomaly]:
+    """D7 audit consumer. Read-only; performs no mutation (WP5-A30)."""
+    parsed   = conversion_ctx.position_conversion.value if conversion_ctx.position_conversion else None
+    boundary = parsed.boundary_evidence if parsed else None
+
+    result = _evaluate_mechanical_continuity(
+        predecessor_reference_price  = boundary.predecessor_reference_price if boundary else None,
+        successor_reference_price    = boundary.successor_reference_price if boundary else None,
+        mechanical_nav_tolerance_pct = boundary.mechanical_nav_tolerance_pct if boundary else None,
+        conversion_ratio             = parsed.conversion_ratio if parsed else None,
+        suspension_gap_annotation    = boundary.suspension_gap_annotation if boundary else None,
+    )
+
+    if result.state == MechanicalContinuityState.PASS:
+        return []
+
+    # WP5-A20: metric_pct/tolerance_pct preserved as exact Decimal — no
+    # float() conversion, no rounding, no quantization. _print_audit_anomaly()
+    # renders non-int/float values via plain str(), which is exact for Decimal.
+    details: dict = {
+        "conversion_transaction_id": conversion_ctx.id,
+        "metric_pct":    result.metric_pct,
+        "tolerance_pct": result.tolerance_pct,
+    }
+
+    if result.state == MechanicalContinuityState.ANNOTATED_BOUNDARY_DISCONTINUITY:
+        return [AuditAnomaly(
+            snapshot_id   = snap.id,
+            snapshot_date = snap.snapshot_date,
+            check         = AuditCheck.MECHANICAL_CONTINUITY,
+            severity      = AuditSeverity.WARNING,
+            description   = (
+                f"Annotated mechanical NAV discontinuity at POSITION_CONVERSION "
+                f"tx{conversion_ctx.id} (metric={details['metric_pct']}% > "
+                f"tolerance={details['tolerance_pct']}%)"
+            ),
+            details       = details,
+        )]
+
+    if result.state == MechanicalContinuityState.MECHANICAL_CONTINUITY_FAILURE:
+        return [AuditAnomaly(
+            snapshot_id   = snap.id,
+            snapshot_date = snap.snapshot_date,
+            check         = AuditCheck.MECHANICAL_CONTINUITY,
+            severity      = AuditSeverity.CRITICAL,
+            description   = (
+                f"Unannotated mechanical NAV discontinuity at POSITION_CONVERSION "
+                f"tx{conversion_ctx.id} (metric={details['metric_pct']}% > "
+                f"tolerance={details['tolerance_pct']}%)"
+            ),
+            details       = details,
+        )]
+
+    # NOT_EVALUABLE — distinct diagnostic identity from MECHANICAL_CONTINUITY_FAILURE.
+    details["invalid_field"]  = result.invalid_field
+    details["invalid_reason"] = result.invalid_reason
+    return [AuditAnomaly(
+        snapshot_id   = snap.id,
+        snapshot_date = snap.snapshot_date,
+        check         = AuditCheck.MECHANICAL_CONTINUITY,
+        severity      = AuditSeverity.CRITICAL,
+        description   = (
+            f"Mechanical continuity NOT_EVALUABLE for POSITION_CONVERSION "
+            f"tx{conversion_ctx.id}: {result.invalid_field}={result.invalid_reason}"
+        ),
+        details       = details,
+    )]
+
+
 # ── Portfolio-level audit ─────────────────────────────────────────────────────
 
 def _audit_portfolio(
@@ -1147,6 +1434,14 @@ def _audit_portfolio(
         result.anomalies.extend(_audit_price_integrity(snap))
         result.anomalies.extend(_audit_return_sanity(snap))
         prev = snap
+
+    # BANPU-WP5-C7 — only for a portfolio whose ledger contains a
+    # POSITION_CONVERSION; attached to the most recent snapshot since the
+    # finding is portfolio-level, not tied to any one snapshot's own fields.
+    conversion_ctx = _find_position_conversion(db, portfolio.id)
+    if conversion_ctx is not None and snaps:
+        result.anomalies.extend(_audit_tolerance_admissibility(snaps[-1], conversion_ctx))
+        result.anomalies.extend(_audit_mechanical_continuity(snaps[-1], conversion_ctx))
 
     return result
 

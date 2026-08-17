@@ -63,12 +63,14 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from models.database import PortfolioSnapshot
 from services.transaction_canonicalizer import CanonicalTransaction, parse_position_conversion_payload
 from services.ledger_validator import LedgerFinding, LedgerValidationReport
 from services.portfolio_rebuilder import (
     _apply_transaction,
     _preflight_position_conversions,
     PositionConversionReplayError,
+    PositionConversionRebuildBoundaryError,
     _replay_with_date_snapshots,
     _populate_return_fields,
     _compute_confidence_score,
@@ -1012,9 +1014,10 @@ def _make_portfolio_obj(id: int = 1, name: str = "Test", cash: float = 0.0) -> M
     return p
 
 
-def _make_raw_tx_mock(tx_id: int) -> MagicMock:
+def _make_raw_tx_mock(tx_id: int, asset_id: int | None = None) -> MagicMock:
     t = MagicMock()
-    t.id = tx_id
+    t.id       = tx_id
+    t.asset_id = asset_id
     return t
 
 
@@ -1042,15 +1045,23 @@ def _clean_report(portfolio_id: int = 1) -> LedgerValidationReport:
 
 
 def _make_rebuild_mock_db(
-    portfolio: MagicMock,
-    raw_txs:   list,
-    items:     list | None = None,
+    portfolio:      MagicMock,
+    raw_txs:        list,
+    items:          list | None = None,
+    existing_snaps: list | None = None,
 ) -> MagicMock:
-    """Mock DB session sufficient for rebuild_portfolio(skip_snapshots=True, dry_run=True)."""
+    """Mock DB session sufficient for rebuild_portfolio(skip_snapshots=True, dry_run=True).
+
+    existing_snaps (default []): rows returned by the Stage 2 existing_snaps
+    query AND by the per-date upsert lookup's .first() (matched by
+    snapshot_date so an admissible bounded rebuild upserts in place rather
+    than blindly inserting — WP5-A8 needs this to prove a pre-boundary row is
+    never even queried-for-update, not just never returned)."""
     from models.database import Portfolio, Transaction, PortfolioItem, PortfolioSnapshot
 
-    items = items or []
-    db    = MagicMock()
+    items          = items or []
+    existing_snaps = existing_snaps or []
+    db             = MagicMock()
 
     def _query(model):
         m = MagicMock()
@@ -1063,10 +1074,22 @@ def _make_rebuild_mock_db(
             m.filter_by.return_value.delete.return_value = None
         elif model is PortfolioSnapshot:
             snap_m = MagicMock()
-            snap_m.all.return_value                   = []
-            snap_m.order_by.return_value.all.return_value = []
-            snap_m.filter.return_value.all.return_value   = []
-            m.filter_by.return_value = snap_m
+            snap_m.all.return_value                       = existing_snaps
+            snap_m.order_by.return_value.all.return_value  = existing_snaps
+
+            def _filter_by(**kw):
+                fm = MagicMock()
+                fm.all.return_value                       = existing_snaps
+                fm.order_by.return_value.all.return_value = existing_snaps
+                fm.filter.return_value.all.return_value   = existing_snaps
+                snap_date = kw.get("snapshot_date")
+                fm.first.return_value = next(
+                    (s for s in existing_snaps if snap_date is not None and s.snapshot_date == snap_date),
+                    None,
+                )
+                return fm
+
+            m.filter_by.side_effect = _filter_by
         return m
 
     db.query.side_effect = _query
@@ -1970,3 +1993,231 @@ def test_rebuild_unrelated_error_finding_does_not_block_stage5():
     assert r.ledger_criticals == 0
     assert r.aborted is False
     assert r.committed is True
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# BANPU-WP5-C3/C4 — POSITION_CONVERSION_REBUILD_BOUNDARY
+#
+# Relocated here per the Independent Implementation Review correction
+# (docs/implementation/BANPU_WP5_INDEPENDENT_IMPLEMENTATION_REVIEW.md §6/§20
+# item 3): Authorization Record §4.2 names this file, not
+# test_position_conversion_replay.py, as the authorized rebuild-boundary test
+# surface. WP5-A4-A8 (WP5_WORK_PACKAGE_PLAN.md §8, §9, §15) plus the
+# rebuild-boundary half of WP5-A31.
+#
+# Uses this file's own MagicMock DB harness — _make_rebuild_mock_db (extended
+# above with an existing_snaps param), _conversion_payload/_conv_ctx — not a
+# real database, consistent with every other rebuild_portfolio() test here.
+# _build_price_matrix is explicitly mocked and its call count asserted in
+# every test: zero calls for the two refusal cases proves the guard fires
+# "before any provider fetch" (review correction item 6), not merely inferred
+# from exception ordering.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _wp5_conversion_ctxs(transition_date: date = date(2026, 3, 2)) -> list[CanonicalTransaction]:
+    payload = _conversion_payload(
+        predecessor_asset_id=5001, predecessor_symbol="WP5PRED.BK", shares_surrendered="100",
+        successor_asset_id=5002, successor_symbol="WP5SUCC.BK", successor_provider_symbol="WP5SUCC.BK",
+        shares_entitled="50", shares_received="50", conversion_ratio="0.5",
+        basis_before="10000", basis_allocated="0", basis_carried="10000",
+        cash_in_lieu=None,
+        transition_date=transition_date.isoformat(),
+    )
+    return [
+        _ctx(id=1, transaction_type="DEPOSIT", raw_symbol=None, canonical_symbol=None,
+             shares=0.0, total_amount=10_000.0, transaction_date=date(2026, 1, 1)),
+        _ctx(id=2, transaction_type="INITIAL_POSITION", raw_symbol="WP5PRED.BK",
+             canonical_symbol="WP5PRED.BK", shares=100.0, price_per_share=100.0,
+             total_amount=0.0, transaction_date=date(2026, 1, 2)),
+        _conv_ctx(3, payload, raw_symbol="WP5PRED.BK", canonical_symbol="WP5PRED.BK",
+                  asset_id=5001, transaction_date=transition_date),
+    ]
+
+
+def _make_snap_row(snapshot_date: str, **kwargs) -> PortfolioSnapshot:
+    """Real (unpersisted, no session) ORM instance — a before/after full-
+    column comparison against it is a genuine structural proof (WP5-A8), not
+    a hand-picked field list."""
+    return PortfolioSnapshot(
+        workspace_id=1, portfolio_id=1, snapshot_date=snapshot_date,
+        total_value=kwargs.get("total_value", 0.0),
+        cash_balance=kwargs.get("cash_balance", 0.0),
+        total_invested=kwargs.get("total_invested", 0.0),
+        unrealized_pnl=kwargs.get("unrealized_pnl"),
+        unrealized_pnl_pct=kwargs.get("unrealized_pnl_pct"),
+        holdings_json=kwargs.get("holdings_json"),
+        holdings_count=kwargs.get("holdings_count"),
+        daily_return_pct=kwargs.get("daily_return_pct"),
+        investment_return_pct=kwargs.get("investment_return_pct"),
+    )
+
+
+def _make_wp5_raw_conversion_tx_mock(tx_id: int = 3) -> MagicMock:
+    """Raw row satisfying _preflight_position_conversions' Pass-1 projection
+    checks for _wp5_conversion_ctxs()'s fixture (shares_received=50,
+    basis_carried_to_successor=10000, no cash_in_lieu)."""
+    t = _make_raw_tx_mock(tx_id, asset_id=5001)
+    t.shares          = 50.0
+    t.price_per_share = 200.0   # 10000 / 50
+    t.total_amount    = 10_000.0
+    t.fees            = 0.0
+    t.taxes           = 0.0
+    return t
+
+
+def _make_wp5_boundary_db(existing_snaps: list[PortfolioSnapshot] | None = None) -> MagicMock:
+    return _make_rebuild_mock_db(
+        _make_portfolio_obj(cash=0.0),
+        [_make_raw_tx_mock(1), _make_raw_tx_mock(2), _make_wp5_raw_conversion_tx_mock(3)],
+        existing_snaps=existing_snaps,
+    )
+
+
+def _run_boundary(db, *, from_date, clean_validator: bool = True):
+    ctm = patch(
+        "services.portfolio_rebuilder.validate_portfolio_ledger",
+        new=AsyncMock(return_value=_clean_report()),
+    )
+    with ctm:
+        return asyncio.run(rebuild_portfolio(
+            db=db, portfolio_id=1, workspace_id=1, from_date=from_date,
+            skip_snapshots=False, dry_run=False, apply_repairs=False,
+        ))
+
+
+# ── WP5-A4 — refusal, from_date=None ───────────────────────────────────────────
+
+def test_wp5_rebuild_boundary_refuses_when_from_date_none():
+    db   = _make_wp5_boundary_db()
+    ctxs = _wp5_conversion_ctxs()
+
+    with patch("services.portfolio_rebuilder.canonicalize_transactions", return_value=ctxs), \
+         patch("services.portfolio_rebuilder._build_price_matrix",
+               new=AsyncMock(return_value={})) as mock_fetch:
+        r = _run_boundary(db, from_date=None)
+
+    assert r.success is False
+    assert "POSITION_CONVERSION_REBUILD_BOUNDARY" in r.error
+    mock_fetch.assert_not_called()               # zero provider fetch before refusal
+    db.add.assert_not_called()                   # zero write
+
+
+# ── WP5-A5 — refusal, from_date before transition ──────────────────────────────
+
+def test_wp5_rebuild_boundary_refuses_when_from_date_before_transition():
+    db   = _make_wp5_boundary_db()
+    ctxs = _wp5_conversion_ctxs()
+
+    with patch("services.portfolio_rebuilder.canonicalize_transactions", return_value=ctxs), \
+         patch("services.portfolio_rebuilder._build_price_matrix",
+               new=AsyncMock(return_value={})) as mock_fetch:
+        r = _run_boundary(db, from_date="2026-02-01")
+
+    assert r.success is False
+    assert "POSITION_CONVERSION_REBUILD_BOUNDARY" in r.error
+    mock_fetch.assert_not_called()
+    db.add.assert_not_called()
+
+
+# ── WP5-A6 — bounded rebuild proceeds when from_date admissible ────────────────
+
+def test_wp5_rebuild_boundary_proceeds_when_from_date_admissible():
+    at_boundary = _make_snap_row("2026-03-02")
+    db          = _make_wp5_boundary_db(existing_snaps=[at_boundary])
+    ctxs        = _wp5_conversion_ctxs()
+
+    with patch("services.portfolio_rebuilder.canonicalize_transactions", return_value=ctxs), \
+         patch("services.portfolio_rebuilder._build_price_matrix",
+               new=AsyncMock(return_value={})) as mock_fetch:
+        r = _run_boundary(db, from_date="2026-03-02")
+
+    assert r.error is None or "POSITION_CONVERSION_REBUILD_BOUNDARY" not in r.error
+    assert r.success is True
+    mock_fetch.assert_called_once()               # normal Stage 2 behavior, unaffected
+
+
+# ── WP5-A7 — no-conversion regression: guard never fires without a conversion ──
+
+def test_wp5_rebuild_boundary_no_conversion_unaffected():
+    db   = _make_wp5_boundary_db()
+    ctxs = [_ctx(id=1, transaction_type="DEPOSIT", raw_symbol=None, canonical_symbol=None,
+                 shares=0.0, total_amount=10_000.0)]
+
+    with patch("services.portfolio_rebuilder.canonicalize_transactions", return_value=ctxs), \
+         patch("services.portfolio_rebuilder._build_price_matrix",
+               new=AsyncMock(return_value={})):
+        r = _run_boundary(db, from_date=None)
+
+    assert r.error is None or "POSITION_CONVERSION_REBUILD_BOUNDARY" not in r.error
+    assert r.success is True
+
+
+# ── WP5-A8 — byte-exact pre-boundary preservation ──────────────────────────────
+
+def test_wp5_rebuild_boundary_preserves_pre_boundary_snapshot_byte_exact():
+    """A pre-boundary row must be neither mutated in place nor ever the
+    target of a db.add() insert once a bounded (admissible from_date)
+    rebuild runs. The mock DB's .first() lookup is keyed by snapshot_date
+    (see _make_rebuild_mock_db), so the pre-boundary row is provably never
+    even queried-for-update: Stage 8 only iterates snapshot_days, which by
+    construction (Stage 2's rebuild_dates filter) never includes a
+    pre-boundary date."""
+    pre_boundary = _make_snap_row(
+        "2026-02-01", total_value=12_345.67, cash_balance=999.0, total_invested=11_000.0,
+        unrealized_pnl=345.67, unrealized_pnl_pct=3.1,
+        holdings_json='[{"symbol": "WP5PRED.BK", "shares": 100, "asset_id": 5001}]',
+        holdings_count=1, daily_return_pct=0.5, investment_return_pct=0.5,
+    )
+    at_boundary = _make_snap_row("2026-03-02")
+    before = {c.name: getattr(pre_boundary, c.name) for c in PortfolioSnapshot.__table__.columns}
+
+    db   = _make_wp5_boundary_db(existing_snaps=[pre_boundary, at_boundary])
+    ctxs = _wp5_conversion_ctxs()
+
+    with patch("services.portfolio_rebuilder.canonicalize_transactions", return_value=ctxs), \
+         patch("services.portfolio_rebuilder._build_price_matrix",
+               new=AsyncMock(return_value={})):
+        r = _run_boundary(db, from_date="2026-03-02")
+
+    assert r.error is None or "POSITION_CONVERSION_REBUILD_BOUNDARY" not in r.error
+    assert r.success is True
+
+    after = {c.name: getattr(pre_boundary, c.name) for c in PortfolioSnapshot.__table__.columns}
+    assert after == before                        # no in-place mutation, zero diffs
+
+    for call in db.add.call_args_list:             # never (re)inserted either
+        written = call.args[0] if call.args else None
+        if isinstance(written, PortfolioSnapshot):
+            assert written.snapshot_date != "2026-02-01"
+
+
+# ── WP5-A31 (rebuild-boundary half) — independent of D7 mechanical continuity ──
+#
+# The D7 half of this row (manage.py) lives in test_verify_snapshots.py. This
+# half proves the converse direction: an admissible from_date lets a bounded
+# rebuild proceed even though the same conversion's boundary evidence would
+# fail D7's D2-D6 comparison outright (P_pre=1.00, P_succ=1.00, R=0.5 in the
+# payload's default boundary_evidence -> metric_pct=50% against a 1.0%
+# default tolerance) — rebuild_portfolio() never evaluates that formula.
+
+def test_wp5_a31_rebuild_boundary_proceeds_regardless_of_d7_outcome():
+    at_boundary = _make_snap_row("2026-03-02")
+    db          = _make_wp5_boundary_db(existing_snaps=[at_boundary])
+    ctxs        = _wp5_conversion_ctxs()   # same fixture D7 would fail: 50% vs 1.0% tolerance
+
+    with patch("services.portfolio_rebuilder.canonicalize_transactions", return_value=ctxs), \
+         patch("services.portfolio_rebuilder._build_price_matrix",
+               new=AsyncMock(return_value={})):
+        r = _run_boundary(db, from_date="2026-03-02")
+
+    assert r.success is True
+    assert r.error is None or "POSITION_CONVERSION_REBUILD_BOUNDARY" not in r.error
+
+
+def test_wp5_a31_no_manage_module_reference_in_rebuilder():
+    """Supplementary only (the primary A31 proof is the behavioral test above
+    plus its D7-side counterpart in test_verify_snapshots.py): portfolio_
+    rebuilder.py never imports manage.py, so there is no possible call path
+    from the rebuild-boundary guard into D7."""
+    import services.portfolio_rebuilder as mod
+    assert "manage" not in mod.__dict__

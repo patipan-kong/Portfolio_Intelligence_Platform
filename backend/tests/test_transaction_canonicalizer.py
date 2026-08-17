@@ -57,7 +57,7 @@ from __future__ import annotations
 import sys
 import os
 from datetime import date, datetime
-from decimal import Decimal
+from decimal import Decimal, localcontext
 from types import SimpleNamespace
 
 import pytest
@@ -698,6 +698,90 @@ def test_position_conversion_error_order_is_deterministic_for_mapping_order():
 
     assert not first.is_valid and not second.is_valid
     assert first.errors == second.errors
+
+
+# ── MINOR-1 — context-independent Decimal fingerprint precision ────────────
+#
+# BANPU-WP4 roadmap §1 reviewer confirmation (2026-08-13) admitted this file
+# and services/transaction_canonicalizer.py solely for the minimal MINOR-1
+# correction: nonzero Decimal fingerprint serialization must derive plain
+# base-10 notation from the exact coefficient/exponent, independent of the
+# ambient Decimal context, instead of via Decimal.normalize() (which rounds
+# to the active context precision before formatting and can collide two
+# payloads whose exact values differ only beyond that precision).
+
+_MINOR1_VALUE_A = "1.12345678901234567890123456781"
+_MINOR1_VALUE_B = "1.12345678901234567890123456782"
+_MINOR1_NON_REGRESSION_FINGERPRINT = (
+    "09e4e2d3b9f3d5789dc14f2adea727f448cdca51f74e4b15b2e63d1f070374d0"
+)
+
+
+def test_minor1_distinct_high_precision_payloads_produce_distinct_fingerprints():
+    payload_a = _conversion_payload()
+    payload_a["boundary_evidence"]["predecessor_reference_price"] = _MINOR1_VALUE_A
+    payload_b = _conversion_payload()
+    payload_b["boundary_evidence"]["predecessor_reference_price"] = _MINOR1_VALUE_B
+
+    result_a = parse_position_conversion_payload(payload_a)
+    result_b = parse_position_conversion_payload(payload_b)
+
+    assert result_a.is_valid and result_b.is_valid
+    assert result_a.value is not None and result_b.value is not None
+    assert (
+        result_a.value.boundary_evidence.predecessor_reference_price
+        != result_b.value.boundary_evidence.predecessor_reference_price
+    )
+    assert result_a.value.fingerprint != result_b.value.fingerprint
+
+
+def test_minor1_existing_full_payload_fingerprint_is_unchanged():
+    """Fixed non-regression vector recorded by the roadmap §1 reviewer
+    confirmation — the MINOR-1 correction must not change this value."""
+    result = parse_position_conversion_payload(_conversion_payload())
+
+    assert result.is_valid
+    assert result.value is not None
+    assert result.value.fingerprint == _MINOR1_NON_REGRESSION_FINGERPRINT
+
+
+@pytest.mark.parametrize("precision", [10, 28, 50])
+def test_minor1_fingerprint_invariant_under_ambient_decimal_precision(precision):
+    """The same exact payload/fingerprint is invariant under controlled
+    ambient Decimal precisions, while distinct A/B payloads remain distinct
+    at every precision — proves the collision cannot recur regardless of
+    runtime Decimal configuration.
+
+    WP4-IIR-B6: distinctness alone (``result_a != result_b``) does not
+    prove each of A and B binds to the SAME fingerprint value across every
+    tested precision — a precision-dependent drift in either fingerprint
+    could satisfy mere distinctness while still being wrong. Each is
+    compared against a default-context baseline fingerprint computed
+    outside any ``localcontext()`` override.
+    """
+    payload = _conversion_payload()
+    payload_a = _conversion_payload()
+    payload_a["boundary_evidence"]["predecessor_reference_price"] = _MINOR1_VALUE_A
+    payload_b = _conversion_payload()
+    payload_b["boundary_evidence"]["predecessor_reference_price"] = _MINOR1_VALUE_B
+
+    baseline_a = parse_position_conversion_payload(payload_a).value.fingerprint
+    baseline_b = parse_position_conversion_payload(payload_b).value.fingerprint
+    assert baseline_a != baseline_b
+
+    with localcontext() as ctx:
+        ctx.prec = precision
+        result = parse_position_conversion_payload(payload)
+        result_a = parse_position_conversion_payload(payload_a)
+        result_b = parse_position_conversion_payload(payload_b)
+
+    assert result.is_valid and result_a.is_valid and result_b.is_valid
+    assert result.value is not None
+    assert result.value.fingerprint == _MINOR1_NON_REGRESSION_FINGERPRINT
+    assert result_a.value is not None and result_b.value is not None
+    assert result_a.value.fingerprint == baseline_a
+    assert result_b.value.fingerprint == baseline_b
+    assert result_a.value.fingerprint != result_b.value.fingerprint
 
 
 def test_position_conversion_requires_payload_but_existing_types_ignore_it():

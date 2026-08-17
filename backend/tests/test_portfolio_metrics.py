@@ -23,19 +23,38 @@ Coverage
   15. cumulative_realized_pnl = prev_cumulative + period_realized_pnl
   16. Empty period_transactions -> all period fields None, cumulative unchanged
   17. Mixed window: multiple transaction types combine correctly
+
+BANPU-WP5-A1/A2/A9 — POSITION_CONVERSION accounting-reader classification
+  18. No cash-in-lieu -> zero external/import/manual/realized/fees contribution
+  19. Cash-in-lieu present -> realized_pnl and fees+taxes counted exactly once
+  20. Unclamped suspension-gap return: a large genuine NAV move across a
+      conversion period is not clamped/smoothed
+  21. Mixed window incl. POSITION_CONVERSION: no double-count, other types unaffected
 """
 from __future__ import annotations
 
 import os
 import sys
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from services.transaction_canonicalizer import CanonicalTransaction
+from services.transaction_canonicalizer import (
+    CanonicalTransaction,
+    PositionConversion,
+    PositionConversionBasis,
+    PositionConversionBoundaryEvidence,
+    PositionConversionCashInLieu,
+    PositionConversionDates,
+    PositionConversionEvidence,
+    PositionConversionParseResult,
+    PositionConversionPredecessor,
+    PositionConversionQuoteBinding,
+    PositionConversionSuccessor,
+)
 from services.portfolio_metrics import PeriodMetrics, compute_period_metrics
 
 
@@ -50,6 +69,7 @@ def _ctx(
     taxes: float = 0.0,
     qty_correction_delta: Decimal | None = None,
     realized_pnl: float | None = None,
+    position_conversion: PositionConversionParseResult | None = None,
 ) -> CanonicalTransaction:
     return CanonicalTransaction(
         id                   = id,
@@ -67,7 +87,53 @@ def _ctx(
         notes                = None,
         qty_correction_delta = qty_correction_delta,
         realized_pnl         = realized_pnl,
+        position_conversion  = position_conversion,
     )
+
+
+def _position_conversion(
+    cash_in_lieu: PositionConversionCashInLieu | None = None,
+) -> PositionConversionParseResult:
+    """A valid, minimal POSITION_CONVERSION parse result for classification tests."""
+    value = PositionConversion(
+        schema_version=1,
+        predecessor=PositionConversionPredecessor(
+            asset_id=101, symbol="PCONV.BK", shares_surrendered=Decimal("100"),
+        ),
+        successor=PositionConversionSuccessor(
+            asset_id=102, symbol="SCONV.BK", provider_symbol="SCONV.BK",
+            shares_entitled=Decimal("50"), shares_received=Decimal("50"),
+        ),
+        conversion_ratio=Decimal("0.5"),
+        basis=PositionConversionBasis(
+            before=Decimal("10000"), allocated_to_cash_in_lieu=Decimal("0"),
+            carried_to_successor=Decimal("10000"),
+        ),
+        cash_in_lieu=cash_in_lieu,
+        dates=PositionConversionDates(
+            legal_effective_date=date(2026, 6, 1),
+            valuation_transition_date=date(2026, 6, 1),
+            predecessor_last_price_date=date(2026, 5, 29),
+            successor_quote_epoch_start_date=date(2026, 6, 1),
+        ),
+        quote_binding=PositionConversionQuoteBinding(
+            provider="test-provider",
+            predecessor_provider_symbol="PCONV.BK",
+            successor_provider_symbol="SCONV.BK",
+        ),
+        boundary_evidence=PositionConversionBoundaryEvidence(
+            predecessor_reference_price=Decimal("100"),
+            successor_reference_price=Decimal("200"),
+            mechanical_nav_tolerance_pct=Decimal("1.0"),
+            suspension_gap_annotation="",
+        ),
+        evidence=PositionConversionEvidence(
+            reference="TEST", source="unit-test",
+            captured_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        ),
+        fingerprint="test-fingerprint",
+    )
+    return PositionConversionParseResult(value=value, errors=())
 
 
 def _compute(txs, curr_nav=100_000.0, prev_nav=100_000.0, price_lookup=None,
@@ -228,3 +294,76 @@ def test_mixed_window_combines_correctly():
     assert m.period_fees_paid == pytest.approx(117.7)
     pure_gain = 200_000.0 - 100_000.0 - 10_000.0 - 11_000.0 - 150.0
     assert m.investment_return_amount == pytest.approx(pure_gain)
+
+
+# ── 18-19. BANPU-WP5-A1/A2 — POSITION_CONVERSION classification ─────────────
+
+def test_wp5_position_conversion_no_cil_contributes_nothing():
+    txs = [_ctx(1, "POSITION_CONVERSION", position_conversion=_position_conversion(cash_in_lieu=None))]
+    m = _compute(txs)
+    assert m.net_external_cash_flow is None
+    assert m.imported_asset_value is None
+    assert m.manual_adjustment_value is None
+    assert m.period_realized_pnl is None
+    assert m.period_fees_paid is None
+
+
+def test_wp5_position_conversion_with_cil_counted_exactly_once():
+    cil = PositionConversionCashInLieu(
+        fractional_entitlement_shares=Decimal("0.5"),
+        gross_proceeds=Decimal("100"),
+        fees=Decimal("2.5"),
+        taxes=Decimal("0.5"),
+        net_cash=Decimal("97"),
+        basis_allocated=Decimal("80"),
+        realized_pnl=Decimal("17"),
+    )
+    txs = [_ctx(1, "POSITION_CONVERSION", position_conversion=_position_conversion(cash_in_lieu=cil))]
+    m = _compute(txs)
+    assert m.period_realized_pnl == pytest.approx(17.0)
+    assert m.period_fees_paid == pytest.approx(3.0)  # fees(2.5) + taxes(0.5)
+    # flow fields untouched — a conversion is not external/import/manual
+    assert m.net_external_cash_flow is None
+    assert m.imported_asset_value is None
+    assert m.manual_adjustment_value is None
+
+
+# ── 20. BANPU-WP5-A9 — unclamped suspension-gap return ───────────────────────
+
+def test_wp5_suspension_gap_return_unclamped():
+    """A large genuine price move across a conversion boundary must be
+    reported arithmetically, not clamped/smoothed — no magnitude-based
+    filter exists anywhere in compute_period_metrics()."""
+    txs = [_ctx(1, "POSITION_CONVERSION", position_conversion=_position_conversion(cash_in_lieu=None))]
+    m = _compute(txs, curr_nav=250_000.0, prev_nav=100_000.0)  # +150%, well beyond ±50%
+    pure_gain = 250_000.0 - 100_000.0
+    assert m.investment_return_amount == pytest.approx(pure_gain)
+    assert m.investment_return_pct == pytest.approx(150.0)
+    assert m.daily_return_pct == pytest.approx(150.0)
+
+
+# ── 21. BANPU-WP5 — mixed window, no double-count, other types unaffected ────
+
+def test_wp5_mixed_window_with_conversion_no_double_count():
+    cil = PositionConversionCashInLieu(
+        fractional_entitlement_shares=Decimal("0.5"),
+        gross_proceeds=Decimal("50"),
+        fees=Decimal("1.0"),
+        taxes=Decimal("0.0"),
+        net_cash=Decimal("49"),
+        basis_allocated=Decimal("40"),
+        realized_pnl=Decimal("9"),
+    )
+    txs = [
+        _ctx(1, "DEPOSIT", total_amount=10_000.0),
+        _ctx(2, "SELL", fees=60.0, taxes=4.2, realized_pnl=750.0),
+        _ctx(3, "DIVIDEND", total_amount=200.0),
+        _ctx(4, "POSITION_CONVERSION", position_conversion=_position_conversion(cash_in_lieu=cil)),
+    ]
+    m = _compute(txs, curr_nav=200_000.0, prev_nav=100_000.0)
+    assert m.net_external_cash_flow == pytest.approx(10_000.0)   # regression — unaffected
+    assert m.imported_asset_value is None                          # regression — unaffected
+    assert m.manual_adjustment_value is None                       # regression — unaffected
+    assert m.period_dividend_income == pytest.approx(200.0)        # regression — unaffected
+    assert m.period_realized_pnl == pytest.approx(750.0 + 9.0)     # SELL + CIL, counted once each
+    assert m.period_fees_paid == pytest.approx(64.2 + 1.0)         # SELL fees/taxes + CIL fees/taxes

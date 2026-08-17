@@ -44,13 +44,14 @@ Because avg_cost includes BUY fees, the complete round-trip cost is:
     true_pnl = cash_out - cost_in  (= the above formula)
 """
 import logging
+from copy import deepcopy
 from decimal import Decimal, ROUND_HALF_UP
-from datetime import datetime
+from datetime import date as date_cls, datetime, time
 
 from sqlalchemy.orm import Session
 
 from models.database import Portfolio, PortfolioItem, Transaction
-from services import capability_lookup_service, registry_lookup
+from services import asset_registry, capability_lookup_service, registry_lookup
 from services.portfolio_reference import resolve_portfolio_reference
 from services.broker_fees import FeeProfile, FeeQuoteStatus, TradeSide
 from services.broker_fees_compat import quote_transaction_fee_compat
@@ -68,6 +69,7 @@ from services.runtime_consultation import (
     RuntimeFindingCategory,
     RuntimeValidationFinding,
 )
+from services.transaction_canonicalizer import parse_position_conversion_payload
 
 _QUANT = Decimal("0.000001")
 _log = logging.getLogger(__name__)
@@ -938,3 +940,686 @@ def execute_initial_cash(
         "notes": tx.notes,
         "cash_balance": portfolio.cash_balance,
     }
+
+
+# ─── POSITION_CONVERSION (BANPU-WP4) ───────────────────────────────────────
+#
+# The only authorized atomic write path for a whole-position predecessor-to-
+# successor conversion (BANPU_POSITION_CONVERSION_IMPLEMENTATION_DESIGN.md
+# §9; BANPU-WP4 Work Package Plan §3.2). Service-only — no CLI or public
+# endpoint calls this (CLI wiring is BANPU-WP7 work; C-13).
+#
+# Registry preparation (asset_registry.prepare_position_conversion_registry,
+# E0) is a distinct, idempotent service act performed by the caller BEFORE
+# this function is invoked — this function only validates the registry
+# state E0 established (E3); it never prepares registry state itself
+# (PD-WP4-1).
+#
+# E1-E13 execute inside exactly one database transaction: no intermediate
+# db.commit() occurs between the portfolio lock and the final commit at E13,
+# and any exception anywhere in that span rolls the entire unit back,
+# leaving no transaction row and no materialized-state mutation. A matching
+# retry at E8-R is the one non-exception early exit; it explicitly rolls
+# back (rather than commits) before returning, since it performs no writes
+# of its own (BANPU-WP4 Retry-Order Work Package Plan Amendment §3.2).
+
+
+class PositionConversionError(ValueError):
+    """Raised by execute_position_conversion() when the request cannot
+    proceed: invalid payload, registry invariant violated, stale optimistic
+    expectation, absent/ambiguous holding, or a conflicting duplicate.
+    Never raised for a matching duplicate — that returns an
+    ``already_applied`` no-op result instead (C-6)."""
+
+
+def _position_conversion_asset_ids(conversion_payload: dict) -> tuple[int, int]:
+    """Read only the authoritative asset IDs needed for registry resolution."""
+    if not isinstance(conversion_payload, dict):
+        raise PositionConversionError("POSITION_CONVERSION payload must be an object")
+    predecessor = conversion_payload.get("predecessor")
+    successor = conversion_payload.get("successor")
+    if not isinstance(predecessor, dict) or not isinstance(successor, dict):
+        raise PositionConversionError(
+            "POSITION_CONVERSION payload predecessor and successor must be objects"
+        )
+    predecessor_asset_id = predecessor.get("asset_id")
+    successor_asset_id = successor.get("asset_id")
+    for path, value in (
+        ("predecessor.asset_id", predecessor_asset_id),
+        ("successor.asset_id", successor_asset_id),
+    ):
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise PositionConversionError(f"{path} must be a positive integer")
+    return predecessor_asset_id, successor_asset_id
+
+
+def _canonical_conversion_payload(
+    conversion_payload: dict,
+    *,
+    predecessor_symbol: str,
+    successor_symbol: str,
+    predecessor_provider_symbol: str,
+) -> dict:
+    """Assemble the sole persisted payload with registry-authoritative labels."""
+    canonical_payload = deepcopy(conversion_payload)
+    canonical_payload["predecessor"]["symbol"] = predecessor_symbol
+    canonical_payload["successor"]["symbol"] = successor_symbol
+    quote_binding = canonical_payload.get("quote_binding")
+    if not isinstance(quote_binding, dict):
+        raise PositionConversionError("POSITION_CONVERSION payload quote_binding must be an object")
+    quote_binding["predecessor_provider_symbol"] = predecessor_provider_symbol
+    return canonical_payload
+
+
+# BANPU-WP4-IIR-B1 (second-renewed correction): the frozen Design's
+# authoritative absolute storage tolerance for the legacy floating-point
+# transaction columns (BANPU_POSITION_CONVERSION_IMPLEMENTATION_DESIGN.md
+# §"Top-level shares, price_per_share, total_amount, fees, and taxes match
+# their payload projections within the authoritative absolute storage
+# tolerance of 0.000001 per field"). Payload arithmetic itself remains exact
+# Decimal arithmetic — this tolerance exists only for the legacy float
+# columns, and is exactly the precision _f()/_QUANT already write at.
+_NUMERIC_PROJECTION_TOLERANCE = Decimal("0.000001")
+
+
+def _within_numeric_projection_tolerance(actual: float | None, expected: Decimal) -> bool:
+    """True iff a stored legacy float column is within the Design's
+    authorized 0.000001 absolute tolerance of its exact Decimal payload
+    projection. The boundary is inclusive ("within"). A missing or
+    non-numeric stored value fails closed rather than raising."""
+    if actual is None:
+        return False
+    try:
+        actual_decimal = _d(actual)
+    except Exception:
+        return False
+    return abs(actual_decimal - expected) <= _NUMERIC_PROJECTION_TOLERANCE
+
+
+def _validate_conversion_transaction_projection(
+    tx: Transaction,
+    *,
+    ws_id: int,
+    portfolio_id: int,
+    predecessor_asset_id: int,
+    predecessor_symbol: str,
+    successor_asset_id: int,
+    successor_symbol: str,
+    transaction_date: datetime,
+    payload,
+) -> None:
+    """Fail closed unless a row is the exact projection of its typed payload.
+
+    Identity fields (ownership, type, asset identity, symbols, dates) are
+    compared for exact equality. The five legacy float columns governed by
+    the Design's 0.000001 absolute storage tolerance (shares,
+    price_per_share, total_amount, fees, taxes) are compared within that
+    tolerance instead of by exact float equality (WP4-IIR-B1 second-renewed
+    correction) — a numerically valid legacy projection must not be
+    rejected merely because it predates this convention or differs from a
+    freshly `_f()`-quantized recomputation by less than the authorized
+    tolerance.
+    """
+    cash = payload.cash_in_lieu
+    expected_fees = cash.fees if cash else Decimal("0")
+    expected_taxes = cash.taxes if cash else Decimal("0")
+    expected_price = payload.basis.carried_to_successor / payload.successor.shares_received
+
+    exact_invariant_values = (
+        ("workspace identity", tx.workspace_id, ws_id),
+        ("portfolio identity", tx.portfolio_id, portfolio_id),
+        ("transaction type", tx.transaction_type, "POSITION_CONVERSION"),
+        ("predecessor asset identity", tx.asset_id, predecessor_asset_id),
+        ("canonical symbol", tx.symbol, predecessor_symbol),
+        ("transaction date", tx.transaction_date, transaction_date),
+        ("payload predecessor asset identity", payload.predecessor.asset_id, predecessor_asset_id),
+        ("payload predecessor symbol", payload.predecessor.symbol, predecessor_symbol),
+        ("payload successor asset identity", payload.successor.asset_id, successor_asset_id),
+        ("payload successor symbol", payload.successor.symbol, successor_symbol),
+        ("payload transition date", payload.dates.valuation_transition_date, transaction_date.date()),
+    )
+    for name, actual, expected in exact_invariant_values:
+        if actual != expected:
+            raise PositionConversionError(
+                f"POSITION_CONVERSION transaction {name} invariant failed: "
+                f"actual={actual!r} expected={expected!r}"
+            )
+
+    numeric_projection_values = (
+        ("shares", tx.shares, payload.successor.shares_received),
+        ("price_per_share", tx.price_per_share, expected_price),
+        ("total_amount", tx.total_amount, payload.basis.carried_to_successor),
+        ("fees", tx.fees, expected_fees),
+        ("taxes", tx.taxes, expected_taxes),
+    )
+    for name, actual, expected in numeric_projection_values:
+        if not _within_numeric_projection_tolerance(actual, expected):
+            raise PositionConversionError(
+                f"POSITION_CONVERSION transaction {name} invariant failed: "
+                f"actual={actual!r} expected={expected!r} "
+                f"tolerance={_NUMERIC_PROJECTION_TOLERANCE}"
+            )
+
+
+def execute_position_conversion(
+    db: Session,
+    ws_id: int,
+    portfolio_id: int,
+    conversion_payload: dict,
+    *,
+    currency: str = "THB",
+    exchange_rate: float = 1.0,
+    notes: str | None = None,
+) -> dict:
+    """Materialize one whole-position POSITION_CONVERSION.
+
+    ``conversion_payload`` is the caller-provided version-1 payload template
+    (BANPU_POSITION_CONVERSION_IMPLEMENTATION_DESIGN.md §6.2) — the same
+    typed contract WP1's canonicalizer and WP2's replay already consume, so
+    this service introduces no second payload-assembly algorithm and no
+    competing accounting identity (mirrors the MINOR-1 rejected-alternative
+    reasoning: one canonical implementation per rule, ADR-004). The
+    payload's own ``predecessor.shares_surrendered`` and ``basis.before``
+    fields ARE the caller's optimistic expectation checked at E6 — no
+    separate "expected_*" parameters are needed.
+
+    Runtime order (BANPU-WP4 Retry-Order Work Package Plan Amendment §3.2,
+    independently reapproved — refines the original Plan §3.2's unqualified
+    E1-E13 order at the retry-disposition point only; E0-E4, E9-E13, and the
+    sole successful commit boundary are otherwise unchanged):
+
+      E1  lock the portfolio row (workspace/portfolio ownership, the
+          primary serialization boundary) — this function's first database
+          access; every exit below is inside the rollback-protected
+          boundary this establishes (WP4-IIR-B4).
+      --  read authoritative predecessor/successor asset IDs, then
+          registry-resolve their identity, symbols, and predecessor
+          provider symbol; asset IDs remain authoritative and the
+          caller-supplied payload symbols/predecessor provider symbol are
+          never trusted for lookup or persistence (WP4-IIR-B2, second-
+          renewed correction)
+      --  assemble, parse, and validate the canonical version-1 payload
+      E2  lock the relevant existing PortfolioItem rows, using the
+          registry-resolved symbols for the legacy-symbol fallback match
+      E3  validate registry invariants (asset_registry), including
+          predecessor provider symbol identity — fail closed
+      E4  derive transaction_date solely from the payload's timezone-free
+          valuation_transition_date (NEW-MINOR-A)
+      E7  MINOR-1 pre-use gate (fingerprint serialization is now
+          context-independent; see transaction_canonicalizer.py)
+      E8-R canonical retry preflight: a read-only lookup by exact canonical
+          conversion identity. No prior row is not a retry — E5/E6 remain
+          mandatory. Exactly one valid prior row has its stored
+          conversion_payload reparsed and its fingerprint regenerated with
+          the sole canonical algorithm; exact equality with the incoming
+          fingerprint is a matching retry (bypasses only E5/E6, no
+          mutation, no-op, ``already_applied``), inequality is a
+          conflicting retry (bypasses only E5/E6, no mutation, hard
+          failure). A malformed or ambiguous existing row establishes
+          neither and fails closed. Current successor materialized state
+          is never a predicate (RTO-13).
+      E5  locate the predecessor holding by asset ID with the controlled
+          registry-resolved-symbol fallback; zero or multiple matches fail
+          closed
+      E6  verify optimistic predecessor quantity/basis expectations
+      E9  insert the append-only conversion transaction row
+      E10 remove the predecessor materialization
+      E11 create or merge the successor materialization
+      E12 apply the admitted cash-in-lieu cash leg
+      E13 assert final invariants — predecessor removal, successor shares,
+          successor basis, successor identity, and cash; reparse the
+          pending row's actual persisted conversion_payload and
+          refingerprint it against the canonically assembled payload
+          (WP4-IIR-B5, second-renewed correction); revalidate registry
+          provider identity from that persisted payload — then commit;
+          the only commit boundary
+
+    Ordering rules preserved exactly: E7 precedes E8-R; E3 and E6 precede
+    every first-application write; E9 precedes E10-E12; E13 is the sole
+    commit boundary. Every exit — success, no-op, conflict, or failure —
+    deterministically finishes this function's one transaction and releases
+    every lock it took (RTO-10, RTO-11, RTO-12).
+    """
+    if db.in_transaction():
+        raise PositionConversionError(
+            "execute_position_conversion requires an idle Session; "
+            "caller-owned transaction left untouched"
+        )
+
+    try:
+        # E1 — lock the portfolio row. First database access; the
+        # surrounding try/except is this function's sole rollback boundary,
+        # covering every exit from this point on (WP4-IIR-B4).
+        portfolio = (
+            db.query(Portfolio)
+            .filter(Portfolio.id == portfolio_id, Portfolio.workspace_id == ws_id)
+            .with_for_update()
+            .one_or_none()
+        )
+        if portfolio is None:
+            raise PositionConversionError(f"Portfolio {portfolio_id} not found")
+
+        # Read only the authoritative IDs needed to resolve registry symbols.
+        # Full payload parsing follows assembly of the canonical symbol labels.
+        predecessor_asset_id, successor_asset_id = _position_conversion_asset_ids(
+            conversion_payload
+        )
+
+        # Registry-resolved predecessor/successor identity and symbols
+        # (WP4-IIR-B2). Asset IDs remain authoritative; the caller-supplied
+        # payload.predecessor.symbol / payload.successor.symbol are never
+        # used to locate holdings, write the transaction symbol, or
+        # relabel the successor — only the registry's own display_symbol
+        # (falling back to canonical_symbol) is used for every
+        # persisted/lookup symbol below.
+        predecessor_asset = asset_registry.get_asset(db, predecessor_asset_id)
+        if predecessor_asset is None:
+            raise PositionConversionError(f"no asset with asset_id={predecessor_asset_id}")
+        successor_asset = asset_registry.get_asset(db, successor_asset_id)
+        if successor_asset is None:
+            raise PositionConversionError(f"no asset with asset_id={successor_asset_id}")
+        if predecessor_asset.id == successor_asset.id:
+            raise PositionConversionError("predecessor and successor asset_id must be distinct")
+        predecessor_symbol = predecessor_asset.display_symbol or predecessor_asset.canonical_symbol
+        successor_symbol = successor_asset.display_symbol or successor_asset.canonical_symbol
+        # Registry-resolved predecessor provider symbol (WP4-IIR-B2
+        # second-renewed correction): derived from the predecessor's own
+        # retired PROVIDER_SYMBOL identifier row, never trusted from the
+        # caller-supplied payload.quote_binding.predecessor_provider_symbol
+        # text.
+        predecessor_provider_symbol = asset_registry.resolve_predecessor_provider_symbol(
+            db, predecessor_asset_id
+        )
+
+        canonical_payload = _canonical_conversion_payload(
+            conversion_payload,
+            predecessor_symbol=predecessor_symbol,
+            successor_symbol=successor_symbol,
+            predecessor_provider_symbol=predecessor_provider_symbol,
+        )
+        parsed = parse_position_conversion_payload(canonical_payload)
+        if not parsed.is_valid or parsed.value is None:
+            raise PositionConversionError(
+                "invalid POSITION_CONVERSION payload: "
+                + "; ".join(f"{e.code}:{e.path}:{e.message}" for e in parsed.errors)
+            )
+        payload = parsed.value
+
+        # E2 — lock the portfolio's PortfolioItem rows plausibly relevant to
+        # either side of the conversion (existing rows only; a not-yet-
+        # existing successor has nothing to lock, matching every other
+        # execute_* function's behavior for a brand-new symbol). The
+        # legacy-symbol fallback uses the registry-resolved symbols, not
+        # the caller-supplied payload symbols (WP4-IIR-B2).
+        candidate_items = (
+            db.query(PortfolioItem)
+            .filter(
+                PortfolioItem.portfolio_id == portfolio_id,
+                (
+                    (PortfolioItem.asset_id == predecessor_asset_id)
+                    | (PortfolioItem.symbol == predecessor_symbol)
+                    | (PortfolioItem.asset_id == successor_asset_id)
+                    | (PortfolioItem.symbol == successor_symbol)
+                ),
+            )
+            .with_for_update()
+            .all()
+        )
+
+        # E3 — registry invariants, fail-closed, before any write.
+        asset_registry.validate_position_conversion_registry_state(
+            db, predecessor_asset_id, successor_asset_id,
+            payload.successor.provider_symbol,
+            payload.quote_binding.predecessor_provider_symbol,
+        )
+
+        # E4 — transaction_date derived solely from the payload's
+        # timezone-free valuation_transition_date (NEW-MINOR-A). The typed
+        # PositionConversionDates.valuation_transition_date field is a
+        # `date`, never a `datetime` — the frozen canonicalizer's
+        # date-only parser (`_PayloadReader.date`) already fails closed on
+        # any offset-bearing or time-bearing authoring string before this
+        # point is ever reached (NMA-I3), so this construction only adds
+        # the canonical naive-midnight representation with no host-clock,
+        # session-timezone, or UTC participation of its own (NMA-I4).
+        transition_date = payload.dates.valuation_transition_date
+        if not isinstance(transition_date, date_cls) or isinstance(transition_date, datetime):
+            raise PositionConversionError(
+                "valuation_transition_date must be a naive calendar date"
+            )
+        transaction_date = datetime.combine(transition_date, time.min)
+        if transaction_date.tzinfo is not None or transaction_date.time() != time.min:
+            raise PositionConversionError(
+                "derived transaction_date must be naive midnight"
+            )
+
+        # E7 — MINOR-1 pre-use gate. Fingerprint idempotency below is
+        # permitted to run because transaction_canonicalizer.py's Decimal
+        # serialization is now context-independent (MINOR-1 correction) —
+        # a 64-character SHA-256 hex digest is not a value that particular
+        # defect could still be masking.
+        fingerprint = payload.fingerprint
+        if not isinstance(fingerprint, str) or len(fingerprint) != 64:
+            raise PositionConversionError("payload fingerprint is not a valid SHA-256 digest")
+
+        # E8-R — canonical retry preflight (BANPU-WP4 Retry-Order Work
+        # Package Plan Amendment §3.2, independently reapproved). Read-only
+        # lookup by exact canonical conversion identity: (portfolio_id,
+        # predecessor asset_id, conversion type, transaction_date) is
+        # exactly the key the WP1 partial unique index enforces. `.all()`
+        # rather than `.one_or_none()` so a zero-or-multiple existing-row
+        # anomaly is itself classified as invalid state (RTO-9) instead of
+        # raising an uncontrolled SQLAlchemy error.
+        existing_rows = (
+            db.query(Transaction)
+            .filter(
+                Transaction.portfolio_id == portfolio_id,
+                Transaction.transaction_type == "POSITION_CONVERSION",
+                Transaction.asset_id == predecessor_asset_id,
+                Transaction.transaction_date == transaction_date,
+            )
+            .all()
+        )
+        if len(existing_rows) > 1:
+            # Invalid/ambiguous existing state: zero-or-multiple where
+            # uniqueness is required establishes neither a matching nor a
+            # conflicting disposition. Not a repair opportunity — fail
+            # closed with no business mutation (RTO-9).
+            raise PositionConversionError(
+                "ambiguous existing POSITION_CONVERSION state for "
+                f"portfolio_id={portfolio_id} predecessor asset_id={predecessor_asset_id} "
+                f"transaction_date={transaction_date}: {len(existing_rows)} rows"
+            )
+        existing = existing_rows[0] if existing_rows else None
+        if existing is not None:
+            # The existing row's stored canonical conversion_payload is
+            # reparsed and its fingerprint regenerated from that payload
+            # with the sole canonical algorithm — never a detached/stored
+            # digest, caller-supplied digest, partial comparison, or
+            # alternate fingerprint (RTO-5, RTO-6).
+            existing_parsed = parse_position_conversion_payload(existing.conversion_payload)
+            if not existing_parsed.is_valid or existing_parsed.value is None:
+                # Malformed/noncanonical stored payload: invalid existing
+                # state establishes neither match nor conflict authority.
+                # Fail closed, no business mutation, no repair (RTO-9).
+                raise PositionConversionError(
+                    "existing POSITION_CONVERSION row transaction_id="
+                    f"{existing.id} has an invalid stored conversion_payload"
+                )
+            existing_payload = existing_parsed.value
+            try:
+                _validate_conversion_transaction_projection(
+                    existing,
+                    ws_id=ws_id,
+                    portfolio_id=portfolio_id,
+                    predecessor_asset_id=predecessor_asset_id,
+                    predecessor_symbol=predecessor_symbol,
+                    successor_asset_id=successor_asset_id,
+                    successor_symbol=successor_symbol,
+                    transaction_date=transaction_date,
+                    payload=existing_payload,
+                )
+                asset_registry.validate_position_conversion_registry_state(
+                    db,
+                    existing_payload.predecessor.asset_id,
+                    existing_payload.successor.asset_id,
+                    existing_payload.successor.provider_symbol,
+                    existing_payload.quote_binding.predecessor_provider_symbol,
+                )
+            except Exception as exc:
+                raise PositionConversionError(
+                    "existing POSITION_CONVERSION row transaction_id="
+                    f"{existing.id} is inconsistent with canonical identity/payload"
+                ) from exc
+            if existing_payload.fingerprint == fingerprint:
+                # Matching retry (RTO-3, RTO-7): bypass only E5/E6. No
+                # business mutation, repair, reconciliation, replay, or
+                # snapshot action. Current successor materialized state is
+                # never consulted (RTO-13). Deterministically finish this
+                # read-only transaction and release every lock before
+                # returning (RTO-10). The id is captured BEFORE rollback —
+                # Session.rollback() expires ORM objects by default, so an
+                # attribute access on `existing` after rollback would
+                # trigger a lazy-load that reopens a new transaction.
+                existing_transaction_id = existing.id
+                db.rollback()
+                return {
+                    "status": "already_applied",
+                    "transaction_id": existing_transaction_id,
+                    "type": "POSITION_CONVERSION",
+                }
+            # Conflicting retry (RTO-4, RTO-8): bypass only E5/E6. No
+            # business mutation or repair. The outer except below
+            # deterministically rolls back and releases every lock before
+            # this propagates (RTO-11).
+            raise PositionConversionError(
+                "conflicting POSITION_CONVERSION already exists for "
+                f"portfolio_id={portfolio_id} predecessor asset_id={predecessor_asset_id} "
+                f"transaction_date={transaction_date}"
+            )
+
+        # No prior canonical conversion row: this is a first application,
+        # not a retry. E5 and E6 remain mandatory and precede every write
+        # (RTO-2).
+
+        # E5 — locate the predecessor holding by asset ID with the
+        # controlled registry-resolved-symbol fallback; zero or multiple
+        # matches fail closed.
+        predecessor_candidates = {
+            item.id: item for item in candidate_items
+            if item.asset_id == predecessor_asset_id
+            or item.symbol == predecessor_symbol
+        }
+        if len(predecessor_candidates) == 0:
+            raise PositionConversionError(
+                f"no predecessor holding found for asset_id={predecessor_asset_id} "
+                f"symbol={predecessor_symbol!r} in portfolio {portfolio_id}"
+            )
+        if len(predecessor_candidates) > 1:
+            raise PositionConversionError(
+                f"ambiguous predecessor holding for asset_id={predecessor_asset_id} "
+                f"symbol={predecessor_symbol!r} in portfolio {portfolio_id}"
+            )
+        predecessor_item = next(iter(predecessor_candidates.values()))
+
+        # E6 — optimistic quantity/basis expectations, mirroring the WP2
+        # replay tolerances exactly (exact share equality, THB 0.01 basis
+        # tolerance) so live materialization and replay reconcile (EQ-1).
+        held_shares = _d(predecessor_item.shares)
+        if held_shares != payload.predecessor.shares_surrendered:
+            raise PositionConversionError(
+                f"predecessor shares mismatch: held={held_shares} "
+                f"expected={payload.predecessor.shares_surrendered}"
+            )
+        held_basis = held_shares * _d(predecessor_item.avg_cost)
+        if abs(held_basis - payload.basis.before) > Decimal("0.01"):
+            raise PositionConversionError(
+                f"predecessor basis mismatch: held={held_basis} "
+                f"expected={payload.basis.before}"
+            )
+
+        # Resolve the successor merge target (existing holding or none)
+        # before inserting the transaction row, so the row's own `sector`
+        # column reflects the final materialized sector (mirrors every
+        # other execute_* function's `sector=sector or item.sector`
+        # convention).
+        successor_candidates = {
+            item.id: item for item in candidate_items
+            if item.id not in predecessor_candidates
+            and (item.asset_id == successor_asset_id or item.symbol == successor_symbol)
+        }
+        if len(successor_candidates) > 1:
+            raise PositionConversionError(
+                f"ambiguous successor holding for asset_id={successor_asset_id} "
+                f"symbol={successor_symbol!r} in portfolio {portfolio_id}"
+            )
+        successor_item = next(iter(successor_candidates.values()), None)
+        if (
+            successor_item is not None
+            and successor_item.asset_id is not None
+            and successor_item.asset_id != successor_asset_id
+        ):
+            raise PositionConversionError(
+                f"successor holding asset_id={successor_item.asset_id} conflicts with "
+                f"payload successor asset_id={successor_asset_id}"
+            )
+
+        predecessor_sector = predecessor_item.sector
+        final_sector = (
+            successor_item.sector if successor_item is not None and successor_item.sector
+            else predecessor_sector
+        )
+
+        received_shares = payload.successor.shares_received
+        carried_basis = payload.basis.carried_to_successor
+        avg_cost = carried_basis / received_shares
+        fees = payload.cash_in_lieu.fees if payload.cash_in_lieu else Decimal("0")
+        taxes = payload.cash_in_lieu.taxes if payload.cash_in_lieu else Decimal("0")
+        net_cash = payload.cash_in_lieu.net_cash if payload.cash_in_lieu else Decimal("0")
+
+        # E9 — insert the append-only conversion transaction row. The
+        # registry-resolved predecessor symbol is stored, never the
+        # caller-supplied payload symbol (WP4-IIR-B2).
+        tx = Transaction(
+            workspace_id=ws_id,
+            portfolio_id=portfolio_id,
+            symbol=predecessor_symbol,
+            transaction_type="POSITION_CONVERSION",
+            shares=_f(received_shares),
+            price_per_share=_f(avg_cost),
+            total_amount=_f(carried_basis),
+            fees=_f(fees),
+            taxes=_f(taxes),
+            currency=currency,
+            exchange_rate=exchange_rate,
+            transaction_date=transaction_date,
+            notes=notes,
+            sector=final_sector,
+            asset_id=predecessor_asset_id,
+            conversion_payload=canonical_payload,
+        )
+        db.add(tx)
+
+        # E10 — remove the predecessor materialization. shares_surrendered
+        # equals the entire predecessor holding (canonicalizer invariant +
+        # E6 exact-equality check above), so full removal is correct.
+        predecessor_item_id = predecessor_item.id
+        db.delete(predecessor_item)
+
+        # E11 — create or merge the successor materialization, using the
+        # registry-resolved successor symbol, never the caller-supplied
+        # payload symbol (WP4-IIR-B2).
+        if successor_item is not None:
+            existing_shares = _d(successor_item.shares)
+            existing_basis = existing_shares * _d(successor_item.avg_cost)
+            combined_shares = existing_shares + received_shares
+            combined_basis = existing_basis + carried_basis
+            successor_item.shares = _f(combined_shares)
+            successor_item.avg_cost = _f(combined_basis / combined_shares)
+            successor_item.symbol = successor_symbol
+            if successor_item.asset_id is None:
+                successor_item.asset_id = successor_asset_id
+            if not successor_item.sector:
+                successor_item.sector = predecessor_sector
+            final_successor_shares = combined_shares
+            final_successor_basis = combined_basis
+        else:
+            successor_item = PortfolioItem(
+                workspace_id=ws_id,
+                portfolio_id=portfolio_id,
+                symbol=successor_symbol,
+                shares=_f(received_shares),
+                avg_cost=_f(avg_cost),
+                sector=predecessor_sector,
+                asset_id=successor_asset_id,
+            )
+            db.add(successor_item)
+            final_successor_shares = received_shares
+            final_successor_basis = carried_basis
+
+        # E12 — admitted cash-in-lieu cash leg only; unchanged without it.
+        cash_before = _d(portfolio.cash_balance)
+        portfolio.cash_balance = _f(cash_before + net_cash)
+
+        # E13 — final invariants, then the sole commit boundary.
+        # WP4-IIR-B5: the refreshed successor basis is recomputed from its
+        # post-write shares × avg_cost and asserted against the expected
+        # carried/combined basis, using the same THB 0.01 tolerance as E6 —
+        # a corrupted refreshed avg_cost is no longer fail-open.
+        db.flush()
+        db.refresh(successor_item)
+        if db.query(PortfolioItem).filter(PortfolioItem.id == predecessor_item_id).first() is not None:
+            raise PositionConversionError("post-write predecessor removal invariant failed")
+        if _d(successor_item.shares) != final_successor_shares:
+            raise PositionConversionError("post-write successor shares invariant failed")
+        refreshed_basis = _d(successor_item.shares) * _d(successor_item.avg_cost)
+        if abs(refreshed_basis - final_successor_basis) > Decimal("0.01"):
+            raise PositionConversionError("post-write successor basis invariant failed")
+        if successor_item.asset_id != successor_asset_id:
+            raise PositionConversionError("post-write successor identity invariant failed")
+        if _f(cash_before + net_cash) != portfolio.cash_balance:
+            raise PositionConversionError("post-write cash invariant failed")
+
+        # WP4-IIR-B5 (second-renewed correction): validate the actual
+        # pending row's persisted conversion_payload, not the pre-write
+        # in-memory `payload` typed object. `tx.conversion_payload` is read
+        # exactly as currently attached to the ORM object at this point —
+        # no db.refresh(tx) — so a post-flush, pre-commit mutation of that
+        # JSON column (in-process or otherwise) is detected here rather
+        # than committed fail-open. Reparsed with the sole canonical
+        # parser and refingerprinted with the sole canonical algorithm; a
+        # detached/stored/alternate fingerprint is never trusted.
+        persisted_parsed = parse_position_conversion_payload(tx.conversion_payload)
+        if not persisted_parsed.is_valid or persisted_parsed.value is None:
+            raise PositionConversionError(
+                "post-write conversion_payload is not a canonically valid "
+                "POSITION_CONVERSION payload"
+            )
+        persisted_payload = persisted_parsed.value
+        if persisted_payload.fingerprint != fingerprint:
+            raise PositionConversionError(
+                "post-write conversion_payload fingerprint does not match the "
+                "canonical payload assembled for this conversion"
+            )
+
+        _validate_conversion_transaction_projection(
+            tx,
+            ws_id=ws_id,
+            portfolio_id=portfolio_id,
+            predecessor_asset_id=predecessor_asset_id,
+            predecessor_symbol=predecessor_symbol,
+            successor_asset_id=successor_asset_id,
+            successor_symbol=successor_symbol,
+            transaction_date=transaction_date,
+            payload=persisted_payload,
+        )
+        asset_registry.validate_position_conversion_registry_state(
+            db,
+            predecessor_asset_id,
+            successor_asset_id,
+            persisted_payload.successor.provider_symbol,
+            persisted_payload.quote_binding.predecessor_provider_symbol,
+        )
+
+        result = {
+            "status": "applied",
+            "transaction_id": tx.id,
+            "type": "POSITION_CONVERSION",
+            "predecessor_asset_id": predecessor_asset_id,
+            "successor_asset_id": successor_asset_id,
+            "successor_symbol": successor_symbol,
+            "shares_received": _f(received_shares),
+            "avg_cost": _f(avg_cost),
+            "basis_carried": _f(carried_basis),
+            "cash_balance": _f(cash_before + net_cash),
+            "transaction_date": transaction_date.isoformat() + "Z",
+            "fingerprint": fingerprint,
+            "notes": notes,
+        }
+
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    return result

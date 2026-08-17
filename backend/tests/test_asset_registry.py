@@ -302,3 +302,398 @@ def test_asset_with_no_identifiers_or_classification_is_valid():
     assert registry.get_identifiers(db, asset.id) == []
     assert registry.get_classifications(db, asset.id) == []
     assert registry.get_asset(db, asset.id) is not None
+
+
+# ── BANPU-WP4 — position-conversion registry preparation and validation ────
+
+def _mint_predecessor_successor():
+    db = make_session()
+    predecessor = registry.mint(
+        db, _claim(canonical_symbol="BANPU"),
+        identifiers=[IdentifierRecord(IdentifierType.PROVIDER_SYMBOL, "BANPU.BK", source="yfinance")],
+    )
+    successor = registry.mint(db, _claim(canonical_symbol="BANPUU"))
+    return db, predecessor, successor
+
+
+def test_retire_identifier_marks_current_identifier_not_current():
+    db = make_session()
+    asset = registry.mint(
+        db, _claim(),
+        identifiers=[IdentifierRecord(IdentifierType.PROVIDER_SYMBOL, "KBANK.BK", source="yfinance")],
+    )
+
+    retired = registry.retire_identifier(db, asset.id, IdentifierType.PROVIDER_SYMBOL)
+
+    assert len(retired) == 1
+    assert registry.get_identifiers(db, asset.id, current_only=True) == []
+    all_rows = registry.get_identifiers(db, asset.id)
+    assert all_rows[0].is_current is False
+    assert all_rows[0].value == "KBANK.BK"
+
+
+def test_retire_identifier_is_idempotent():
+    db = make_session()
+    asset = registry.mint(
+        db, _claim(),
+        identifiers=[IdentifierRecord(IdentifierType.PROVIDER_SYMBOL, "KBANK.BK", source="yfinance")],
+    )
+
+    registry.retire_identifier(db, asset.id, IdentifierType.PROVIDER_SYMBOL)
+    second = registry.retire_identifier(db, asset.id, IdentifierType.PROVIDER_SYMBOL)
+
+    assert second == []  # nothing left current to retire
+    assert registry.get_identifiers(db, asset.id, current_only=True) == []
+
+
+def test_retire_identifier_rejects_unknown_asset():
+    db = make_session()
+    with pytest.raises(AssetRegistryError):
+        registry.retire_identifier(db, 9999, IdentifierType.PROVIDER_SYMBOL)
+
+
+def test_prepare_position_conversion_registry_establishes_full_state():
+    db, predecessor, successor = _mint_predecessor_successor()
+
+    rel = registry.prepare_position_conversion_registry(
+        db, predecessor.id, successor.id, "BANPUU.BK", source="banpu-wp4",
+    )
+
+    assert rel.from_asset_id == predecessor.id
+    assert rel.to_asset_id == successor.id
+    assert rel.relationship_type == RelationshipType.MERGED_INTO.value
+
+    refreshed_predecessor = registry.get_asset(db, predecessor.id)
+    assert refreshed_predecessor.status == AssetStatus.MERGED.value
+    assert registry.get_identifiers(db, predecessor.id, current_only=True) == []
+
+    successor_current = registry.get_identifiers(db, successor.id, current_only=True)
+    assert len(successor_current) == 1
+    assert successor_current[0].value == "BANPUU.BK"
+    assert successor_current[0].identifier_type == IdentifierType.PROVIDER_SYMBOL.value
+
+
+def test_prepare_position_conversion_registry_is_idempotent():
+    db, predecessor, successor = _mint_predecessor_successor()
+
+    first = registry.prepare_position_conversion_registry(
+        db, predecessor.id, successor.id, "BANPUU.BK", source="banpu-wp4",
+    )
+    second = registry.prepare_position_conversion_registry(
+        db, predecessor.id, successor.id, "BANPUU.BK", source="banpu-wp4",
+    )
+
+    assert first.id == second.id
+    assert len(registry.get_relationships(db, predecessor.id)) == 1
+    assert registry.get_asset(db, predecessor.id).status == AssetStatus.MERGED.value
+
+
+def test_prepare_position_conversion_registry_rejects_same_asset():
+    db = make_session()
+    asset = registry.mint(db, _claim())
+
+    with pytest.raises(AssetRegistryError):
+        registry.prepare_position_conversion_registry(
+            db, asset.id, asset.id, "X.BK", source="banpu-wp4",
+        )
+
+
+def test_validate_position_conversion_registry_state_passes_after_preparation():
+    db, predecessor, successor = _mint_predecessor_successor()
+    registry.prepare_position_conversion_registry(
+        db, predecessor.id, successor.id, "BANPUU.BK", source="banpu-wp4",
+    )
+
+    registry.validate_position_conversion_registry_state(
+        db, predecessor.id, successor.id, "BANPUU.BK",
+        "BANPU.BK",
+    )  # must not raise
+
+
+def test_validate_position_conversion_registry_state_rejects_unprepared_pair():
+    db, predecessor, successor = _mint_predecessor_successor()
+
+    with pytest.raises(AssetRegistryError):
+        registry.validate_position_conversion_registry_state(
+            db, predecessor.id, successor.id, "BANPUU.BK",
+            "BANPU.BK",
+        )
+
+
+def test_validate_position_conversion_registry_state_rejects_successor_provider_symbol_mismatch():
+    db, predecessor, successor = _mint_predecessor_successor()
+    registry.prepare_position_conversion_registry(
+        db, predecessor.id, successor.id, "BANPUU.BK", source="banpu-wp4",
+    )
+
+    with pytest.raises(AssetRegistryError):
+        registry.validate_position_conversion_registry_state(
+            db, predecessor.id, successor.id, "WRONG.BK",
+            "BANPU.BK",
+        )
+
+
+def test_validate_position_conversion_registry_state_rejects_predecessor_not_merged():
+    db, predecessor, successor = _mint_predecessor_successor()
+    registry.attach_identifier(
+        db, successor.id,
+        IdentifierRecord(IdentifierType.PROVIDER_SYMBOL, "BANPUU.BK", source="banpu-wp4"),
+    )
+    registry.retire_identifier(db, predecessor.id, IdentifierType.PROVIDER_SYMBOL)
+    registry.link_relationship(db, predecessor.id, successor.id, RelationshipType.MERGED_INTO)
+    # predecessor status left ACTIVE — never transitioned to MERGED
+
+    with pytest.raises(AssetRegistryError):
+        registry.validate_position_conversion_registry_state(
+            db, predecessor.id, successor.id, "BANPUU.BK",
+            "BANPU.BK",
+        )
+
+
+def test_validate_position_conversion_registry_state_rejects_predecessor_identifier_not_retired():
+    db, predecessor, successor = _mint_predecessor_successor()
+    registry.attach_identifier(
+        db, successor.id,
+        IdentifierRecord(IdentifierType.PROVIDER_SYMBOL, "BANPUU.BK", source="banpu-wp4"),
+    )
+    registry.transition_status(db, predecessor.id, AssetStatus.MERGED)
+    registry.link_relationship(db, predecessor.id, successor.id, RelationshipType.MERGED_INTO)
+    # predecessor's PROVIDER_SYMBOL identifier was never retired
+
+    with pytest.raises(AssetRegistryError):
+        registry.validate_position_conversion_registry_state(
+            db, predecessor.id, successor.id, "BANPUU.BK",
+            "BANPU.BK",
+        )
+
+
+def test_validate_position_conversion_registry_state_rejects_missing_merged_into():
+    db, predecessor, successor = _mint_predecessor_successor()
+    registry.attach_identifier(
+        db, successor.id,
+        IdentifierRecord(IdentifierType.PROVIDER_SYMBOL, "BANPUU.BK", source="banpu-wp4"),
+    )
+    registry.retire_identifier(db, predecessor.id, IdentifierType.PROVIDER_SYMBOL)
+    registry.transition_status(db, predecessor.id, AssetStatus.MERGED)
+    # no MERGED_INTO relationship created
+
+    with pytest.raises(AssetRegistryError):
+        registry.validate_position_conversion_registry_state(
+            db, predecessor.id, successor.id, "BANPUU.BK",
+            "BANPU.BK",
+        )
+
+
+def test_validate_position_conversion_registry_state_rejects_reversed_merged_into():
+    db, predecessor, successor = _mint_predecessor_successor()
+    registry.attach_identifier(
+        db, successor.id,
+        IdentifierRecord(IdentifierType.PROVIDER_SYMBOL, "BANPUU.BK", source="banpu-wp4"),
+    )
+    registry.retire_identifier(db, predecessor.id, IdentifierType.PROVIDER_SYMBOL)
+    registry.transition_status(db, predecessor.id, AssetStatus.MERGED)
+    # reversed edge: successor -> predecessor instead of predecessor -> successor
+    registry.link_relationship(db, successor.id, predecessor.id, RelationshipType.MERGED_INTO)
+
+    with pytest.raises(AssetRegistryError):
+        registry.validate_position_conversion_registry_state(
+            db, predecessor.id, successor.id, "BANPUU.BK",
+            "BANPU.BK",
+        )
+
+
+def test_validate_position_conversion_registry_state_rejects_merged_into_pointing_elsewhere():
+    db, predecessor, successor = _mint_predecessor_successor()
+    other = registry.mint(db, _claim(canonical_symbol="OTHER"))
+    registry.attach_identifier(
+        db, successor.id,
+        IdentifierRecord(IdentifierType.PROVIDER_SYMBOL, "BANPUU.BK", source="banpu-wp4"),
+    )
+    registry.retire_identifier(db, predecessor.id, IdentifierType.PROVIDER_SYMBOL)
+    registry.transition_status(db, predecessor.id, AssetStatus.MERGED)
+    registry.link_relationship(db, predecessor.id, other.id, RelationshipType.MERGED_INTO)
+
+    with pytest.raises(AssetRegistryError):
+        registry.validate_position_conversion_registry_state(
+            db, predecessor.id, successor.id, "BANPUU.BK",
+            "BANPU.BK",
+        )
+
+
+# ── WP4-IIR-B3 — registry preparation conflict safety ──────────────────────
+
+def test_prepare_position_conversion_registry_normal_preparation_still_works():
+    db, predecessor, successor = _mint_predecessor_successor()
+
+    rel = registry.prepare_position_conversion_registry(
+        db, predecessor.id, successor.id, "BANPUU.BK", source="banpu-wp4",
+    )
+
+    assert rel.from_asset_id == predecessor.id
+    assert rel.to_asset_id == successor.id
+    registry.validate_position_conversion_registry_state(
+        db, predecessor.id, successor.id, "BANPUU.BK",
+        "BANPU.BK",
+    )  # must not raise
+
+
+def test_prepare_position_conversion_registry_repeated_identical_preparation_is_idempotent():
+    db, predecessor, successor = _mint_predecessor_successor()
+
+    first = registry.prepare_position_conversion_registry(
+        db, predecessor.id, successor.id, "BANPUU.BK", source="banpu-wp4",
+    )
+    second = registry.prepare_position_conversion_registry(
+        db, predecessor.id, successor.id, "BANPUU.BK", source="banpu-wp4",
+    )
+    third = registry.prepare_position_conversion_registry(
+        db, predecessor.id, successor.id, "BANPUU.BK", source="banpu-wp4",
+    )
+
+    assert first.id == second.id == third.id
+    merged_into = [
+        row for row in registry.get_relationships(db, predecessor.id)
+        if row.relationship_type == RelationshipType.MERGED_INTO.value
+    ]
+    assert len(merged_into) == 1
+    registry.validate_position_conversion_registry_state(
+        db, predecessor.id, successor.id, "BANPUU.BK",
+        "BANPU.BK",
+    )  # still exactly one edge; still valid
+
+
+def test_prepare_position_conversion_registry_rejects_conflicting_pre_existing_merged_into():
+    """WP4-IIR-B3: a predecessor already carrying an outgoing MERGED_INTO
+    edge to a DIFFERENT asset must reject a request to prepare a conversion
+    to a new successor — not silently add a second edge alongside the
+    conflicting one."""
+    db, predecessor, successor = _mint_predecessor_successor()
+    other_successor = registry.mint(db, _claim(canonical_symbol="OTHERSUCC"))
+
+    registry.prepare_position_conversion_registry(
+        db, predecessor.id, successor.id, "BANPUU.BK", source="banpu-wp4",
+    )
+
+    with pytest.raises(AssetRegistryError):
+        registry.prepare_position_conversion_registry(
+            db, predecessor.id, other_successor.id, "OTHERSUCC.BK", source="banpu-wp4",
+        )
+
+
+def test_prepare_position_conversion_registry_conflict_persists_no_second_edge():
+    """WP4-IIR-B3: after a rejected conflicting preparation attempt, the
+    predecessor still carries exactly one MERGED_INTO edge — to the
+    original successor, never a second edge to the conflicting one."""
+    db, predecessor, successor = _mint_predecessor_successor()
+    other_successor = registry.mint(db, _claim(canonical_symbol="OTHERSUCC"))
+
+    registry.prepare_position_conversion_registry(
+        db, predecessor.id, successor.id, "BANPUU.BK", source="banpu-wp4",
+    )
+    with pytest.raises(AssetRegistryError):
+        registry.prepare_position_conversion_registry(
+            db, predecessor.id, other_successor.id, "OTHERSUCC.BK", source="banpu-wp4",
+        )
+
+    merged_into = [
+        row for row in registry.get_relationships(db, predecessor.id)
+        if row.relationship_type == RelationshipType.MERGED_INTO.value
+    ]
+    assert len(merged_into) == 1
+    assert merged_into[0].to_asset_id == successor.id
+
+
+def test_prepare_position_conversion_registry_conflict_leaves_registry_state_unchanged():
+    """WP4-IIR-B3: the conflict check must run BEFORE any mutation, so a
+    rejected conflicting preparation leaves the predecessor's identifier,
+    status, and the successor's identifier state exactly as they were —
+    the failure is not merely non-doubling of the edge, but a true no-op."""
+    db, predecessor, successor = _mint_predecessor_successor()
+    other_successor = registry.mint(db, _claim(canonical_symbol="OTHERSUCC"))
+
+    registry.prepare_position_conversion_registry(
+        db, predecessor.id, successor.id, "BANPUU.BK", source="banpu-wp4",
+    )
+    predecessor_status_before = registry.get_asset(db, predecessor.id).status
+    predecessor_identifiers_before = registry.get_identifiers(db, predecessor.id, current_only=True)
+    other_successor_identifiers_before = registry.get_identifiers(db, other_successor.id, current_only=True)
+
+    with pytest.raises(AssetRegistryError):
+        registry.prepare_position_conversion_registry(
+            db, predecessor.id, other_successor.id, "OTHERSUCC.BK", source="banpu-wp4",
+        )
+
+    assert registry.get_asset(db, predecessor.id).status == predecessor_status_before
+    assert registry.get_identifiers(db, predecessor.id, current_only=True) == predecessor_identifiers_before
+    assert registry.get_identifiers(db, other_successor.id, current_only=True) == other_successor_identifiers_before
+    registry.validate_position_conversion_registry_state(
+        db, predecessor.id, successor.id, "BANPUU.BK",
+        "BANPU.BK",
+    )  # original preparation is still exactly and only what is valid
+
+
+# ── WP4-IIR-B2 second-renewed correction — predecessor provider symbol ─────
+# resolved from registry/identifier state, never trusted from caller-
+# supplied payload text.
+
+def test_resolve_predecessor_provider_symbol_reads_retired_identifier():
+    db, predecessor, successor = _mint_predecessor_successor()
+    registry.prepare_position_conversion_registry(
+        db, predecessor.id, successor.id, "BANPUU.BK", source="banpu-wp4",
+    )
+
+    assert registry.resolve_predecessor_provider_symbol(db, predecessor.id) == "BANPU.BK"
+
+
+def test_resolve_predecessor_provider_symbol_ignores_caller_supplied_text():
+    """The resolved value depends only on registry state -- there is no
+    caller-supplied parameter for it to ever be influenced by."""
+    db, predecessor, successor = _mint_predecessor_successor()
+    registry.prepare_position_conversion_registry(
+        db, predecessor.id, successor.id, "BANPUU.BK", source="banpu-wp4",
+    )
+
+    resolved_a = registry.resolve_predecessor_provider_symbol(db, predecessor.id)
+    resolved_b = registry.resolve_predecessor_provider_symbol(db, predecessor.id)
+    assert resolved_a == resolved_b == "BANPU.BK"
+
+
+def test_resolve_predecessor_provider_symbol_rejects_asset_with_no_identifier():
+    """Fail-closed: an asset with no PROVIDER_SYMBOL identifier of any
+    currency has no registry-authoritative value to derive -- this must
+    never fall back to a hard-coded or arbitrary value."""
+    db = make_session()
+    predecessor = registry.mint(db, _claim(canonical_symbol="NOIDENT"))
+
+    with pytest.raises(AssetRegistryError):
+        registry.resolve_predecessor_provider_symbol(db, predecessor.id)
+
+
+def test_validate_position_conversion_registry_state_rejects_wrong_predecessor_provider_symbol():
+    """WP4-IIR-B2 second-renewed correction: an arbitrary/adversarial
+    caller-supplied predecessor provider symbol that does not match the
+    registry-derived value must fail closed, exactly like the existing
+    successor-provider-symbol mismatch check."""
+    db, predecessor, successor = _mint_predecessor_successor()
+    registry.prepare_position_conversion_registry(
+        db, predecessor.id, successor.id, "BANPUU.BK", source="banpu-wp4",
+    )
+
+    for adversarial_label in ("CALLER-PROVIDER-PRE-A", "CALLER-PROVIDER-PRE-B", ""):
+        with pytest.raises(AssetRegistryError):
+            registry.validate_position_conversion_registry_state(
+                db, predecessor.id, successor.id, "BANPUU.BK",
+                adversarial_label,
+            )
+
+
+def test_validate_position_conversion_registry_state_accepts_only_registry_derived_predecessor_provider_symbol():
+    db, predecessor, successor = _mint_predecessor_successor()
+    registry.prepare_position_conversion_registry(
+        db, predecessor.id, successor.id, "BANPUU.BK", source="banpu-wp4",
+    )
+
+    registry.validate_position_conversion_registry_state(
+        db, predecessor.id, successor.id, "BANPUU.BK",
+        "BANPU.BK",
+    )  # must not raise -- matches the registry-derived value exactly

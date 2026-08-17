@@ -220,6 +220,47 @@ no authority and does not duplicate the Decision Log narrative.
 BANPU-WP3 is `COMPLETE`, `FROZEN`, and `CLOSED`. WP4's S7 entry prerequisite
 is satisfied; WP4 remains `NOT ALLOCATED` and `NOT AUTHORIZED`.
 
+## BANPU-WP4 — Registry Preparation and Live Materialization
+
+This navigation entry records the final BANPU-WP4 repository state. It grants
+no authority and does not duplicate the Decision Log narrative.
+
+| Lifecycle stage | Final state | Record |
+|---|---|---|
+| BANPU-WP4 Work Package Plan / retry-order amendment | `AMENDMENT BOUND / FROZEN / AUTHORITATIVE` | [Retry-Order Amendment Binding/Freeze Record](BANPU_WP4_RETRY_ORDER_AMENDMENT_BINDING_FREEZE_RECORD.md) |
+| BANPU-WP4 Allocation | `BANPU-WP4 ALLOCATED` | [Allocation Record](BANPU_WP4_ALLOCATION_RECORD.md) |
+| BANPU-WP4 Implementation Authorization | `BANPU-WP4 IMPLEMENTATION AUTHORIZED` | [Implementation Authorization](BANPU_WP4_IMPLEMENTATION_AUTHORIZATION_RECORD.md) |
+| Independent Implementation Review (original through Third Renewed) | `BANPU-WP4 IMPLEMENTATION CANDIDATE — INDEPENDENTLY APPROVED` | [Third Renewed Independent Implementation Review](BANPU_WP4_THIRD_RENEWED_INDEPENDENT_IMPLEMENTATION_REVIEW.md) |
+| BANPU-WP4 Implementation | `COMPLETE` | [Epic Closeout](BANPU_WP4_EPIC_CLOSEOUT.md) |
+| Implementation Confirmation | `BANPU-WP4 IMPLEMENTATION CONFIRMED` | [Implementation Confirmation](BANPU_WP4_IMPLEMENTATION_CONFIRMATION.md) |
+| Implementation Freeze | `BANPU-WP4 IMPLEMENTATION FROZEN` | [Implementation Freeze Record](BANPU_WP4_IMPLEMENTATION_FREEZE_RECORD.md) |
+| Epic Closeout | `BANPU-WP4 EPIC CLOSEOUT COMPLETE` | [Epic Closeout](BANPU_WP4_EPIC_CLOSEOUT.md) |
+| Decision Log synchronization | `BANPU-WP4 DECISION LOG SYNCHRONIZED` | [Decision Log](../engineering/DECISION_LOG.md#banpu-wp4-decision-log-synchronization) |
+
+BANPU-WP4 is `COMPLETE`, `FROZEN`, and `CLOSED`. WP5's entry prerequisite is
+satisfied; WP5 remains `NOT ALLOCATED` and `NOT AUTHORIZED`.
+
+## BANPU-WP5 — Accounting Readers and Bounded Reconstruction
+
+This navigation entry records the final BANPU-WP5 repository state. It grants
+no authority and does not duplicate the Decision Log narrative.
+
+| Lifecycle stage | Final state | Record |
+|---|---|---|
+| BANPU-WP5 Work Package Plan / Mechanical Continuity Amendment / D7 Implementation Authorization Amendment lifecycle | `COMPLETE AND FROZEN` | [Planning Freeze Record](BANPU_WP5_PLANNING_FREEZE_RECORD.md) |
+| BANPU-WP5 Allocation | `BANPU-WP5 ALLOCATED` | [Allocation Record](BANPU_WP5_ALLOCATION_RECORD.md) |
+| BANPU-WP5 Implementation Authorization | `BANPU-WP5 IMPLEMENTATION AUTHORIZED` (amended, D7 binding-frozen) | [Implementation Authorization Record](BANPU_WP5_IMPLEMENTATION_AUTHORIZATION_RECORD.md), [D7 Amendment Binding Freeze Record](BANPU_WP5_D7_IMPLEMENTATION_AUTHORIZATION_AMENDMENT_BINDING_FREEZE_RECORD.md) |
+| Independent Implementation Review (original through Second Fresh Re-Review) | `BANPU-WP5 FRESH INDEPENDENT IMPLEMENTATION RE-REVIEW — PASSED` | [Second Fresh Independent Implementation Re-Review](BANPU_WP5_SECOND_FRESH_INDEPENDENT_IMPLEMENTATION_REVIEW.md) |
+| BANPU-WP5 Implementation | `COMPLETE` | [Epic Closeout](BANPU_WP5_EPIC_CLOSEOUT.md) |
+| Implementation Confirmation | `BANPU-WP5 IMPLEMENTATION CONFIRMED` | [Implementation Confirmation](BANPU_WP5_IMPLEMENTATION_CONFIRMATION.md) |
+| Implementation Freeze | `BANPU-WP5 IMPLEMENTATION FROZEN` | [Implementation Freeze Record](BANPU_WP5_IMPLEMENTATION_FREEZE_RECORD.md) |
+| Epic Closeout | `BANPU-WP5 EPIC CLOSEOUT COMPLETE` | [Epic Closeout](BANPU_WP5_EPIC_CLOSEOUT.md) |
+| Decision Log synchronization | `BANPU-WP5 DECISION LOG SYNCHRONIZED` | [Decision Log](../engineering/DECISION_LOG.md#banpu-wp5-decision-log-synchronization) |
+
+BANPU-WP5 is `COMPLETE`, `FROZEN`, and `CLOSED`. WP6's Decision Log and
+Implementation INDEX entry prerequisites are both now satisfied; WP6 remains
+`NOT ALLOCATED` and `NOT AUTHORIZED`.
+
 ## Milestone Navigation (M0–current)
 
 | Milestone | Status (as declared in-document) | Primary document(s) | Closeout | Decision Log |

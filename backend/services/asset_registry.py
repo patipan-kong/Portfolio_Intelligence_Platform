@@ -30,6 +30,7 @@ from services.asset_domain import (
     AssetType,
     ClassificationDimension,
     IdentifierRecord,
+    IdentifierType,
     RelationshipType,
 )
 from services.runtime_consultation import (
@@ -309,6 +310,231 @@ def link_relationship(
 
 def get_relationships(db: Session, asset_id: AssetId) -> Sequence[AssetRelationship]:
     return repo.get_relationships(db, asset_id)
+
+
+# ── BANPU-WP4 — position-conversion registry preparation and validation ────
+#
+# WP4 Work Package Plan PD-WP4-1: registry preparation is a distinct,
+# idempotent service act performed BEFORE execute_position_conversion()
+# opens its transaction — never performed implicitly by that service.
+# PD-WP4-2: mark_identifier_not_current() already exists in asset_repository
+# (M1); the missing capability was only the service-level retirement
+# operation below, which composes it. transition_status() and
+# link_relationship() (both M1, above) are reused unchanged.
+
+def retire_identifier(
+    db: Session, asset_id: AssetId, identifier_type: IdentifierType,
+) -> Sequence[AssetIdentifier]:
+    """Retires (is_current=False) every currently-current identifier of
+    `identifier_type` for asset_id, recording no replacement.
+
+    Distinct from attach_identifier()'s supersession, which retires the
+    prior mapping only as a side effect of adding a new one. A predecessor
+    identity that is merging away — not being renamed — needs retirement
+    without succession as its own act. Idempotent: already-retired
+    identifiers are untouched, and calling this again once nothing of that
+    type is current is a no-op that retires nothing.
+    """
+    asset = repo.get_asset(db, asset_id)
+    if asset is None:
+        raise AssetRegistryError(f"no asset with asset_id={asset_id}")
+
+    current = [
+        row for row in repo.get_identifiers(db, asset_id, current_only=True)
+        if row.identifier_type == identifier_type.value
+    ]
+    for row in current:
+        repo.mark_identifier_not_current(db, row)
+    return current
+
+
+def prepare_position_conversion_registry(
+    db: Session,
+    predecessor_asset_id: AssetId,
+    successor_asset_id: AssetId,
+    successor_provider_symbol: str,
+    *,
+    source: str,
+    effective_date: Optional[datetime] = None,
+) -> AssetRelationship:
+    """BANPU-WP4 registry preparation (Work Package Plan §3.2 step E0).
+
+    Establishes the current successor PROVIDER_SYMBOL identifier, retires
+    the predecessor's current PROVIDER_SYMBOL identifier, transitions the
+    predecessor to MERGED, and links predecessor -> successor with the
+    existing MERGED_INTO relationship type. Idempotent and repeatable:
+    re-running against an already-prepared pair performs no redundant
+    mutation and reaches the same end state. Fail-closed — an illegal
+    predecessor lifecycle transition (e.g. from DELISTED or ARCHIVED)
+    raises AssetRegistryError exactly as transition_status() already does.
+
+    This is a separate service act, never invoked by
+    execute_position_conversion() itself (PD-WP4-1) — that service only
+    validates the state this function establishes.
+    """
+    if predecessor_asset_id == successor_asset_id:
+        raise AssetRegistryError("predecessor and successor asset_id must be distinct")
+
+    predecessor = repo.get_asset(db, predecessor_asset_id)
+    if predecessor is None:
+        raise AssetRegistryError(f"no asset with asset_id={predecessor_asset_id}")
+    if repo.get_asset(db, successor_asset_id) is None:
+        raise AssetRegistryError(f"no asset with asset_id={successor_asset_id}")
+
+    # WP4-IIR-B3: fail closed on a conflicting pre-existing outgoing
+    # MERGED_INTO edge BEFORE any mutation below. link_relationship()'s own
+    # idempotency check only matches the exact (from, to, type) triple, so
+    # without this guard a predecessor already merged into some other asset
+    # would silently gain a second MERGED_INTO edge instead of rejecting the
+    # conflicting request. An edge to this exact successor is left to
+    # link_relationship()'s existing idempotent handling below.
+    conflicting_merged_into = [
+        row for row in repo.get_relationships(db, predecessor_asset_id)
+        if row.from_asset_id == predecessor_asset_id
+        and row.relationship_type == RelationshipType.MERGED_INTO.value
+        and row.to_asset_id != successor_asset_id
+    ]
+    if conflicting_merged_into:
+        raise AssetRegistryError(
+            f"predecessor asset_id={predecessor_asset_id} already carries a MERGED_INTO "
+            f"relationship to asset_id={conflicting_merged_into[0].to_asset_id}; cannot also "
+            f"link it to asset_id={successor_asset_id}"
+        )
+
+    attach_identifier(
+        db, successor_asset_id,
+        IdentifierRecord(
+            IdentifierType.PROVIDER_SYMBOL, successor_provider_symbol,
+            source=source, as_of=effective_date,
+        ),
+    )
+
+    retire_identifier(db, predecessor_asset_id, IdentifierType.PROVIDER_SYMBOL)
+
+    if AssetStatus(predecessor.status) != AssetStatus.MERGED:
+        transition_status(db, predecessor_asset_id, AssetStatus.MERGED)
+
+    return link_relationship(
+        db, predecessor_asset_id, successor_asset_id, RelationshipType.MERGED_INTO,
+        effective_date=effective_date,
+    )
+
+
+def resolve_predecessor_provider_symbol(db: Session, predecessor_asset_id: AssetId) -> str:
+    """Derives the predecessor's provider symbol from registry/identifier
+    state — never from caller-supplied payload text (WP4-IIR-B2 second-
+    renewed correction).
+
+    E0 retirement (retire_identifier(), called by
+    prepare_position_conversion_registry()) flips the predecessor's current
+    PROVIDER_SYMBOL identifier's is_current to False; it does not delete the
+    row. Historical mappings are retained forever (ASSET_REGISTRY.md
+    Section 3), so the identifier value that was current immediately before
+    retirement remains readable — it is the most recently attached
+    PROVIDER_SYMBOL row for this asset_id, since get_identifiers() orders by
+    created_at ascending and attach_identifier() only ever adds one new
+    current row per real-world change (never edits or reorders existing
+    rows).
+
+    Fail-closed: raises AssetRegistryError if the predecessor carries no
+    PROVIDER_SYMBOL identifier at all — registry preparation (E0) is
+    incomplete or never ran, so no registry-authoritative value exists to
+    derive. This function never falls back to an arbitrary or hard-coded
+    value in that case.
+    """
+    provider_symbol_identifiers = [
+        row for row in repo.get_identifiers(db, predecessor_asset_id, current_only=False)
+        if row.identifier_type == IdentifierType.PROVIDER_SYMBOL.value
+    ]
+    if not provider_symbol_identifiers:
+        raise AssetRegistryError(
+            f"predecessor asset_id={predecessor_asset_id} has no PROVIDER_SYMBOL "
+            "identifier of any currency to resolve a predecessor provider symbol "
+            "from; registry preparation is incomplete"
+        )
+    return provider_symbol_identifiers[-1].value
+
+
+def validate_position_conversion_registry_state(
+    db: Session,
+    predecessor_asset_id: AssetId,
+    successor_asset_id: AssetId,
+    successor_provider_symbol: str,
+    predecessor_provider_symbol: str,
+) -> None:
+    """Fail-closed validation of the WP4 conversion registry invariants.
+
+    Performed by execute_position_conversion() (step E3) before any write —
+    this function never prepares registry state itself (PD-WP4-1); it only
+    verifies that prepare_position_conversion_registry() already ran and
+    reached a consistent end state. Raises AssetRegistryError with a
+    descriptive reason on the first failing invariant; read-only otherwise.
+
+    Verifies exactly:
+      - both assets exist and are distinct;
+      - the successor has a current PROVIDER_SYMBOL identifier equal to
+        successor_provider_symbol;
+      - the predecessor status is MERGED;
+      - the predecessor no longer carries a current PROVIDER_SYMBOL
+        identifier (retired);
+      - predecessor_provider_symbol equals resolve_predecessor_provider_symbol()
+        for the predecessor — never trusted as arbitrary caller-supplied text
+        (WP4-IIR-B2 second-renewed correction);
+      - exactly one MERGED_INTO relationship links predecessor to
+        successor (not absent, not reversed, not pointing elsewhere).
+    """
+    if predecessor_asset_id == successor_asset_id:
+        raise AssetRegistryError("predecessor and successor asset_id must be distinct")
+
+    predecessor = repo.get_asset(db, predecessor_asset_id)
+    if predecessor is None:
+        raise AssetRegistryError(f"no asset with asset_id={predecessor_asset_id}")
+    if repo.get_asset(db, successor_asset_id) is None:
+        raise AssetRegistryError(f"no asset with asset_id={successor_asset_id}")
+
+    successor_identifier = repo.find_current_identifier(
+        db, IdentifierType.PROVIDER_SYMBOL.value, successor_provider_symbol,
+    )
+    if successor_identifier is None or successor_identifier.asset_id != successor_asset_id:
+        raise AssetRegistryError(
+            f"successor asset_id={successor_asset_id} has no current PROVIDER_SYMBOL "
+            f"identifier {successor_provider_symbol!r}"
+        )
+
+    if AssetStatus(predecessor.status) != AssetStatus.MERGED:
+        raise AssetRegistryError(
+            f"predecessor asset_id={predecessor_asset_id} status is "
+            f"{predecessor.status!r}, expected {AssetStatus.MERGED.value!r}"
+        )
+
+    predecessor_current = [
+        row for row in repo.get_identifiers(db, predecessor_asset_id, current_only=True)
+        if row.identifier_type == IdentifierType.PROVIDER_SYMBOL.value
+    ]
+    if predecessor_current:
+        raise AssetRegistryError(
+            f"predecessor asset_id={predecessor_asset_id} still has a current "
+            "PROVIDER_SYMBOL identifier; expected retired"
+        )
+
+    resolved_predecessor_provider_symbol = resolve_predecessor_provider_symbol(db, predecessor_asset_id)
+    if predecessor_provider_symbol != resolved_predecessor_provider_symbol:
+        raise AssetRegistryError(
+            f"predecessor asset_id={predecessor_asset_id} provider symbol "
+            f"{predecessor_provider_symbol!r} does not match the registry-derived "
+            f"value {resolved_predecessor_provider_symbol!r}"
+        )
+
+    merged_into = [
+        row for row in repo.get_relationships(db, predecessor_asset_id)
+        if row.from_asset_id == predecessor_asset_id
+        and row.relationship_type == RelationshipType.MERGED_INTO.value
+    ]
+    if len(merged_into) != 1 or merged_into[0].to_asset_id != successor_asset_id:
+        raise AssetRegistryError(
+            f"predecessor asset_id={predecessor_asset_id} does not carry exactly one "
+            f"MERGED_INTO relationship to successor asset_id={successor_asset_id}"
+        )
 
 
 def record_classification(

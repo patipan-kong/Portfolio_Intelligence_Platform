@@ -262,6 +262,23 @@ class _PayloadReader:
         return parsed
 
 
+def _format_decimal_context_independent(value: Decimal) -> str:
+    """Render a nonzero Decimal as plain base-10 notation from its exact
+    coefficient and exponent, independent of the ambient Decimal context.
+
+    ``Decimal.normalize()`` rounds to the active context precision before
+    formatting, so two exact values differing only beyond that precision can
+    serialize identically (BANPU-WP1 MINOR-1). ``format(value, "f")`` renders
+    the exact coefficient with no context-applying arithmetic; only
+    insignificant fractional trailing zeroes and a now-empty decimal point
+    are stripped afterward.
+    """
+    text = format(value, "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text
+
+
 def _canonical_fingerprint_value(value: Any) -> Any:
     """Return the stable JSON value used by conversion fingerprints.
 
@@ -275,7 +292,7 @@ def _canonical_fingerprint_value(value: Any) -> Any:
     if isinstance(value, Decimal):
         if value == 0:
             return "0"
-        return format(value.normalize(), "f")
+        return _format_decimal_context_independent(value)
     if isinstance(value, datetime):
         return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
     if isinstance(value, date):

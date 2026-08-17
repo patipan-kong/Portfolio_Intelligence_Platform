@@ -167,6 +167,17 @@ def compute_period_metrics(
             period_fees_paid += float(ctx.fees) + float(ctx.taxes)
         elif ctx.transaction_type == "DIVIDEND":
             period_dividend_income += float(ctx.total_amount)
+        elif ctx.transaction_type == "POSITION_CONVERSION":
+            # BANPU-WP5-C1/C2 — a conversion is not an external/import/manual
+            # flow (it matches none of the branches above), so it contributes
+            # to net_ecf/imported_asset_value/manual_adjustment_value only by
+            # omission. Its only accounting effect is the admitted cash-in-lieu
+            # component, if any, counted exactly once here.
+            parsed = ctx.position_conversion.value if ctx.position_conversion else None
+            cil    = parsed.cash_in_lieu if parsed else None
+            if cil is not None:
+                period_realized_pnl += float(cil.realized_pnl)
+                period_fees_paid    += float(cil.fees) + float(cil.taxes)
 
     # ── Cash-flow-adjusted return (Modified Dietz, simplified for periods) ────
     investment_return_pct:    float | None = None
