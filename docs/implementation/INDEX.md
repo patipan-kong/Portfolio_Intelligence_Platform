@@ -261,6 +261,35 @@ BANPU-WP5 is `COMPLETE`, `FROZEN`, and `CLOSED`. WP6's Decision Log and
 Implementation INDEX entry prerequisites are both now satisfied; WP6 remains
 `NOT ALLOCATED` and `NOT AUTHORIZED`.
 
+## BANPU-WP6 — Shadow and Succession-Aware Time-Series Continuity
+
+This navigation entry records the final BANPU-WP6 repository state. It grants
+no authority and does not duplicate the Decision Log narrative.
+
+| Lifecycle stage | Final state | Record |
+|---|---|---|
+| BANPU-WP6 Work Package Plan / Planning Freeze | `COMPLETE AND FROZEN` | [Planning Freeze Record](BANPU_WP6_PLANNING_FREEZE_RECORD.md) |
+| BANPU-WP6 Allocation | `BANPU-WP6 ALLOCATED` | [Allocation Record](BANPU_WP6_ALLOCATION_RECORD.md) |
+| BANPU-WP6 Implementation Authorization | `BANPU-WP6 IMPLEMENTATION AUTHORIZED` | [Implementation Authorization Record](BANPU_WP6_IMPLEMENTATION_AUTHORIZATION_RECORD.md) |
+| Independent Implementation Review (original through Second Fresh Re-Review) | `BANPU-WP6 INDEPENDENT IMPLEMENTATION RE-REVIEW PASSED` | [Second Fresh Independent Implementation Re-Review](BANPU_WP6_SECOND_FRESH_INDEPENDENT_IMPLEMENTATION_REVIEW.md) |
+| Implementation Confirmation | `BANPU-WP6 IMPLEMENTATION CONFIRMED` | [Implementation Confirmation](BANPU_WP6_IMPLEMENTATION_CONFIRMATION.md) |
+| Implementation Freeze | `BANPU-WP6 IMPLEMENTATION FROZEN` | [Implementation Freeze Record](BANPU_WP6_IMPLEMENTATION_FREEZE_RECORD.md) |
+| Epic Closeout | `BANPU-WP6 EPIC CLOSEOUT COMPLETE` | [Epic Closeout](BANPU_WP6_EPIC_CLOSEOUT.md) |
+| Decision Log synchronization | `BANPU-WP6 DECISION LOG SYNCHRONIZED` | [Decision Log](../engineering/DECISION_LOG.md#banpu-wp6-decision-log-synchronization) |
+
+The independent review chain reached this passing state only after the
+original review concluded `FAIL — IMPLEMENTATION CORRECTION REQUIRED` and a
+first fresh re-review subsequently failed on `WP6-RR-B1`; both failed reviews
+remain preserved, unedited, in the [Epic Closeout](BANPU_WP6_EPIC_CLOSEOUT.md)
+§10 and the governance record set. `MINOR-2` and
+`POSITION_CONVERSION_REBUILD_BOUNDARY` are not WP6-owned and remain exactly
+as recorded by [BANPU-WP5's Epic Closeout](BANPU_WP5_EPIC_CLOSEOUT.md); WP6
+carries forward zero WP6-native residuals.
+
+BANPU-WP6 is `COMPLETE`, `FROZEN`, and `CLOSED`. WP7's Decision Log and
+Implementation INDEX entry prerequisites are both now satisfied; WP7 remains
+`NOT ALLOCATED` and `NOT AUTHORIZED`.
+
 ## Milestone Navigation (M0–current)
 
 | Milestone | Status (as declared in-document) | Primary document(s) | Closeout | Decision Log |

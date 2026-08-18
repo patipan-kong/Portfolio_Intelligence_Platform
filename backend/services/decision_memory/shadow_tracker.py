@@ -93,7 +93,10 @@ check any future simulation engine can reuse:
       walks every RecommendationSnapshot from the shadow's immutable
       inception_date forward, exactly mirroring create_active_model_shadow's
       rebalance mechanic and ideal_series.py's day-by-day replay shape, and
-      persists one ShadowPortfolioSnapshot per day.
+      persists one ShadowPortfolioSnapshot per day — skipping persistence
+      entirely for any day earlier than the shadow's relationship-derived
+      write boundary, if one applies (WP6-RR-B1 correction; same rule as
+      regenerate_static_shadow, below).
 
   regenerate_portfolio_paper_history(db, portfolio_id, workspace_id) —
       orchestrates both of the above for one portfolio, then leaves
@@ -126,6 +129,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, date, timedelta
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -508,6 +512,186 @@ def _compute_paper_value(
     return total, enriched
 
 
+# ─── Succession-aware identity carrying (BANPU-WP6, WP6-C2/C3/C4/C6) ────────
+
+def _conversion_ratio(
+    db: Session,
+    *,
+    portfolio_id: int,
+    predecessor_asset_id: int,
+    successor_asset_id: int,
+    effective_date: date,
+) -> Decimal | None:
+    """Read-only lookup of the exact conversion_ratio WP1/WP4 already parsed
+    and stored on this portfolio's own POSITION_CONVERSION transaction
+    (design §12/§6.2's payload contract) — reused here rather than
+    re-derived (ENGINEERING_PRINCIPLES.md "Reuse Before Create").
+
+    WP6-IIR-B3/B4 correction: the prior version selected the earliest
+    same-symbol POSITION_CONVERSION row for this portfolio with no further
+    check, so an unrelated conversion, a stale historical conversion, or a
+    schedule mismatch between the AssetRelationship's `effective_date` and
+    the transaction's own `valuation_transition_date` could silently bind
+    the wrong evidence (or none at all) to an already-switched successor
+    identity. This version requires the payload's `predecessor.asset_id`,
+    `successor.asset_id`, and `dates.valuation_transition_date` to match
+    *predecessor_asset_id*, *successor_asset_id*, and *effective_date*
+    (the exact relationship `find_succession_boundary` resolved) exactly,
+    and requires exactly one such matching transaction to exist.
+
+    Returns None — "cannot verify the ratio," the caller's fail-closed
+    signal not to apply the successor conversion at all — when zero or more
+    than one transaction binds unambiguously to this relationship (missing
+    evidence, malformed payload, predecessor/successor mismatch, date
+    mismatch, or ambiguous duplicate evidence are all covered by this same
+    single check).
+    """
+    from models.database import Transaction
+    from services.transaction_canonicalizer import parse_position_conversion_payload
+
+    rows = (
+        db.query(Transaction)
+        .filter(
+            Transaction.portfolio_id == portfolio_id,
+            Transaction.transaction_type == "POSITION_CONVERSION",
+        )
+        .all()
+    )
+
+    matches: list[Decimal] = []
+    for tx in rows:
+        if not tx.conversion_payload:
+            continue
+        parsed = parse_position_conversion_payload(tx.conversion_payload)
+        if not parsed.is_valid or parsed.value is None:
+            continue
+        payload = parsed.value
+        if (
+            payload.predecessor.asset_id == predecessor_asset_id
+            and payload.successor.asset_id == successor_asset_id
+            and payload.dates.valuation_transition_date == effective_date
+        ):
+            matches.append(payload.conversion_ratio)
+
+    if len(matches) != 1:
+        return None
+    return matches[0]
+
+
+def _shadow_conversion_boundary(db: Session, holdings: list[dict]) -> date | None:
+    """WP6-IIR-B2 correction: the earliest succession `effective_date` among
+    *holdings*' own (unconverted, base) symbols, if any holding has an
+    admissible outgoing MERGED_INTO relationship at all. Returns None when
+    no holding in *holdings* has one — the common, non-BANPU case, for
+    which persisted regeneration remains entirely unrestricted, exactly as
+    before WP6 (WP6-A15 unrelated-symbol non-remapping).
+
+    This is the write boundary `_rebuild_shadow_snapshots` restricts
+    persisted regeneration to on/after (BANPU_WP6_WORK_PACKAGE_PLAN.md §7.2
+    "Persistence boundaries (WP6-C6)").
+    """
+    from services import position_conversion as pc
+
+    boundaries: list[date] = []
+    seen: set[str] = set()
+    for h in holdings:
+        sym = h.get("symbol")
+        if not sym or sym in seen:
+            continue
+        seen.add(sym)
+        boundary = pc.find_succession_boundary(db, symbol=sym)
+        if boundary is not None:
+            boundaries.append(boundary.effective_date)
+    return min(boundaries) if boundaries else None
+
+
+def _carry_succession_identity(
+    db: Session,
+    holdings: list[dict],
+    as_of_date: str,
+    portfolio_id: int,
+) -> list[dict]:
+    """WP6-C2/C3/C4: resolve each holding's identity as of *as_of_date*
+    through the succession lookup (services.position_conversion.resolve_identity),
+    populating a non-null `asset_id` key and, for a converted holding,
+    translating `symbol` to the successor's canonical symbol and applying
+    the exact conversion-ratio arithmetic (design §12 verbatim — paper
+    shares use the exact ratio and remain fractional, no broker
+    cash-in-lieu; `inception_price` is divided by the ratio to preserve
+    inception value). See BANPU_WP6_WORK_PACKAGE_PLAN.md §7.2.
+
+    Pure with respect to its input: never mutates *holdings* in place,
+    always returns a new list built from the given (unconverted) base
+    state — repeated calls against the same raw holdings, never against
+    already-converted output, produce identical results and never compound
+    the ratio (WP6-A14's rerun-idempotency requirement).
+
+    Fail-open (§7.2 "Failure behavior"): a symbol that does not resolve to
+    any registered Asset at all is left completely unchanged — WP6 must
+    not turn an unrelated, non-BANPU shadow holding's normal valuation
+    into a hard failure.
+
+    Fail-closed (WP6-IIR-B3/B4 correction): a symbol whose registry
+    relationship admits a successor as of *as_of_date* but whose ledger
+    conversion-ratio evidence cannot be bound unambiguously to that exact
+    relationship (`_conversion_ratio` returns None) is kept at its
+    predecessor identity — never switched to the successor's symbol with an
+    unconverted quantity. This is logged (never silent), never raised: an
+    unresolved conversion is a data-completeness gap, not an internal
+    invariant violation, and must not abort valuation for this or any other
+    holding.
+    """
+    from services import position_conversion as pc
+
+    out: list[dict] = []
+    for h in holdings:
+        sym = h.get("symbol")
+        if not sym:
+            out.append(h)
+            continue
+        try:
+            resolved = pc.resolve_identity(db, symbol=sym, as_of_date=as_of_date)
+        except pc.PositionConversionLookupError:
+            out.append(h)
+            continue
+
+        if not resolved.converted:
+            out.append({**h, "asset_id": resolved.asset_id})
+            continue
+
+        boundary = pc.find_succession_boundary(db, symbol=sym)
+        ratio = (
+            _conversion_ratio(
+                db,
+                portfolio_id=portfolio_id,
+                predecessor_asset_id=boundary.predecessor_asset_id,
+                successor_asset_id=boundary.successor_asset_id,
+                effective_date=boundary.effective_date,
+            )
+            if boundary is not None
+            else None
+        )
+
+        if ratio is None:
+            logger.warning(
+                "[SHADOW] succession boundary crossed for %s (portfolio_id=%s, "
+                "as_of=%s) but no unambiguous conversion-ratio evidence is "
+                "bound to this relationship — keeping predecessor identity",
+                sym, portfolio_id, as_of_date,
+            )
+            fallback_asset_id = boundary.predecessor_asset_id if boundary is not None else None
+            out.append({**h, "asset_id": fallback_asset_id} if fallback_asset_id is not None else dict(h))
+            continue
+
+        enriched = {**h, "asset_id": resolved.asset_id, "symbol": resolved.symbol}
+        if enriched.get("shares") is not None:
+            enriched["shares"] = float(Decimal(str(enriched["shares"])) * ratio)
+        if enriched.get("inception_price") is not None:
+            enriched["inception_price"] = float(Decimal(str(enriched["inception_price"])) / ratio)
+        out.append(enriched)
+    return out
+
+
 def _benchmark_return_pct(
     db: Session,
     benchmark_symbol: str,
@@ -568,6 +752,9 @@ def value_shadow_portfolio(db: Session, shadow_id: int) -> dict[str, Any]:
     except Exception:
         pass
 
+    # WP6-C2/C3: carry succession identity before pricing so a converted
+    # holding's post-boundary snapshot carries the successor's symbol/asset_id.
+    holdings = _carry_succession_identity(db, holdings, today_str, shadow.portfolio_id)
     symbols = [h["symbol"] for h in holdings if h.get("symbol")]
     prices = _fetch_cached_prices(db, symbols)
     total_value, enriched = _compute_paper_value(holdings, prices)
@@ -812,6 +999,9 @@ def create_static_frozen_shadow(
     )
 
     inception_date = date.today().isoformat()
+    # WP6-C2: carry non-null asset IDs (and, for an already-converted
+    # symbol, the successor's identity) into inception_holdings_json.
+    holdings = _carry_succession_identity(db, holdings, inception_date, decision.portfolio_id)
 
     shadow = ShadowPortfolio(
         workspace_id=workspace_id,
@@ -898,9 +1088,19 @@ def create_active_model_shadow(
             pass
 
         if old_holdings:
-            old_syms = [h["symbol"] for h in old_holdings if h.get("symbol")]
+            # WP6-IIR-B5 correction: value old_holdings under THIS date's own
+            # succession identity before computing running_nav — the prior
+            # version valued the raw (unconverted) old_holdings directly, so
+            # a holding whose succession boundary fell on/before today_str
+            # was still valued under its stale predecessor identity for the
+            # NAV basis the rebalance is computed from, immediately before
+            # new_holdings below correctly translates the NEW allocation.
+            # Mirrors the already-correct pattern _replay_active_model_series
+            # uses for its own pre-rebalance valuation (`priced_before`).
+            priced_old_holdings = _carry_succession_identity(db, old_holdings, today_str, portfolio_id)
+            old_syms = [h["symbol"] for h in priced_old_holdings if h.get("symbol")]
             old_prices = _fetch_cached_prices(db, old_syms)
-            running_nav, _ = _compute_paper_value(old_holdings, old_prices)
+            running_nav, _ = _compute_paper_value(priced_old_holdings, old_prices)
             running_nav += existing.paper_cash_balance or 0.0
             if running_nav < 1.0:
                 running_nav = (
@@ -921,6 +1121,9 @@ def create_active_model_shadow(
             label=f"create_active_model_shadow rebalance shadow_id={existing.id}",
             expected_nav=running_nav, equity=deployed_value, cash=new_cash,
         )
+        # WP6-C2: carry non-null asset IDs / successor identity into the
+        # rebalanced inception_holdings_json.
+        new_holdings = _carry_succession_identity(db, new_holdings, today_str, portfolio_id)
         holdings_priced = len([h for h in new_holdings if not h.get("price_frozen")])
 
         # inception_date and inception_value are NEVER touched after first creation
@@ -953,6 +1156,9 @@ def create_active_model_shadow(
         label=f"create_active_model_shadow inception portfolio_id={portfolio_id}",
         expected_nav=total_portfolio_value, equity=deployed_value, cash=cash,
     )
+    # WP6-C2: carry non-null asset IDs / successor identity into
+    # inception_holdings_json.
+    holdings = _carry_succession_identity(db, holdings, today_str, portfolio_id)
     holdings_priced = len([h for h in holdings if not h.get("price_frozen")])
 
     shadow = ShadowPortfolio(
@@ -1059,6 +1265,9 @@ def create_recommendation_shadow(
         label=f"create_recommendation_shadow snapshot_id={snapshot_id}",
         expected_nav=total_portfolio_value, equity=deployed_value, cash=cash,
     )
+    # WP6-C2: carry non-null asset IDs / successor identity into
+    # inception_holdings_json.
+    holdings = _carry_succession_identity(db, holdings, inception_date, snap.portfolio_id)
 
     shadow = ShadowPortfolio(
         workspace_id=workspace_id,
@@ -1155,6 +1364,31 @@ def _rebuild_shadow_snapshots(
 
     Walks all price-history dates in order, carrying prices forward, and
     upserts one snapshot per date ≥ inception_date. Returns rows written.
+
+    WP6-IIR-B1/B2 correction: two blocking defects in the prior version
+    (BANPU_WP6_INDEPENDENT_IMPLEMENTATION_REVIEW.md §6, §15) are fixed here:
+
+      B1 — `_compute_paper_value`'s enriched per-holding result was computed
+      but discarded; new rows persisted `holdings_json=None` and existing
+      rows never had `holdings_json` refreshed at all, so the identity/
+      quantity carried by `_carry_succession_identity` never actually
+      reached persisted storage. `holdings_json` is now written on both the
+      insert and update branch, from the exact `enriched` result priced for
+      that date.
+
+      B2 — every date in `rebuild_dates` was written unconditionally, with
+      no guard against a date earlier than a converted holding's resolved
+      succession boundary; recomputing numerically-equal values there is
+      not the frozen requirement — WPP §7.2 "Persistence boundaries"
+      requires the write loop to skip persisting *any* recomputed value
+      (insert or update) for a date earlier than the boundary. A write
+      boundary is computed once, up front, from this shadow's own
+      (unconverted) base holdings via `_shadow_conversion_boundary`; a
+      shadow with no converted holding at all (the common case) has no
+      boundary and remains entirely unrestricted, exactly as before WP6
+      (WP6-A15). Price accumulation (LOCF) still runs for a skipped date —
+      only persistence is skipped — so a later, written date still prices
+      correctly against the full price history.
     """
     from models.database import ShadowPortfolioSnapshot
 
@@ -1170,6 +1404,9 @@ def _rebuild_shadow_snapshots(
         | {d for d in existing_rows if d >= shadow.inception_date}
     )
 
+    write_boundary = _shadow_conversion_boundary(db, holdings)
+    write_boundary_str = write_boundary.isoformat() if write_boundary is not None else None
+
     last_prices: dict[str, float] = {}
     # Seed LOCF with prices observed on/before inception
     for d in sorted(history):
@@ -1179,13 +1416,38 @@ def _rebuild_shadow_snapshots(
 
     inception_value: float | None = shadow.inception_value
     prev_total: float | None = None
+    # Seed daily-return continuity from the last untouched pre-boundary
+    # existing row, if any, so the first WRITTEN (on/after-boundary) row's
+    # daily_return_pct is not spuriously None merely because this loop
+    # never iterates the protected pre-boundary dates.
+    if write_boundary_str is not None:
+        pre_boundary_existing = [
+            (d2, s) for d2, s in existing_rows.items() if d2 < write_boundary_str
+        ]
+        if pre_boundary_existing:
+            _, last_pre_snap = max(pre_boundary_existing, key=lambda t: t[0])
+            if last_pre_snap.total_value and last_pre_snap.total_value > 0:
+                prev_total = last_pre_snap.total_value
     written = 0
 
     for d in rebuild_dates:
         if d in history:
             last_prices.update(history[d])
 
-        total, _ = _compute_paper_value(holdings, last_prices)
+        if write_boundary_str is not None and d < write_boundary_str:
+            # WP6-IIR-B2: protected pre-boundary date — no read of
+            # existing_rows.get(d), no field assignment, no insert. LOCF
+            # price accumulation above already ran; only persistence stops.
+            continue
+
+        # WP6-C3/C6: per-row (not portfolio-wide) boundary evaluation against
+        # the ORIGINAL unconverted holdings — pre-boundary dates resolve to
+        # the predecessor's own identity (byte-identical to pre-WP6 output),
+        # post-boundary dates resolve to the successor so last_prices (keyed
+        # by whatever PortfolioSnapshot itself carries for that date) is
+        # matched correctly. See BANPU_WP6_WORK_PACKAGE_PLAN.md §7.2.
+        priced_holdings = _carry_succession_identity(db, holdings, d, shadow.portfolio_id)
+        total, enriched = _compute_paper_value(priced_holdings, last_prices)
         total += shadow.paper_cash_balance or 0.0
         if total <= 0:
             continue
@@ -1206,11 +1468,13 @@ def _rebuild_shadow_snapshots(
                 daily_ret = round(raw_daily, 4)
         prev_total = total
 
+        holdings_json = json.dumps(enriched, default=str)
         snap = existing_rows.get(d)
         if snap:
             snap.total_value = total
             snap.return_pct_since_inception = inception_ret
             snap.daily_return_pct = daily_ret
+            snap.holdings_json = holdings_json
         else:
             db.add(ShadowPortfolioSnapshot(
                 shadow_portfolio_id=shadow.id,
@@ -1218,7 +1482,7 @@ def _rebuild_shadow_snapshots(
                 total_value=total,
                 return_pct_since_inception=inception_ret,
                 daily_return_pct=daily_ret,
-                holdings_json=None,
+                holdings_json=holdings_json,
                 benchmark_symbol=_BENCHMARK_SYMBOL,
                 created_at=datetime.utcnow(),
             ))
@@ -1585,6 +1849,16 @@ def _replay_active_model_series(
     write holdings_json/total_value/return fields from one consistent state
     instead of only updating total_value (Issue A, Accounting Correctness
     C5 — see regenerate_active_model_shadow).
+
+    WP6-RR-B1 correction: the returned dict also carries `write_boundary`
+    (an ISO date string, or None) — the persisted-write boundary
+    `regenerate_active_model_shadow` must apply to this series before
+    upserting it (see that function). This function itself remains
+    unrestricted: every date in `dates` is still fully computed and
+    returned, in memory, regardless of `write_boundary` — only the CALLER's
+    persistence step skips pre-boundary rows. Full in-memory replay is
+    required for correct on/after-boundary NAV and rebalance-basis
+    continuity (WPP §7.2's "in-memory replay may continue" carve-out).
     """
     from models.database import RecommendationSnapshot
 
@@ -1639,6 +1913,27 @@ def _replay_active_model_series(
     rebalance_map = {d: allocs for d, allocs in rebalances}
     _, seed_allocs = seed
 
+    # WP6-RR-B1 correction: the write boundary this shadow's persisted rows
+    # must respect — the earliest succession `effective_date` among every
+    # BASE (unconverted) symbol this replay's seed allocation OR any later
+    # rebalance ever allocates to. Mirrors `_shadow_conversion_boundary`'s
+    # static-path rule (BANPU_WP6_INDEPENDENT_IMPLEMENTATION_REVIEW.md §5
+    # "the persisted snapshot row becomes eligible once the earliest
+    # converting holding reaches its boundary") applied to the full set of
+    # base allocations an ACTIVE_MODEL shadow ever holds across its
+    # rebalance history, since — unlike a STATIC_FROZEN shadow — its
+    # holdings are not one fixed set. Computed from the raw allocation
+    # dicts (never from `_carry_succession_identity`-translated output):
+    # a successor symbol has no further outgoing edge under the single-hop
+    # rule, so translated holdings would silently resolve no boundary at
+    # all. No relationship among any base symbol ⇒ no restriction, exactly
+    # as before WP6 (WP6-A15).
+    all_base_allocations = list(seed_allocs) + [
+        a for _, allocs in rebalances for a in allocs
+    ]
+    write_boundary = _shadow_conversion_boundary(db, all_base_allocations)
+    write_boundary_str = write_boundary.isoformat() if write_boundary is not None else None
+
     seed_symbols = [a.get("symbol") for a in seed_allocs if a.get("symbol")]
     seed_prices = {
         sym: p for sym in seed_symbols
@@ -1654,12 +1949,16 @@ def _replay_active_model_series(
 
     series: list[dict[str, Any]] = []
     last_prices: dict[str, float] = dict(seed_prices)
+    final_priced_holdings = holdings
 
     for d in dates:
         last_prices.update(history.get(d, {}))
 
         if d in rebalance_map and d != inception_date:
-            equity_before, _ = _compute_paper_value(holdings, last_prices)
+            # WP6-C3: value the pre-rebalance holdings under their own
+            # as-of-date identity before computing the rebalance NAV base.
+            priced_before = _carry_succession_identity(db, holdings, d, portfolio_id)
+            equity_before, _ = _compute_paper_value(priced_before, last_prices)
             nav = equity_before + cash
             if nav <= 0:
                 nav = series[-1]["total_value"] if series else inception_value
@@ -1670,13 +1969,19 @@ def _replay_active_model_series(
                     if p:
                         last_prices[s] = p
             holdings, cash = _resolve_shares_from_weights(rebalance_map[d], nav, last_prices)
-            deployed_value, _ = _compute_paper_value(holdings, last_prices)
+            priced_after = _carry_succession_identity(db, holdings, d, portfolio_id)
+            deployed_value, _ = _compute_paper_value(priced_after, last_prices)
             assert_nav_conserved(
                 label=f"regenerate_active_model_shadow rebalance portfolio_id={portfolio_id} date={d}",
                 expected_nav=nav, equity=deployed_value, cash=cash,
             )
 
-        equity_today, enriched_today = _compute_paper_value(holdings, last_prices)
+        # WP6-C2/C3: per-row (not portfolio-wide) boundary evaluation —
+        # pre-boundary dates resolve to the unconverted predecessor identity
+        # (byte-identical to pre-WP6 output), post-boundary dates carry the
+        # successor's asset_id/symbol into this row's persisted holdings_json.
+        priced_today = _carry_succession_identity(db, holdings, d, portfolio_id)
+        equity_today, enriched_today = _compute_paper_value(priced_today, last_prices)
         total = equity_today + cash
         if total <= 0:
             total = series[-1]["total_value"] if series else inception_value
@@ -1692,15 +1997,17 @@ def _replay_active_model_series(
         # state, matching value_shadow_portfolio's existing enriched-holdings
         # convention (Issue A, Accounting Correctness C5).
         series.append({"date": d, "total_value": round(total, 6), "holdings": enriched_today})
+        final_priced_holdings = priced_today
 
     return {
         "status": "ok",
         "dates": dates,
         "series": series,
         "rebalance_dates": sorted(rebalance_map.keys()),
-        "final_holdings": holdings,
+        "final_holdings": final_priced_holdings,
         "final_cash": round(cash, 6),
         "inception_value": inception_value,
+        "write_boundary": write_boundary_str,
     }
 
 
@@ -1729,6 +2036,24 @@ def regenerate_active_model_shadow(db: Session, portfolio_id: int, dry_run: bool
     regeneration — internally inconsistent with the corrected total_value.
     holdings_json now always describes the same regenerated state as the
     other three fields, on every row, new or existing.
+
+    WP6-RR-B1 correction (BANPU_WP6_FRESH_INDEPENDENT_IMPLEMENTATION_
+    REVIEW.md §5, §13): the prior version upserted every date in
+    `replay["series"]` unconditionally, including a date earlier than an
+    affected symbol's succession boundary — a direct WPP §7.2 / WP6-C6
+    violation demonstrated by the re-review's sentinel reproduction. This
+    version reads `replay["write_boundary"]` (computed by
+    `_replay_active_model_series` — see that function) and, for any date
+    earlier than it, skips the row entirely: no `existing_rows.get(d)`
+    read, no field assignment, no insert. In-memory replay is unaffected —
+    `_replay_active_model_series` already computed every date's `total`
+    unconditionally, so later on/after-boundary rows still price and
+    rebalance correctly; only THIS persistence step is now restricted,
+    exactly mirroring `_rebuild_shadow_snapshots`'s already-corrected
+    static-path guard (WP6-IIR-B2). No relationship among any base
+    allocation this shadow ever held ⇒ `write_boundary` is None ⇒
+    persistence remains entirely unrestricted, exactly as before WP6
+    (WP6-A15).
     """
     from models.database import ShadowPortfolio, ShadowPortfolioSnapshot
 
@@ -1752,11 +2077,37 @@ def regenerate_active_model_shadow(db: Session, portfolio_id: int, dry_run: bool
         .all()
     }
 
+    write_boundary_str = replay.get("write_boundary")
+
     inception_value = replay["inception_value"]
     prev_total: float | None = None
+    # WP6-RR-B1: seed daily-return continuity from the last untouched
+    # pre-boundary existing row, if any, so the first WRITTEN (on/after-
+    # boundary) row's daily_return_pct is not spuriously None merely
+    # because this loop never persists the protected pre-boundary dates —
+    # mirrors `_rebuild_shadow_snapshots`'s identical seeding (WP6-IIR-B2).
+    if write_boundary_str is not None:
+        pre_boundary_existing = [
+            (d2, s) for d2, s in existing_rows.items() if d2 < write_boundary_str
+        ]
+        if pre_boundary_existing:
+            _, last_pre_snap = max(pre_boundary_existing, key=lambda t: t[0])
+            if last_pre_snap.total_value and last_pre_snap.total_value > 0:
+                prev_total = last_pre_snap.total_value
+
     written = 0
     for row in replay["series"]:
         d, total = row["date"], row["total_value"]
+
+        if write_boundary_str is not None and d < write_boundary_str:
+            # WP6-RR-B1: protected pre-boundary row — no read of
+            # existing_rows.get(d), no field assignment, no insert. The
+            # in-memory `total`/`holdings` above were already fully
+            # computed by _replay_active_model_series (needed for later
+            # dates' rebalance-basis/NAV continuity); only persistence
+            # stops here.
+            continue
+
         # Issue A (Accounting Correctness C5): holdings_json must describe the
         # same regenerated state as total_value/the return fields below —
         # never left stale on an existing row. See _replay_active_model_series.

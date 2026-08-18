@@ -41,6 +41,7 @@ def db():
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
     from models.database import Base
+    import models.asset  # noqa: F401 — registers Asset*/asset_relationships tables
 
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
@@ -499,3 +500,54 @@ def test_ai_portfolio_no_snapshots_in_window_status(db, ws_portfolio):
 
     assert result["ai_portfolio"]["status"] == "no_snapshots_in_window"
     assert result["ai_portfolio"]["return_pct"] is None
+
+
+# ── WP6-A11: valuation-subject normalization across a conversion boundary ──
+
+def test_ai_portfolio_revalues_correctly_across_a_symbol_conversion(db, ws_portfolio):
+    """Confirm-or-implement finding (BANPU_WP6_WORK_PACKAGE_PLAN.md §7.4):
+    ideal_series.py needs no source change because both sides of its
+    canonical-price join transition to the successor symbol at the
+    identical boundary date. This proves that empirically: the real
+    portfolio's canonical price archive (WP5's closed surface) and the
+    shadow's own holdings_json (WP6-fixed shadow_tracker.py) both switch
+    from the predecessor symbol to the successor symbol on day 5, and the
+    revaluation still tracks the true price appreciation (100 -> 110)
+    across the boundary rather than losing the holding to a symbol-key
+    mismatch.
+    """
+    from models.database import PortfolioSnapshot
+
+    ws, portfolio = ws_portfolio
+    _seed_recommendation(db, ws, portfolio, [
+        {"symbol": "OLDI", "target_weight": 100.0, "action": "BUY"},
+    ], days_ago=15)
+
+    for d in range(10, 4, -1):
+        db.add(PortfolioSnapshot(
+            workspace_id=ws.id, portfolio_id=portfolio.id, snapshot_date=_d(d),
+            total_value=1_000_000.0, cash_balance=0.0,
+            holdings_json=json.dumps([{"symbol": "OLDI", "current_price": 100.0}]),
+        ))
+    for d in range(4, -1, -1):
+        db.add(PortfolioSnapshot(
+            workspace_id=ws.id, portfolio_id=portfolio.id, snapshot_date=_d(d),
+            total_value=1_100_000.0, cash_balance=0.0,
+            holdings_json=json.dumps([{"symbol": "NEWI", "current_price": 110.0}]),
+        ))
+    db.commit()
+
+    holdings_pre = [{"symbol": "OLDI", "shares": 10000, "inception_price": 100.0, "price_frozen": False}]
+    holdings_post = [{"symbol": "NEWI", "shares": 10000, "inception_price": 100.0, "price_frozen": False}]
+    _seed_ai_shadow(
+        db, ws, portfolio, inception_days_ago=10, holdings=holdings_post,
+        snapshot_rows=[
+            (10, holdings_pre, 1_000_000.0, 0.0),
+            (5, holdings_pre, 1_000_000.0, 0.0),
+            (0, holdings_post, 1_000_000.0, 0.0),  # stored: claims flat (must be ignored)
+        ],
+    )
+
+    result = compute_three_portfolios(db, portfolio.id, period_days=10)
+
+    assert result["ai_portfolio"]["return_pct"] == pytest.approx(10.0, abs=0.01)
