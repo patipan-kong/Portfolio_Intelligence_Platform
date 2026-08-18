@@ -29,7 +29,9 @@ from services.market_data.yahoo_chart import (
     QuoteObservation,
     YahooChartProvider,
     _chart_result_to_df,
+    _dedup_sessions_by_timestamp,
     _extract_provider_evidence,
+    _previous_close_from_observations,
 )
 
 
@@ -254,7 +256,11 @@ def test_get_quote_returns_previous_close():
     assert quote["last_updated"] is not None
 
 
-def test_get_quote_uses_provider_previous_close_when_latest_chart_bar_is_sparse():
+def test_get_quote_skips_null_bar_via_timestamp_associated_derivation():
+    # The bar immediately before the latest one (index 3) is null/sparse.
+    # get_quote() must skip it and land on the true previous completed
+    # session (249.0, index 2) -- not on meta.chartPreviousClose (250.0),
+    # which is anchored to the start of the chart window, not to "yesterday".
     result = _make_raw_chart_result(
         "KBANK.BK",
         248.0,
@@ -265,7 +271,7 @@ def test_get_quote_uses_provider_previous_close_when_latest_chart_bar_is_sparse(
         quote = YahooChartProvider().get_quote("KBANK.BK")
 
     assert quote["current_price"] == 248.0
-    assert quote["previous_close"] == 250.0
+    assert quote["previous_close"] == 249.0
 
 
 def test_get_quote_failure_returns_none_fields():
@@ -273,6 +279,195 @@ def test_get_quote_failure_returns_none_fields():
         mock_get.return_value = _MockResponse(404, None)
         quote = YahooChartProvider().get_quote("NOTASYMBOL.XX")
     assert quote == {"current_price": None, "previous_close": None, "last_updated": None}
+
+
+# ── Dashboard previous-close regression (2026-08-18 forensic investigation) ────
+#
+# Proven root cause: meta.chartPreviousClose is anchored to the start of the
+# requested chart window ("range"), not to the trading session immediately
+# before the latest bar. With a fixed 5-day window, that silently returns a
+# close from ~4 trading sessions ago whenever the true previous-session value
+# is absent from provider metadata (previousClose / regularMarketPreviousClose
+# are unpopulated on this endpoint in practice). get_quote() must derive
+# previous_close from timestamp-associated session evidence only.
+
+def test_get_quote_ignores_stale_window_anchored_chart_previous_close():
+    # Live-proven shape (PIS.BK, 2026-08-18): a 5-session window where price
+    # moved meaningfully. meta.chartPreviousClose (5.15, the window-start
+    # session N-4) must be ignored in favor of the true previous completed
+    # session N-1 (5.60).
+    closes = [5.15, 5.20, 5.20, 5.60, 5.85]  # sessions N-4 .. N (today)
+    result = _make_raw_chart_result(
+        "PIS.BK",
+        5.85,
+        closes,
+        meta_extra={
+            "previousClose": None,
+            "chartPreviousClose": 5.15,
+            "regularMarketPreviousClose": None,
+        },
+    )
+    with _patched_fetch_chart_result(result):
+        quote = YahooChartProvider().get_quote("PIS.BK")
+    assert quote["current_price"] == 5.85
+    assert quote["previous_close"] == 5.60
+
+
+def test_get_quote_selects_previous_trading_session_across_holiday_gap():
+    # A multi-day calendar gap between the last two bars (e.g. a market
+    # holiday) must not change which session counts as "previous" --
+    # selection is by trading-session order, not calendar-day arithmetic.
+    base = 1_700_000_000
+    timestamps = [base, base + 86400, base + 5 * 86400]  # 4 calendar days' gap before the latest bar
+    closes = [10.0, 11.0, 12.0]
+    result = _make_raw_chart_result("HOL.BK", 12.0, closes, timestamps=timestamps)
+    with _patched_fetch_chart_result(result):
+        quote = YahooChartProvider().get_quote("HOL.BK")
+    assert quote["current_price"] == 12.0
+    assert quote["previous_close"] == 11.0
+
+
+def test_get_quote_skips_null_bar_across_holiday_gap():
+    # Combines the holiday gap with a sparse/no-trade bar: the null bar must
+    # still be skipped by timestamp, regardless of the calendar gap size.
+    base = 1_700_000_000
+    timestamps = [base, base + 4 * 86400, base + 5 * 86400]
+    closes = [10.0, None, 12.0]
+    result = _make_raw_chart_result("HOL2.BK", 12.0, closes, timestamps=timestamps)
+    with _patched_fetch_chart_result(result):
+        quote = YahooChartProvider().get_quote("HOL2.BK")
+    assert quote["current_price"] == 12.0
+    assert quote["previous_close"] == 10.0
+
+
+def test_get_quote_flat_price_control_ignores_metadata_and_uses_session_evidence():
+    # Live-proven shape (KBANK.BK, 2026-08-18): the true previous session's
+    # close (249.0) happens to equal an earlier, stale session's close too --
+    # so a numeric-only assertion couldn't tell "correct by evidence" apart
+    # from "correct by luck". meta.chartPreviousClose is deliberately
+    # poisoned with an obviously wrong value (999.0) to prove get_quote() no
+    # longer reads previous-close metadata fields at all -- only
+    # timestamp-associated session evidence.
+    closes = [249.0, 249.0, 248.0, 249.0, 247.0]  # sessions N-4 .. N; N-4 and N-1 both 249.0
+    result = _make_raw_chart_result(
+        "KBANK.BK",
+        247.0,
+        closes,
+        meta_extra={
+            "previousClose": None,
+            "chartPreviousClose": 999.0,
+            "regularMarketPreviousClose": None,
+        },
+    )
+    with _patched_fetch_chart_result(result):
+        quote = YahooChartProvider().get_quote("KBANK.BK")
+    assert quote["current_price"] == 247.0
+    assert quote["previous_close"] == 249.0
+
+
+# ── Independent-review blockers (duplicate timestamp / trailing null) ──────────
+#
+# Two counterexamples an independent review raised against the first pass of
+# this fix, both now handled by _dedup_sessions_by_timestamp() +
+# _previous_close_from_observations() (see their docstrings for the exact
+# algorithm): a repeated provider timestamp must count as one session, and
+# the single most-recent distinct session is always excluded from
+# "previous close" candidates -- whether or not that session's own close is
+# populated -- because it is treated as belonging to the live quote.
+
+def test_dedup_sessions_by_timestamp_keeps_last_duplicate():
+    # Direct unit coverage of the duplicate-timestamp policy: mirrors
+    # _chart_result_to_df's existing history dedup (sort, then keep the last
+    # occurrence of a repeated timestamp).
+    obs = (
+        QuoteObservation(timestamp=100, close=10.0),
+        QuoteObservation(timestamp=200, close=11.0),
+        QuoteObservation(timestamp=200, close=12.0),
+    )
+    assert _dedup_sessions_by_timestamp(obs) == (
+        QuoteObservation(timestamp=100, close=10.0),
+        QuoteObservation(timestamp=200, close=12.0),
+    )
+
+
+def test_dedup_sessions_by_timestamp_last_by_appearance_not_input_order():
+    # "Last" means last in provider-returned (appearance) order, not last
+    # after the caller happens to list it -- shuffling which duplicate
+    # appears first in the input tuple must not change the winner.
+    obs = (
+        QuoteObservation(timestamp=200, close=11.0),
+        QuoteObservation(timestamp=100, close=10.0),
+        QuoteObservation(timestamp=200, close=12.0),
+    )
+    assert _dedup_sessions_by_timestamp(obs) == (
+        QuoteObservation(timestamp=100, close=10.0),
+        QuoteObservation(timestamp=200, close=12.0),
+    )
+
+
+def test_previous_close_from_observations_duplicate_timestamp_blocker():
+    # Independent-review Blocker 1 counterexample. Without deduplication,
+    # sorting [10, 11, 12] at timestamps [100, 200, 200] and taking the
+    # second-most-recent non-null close would wrongly return 11 (the earlier
+    # of the two same-session observations at timestamp 200). This would
+    # fail against the pre-correction implementation.
+    obs = (
+        QuoteObservation(timestamp=100, close=10.0),
+        QuoteObservation(timestamp=200, close=11.0),
+        QuoteObservation(timestamp=200, close=12.0),
+    )
+    assert _previous_close_from_observations(obs) == 10.0
+
+
+def test_get_quote_deduplicates_repeated_timestamp_keeping_last_value():
+    # End-to-end version of the duplicate-timestamp blocker through
+    # get_quote(). Would fail (return 11.0) against the pre-correction
+    # implementation, which sorted non-null closes and took the
+    # second-to-last without collapsing the repeated timestamp first.
+    result = _make_raw_chart_result("DUP.BK", 12.0, [10.0, 11.0, 12.0], timestamps=[100, 200, 200])
+    with _patched_fetch_chart_result(result):
+        quote = YahooChartProvider().get_quote("DUP.BK")
+    assert quote["current_price"] == 12.0
+    assert quote["previous_close"] == 10.0
+
+
+def test_previous_close_from_observations_trailing_null_blocker():
+    # Independent-review Blocker 2 counterexample. The latest session (300)
+    # has no completed close yet; the pre-correction implementation filtered
+    # nulls out entirely and then took the second-to-last of what remained
+    # (10, at timestamp 100) instead of the most recent *completed* session
+    # (11, at timestamp 200).
+    obs = (
+        QuoteObservation(timestamp=100, close=10.0),
+        QuoteObservation(timestamp=200, close=11.0),
+        QuoteObservation(timestamp=300, close=None),
+    )
+    assert _previous_close_from_observations(obs) == 11.0
+
+
+def test_get_quote_uses_last_completed_session_when_latest_bar_is_null():
+    # End-to-end version of the trailing-null blocker through get_quote().
+    # meta.regularMarketPrice (12.0, the live quote) is preserved as
+    # current_price unchanged; previous_close must be the most recent
+    # *completed* session (11.0), not two sessions back (10.0). Would fail
+    # (return 10.0) against the pre-correction implementation.
+    result = _make_raw_chart_result("TRAIL.BK", 12.0, [10.0, 11.0, None], timestamps=[100, 200, 300])
+    with _patched_fetch_chart_result(result):
+        quote = YahooChartProvider().get_quote("TRAIL.BK")
+    assert quote["current_price"] == 12.0
+    assert quote["previous_close"] == 11.0
+
+
+def test_get_quote_session_identity_not_confused_by_matching_price():
+    # Equal-price ambiguity: meta.regularMarketPrice (10.0) numerically
+    # matches an earlier session's close (N-2, also 10.0). Session identity
+    # must come from timestamp order, not from searching for a close equal
+    # to the current price -- the correct previous session is N-1 (20.0).
+    result = _make_raw_chart_result("EQ.BK", 10.0, [10.0, 20.0, 10.0])
+    with _patched_fetch_chart_result(result):
+        quote = YahooChartProvider().get_quote("EQ.BK")
+    assert quote["current_price"] == 10.0
+    assert quote["previous_close"] == 20.0
 
 
 # ── BANPU-WP3 Stage 0 / Step 1.1 — PD-1 characterization (locked) ──────────────
@@ -337,13 +532,14 @@ def test_characterization_f1_dense_matching_symbol():
 
 
 def test_characterization_f2_sparse_latest_bar_absent():
-    # The provider metadata is absent here, so the legacy quote path must not
-    # synthesize a previous close from the sparse chart bars.
+    # Timestamp-associated derivation (shared with get_quote_evidence()):
+    # the null bar at index 1 is skipped, and the true previous non-null
+    # session (95.0) is used -- get_quote() no longer returns None here.
     result = _make_raw_chart_result("F2SYM.BK", 100.0, [95.0, None, 100.0])
     with _patched_fetch_chart_result(result):
         quote = YahooChartProvider().get_quote("F2SYM.BK")
     assert quote["current_price"] == 100.0
-    assert quote["previous_close"] is None
+    assert quote["previous_close"] == 95.0
 
 
 def test_characterization_f3_meta_symbol_mismatch():
@@ -356,11 +552,15 @@ def test_characterization_f3_meta_symbol_mismatch():
 
 
 def test_characterization_f4a_meta_absent():
+    # current_price still depends on meta.regularMarketPrice and stays None
+    # when meta is absent. previous_close no longer does -- it comes from the
+    # observations array (timestamp-associated derivation), independent of
+    # whether meta is present at all.
     result = _make_raw_chart_result(None, None, [10.0, 11.0, 12.0], include_meta=False)
     with _patched_fetch_chart_result(result):
         quote = YahooChartProvider().get_quote("F4SYM.BK")
     assert quote["current_price"] is None
-    assert quote["previous_close"] is None
+    assert quote["previous_close"] == 11.0
 
 
 def test_characterization_f4b_meta_incomplete():
@@ -373,11 +573,13 @@ def test_characterization_f4b_meta_incomplete():
 
 
 def test_characterization_f5_null_at_closes_minus_2():
+    # Same shape as F2: the null bar is skipped by timestamp, landing on the
+    # true previous non-null session (55.0) instead of None.
     result = _make_raw_chart_result("F5SYM.BK", 58.0, [55.0, None, 58.0])
     with _patched_fetch_chart_result(result):
         quote = YahooChartProvider().get_quote("F5SYM.BK")
     assert quote["current_price"] == 58.0
-    assert quote["previous_close"] is None
+    assert quote["previous_close"] == 55.0
 
 
 # 2023-11-14T17:00:00Z == 2023-11-15T00:00:00+07:00 -- an exact UTC+7
@@ -388,8 +590,10 @@ _UTC7_MIDNIGHT_BOUNDARY_TS = 1699981200
 
 def test_characterization_f6_utc7_boundary_both_edges_identical():
     # Identical closes, timestamps straddling the exact UTC+7 midnight
-    # boundary from both sides: current (pre-WP3) get_quote() never reads
-    # `timestamp`, so both edges must produce identical output.
+    # boundary from both sides: get_quote() derives previous_close from
+    # session *order* (sorted timestamps), not from any absolute calendar
+    # boundary, so shifting every timestamp by the same offset across this
+    # boundary must produce identical output.
     edge_before = [
         _UTC7_MIDNIGHT_BOUNDARY_TS - 3600,
         _UTC7_MIDNIGHT_BOUNDARY_TS - 1,
@@ -496,8 +700,8 @@ def test_evidence_e3_observations_pair_timestamps_with_closes():
 
 def test_evidence_e4_previous_close_timestamp_associated_on_sparse_fixture():
     # Same F2 fixture as the locked characterization test above. get_quote()
-    # returns previous_close=None (positional); this evidence structure's E4
-    # derivation correctly skips the null bar and finds 95.0.
+    # reuses this same E4 derivation, so both correctly skip the null bar and
+    # find 95.0 (see test_get_quote_and_get_quote_evidence_agree_on_previous_close).
     result = _make_raw_chart_result("F2SYM.BK", 100.0, [95.0, None, 100.0])
     evidence = _extract_provider_evidence(result, requested_symbol="F2SYM.BK")
     assert evidence.current_close == 100.0
@@ -511,6 +715,15 @@ def test_evidence_e4_dense_series_matches_positional_result():
     evidence = _extract_provider_evidence(result, requested_symbol="F1SYM.BK")
     assert evidence.current_close == 105.5
     assert evidence.previous_close == 102.0
+
+
+def test_evidence_e4_previous_close_deduplicates_repeated_timestamp():
+    # Same duplicate-timestamp blocker as test_get_quote_deduplicates_..., at
+    # the evidence-structure level: get_quote() and get_quote_evidence()
+    # share this derivation, so both must be fixed together.
+    result = _make_raw_chart_result("DUP.BK", 12.0, [10.0, 11.0, 12.0], timestamps=[100, 200, 200])
+    evidence = _extract_provider_evidence(result, requested_symbol="DUP.BK")
+    assert evidence.previous_close == 10.0
 
 
 def test_evidence_e5_exchange_timezone_present():
@@ -605,16 +818,17 @@ def test_get_quote_evidence_returns_none_on_fetch_failure():
     assert evidence is None
 
 
-def test_get_quote_evidence_sparse_bar_is_separate_from_metadata_quote_path():
-    # Both paths are tested independently against the SAME fixture: the
-    # evidence method returns the corrected, timestamp-associated value while
-    # the legacy quote path remains metadata-driven and has no metadata here.
+def test_get_quote_and_get_quote_evidence_agree_on_previous_close():
+    # get_quote() and get_quote_evidence() must not disagree about what
+    # "previous close" means -- both derive it from the same
+    # timestamp-associated, skip-null logic against the same fixture.
     result = _make_raw_chart_result("F2SYM.BK", 100.0, [95.0, None, 100.0])
     with _patched_fetch_chart_result(result):
         quote = YahooChartProvider().get_quote("F2SYM.BK")
         evidence = YahooChartProvider().get_quote_evidence("F2SYM.BK")
-    assert quote["previous_close"] is None
+    assert quote["previous_close"] == 95.0
     assert evidence.previous_close == 95.0
+    assert quote["previous_close"] == evidence.previous_close
 
 
 def test_module_never_imports_position_conversion_types():
