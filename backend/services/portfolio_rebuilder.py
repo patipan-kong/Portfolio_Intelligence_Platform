@@ -353,6 +353,8 @@ class RebuildResult:
     committed:        bool                   = False
     backup_path:      str | None             = None
     elapsed_seconds:  float                  = 0.0
+    reconstructed_realized_pnl: float | None = None
+    reconstructed_holding_basis: dict[str, Decimal] = field(default_factory=dict)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -2269,6 +2271,15 @@ async def rebuild_portfolio(
         print(final_state.holdings.keys())
         result.reconstructed_holdings_count = len(final_state.holdings)
         result.reconstructed_cash           = _f(final_state.cash_balance)
+        result.reconstructed_realized_pnl   = _f(final_state.cumulative_realized_pnl)
+        holding_basis: dict[str, Decimal] = {}
+        for h in final_state.holdings.values():
+            if h.report_symbol in holding_basis:
+                raise ValueError(
+                    f"Duplicate report_symbol in reconstructed holdings: {h.report_symbol}"
+                )
+            holding_basis[h.report_symbol] = h.shares * h.avg_cost
+        result.reconstructed_holding_basis = holding_basis
         _progress(
             f"  → cash={result.reconstructed_cash:,.2f}  "
             f"holdings={result.reconstructed_holdings_count}"

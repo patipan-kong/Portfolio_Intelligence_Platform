@@ -261,6 +261,47 @@ BANPU-WP5 is `COMPLETE`, `FROZEN`, and `CLOSED`. WP6's Decision Log and
 Implementation INDEX entry prerequisites are both now satisfied; WP6 remains
 `NOT ALLOCATED` and `NOT AUTHORIZED`.
 
+### Fresh Result-Surface Amendments — Realized P&L and Ordinary Holding Basis Exposure
+
+This navigation entry records the two completed, successor-triggered BANPU-WP5
+result-surface amendments layered on the closed epic above. It grants no
+authority and does not duplicate the Decision Log narrative.
+
+| Lifecycle stage | Final state | Record |
+|---|---|---|
+| Realized P&L exposure — Amendment Authorization | `BANPU-WP5 REALIZED-PNL RESULT-SURFACE AMENDMENT AUTHORIZED` | [Amendment Authorization](BANPU_WP5_IMPLEMENTATION_AUTHORIZATION_AMENDMENT_REBUILDRESULT_REALIZED_PNL_EXPOSURE.md) |
+| Realized P&L exposure — Fresh Independent Review | `BANPU-WP5 REALIZED-PNL RESULT-SURFACE IMPLEMENTATION REVIEW PASSED` | [Fresh Independent Implementation Review](BANPU_WP5_FRESH_INDEPENDENT_IMPLEMENTATION_REVIEW_REALIZED_PNL_EXPOSURE.md) |
+| Realized P&L exposure — Fresh Implementation Confirmation | `BANPU-WP5 REALIZED-PNL RESULT-SURFACE IMPLEMENTATION CONFIRMED` | [Fresh Implementation Confirmation](BANPU_WP5_FRESH_IMPLEMENTATION_CONFIRMATION_REALIZED_PNL_EXPOSURE.md) |
+| Realized P&L exposure — Fresh Implementation Freeze | `BANPU-WP5 REALIZED-PNL RESULT-SURFACE IMPLEMENTATION FROZEN` | [Fresh Implementation Freeze Record](BANPU_WP5_FRESH_IMPLEMENTATION_FREEZE_REALIZED_PNL_EXPOSURE.md) |
+| Ordinary holding basis exposure — triggering determination | `BANPU-WP7 BASIS EVIDENCE SOURCE RESOLVED — PREDECESSOR EXPOSURE AMENDMENT REQUIRED` | [Basis Evidence Source Determination](BANPU_WP7_WP5_ORDINARY_HOLDING_BASIS_EVIDENCE_SOURCE_DETERMINATION.md) |
+| Ordinary holding basis exposure — Amendment Authorization | `BANPU-WP5 ORDINARY-HOLDING-BASIS RESULT-SURFACE AMENDMENT AUTHORIZED` | [Amendment Authorization](BANPU_WP5_IMPLEMENTATION_AUTHORIZATION_AMENDMENT_REBUILDRESULT_ORDINARY_HOLDING_BASIS_EXPOSURE.md) |
+| Ordinary holding basis exposure — Fresh Independent Review | `BANPU-WP5 ORDINARY-HOLDING-BASIS RESULT-SURFACE IMPLEMENTATION REVIEW PASSED` | [Fresh Independent Implementation Review](BANPU_WP5_FRESH_INDEPENDENT_IMPLEMENTATION_REVIEW_ORDINARY_HOLDING_BASIS_EXPOSURE.md) |
+| Ordinary holding basis exposure — Fresh Implementation Confirmation | `BANPU-WP5 ORDINARY-HOLDING-BASIS RESULT-SURFACE IMPLEMENTATION CONFIRMED` | [Fresh Implementation Confirmation](BANPU_WP5_FRESH_IMPLEMENTATION_CONFIRMATION_ORDINARY_HOLDING_BASIS_EXPOSURE.md) |
+| Ordinary holding basis exposure — Fresh Implementation Freeze | `BANPU-WP5 ORDINARY-HOLDING-BASIS RESULT-SURFACE IMPLEMENTATION FROZEN` | [Fresh Implementation Freeze Record](BANPU_WP5_FRESH_IMPLEMENTATION_FREEZE_ORDINARY_HOLDING_BASIS_EXPOSURE.md) |
+| Decision Log synchronization | `BANPU-WP5 FRESH RESULT-SURFACE AMENDMENTS DECISION LOG SYNCHRONIZED` | [Decision Log](../engineering/DECISION_LOG.md#banpu-wp5-fresh-result-surface-amendments-decision-log-synchronization) |
+
+The active WP5 result-surface overlay is 2 members
+(`backend/services/portfolio_rebuilder.py`,
+`backend/tests/test_portfolio_rebuilder.py`), canonical-LF identity of
+record `89AA23712BE8177F8D363587343B520CB7DCC2C950BB6AE8B08E27A6D519C6F0`,
+incorporating both amendments; the realized-P&L delta is preserved as
+incorporated frozen history within it, exactly as its Fresh Implementation
+Freeze recorded. The historical BANPU-WP5 nine-member corpus and table above
+are unchanged and are not re-frozen or superseded by this overlay.
+
+BANPU-WP7 is unaffected and not reopened: its already-committed
+implementation and Decision Log Synchronization entry consume this overlay
+by reference only. LM13 (`backend/tests/test_position_conversion_live.py`)
+remains unresolved and is not synchronized by this entry; `A11`, `A12`,
+`A14`, `A15`, `MINOR-5`, and `NEW-MINOR-A` remain exactly as the BANPU-WP7
+Epic Closeout recorded them. No BANPU-WP8 or M46 allocation or authorization
+exists.
+
+This amendment lineage is `COMPLETE` and `FROZEN`. Its Decision Log and
+Implementation INDEX synchronization are both now complete. The next act is
+BANPU-WP5 Fresh Result-Surface Amendments Final Repository Verification /
+Commit-Readiness; it is not performed by this entry.
+
 ## BANPU-WP6 — Shadow and Succession-Aware Time-Series Continuity
 
 This navigation entry records the final BANPU-WP6 repository state. It grants
