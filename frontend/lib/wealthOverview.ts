@@ -20,6 +20,10 @@ export interface PortfolioWealth {
   total: number;
   /** true if at least one holding had no confirmed live/DB price and fell back to avg_cost. */
   hasEstimatedPrice: boolean;
+  /** true if at least one holding's contributing price was a real number but
+   * served from an expired-cache fallback (live fetch blocked/failed) —
+   * distinct from hasEstimatedPrice, which means no real price at all. */
+  hasStalePrice: boolean;
   /** true if this portfolio's holdings failed to load — total/holdingsValue are not meaningful. */
   failed: boolean;
 }
@@ -30,15 +34,17 @@ export interface WealthSummary {
   portfolios: PortfolioWealth[];
   anyFailed: boolean;
   anyEstimated: boolean;
+  anyStale: boolean;
 }
 
 function resolveHoldingsValue(
   items: PortfolioItem[],
   prices: PriceRefreshItem[]
-): { value: number; hasEstimatedPrice: boolean } {
+): { value: number; hasEstimatedPrice: boolean; hasStalePrice: boolean } {
   const liveBySymbol = new Map(prices.map((p) => [p.symbol, p]));
   let value = 0;
   let hasEstimatedPrice = false;
+  let hasStalePrice = false;
 
   for (const item of items) {
     const live = liveBySymbol.get(item.symbol);
@@ -49,10 +55,14 @@ function resolveHoldingsValue(
     const confirmedPrice = live?.current_price ?? item.current_price ?? null;
     const price = confirmedPrice ?? item.avg_cost;
     if (confirmedPrice == null) hasEstimatedPrice = true;
+    // A stale price is a real, contributing number (backend guarantees
+    // is_stale is only true alongside a non-null current_price), just not
+    // confirmed current — a distinct honesty concern from "no price at all".
+    if (live?.is_stale) hasStalePrice = true;
     value += item.shares * price;
   }
 
-  return { value, hasEstimatedPrice };
+  return { value, hasEstimatedPrice, hasStalePrice };
 }
 
 /**
@@ -76,13 +86,14 @@ export function computeWealthSummary(
         holdingsValue: 0,
         total: 0,
         hasEstimatedPrice: false,
+        hasStalePrice: false,
         failed: true,
       };
     }
 
     const items = holdingsMap[p.id] ?? [];
     const prices = priceMap[p.id] ?? [];
-    const { value, hasEstimatedPrice } = resolveHoldingsValue(items, prices);
+    const { value, hasEstimatedPrice, hasStalePrice } = resolveHoldingsValue(items, prices);
 
     return {
       portfolioId: p.id,
@@ -91,6 +102,7 @@ export function computeWealthSummary(
       holdingsValue: value,
       total: p.cash_balance + value,
       hasEstimatedPrice,
+      hasStalePrice,
       failed: false,
     };
   });
@@ -102,6 +114,7 @@ export function computeWealthSummary(
     portfolios: rows,
     anyFailed: rows.some((row) => row.failed),
     anyEstimated: rows.some((row) => row.hasEstimatedPrice),
+    anyStale: rows.some((row) => row.hasStalePrice),
   };
 }
 

@@ -854,10 +854,14 @@ def test_legacy_unconverted_stale_fallback_is_preserved(monkeypatch):
 
     result = fetcher.fetch_price_info("PRED.BK")
 
+    # `_stale_data` now survives fetch_price_info() (it did not before) so
+    # main.py can translate it into the public `is_stale` field — see
+    # test_main_quote_response.py for that translation.
     assert result == {
         "current_price": 8.0,
         "previous_close": 7.0,
         "last_updated": "stale",
+        "_stale_data": True,
     }
     assert provider.quote_calls == 0
 

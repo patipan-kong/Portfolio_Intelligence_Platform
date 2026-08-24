@@ -64,3 +64,49 @@ describe("Portfolio detail quote rendering", () => {
     expect(screen.getAllByText("-3.28%").length).toBeGreaterThan(0);
   });
 });
+
+describe("Stale-price data-trust indicator", () => {
+  test("a fresh price renders with no stale cue", () => {
+    render(
+      <PortfolioTable
+        rows={[holding({ is_stale: false })]}
+        onRemove={vi.fn(async () => {})}
+        onReanalyze={vi.fn(async () => {})}
+        onToggleSwap={vi.fn(async () => {})}
+      />
+    );
+
+    expect(screen.getAllByText("248.00").length).toBeGreaterThan(0);
+    expect(screen.queryByLabelText(/stale/i)).not.toBeInTheDocument();
+    expect(screen.queryByTitle(/Live price unavailable/)).not.toBeInTheDocument();
+  });
+
+  test("a stale price still shows its numeric value plus a stale cue", () => {
+    render(
+      <PortfolioTable
+        rows={[holding({ is_stale: true })]}
+        onRemove={vi.fn(async () => {})}
+        onReanalyze={vi.fn(async () => {})}
+        onToggleSwap={vi.fn(async () => {})}
+      />
+    );
+
+    // The price itself is preserved, not hidden or replaced with an error.
+    expect(screen.getAllByText("248.00").length).toBeGreaterThan(0);
+    expect(screen.getAllByTitle("Live price unavailable; showing the last cached price.").length).toBeGreaterThan(0);
+  });
+
+  test("a null price renders '—', never a stale badge, even if is_stale were somehow set", () => {
+    render(
+      <PortfolioTable
+        rows={[holding({ current_price: null, is_stale: true })]}
+        onRemove={vi.fn(async () => {})}
+        onReanalyze={vi.fn(async () => {})}
+        onToggleSwap={vi.fn(async () => {})}
+      />
+    );
+
+    expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+    expect(screen.queryByTitle(/Live price unavailable/)).not.toBeInTheDocument();
+  });
+});

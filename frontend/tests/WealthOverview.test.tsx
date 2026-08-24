@@ -207,4 +207,46 @@ describe("WealthOverview", () => {
     expect(screen.getByText(/last-known price/)).toBeInTheDocument();
     expect(screen.getAllByText("฿120.00").length).toBeGreaterThan(0);
   });
+
+  test("flags a stale (expired-cache fallback) price without hiding the total or the value it contributed", () => {
+    const portfolios = [makePortfolio(1, "P1", 0)];
+    const holdingsMap = { 1: [makeHolding({ symbol: "AAA", shares: 3, avg_cost: 40 })] };
+    const priceMap = { 1: [{ ...makeQuote("AAA", 50), is_stale: true }] };
+
+    render(
+      <WealthOverview
+        portfolios={portfolios}
+        holdingsMap={holdingsMap}
+        priceMap={priceMap}
+        holdingsFailedMap={{}}
+        pricesLoaded
+        loading={false}
+      />
+    );
+
+    // Reuses the existing honesty-banner block, not a second warning system —
+    // and the number is the real (stale) price, not the avg_cost fallback.
+    expect(screen.getByText(/live fetch was unavailable/)).toBeInTheDocument();
+    expect(screen.getAllByText("฿150.00").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/last-known price/)).not.toBeInTheDocument();
+  });
+
+  test("does not show the stale banner when every price is fresh", () => {
+    const portfolios = [makePortfolio(1, "P1", 0)];
+    const holdingsMap = { 1: [makeHolding({ symbol: "AAA", shares: 1, avg_cost: 40 })] };
+    const priceMap = { 1: [makeQuote("AAA", 50)] };
+
+    render(
+      <WealthOverview
+        portfolios={portfolios}
+        holdingsMap={holdingsMap}
+        priceMap={priceMap}
+        holdingsFailedMap={{}}
+        pricesLoaded
+        loading={false}
+      />
+    );
+
+    expect(screen.queryByText(/live fetch was unavailable/)).not.toBeInTheDocument();
+  });
 });

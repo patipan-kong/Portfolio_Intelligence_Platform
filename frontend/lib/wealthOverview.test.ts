@@ -127,6 +127,30 @@ test("a live-refreshed price takes priority over a stale DB current_price", () =
   assert.equal(summary.portfolios[0].hasEstimatedPrice, false);
 });
 
+test("a holding priced from an expired-cache fallback is flagged stale, not estimated — the number still contributes to the total", () => {
+  const portfolios = [portfolio(1, "P1", 0)];
+  const holdingsMap = { 1: [holding({ symbol: "AAA", shares: 2, avg_cost: 10 })] };
+  const priceMap = { 1: [{ ...quote("AAA", 30), is_stale: true }] };
+
+  const summary = computeWealthSummary(portfolios, holdingsMap, priceMap, {});
+
+  assert.equal(summary.portfolios[0].holdingsValue, 60); // the stale price is still used, not discarded
+  assert.equal(summary.portfolios[0].hasStalePrice, true);
+  assert.equal(summary.portfolios[0].hasEstimatedPrice, false); // distinct concern: we do have a real price
+  assert.equal(summary.anyStale, true);
+});
+
+test("a fresh live price is never flagged stale", () => {
+  const portfolios = [portfolio(1, "P1", 0)];
+  const holdingsMap = { 1: [holding({ symbol: "AAA", shares: 1, avg_cost: 10 })] };
+  const priceMap = { 1: [quote("AAA", 15)] }; // is_stale omitted, like a real fresh quote
+
+  const summary = computeWealthSummary(portfolios, holdingsMap, priceMap, {});
+
+  assert.equal(summary.portfolios[0].hasStalePrice, false);
+  assert.equal(summary.anyStale, false);
+});
+
 test("sharePct never returns NaN or Infinity when total wealth is zero", () => {
   const portfolios = [portfolio(1, "P1", 0), portfolio(2, "P2", 0)];
   const summary = computeWealthSummary(portfolios, {}, {}, {});

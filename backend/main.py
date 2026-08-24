@@ -442,13 +442,22 @@ def _risk_level(ta_score: int | None, fa_score: int | None) -> str | None:
 
 
 def _quote_response(price: dict) -> dict:
-    """Attach presentation-only day change without writing it to quote cache."""
+    """Attach presentation-only day change without writing it to quote cache.
+
+    Also translates data_fetcher's private `_stale_data` marker (set only when
+    a price was served from an expired-cache fallback because a live fetch was
+    blocked or failed) into a public `is_stale` boolean, and drops the private
+    key so it never reaches the API response. A missing price is never
+    reported as stale — staleness only describes a real, usable price.
+    """
+    stale = bool(price.pop("_stale_data", False)) and price.get("current_price") is not None
     return {
         **price,
         "change_percent": calculate_change_percent(
             price.get("current_price"),
             price.get("previous_close"),
         ),
+        "is_stale": stale,
     }
 
 

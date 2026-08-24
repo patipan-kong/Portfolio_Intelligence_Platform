@@ -938,7 +938,12 @@ def _fetch_price_info_legacy(symbol: str) -> dict:
             _log.info("[VPS BLOCKED FETCH] fetch_price_info symbol=%s — returning stale cache", symbol)
             stale = _get_stale(symbol, cache_type)
             if stale:
-                return {k: v for k, v in stale.items() if not k.startswith("_")}
+                # `_stale_data` is deliberately kept (not stripped like the other
+                # underscore-prefixed cache metadata) so main.py's `_quote_response`
+                # can translate it into the public `is_stale` field. Every other
+                # caller of fetch_price_info() (factor_engine, idea_review, ...)
+                # only reads current_price/previous_close and ignores extra keys.
+                return {k: v for k, v in stale.items() if not k.startswith("_") or k == "_stale_data"}
             return {"current_price": None, "previous_close": None, "last_updated": None, "_vps_cache_miss": True}
 
     _inc("yahoo_requests")
@@ -952,13 +957,17 @@ def _fetch_price_info_legacy(symbol: str) -> dict:
             return result
         stale = _get_stale(symbol, cache_type)
         if stale:
-            return _source_quote_payload(stale)
+            fallback = _source_quote_payload(stale)
+            fallback["_stale_data"] = True
+            return fallback
         return result
     except Exception as exc:
         _record_yf_error(exc)
         stale = _get_stale(symbol, cache_type)
         if stale:
-            return _source_quote_payload(stale)
+            fallback = _source_quote_payload(stale)
+            fallback["_stale_data"] = True
+            return fallback
         return {"current_price": None, "previous_close": None, "last_updated": None}
 
 

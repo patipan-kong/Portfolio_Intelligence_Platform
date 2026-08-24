@@ -333,6 +333,7 @@ def test_owning_call_site_serializes_previous_close_and_day_change_for_set_equit
         "previous_close": 250.0,
         "change_percent": -0.8,
         "last_updated": "provider",
+        "is_stale": False,
         "upside_pct": None,
     }]
 

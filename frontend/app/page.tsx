@@ -35,6 +35,7 @@ function DashboardHeatmap({
     cp: number | null;
     livePrice: number | null;
     priceConfirmed: boolean;
+    isStale: boolean;
   }>();
 
   portfolios.forEach((p) => {
@@ -49,6 +50,9 @@ function DashboardHeatmap({
       // so a truthy `live` lookup alone doesn't mean we have a confirmed price.
       const livePrice = live?.current_price ?? null;
       const priceConfirmed = pricesLoaded && livePrice != null;
+      // is_stale is only ever true alongside a real current_price, so this
+      // never fires for the "no data" case above.
+      const isStale = live?.is_stale === true;
 
       const existing = aggregated.get(item.symbol);
       if (existing) {
@@ -56,8 +60,9 @@ function DashboardHeatmap({
         if (cp != null) existing.cp = cp;
         if (livePrice != null) existing.livePrice = livePrice;
         if (priceConfirmed) existing.priceConfirmed = true;
+        if (isStale) existing.isStale = true;
       } else {
-        aggregated.set(item.symbol, { symbol: item.symbol, mv, cp, livePrice, priceConfirmed });
+        aggregated.set(item.symbol, { symbol: item.symbol, mv, cp, livePrice, priceConfirmed, isStale });
       }
     });
   });
@@ -106,6 +111,7 @@ function DashboardHeatmap({
             <Link
               key={tile.symbol}
               href={`/stock/${encodeURIComponent(tile.symbol)}`}
+              title={tile.isStale ? "Live price unavailable; showing the last cached price." : undefined}
               style={{
                 flexBasis: `${Math.max(6, weightPct - 0.5)}%`,
                 flexGrow: 0,
@@ -113,9 +119,18 @@ function DashboardHeatmap({
                 background: heatTileColor(tile.cp, pricesLoaded || tile.priceConfirmed),
                 minWidth: 72,
                 minHeight: 72,
+                position: "relative",
               }}
               className="rounded-lg p-2 flex flex-col justify-between hover:brightness-110 transition-all cursor-pointer"
             >
+              {tile.isStale && (
+                <span
+                  className="absolute top-1 right-1 text-amber-300 text-[10px] leading-none"
+                  aria-label="Stale price"
+                >
+                  ⏱
+                </span>
+              )}
               <span className="text-white text-xs font-bold truncate leading-tight">{display}</span>
               <div>
                 <div className={`text-xs font-semibold leading-tight ${changeColor}`}>{changeText}</div>

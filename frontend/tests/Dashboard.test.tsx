@@ -163,4 +163,35 @@ describe("Dashboard pricing", () => {
     await waitFor(() => expect(screen.getAllByText("฿110.00").length).toBe(2));
     expect(screen.getByText(/Excludes 1 portfolio that failed to load/)).toBeInTheDocument();
   });
+
+  test("marks a tile with a stale-price indicator when its live quote came from an expired-cache fallback", async () => {
+    const portfolio = makePortfolio(1);
+    portfolioState.portfolios = [portfolio];
+    getHoldings.mockResolvedValue([makeHolding(portfolio.id, 1, "AAA")]);
+    getPortfolioPrices.mockResolvedValue([
+      { ...makeQuote("AAA", 100, 80), is_stale: true },
+    ]);
+
+    render(<DashboardPage />);
+
+    await waitFor(() => {
+      const tile = screen.getByRole("link", { name: /AAA/ });
+      expect(tile).toHaveAttribute("title", "Live price unavailable; showing the last cached price.");
+    });
+    // The numeric price signal (Day%) is still shown alongside the cue — a
+    // stale price is not hidden or treated as an error/no-data state.
+    expect(screen.getByRole("link", { name: /AAA/ })).toHaveTextContent("+25.00%");
+  });
+
+  test("does not mark a tile stale when its live quote is fresh", async () => {
+    const portfolio = makePortfolio(1);
+    portfolioState.portfolios = [portfolio];
+    getHoldings.mockResolvedValue([makeHolding(portfolio.id, 1, "AAA")]);
+    getPortfolioPrices.mockResolvedValue([makeQuote("AAA", 100, 80)]);
+
+    render(<DashboardPage />);
+
+    await waitFor(() => expect(screen.getByRole("link", { name: /AAA/ })).toHaveTextContent("+25.00%"));
+    expect(screen.getByRole("link", { name: /AAA/ })).not.toHaveAttribute("title");
+  });
 });

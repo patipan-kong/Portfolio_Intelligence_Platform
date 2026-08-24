@@ -61,7 +61,7 @@ export default function WealthOverview({
       <div className="bg-white border rounded-xl p-6 shadow-sm">
         <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Total Wealth</p>
         <p className="text-3xl font-bold text-gray-800">฿{fmtTHB(summary.totalWealth)}</p>
-        {(!pricesLoaded || summary.anyEstimated || summary.anyFailed) && (
+        {(!pricesLoaded || summary.anyEstimated || summary.anyStale || summary.anyFailed) && (
           <div className="mt-2 flex flex-col gap-0.5 text-xs text-gray-400">
             {!pricesLoaded && (
               <span className="flex items-center gap-1">
@@ -71,6 +71,9 @@ export default function WealthOverview({
             )}
             {summary.anyEstimated && (
               <span>Some holdings use a last-known price — totals may be approximate.</span>
+            )}
+            {summary.anyStale && (
+              <span>Some holdings show a cached price because a live fetch was unavailable — totals may not be fully current.</span>
             )}
             {summary.anyFailed && (
               <span className="text-red-500">
@@ -110,6 +113,9 @@ export default function WealthOverview({
                           ฿{fmtTHB(row.holdingsValue)}
                           {row.hasEstimatedPrice && (
                             <span className="ml-1 text-amber-500" title="Uses a last-known price">*</span>
+                          )}
+                          {row.hasStalePrice && (
+                            <span className="ml-1 text-amber-500" title="Live price unavailable; showing the last cached price.">⏱</span>
                           )}
                         </span>
                       </div>
