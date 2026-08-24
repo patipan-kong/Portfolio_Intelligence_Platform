@@ -21,11 +21,11 @@ vi.mock("@/lib/PortfolioContext", () => ({
   usePortfolio: () => portfolioState,
 }));
 
-function makePortfolio(id: number): Portfolio {
+function makePortfolio(id: number, cash_balance = 0): Portfolio {
   return {
     id,
     name: `Portfolio ${id}`,
-    cash_balance: 0,
+    cash_balance,
     created_at: "2026-01-01T00:00:00Z",
   };
 }
@@ -135,5 +135,32 @@ describe("Dashboard pricing", () => {
 
     expect(screen.getByRole("link", { name: /BBB/ })).toHaveTextContent("+100.00%");
     expect(screen.queryByRole("link", { name: /AAA/ })).not.toBeInTheDocument();
+  });
+
+  test("one portfolio's holdings request failing does not block the others from loading", async () => {
+    const good = makePortfolio(1, 100);
+    const broken = makePortfolio(2, 5000);
+    portfolioState.portfolios = [good, broken];
+    getHoldings.mockImplementation((portfolioId: number) =>
+      portfolioId === good.id
+        ? Promise.resolve([makeHolding(good.id, 1, "AAA")])
+        : Promise.reject(new Error("backend unavailable"))
+    );
+    getPortfolioPrices.mockImplementation((portfolioId: number) =>
+      portfolioId === good.id ? Promise.resolve([makeQuote("AAA", 10, 10)]) : Promise.resolve([])
+    );
+
+    render(<DashboardPage />);
+
+    // The healthy portfolio's holding still renders in the heatmap.
+    await waitFor(() => expect(screen.getByRole("link", { name: /AAA/ })).toBeInTheDocument());
+
+    // Wealth Overview reflects only the portfolio it could load — the
+    // broken one's much larger value is never silently counted as 0. Both
+    // the Total Wealth card and the healthy portfolio's own card read
+    // 110.00, since it's the only portfolio counted in the total. Wait for
+    // the live price (Phase 2) to land, not just holdings (Phase 1).
+    await waitFor(() => expect(screen.getAllByText("฿110.00").length).toBe(2));
+    expect(screen.getByText(/Excludes 1 portfolio that failed to load/)).toBeInTheDocument();
   });
 });

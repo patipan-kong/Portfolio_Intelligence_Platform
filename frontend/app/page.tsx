@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePortfolio } from "@/lib/PortfolioContext";
 import { getHoldings, getPortfolioPrices } from "@/lib/api";
 import type { Portfolio, PortfolioItem, PriceRefreshItem } from "@/lib/api";
+import WealthOverview from "@/components/WealthOverview";
 
 function heatTileColor(cp: number | null, pricesLoaded: boolean): string {
   if (!pricesLoaded) return "#374151"; // dark gray — still loading
@@ -131,8 +132,14 @@ function DashboardHeatmap({
 export default function DashboardPage() {
   const { portfolios, loading: ctxLoading } = usePortfolio();
   const [holdingsMap, setHoldingsMap] = useState<Record<number, PortfolioItem[]>>({});
+  const [holdingsFailedMap, setHoldingsFailedMap] = useState<Record<number, boolean>>({});
   const [priceMap, setPriceMap] = useState<Record<number, PriceRefreshItem[]>>({});
   const [loadingHoldings, setLoadingHoldings] = useState(false);
+  // True once Phase 1 has settled (every portfolio either loaded or failed) —
+  // distinct from holdingsMap containing every id, since a failed portfolio
+  // never gets a holdingsMap entry. Gates Phase 2 so it doesn't fire against
+  // a stale/incomplete holdingsMap from a previous portfolio list.
+  const [holdingsSettled, setHoldingsSettled] = useState(false);
   const [pricesLoaded, setPricesLoaded] = useState(false);
   const [error, setError] = useState("");
   const holdingsRequestIdRef = useRef(0);
@@ -148,33 +155,46 @@ export default function DashboardPage() {
 
     if (ctxLoading || portfolios.length === 0) {
       setHoldingsMap({});
+      setHoldingsFailedMap({});
       setPriceMap({});
       setPricesLoaded(false);
       setLoadingHoldings(false);
+      setHoldingsSettled(!ctxLoading);
       return () => { active = false; };
     }
 
     setLoadingHoldings(true);
+    setHoldingsSettled(false);
     setPricesLoaded(false);
     setPriceMap({});
     setError("");
-    Promise.all(
+    // Promise.allSettled — one portfolio's holdings request failing must not
+    // wipe out the others. The dashboard/wealth overview should still show
+    // every portfolio it *could* load; the failed one is flagged, not hidden.
+    Promise.allSettled(
       portfolios.map((p) => getHoldings(p.id).then((items) => ({ id: p.id, items })))
     )
       .then((results) => {
         if (!active || holdingsRequestIdRef.current !== requestId) return;
         const map: Record<number, PortfolioItem[]> = {};
-        results.forEach(({ id, items }) => { map[id] = items; });
+        const failed: Record<number, boolean> = {};
+        results.forEach((result, i) => {
+          const pid = portfolios[i].id;
+          if (result.status === "fulfilled") {
+            map[result.value.id] = result.value.items;
+          } else {
+            failed[pid] = true;
+            console.error(`Failed to load holdings for portfolio ${pid}:`, result.reason);
+          }
+        });
         setHoldingsMap(map);
-      })
-      .catch(() => {
-        if (active && holdingsRequestIdRef.current === requestId) {
-          setError("Cannot connect to backend");
-        }
+        setHoldingsFailedMap(failed);
+        setError(Object.keys(failed).length === portfolios.length ? "Cannot connect to backend" : "");
       })
       .finally(() => {
         if (active && holdingsRequestIdRef.current === requestId) {
           setLoadingHoldings(false);
+          setHoldingsSettled(true);
         }
       });
 
@@ -186,11 +206,8 @@ export default function DashboardPage() {
     const requestId = ++priceRequestIdRef.current;
     const holdingsRequestId = holdingsRequestIdRef.current;
     let active = true;
-    const holdingsLoaded = portfolios.length > 0 && portfolios.every((p) => (
-      Object.prototype.hasOwnProperty.call(holdingsMap, p.id)
-    ));
 
-    if (!holdingsLoaded) {
+    if (!holdingsSettled || portfolios.length === 0) {
       return () => { active = false; };
     }
 
@@ -219,16 +236,25 @@ export default function DashboardPage() {
     });
 
     return () => { active = false; };
-  }, [holdingsMap, portfolios]);
+  }, [holdingsSettled, holdingsMap, portfolios]);
 
   const isLoading = ctxLoading || loadingHoldings;
 
   return (
     <div className="space-y-10">
       <section>
-        <h1 className="text-2xl font-bold mb-1">Dashboard</h1>
+        <h1 className="text-2xl font-bold mb-1">Wealth Overview</h1>
         {error && <p className="mt-2 text-sm text-red-500">{error}</p>}
       </section>
+
+      <WealthOverview
+        portfolios={portfolios}
+        holdingsMap={holdingsMap}
+        priceMap={priceMap}
+        holdingsFailedMap={holdingsFailedMap}
+        pricesLoaded={pricesLoaded}
+        loading={isLoading}
+      />
 
       {isLoading ? (
         <p className="text-sm text-gray-400">Loading…</p>
