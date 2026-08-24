@@ -1,7 +1,7 @@
 """Benchmark price fetching and storage.
 
-Fetches daily closing prices for index/ETF benchmarks via yfinance and
-persists them in the benchmark_prices table for use in the
+Fetches daily closing prices for index/ETF benchmarks via the Yahoo Chart
+provider and persists them in the benchmark_prices table for use in the
 performance-comparison analytics endpoint.
 
 Default benchmarks:
@@ -12,7 +12,7 @@ import asyncio
 import logging
 from datetime import date, datetime, timedelta
 
-import yfinance as yf
+import pandas as pd
 from sqlalchemy.orm import Session
 
 from models.database import BenchmarkPrice
@@ -51,9 +51,24 @@ def bench_key(symbol: str) -> str:
 def _fetch_close_on_date(symbol: str, price_date: str) -> float | None:
     """Return the closing price for *symbol* on or before *price_date*.
 
-    Requests a 6-day window ending on the day after *price_date* so that the
-    last available trading-day close is returned even when *price_date* falls
-    on a weekend or holiday.
+    Fetches a trailing window via the crash-safe YahooChartProvider (plain
+    ``requests`` against Yahoo's chart endpoint — see yahoo_chart.py) and
+    keeps only bars on or before *price_date*, returning the most recent one.
+    This mirrors the old yfinance 6-day-window behavior so the last available
+    trading-day close is returned even when *price_date* falls on a weekend
+    or holiday.
+
+    Deliberately does NOT use yf.Ticker(...).history() directly: on this
+    Windows + Python 3.13 stack, yfinance's curl_cffi-based impersonation
+    layer crashes the whole interpreter with an access violation (exit
+    0xC0000005) whenever it receives a non-empty response — a native crash
+    that no try/except can catch. That crash was the actual reason daily
+    benchmark ingestion silently stopped persisting fresh rows: the scheduler
+    job's benchmark-fetch step would take down the entire backend process
+    before any commit, immediately after portfolio snapshots (an earlier step
+    in the same job) had already been written successfully. See
+    yahoo_chart.py's module docstring for the original diagnosis.
+
     On VPS: always returns None (no live fetch allowed).
     """
     if not allow_market_fetching():
@@ -64,12 +79,18 @@ def _fetch_close_on_date(symbol: str, price_date: str) -> float | None:
         return None
 
     d = date.fromisoformat(price_date)
-    start = (d - timedelta(days=6)).isoformat()
-    end = (d + timedelta(days=1)).isoformat()  # yfinance end is exclusive
     try:
-        hist = yf.Ticker(symbol).history(start=start, end=end, interval="1d")
-        if hist.empty:
+        hist = get_provider().get_history(symbol, period="1mo", interval="1d")
+        if hist is None or hist.empty:
             log.warning("benchmark_service: no data for %s on %s", symbol, price_date)
+            return None
+        idx = hist.index.tz_convert(None) if hist.index.tz is not None else hist.index
+        hist = hist.loc[idx.normalize() <= pd.Timestamp(d)]
+        if hist.empty:
+            log.warning(
+                "benchmark_service: no data on/before %s for %s within lookback window",
+                price_date, symbol,
+            )
             return None
         log.info("[LOCAL FETCH] benchmark_service fetched %s @ %s", symbol, price_date)
         return float(hist["Close"].iloc[-1])
