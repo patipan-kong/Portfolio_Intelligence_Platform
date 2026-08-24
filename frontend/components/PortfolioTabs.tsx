@@ -11,13 +11,14 @@ const TABS = [
   { label: "ผลตอบแทน",        href: "/performance" },
   { label: "วิเคราะห์เชิงลึก", href: "/analytics" },
   { label: "ประวัติธุรกรรม",   href: "/history" },
+  { label: "เงินปันผล",       href: "/income" },
 ];
 
 export default function PortfolioTabs() {
   const pathname = usePathname();
 
   return (
-    <div className="inline-flex items-center gap-1 rounded-xl bg-gray-100 p-1">
+    <div className="flex items-center gap-1 rounded-xl bg-gray-100 p-1 overflow-x-auto">
       {TABS.map(({ label, href }) => {
         const active = pathname.startsWith(href);
         return (
