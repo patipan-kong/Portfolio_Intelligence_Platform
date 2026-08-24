@@ -10,6 +10,7 @@ const TABS = [
   { label: "ภาพรวม",          href: "/portfolio" },
   { label: "ผลตอบแทน",        href: "/performance" },
   { label: "วิเคราะห์เชิงลึก", href: "/analytics" },
+  { label: "ประวัติธุรกรรม",   href: "/history" },
 ];
 
 export default function PortfolioTabs() {

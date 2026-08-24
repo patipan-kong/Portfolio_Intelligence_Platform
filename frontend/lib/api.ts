@@ -1409,7 +1409,9 @@ export type TransactionType =
   | "WITHDRAW"
   | "INITIAL_POSITION"
   | "INITIAL_CASH"
-  | "DIVIDEND";
+  | "DIVIDEND"
+  | "QUANTITY_CORRECTION"
+  | "POSITION_CONVERSION";
 
 export interface TransactionRecord {
   id: number;
