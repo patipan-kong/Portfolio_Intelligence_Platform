@@ -355,6 +355,8 @@ def execute_buy(
     db.refresh(tx)
     db.refresh(item)
 
+    _log_runtime_consultation(db, symbol, tx.id, "quantity_valuation", "execute_buy")
+
     result = {
         "transaction_id": tx.id,
         "type": "BUY",
@@ -488,6 +490,8 @@ def execute_sell(
     db.add(tx)
     db.commit()
     db.refresh(tx)
+
+    _log_runtime_consultation(db, symbol, tx.id, "quantity_valuation", "execute_sell")
 
     result = {
         "transaction_id": tx.id,
@@ -773,6 +777,8 @@ def execute_initial_position(
     db.commit()
     db.refresh(tx)
     db.refresh(item)
+
+    _log_runtime_consultation(db, symbol, tx.id, "quantity_valuation", "execute_initial_position")
 
     result = {
         "transaction_id": tx.id,

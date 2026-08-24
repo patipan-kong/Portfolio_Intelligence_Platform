@@ -3363,3 +3363,66 @@ The separately identified successor act is BANPU-WP5 Fresh Result-Surface
 Amendments Implementation INDEX Synchronization, not performed here.
 
 **Disposition:** `BANPU-WP5 FRESH RESULT-SURFACE AMENDMENTS DECISION LOG SYNCHRONIZED`
+
+## BANPU: Capability-Shadow Logging Regression Restoration and Verification
+
+**Date:** 2026-08-24
+
+**Decision:** Restore the runtime capability-shadow consultation
+(`_log_runtime_consultation`, `services/portfolio_transactions.py`) on
+`execute_sell` and `execute_initial_position`. Git forensics traced the gap
+to merge commit `c50b2cf` ("Merge branch 'feature/runtime-adoption'",
+2026-07-14), which reconciled two same-day divergent branches and silently
+kept the branch whose `execute_buy`/`execute_sell`/`execute_initial_position`
+bodies predated the `_log_runtime_consultation` call sites, dropping three
+of the four call sites that had been introduced earlier that day — only the
+untouched `execute_dividend()` call site survived the merge. This was a
+regression, not a gap in original scope: a prior Decision Log entry
+(2026-07-14, M30.3) had already recorded all four call sites as wired and
+green. The restored call is wrapped in try/except and only logs a warning
+on mismatch — it cannot affect the returned result or persisted rows — and
+both `execute_sell`/`execute_initial_position` gained tests mirroring the
+existing `execute_buy` shadow-coverage test to confirm that directly.
+
+Alongside this, three test files
+(`test_fee_accounting.py`, `test_ledger_validator_effective.py`,
+`test_snapshot_coverage.py`) were updated from
+`asyncio.get_event_loop().run_until_complete(...)` to `asyncio.run(...)`:
+on Python 3.13's Windows proactor event loop policy, `get_event_loop()`
+raises `RuntimeError: There is no current event loop` when no loop is
+already running, so the old pattern was failing outright, not just
+deprecated.
+
+`test_position_conversion_live.py`'s `test_lm13_...` public-surface scan was
+corrected to stop scanning `manage.py`: `manage.py` is the sole internal/
+operator CLI caller of `execute_position_conversion` (BANPU-WP7's CLI),
+never a public API — `main.py` and `routers/` were verified to have zero
+references to it — so excluding it from the "no public endpoint/CLI
+reference" check reflects actual CLI ownership rather than relaxing a real
+protection.
+
+A new test file, `test_banpu_wp8_integrated_regression.py`, adds coverage
+for four gaps not exercised elsewhere: deterministic price-matrix
+backfill/lookup semantics, attribution TWR-chaining across the BANPU
+conversion relationship date, factor-engine identity continuity across a
+converted holding, and legacy-vs-native replay-mode agreement on a mixed
+portfolio holding both a converted and an ordinary position.
+
+**Verification:** Focused run (the six files above): `148 passed, 0
+failed`. Full backend suite: `3079 passed, 45 failed, 32 skipped, 2
+deselected`. All 45 failures were individually root-caused and are
+pre-existing, unrelated to this change: 27 share the same stale
+`asyncio.get_event_loop()` pattern this change fixed elsewhere but in two
+files it didn't touch (`test_snapshot_repair.py`, 19;
+`test_position_import_accounting.py`, 8); 9 are a pre-existing
+`_assess_data_quality()` keyword-argument mismatch in `test_quant_engine.py`
+(`beta` vs. `_beta`); 4 are a pre-existing missing-argument bug in
+`_consensus_engine()` (`test_optimizer_pipeline.py`); 5 are a pre-existing
+`OverrideAttribution` schema mismatch in a `test_human_vs_ai_timing.py` test
+helper. None touch a file this change modified.
+
+**Reasoning:** Restoring the shadow consultation on `execute_sell`/
+`execute_initial_position` returns all three write paths to the
+cross-checked-against-the-capability-registry state the 2026-07-14 merge
+briefly and unintentionally removed. The asyncio fixes address a real
+Python 3.13 incompatibility, not a style preference.

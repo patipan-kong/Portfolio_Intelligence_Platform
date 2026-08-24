@@ -201,12 +201,18 @@ def _make_portfolio(pid: int = 1, cash: float = 0.0) -> SimpleNamespace:
         name         = f"Portfolio {pid}",
         cash_balance = Decimal(str(cash)),
         created_at   = datetime(2025, 1, 1),
+        replay_asset_id_native = False,
     )
 
 
 def _run(coro):
-    """Run a coroutine synchronously."""
-    return asyncio.get_event_loop().run_until_complete(coro)
+    """Run a coroutine synchronously.
+
+    Uses asyncio.run() (not get_event_loop()) so each call is independent
+    of any current-loop state — deterministic under Python 3.13 regardless
+    of test order or a prior closed loop.
+    """
+    return asyncio.run(coro)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

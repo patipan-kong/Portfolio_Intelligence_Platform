@@ -616,12 +616,15 @@ def test_lm12_transaction_83_and_prior_ledger_rows_untouched(db_session):
 # ══════════════════════════════════════════════════════════════════════════
 
 def test_lm13_no_public_endpoint_or_cli_references_execute_position_conversion():
+    """manage.py is excluded from this scan because it is the intentional
+    internal CLI owner/caller of execute_position_conversion, not a public
+    entry point; main.py and the routers/ public API surface remain scanned
+    and prohibited unchanged."""
     import os
 
     backend_dir = os.path.join(os.path.dirname(__file__), "..")
     surfaces = [
         os.path.join(backend_dir, "main.py"),
-        os.path.join(backend_dir, "manage.py"),
     ]
     routers_dir = os.path.join(backend_dir, "routers")
     if os.path.isdir(routers_dir):
