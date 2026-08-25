@@ -60,6 +60,28 @@ export interface CashAccount {
   baseline?: CashAccountBaseline | null;
 }
 
+export type LiabilityType =
+  | "MORTGAGE"
+  | "AUTO_LOAN"
+  | "PERSONAL_LOAN"
+  | "CREDIT_CARD"
+  | "STUDENT_LOAN"
+  | "OTHER";
+
+export interface Liability {
+  id: number;
+  workspace_id: number;
+  name: string;
+  liability_type: LiabilityType;
+  lender: string | null;
+  balance: number;
+  currency: "THB";
+  note: string | null;
+  is_archived: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface CashAccountBaseline {
   id: number;
   cash_account_id: number;
@@ -418,6 +440,35 @@ export const createCashAccount = (body: CashAccountCreate) =>
 
 export const updateCashAccount = (id: number, body: CashAccountUpdate) =>
   apiFetch<CashAccount>(`/cash-accounts/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+
+// ─── Liabilities ────────────────────────────────────────────────────────────
+
+export type LiabilityCreate = {
+  name: string;
+  liability_type: LiabilityType;
+  lender?: string | null;
+  balance: number;
+  currency: "THB";
+  note?: string | null;
+};
+
+export type LiabilityUpdate = {
+  name?: string;
+  liability_type?: LiabilityType;
+  lender?: string | null;
+  balance?: number;
+  note?: string | null;
+  is_archived?: boolean;
+};
+
+export const listLiabilities = (includeArchived = false) =>
+  apiFetch<Liability[]>(`/liabilities${includeArchived ? "?include_archived=true" : ""}`);
+
+export const createLiability = (body: LiabilityCreate) =>
+  apiFetch<Liability>("/liabilities", { method: "POST", body: JSON.stringify(body) });
+
+export const updateLiability = (id: number, body: LiabilityUpdate) =>
+  apiFetch<Liability>(`/liabilities/${id}`, { method: "PATCH", body: JSON.stringify(body) });
 
 export type CashAccountBaselineCreate = {
   effective_on: string;

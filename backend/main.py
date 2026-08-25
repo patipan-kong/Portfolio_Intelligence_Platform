@@ -9,7 +9,7 @@ from typing import Literal
 from fastapi import FastAPI, HTTPException, Depends, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_ as sa_or
 
@@ -21,7 +21,7 @@ import uuid as _uuid
 from models.database import (
     init_db, migrate_legacy_data, get_db, SessionLocal,
     Workspace, get_default_workspace,
-    Portfolio, PortfolioItem, CashAccount, CashAccountBaseline, CashAccountTransfer, CashAccountTransaction, Watchlist,
+    Portfolio, PortfolioItem, CashAccount, CashAccountBaseline, CashAccountTransfer, CashAccountTransaction, Liability, Watchlist,
     AgentCache, AnalysisCache, AnalysisHistory, OptimizerHistory, SignalHistory,
     Settings, UserUsage, Transaction, PortfolioSnapshot, BenchmarkPrice,
     MarketDataCache,
@@ -1092,6 +1092,143 @@ async def reconcile_cash_account(
     db.refresh(account)
     db.refresh(transaction)
     return {"account": _cash_account_payload(account), "adjustment": _cash_account_transaction_payload(transaction)}
+
+
+# ─── Liabilities ──────────────────────────────────────────────────────────────
+
+LiabilityType = Literal[
+    "MORTGAGE",
+    "AUTO_LOAN",
+    "PERSONAL_LOAN",
+    "CREDIT_CARD",
+    "STUDENT_LOAN",
+    "OTHER",
+]
+
+
+def _liability_payload(liability: Liability) -> dict:
+    return {
+        "id": liability.id,
+        "workspace_id": liability.workspace_id,
+        "name": liability.name,
+        "liability_type": liability.liability_type,
+        "lender": liability.lender,
+        "balance": liability.balance,
+        "currency": liability.currency,
+        "note": liability.note,
+        "is_archived": liability.is_archived,
+        "created_at": liability.created_at.isoformat(),
+        "updated_at": liability.updated_at.isoformat(),
+    }
+
+
+def _liability_or_404(db: Session, liability_id: int, workspace_id: int) -> Liability:
+    liability = (
+        db.query(Liability)
+        .filter(Liability.id == liability_id, Liability.workspace_id == workspace_id)
+        .first()
+    )
+    if liability is None:
+        raise HTTPException(status_code=404, detail="Liability not found")
+    return liability
+
+
+class LiabilityCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    liability_type: LiabilityType
+    lender: str | None = None
+    balance: float
+    currency: str
+    note: str | None = None
+
+    @model_validator(mode="after")
+    def validate_liability(self):
+        if not self.name.strip():
+            raise ValueError("name must not be blank")
+        if self.currency != "THB":
+            raise ValueError("currency must be THB")
+        if not math.isfinite(self.balance) or self.balance < 0:
+            raise ValueError("balance must be finite and non-negative")
+        return self
+
+
+class LiabilityUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = None
+    liability_type: LiabilityType | None = None
+    lender: str | None = None
+    balance: float | None = None
+    note: str | None = None
+    is_archived: bool | None = None
+
+    @model_validator(mode="after")
+    def validate_liability_update(self):
+        if not self.model_fields_set:
+            raise ValueError("at least one field is required")
+        if "name" in self.model_fields_set and (self.name is None or not self.name.strip()):
+            raise ValueError("name must not be blank")
+        if "liability_type" in self.model_fields_set and self.liability_type is None:
+            raise ValueError("liability_type must be supplied when updating it")
+        if "balance" in self.model_fields_set:
+            if self.balance is None or not math.isfinite(self.balance) or self.balance < 0:
+                raise ValueError("balance must be finite and non-negative")
+        if "is_archived" in self.model_fields_set and self.is_archived is None:
+            raise ValueError("is_archived must be supplied when updating it")
+        return self
+
+
+@app.get("/liabilities")
+async def list_liabilities(include_archived: bool = False, db: Session = Depends(get_db)) -> list[dict]:
+    ws = _ws_id(db)
+    query = db.query(Liability).filter(Liability.workspace_id == ws)
+    if not include_archived:
+        query = query.filter(Liability.is_archived.is_(False))
+    return [_liability_payload(item) for item in query.order_by(Liability.name, Liability.id).all()]
+
+
+@app.post("/liabilities", status_code=201)
+async def create_liability(body: LiabilityCreate, db: Session = Depends(get_db)) -> dict:
+    liability = Liability(
+        workspace_id=_ws_id(db),
+        name=body.name.strip(),
+        liability_type=body.liability_type,
+        lender=body.lender.strip() or None if body.lender is not None else None,
+        balance=body.balance,
+        currency=body.currency,
+        note=body.note.strip() or None if body.note is not None else None,
+    )
+    db.add(liability)
+    db.commit()
+    db.refresh(liability)
+    return _liability_payload(liability)
+
+
+@app.patch("/liabilities/{liability_id}")
+async def update_liability(liability_id: int, body: LiabilityUpdate, db: Session = Depends(get_db)) -> dict:
+    liability = _liability_or_404(db, liability_id, _ws_id(db))
+    fields = body.model_dump(exclude_unset=True)
+    if "name" in fields:
+        liability.name = fields["name"].strip()
+    if "liability_type" in fields:
+        liability.liability_type = fields["liability_type"]
+    if "lender" in fields:
+        lender = fields["lender"]
+        liability.lender = lender.strip() or None if lender is not None else None
+    if "balance" in fields:
+        # This is an observed-balance replacement only; no payment or ledger
+        # event is created and no CashAccount is changed.
+        liability.balance = fields["balance"]
+    if "note" in fields:
+        note = fields["note"]
+        liability.note = note.strip() or None if note is not None else None
+    if "is_archived" in fields:
+        liability.is_archived = fields["is_archived"]
+    db.commit()
+    db.refresh(liability)
+    return _liability_payload(liability)
 
 
 # ─── Portfolios ───────────────────────────────────────────────────────────────

@@ -67,6 +67,7 @@ class Workspace(Base):
 
     portfolios = relationship("Portfolio", back_populates="workspace", cascade="all, delete-orphan")
     cash_accounts = relationship("CashAccount", back_populates="workspace", cascade="all, delete-orphan")
+    liabilities = relationship("Liability", back_populates="workspace", cascade="all, delete-orphan")
     cash_account_transactions = relationship("CashAccountTransaction", back_populates="workspace", cascade="all, delete-orphan")
     cash_account_transfers = relationship("CashAccountTransfer", back_populates="workspace", cascade="all, delete-orphan")
     watchlist_items = relationship("Watchlist", back_populates="workspace", cascade="all, delete-orphan")
@@ -147,6 +148,35 @@ class CashAccount(Base):
         CheckConstraint("currency = 'THB'", name="ck_cash_accounts_currency_thb"),
         CheckConstraint("balance >= 0", name="ck_cash_accounts_balance_nonnegative"),
         Index("ix_cash_accounts_workspace_archived", "workspace_id", "is_archived"),
+    )
+
+
+class Liability(Base):
+    """A workspace-owned current observed outstanding liability balance."""
+    __tablename__ = "liabilities"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    liability_type = Column(String(32), nullable=False)
+    lender = Column(String, nullable=True)
+    balance = Column(Float, nullable=False, default=0.0)
+    currency = Column(String(3), nullable=False, default="THB")
+    note = Column(Text, nullable=True)
+    is_archived = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    workspace = relationship("Workspace", back_populates="liabilities")
+
+    __table_args__ = (
+        CheckConstraint(
+            "liability_type IN ('MORTGAGE', 'AUTO_LOAN', 'PERSONAL_LOAN', 'CREDIT_CARD', 'STUDENT_LOAN', 'OTHER')",
+            name="ck_liabilities_type",
+        ),
+        CheckConstraint("currency = 'THB'", name="ck_liabilities_currency_thb"),
+        CheckConstraint("balance >= 0", name="ck_liabilities_balance_nonnegative"),
+        Index("ix_liabilities_workspace_archived", "workspace_id", "is_archived"),
     )
 
 

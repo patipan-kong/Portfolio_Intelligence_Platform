@@ -21,6 +21,7 @@ const NAV_MAIN: { label: string; href: string; match: string[] }[] = [
   },
   { label: "บัญชีเงินสด", href: "/cash", match: ["/cash"] },
   { label: "Cash Flow", href: "/cash-flow", match: ["/cash-flow"] },
+  { label: "Liabilities", href: "/liabilities", match: ["/liabilities"] },
   { label: "รายการเฝ้าดู", href: "/watchlist", match: ["/watchlist"] },
   {
     label: "ศูนย์บัญชาการ AI",
