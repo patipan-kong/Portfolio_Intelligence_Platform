@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import Link from "next/link";
 import {
   createCashAccount, createCashAccountBaseline, createCashAccountTransaction,
   listCashAccountTransactions, listCashAccounts, reconcileCashAccount, updateCashAccount,
@@ -62,7 +63,7 @@ export default function CashAccountsPage() {
   const active = accounts.filter((account) => !account.is_archived); const archived = accounts.filter((account) => account.is_archived);
 
   return <div className="space-y-6 max-w-3xl">
-    <div><h1 className="text-2xl font-bold">Cash Accounts</h1><p className="text-sm text-gray-500 mt-1">Track the current observed balance of external cash accounts.</p></div>
+     <div className="flex items-start justify-between gap-4 flex-wrap"><div><h1 className="text-2xl font-bold">Cash Accounts</h1><p className="text-sm text-gray-500 mt-1">Track the current observed balance of external cash accounts.</p></div><Link href="/cash-flow" className="text-sm text-blue-600 hover:underline">View Cash Flow →</Link></div>
     <form onSubmit={handleCreate} className="bg-white border rounded-xl p-4 space-y-3 shadow-sm"><h2 className="font-semibold">Add cash account</h2><div className="grid gap-3 sm:grid-cols-3"><Field label="Account name"><input aria-label="Account name" value={name} onChange={(event) => setName(event.target.value)} className={inputClass} /></Field><Field label="Institution (optional)"><input aria-label="Institution" value={institution} onChange={(event) => setInstitution(event.target.value)} className={inputClass} /></Field><Field label="Current balance"><input aria-label="Initial balance" type="number" step="0.01" value={balance} onChange={(event) => setBalance(event.target.value)} className={inputClass} /></Field></div><p className="text-xs text-gray-500">Currency: <strong>THB</strong> (fixed for Cash Accounts v1)</p><PrimaryButton>Add cash account</PrimaryButton></form>
     {mutationError && <p role="alert" className="text-sm text-red-600">{mutationError}</p>}
     {editing && <form onSubmit={handleEdit} className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-3"><h2 className="font-semibold">Edit {editing.name}</h2><div className="grid gap-3 sm:grid-cols-2 mt-3"><Field label="Account name"><input aria-label="Edit account name" value={editName} onChange={(event) => setEditName(event.target.value)} className={inputClass} /></Field><Field label="Institution"><input aria-label="Edit institution" value={editInstitution} onChange={(event) => setEditInstitution(event.target.value)} className={inputClass} /></Field></div><Actions><PrimaryButton>Save changes</PrimaryButton><Cancel onClick={() => setEditing(null)} /></Actions></form>}

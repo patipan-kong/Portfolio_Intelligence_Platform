@@ -81,6 +81,16 @@ export interface CashAccountTransaction {
   created_at: string;
 }
 
+export interface CashFlowEvent extends CashAccountTransaction {
+  account_name: string;
+  account_is_archived: boolean;
+}
+
+export interface CashFlowReport {
+  month: string;
+  events: CashFlowEvent[];
+}
+
 export const updatePortfolioGoal = (portfolioId: number, goal: number | null) =>
   apiFetch<{ id: number; goal_target_value: number | null; ok: boolean }>(
     `/portfolios/${portfolioId}/goal`,
@@ -431,6 +441,9 @@ export const createCashAccountTransaction = (id: number, body: CashAccountTransa
 
 export const reconcileCashAccount = (id: number, body: CashAccountReconcile) =>
   apiFetch<{ account: CashAccount; adjustment: CashAccountTransaction | null }>(`/cash-accounts/${id}/reconcile`, { method: "POST", body: JSON.stringify(body) });
+
+export const getCashFlowReport = (month: string) =>
+  apiFetch<CashFlowReport>(`/cash-flow?month=${encodeURIComponent(month)}`);
 
 // ─── Holdings ────────────────────────────────────────────────────────────────
 

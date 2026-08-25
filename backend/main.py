@@ -700,6 +700,21 @@ def _require_on_or_after_baseline(occurred_on: date, baseline: CashAccountBaseli
     return date_value
 
 
+def _cash_flow_month_bounds(month: str) -> tuple[str, str]:
+    """Return inclusive ISO calendar-date bounds for a selected YYYY-MM month."""
+    if not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month):
+        raise HTTPException(status_code=422, detail="month must use YYYY-MM calendar format")
+    try:
+        first_day = date.fromisoformat(f"{month}-01")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="month must be a valid calendar month") from exc
+    if first_day.month == 12:
+        next_month = date(first_day.year + 1, 1, 1)
+    else:
+        next_month = date(first_day.year, first_day.month + 1, 1)
+    return first_day.isoformat(), (next_month - timedelta(days=1)).isoformat()
+
+
 def _record_cash_account_transaction(
     db: Session,
     account: CashAccount,
@@ -826,6 +841,39 @@ async def list_cash_account_transactions(cash_account_id: int, db: Session = Dep
             .all()
         )
     ]
+
+
+@app.get("/cash-flow")
+async def get_cash_flow_report(month: str, db: Session = Depends(get_db)) -> dict:
+    """Return one complete, workspace-scoped calendar-month cash-flow slice.
+
+    This is deliberately read-only and transaction-only: a CashAccount baseline
+    is an observation, not a cash-flow event. The account join keeps archived
+    history visible while the workspace predicates prevent cross-tenant rows.
+    """
+    start_on, end_on = _cash_flow_month_bounds(month)
+    workspace_id = _ws_id(db)
+    rows = (
+        db.query(CashAccountTransaction, CashAccount)
+        .join(CashAccount, CashAccount.id == CashAccountTransaction.cash_account_id)
+        .join(CashAccountBaseline, CashAccountBaseline.cash_account_id == CashAccount.id)
+        .filter(
+            CashAccountTransaction.workspace_id == workspace_id,
+            CashAccount.workspace_id == workspace_id,
+            CashAccountTransaction.occurred_on >= start_on,
+            CashAccountTransaction.occurred_on <= end_on,
+            CashAccountTransaction.occurred_on >= CashAccountBaseline.effective_on,
+        )
+        .order_by(CashAccountTransaction.occurred_on.desc(), CashAccountTransaction.id.desc())
+        .all()
+    )
+    events = []
+    for transaction, account in rows:
+        event = _cash_account_transaction_payload(transaction)
+        event["account_name"] = account.name
+        event["account_is_archived"] = bool(account.is_archived)
+        events.append(event)
+    return {"month": month, "events": events}
 
 
 @app.post("/cash-accounts/{cash_account_id}/transactions", status_code=201)
