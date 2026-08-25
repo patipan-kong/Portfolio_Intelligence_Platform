@@ -80,6 +80,10 @@ export interface Liability {
   is_archived: boolean;
   created_at: string;
   updated_at: string;
+  // Phase 5: date of the most recent explicit balance observation, or null if
+  // no historical tracking has started yet. Status only — never a substitute
+  // for the As-Of read.
+  first_observation_on?: string | null;
 }
 
 export interface CashAccountBaseline {
@@ -469,6 +473,43 @@ export const createLiability = (body: LiabilityCreate) =>
 
 export const updateLiability = (id: number, body: LiabilityUpdate) =>
   apiFetch<Liability>(`/liabilities/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+
+// ─── Liability Historical Observations (Phase 5) ───────────────────────────
+// Dated, explicitly recorded observed-balance facts — an effective-state
+// model, not a payment ledger. `balance` is null and `available` is false for
+// any date before the first observation — never a fabricated zero or the
+// liability's current balance.
+
+export interface LiabilityBalanceObservation {
+  id: number;
+  workspace_id: number;
+  liability_id: number;
+  balance: number;
+  observed_on: string;
+  created_at: string;
+}
+
+export type LiabilityBalanceObservationCreate = {
+  balance: number;
+  observed_on: string;
+};
+
+export interface LiabilityBalanceAsOf {
+  liability_id: number;
+  date: string;
+  currency: "THB";
+  balance: number | null;
+  available: boolean;
+}
+
+export const createLiabilityBalanceObservation = (id: number, body: LiabilityBalanceObservationCreate) =>
+  apiFetch<LiabilityBalanceObservation>(`/liabilities/${id}/observations`, { method: "POST", body: JSON.stringify(body) });
+
+export const listLiabilityBalanceObservations = (id: number) =>
+  apiFetch<LiabilityBalanceObservation[]>(`/liabilities/${id}/observations`);
+
+export const getLiabilityBalanceAsOf = (id: number, date: string) =>
+  apiFetch<LiabilityBalanceAsOf>(`/liabilities/${id}/as-of?date=${encodeURIComponent(date)}`);
 
 export type CashAccountBaselineCreate = {
   effective_on: string;

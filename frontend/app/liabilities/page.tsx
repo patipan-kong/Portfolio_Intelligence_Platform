@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import {
   createLiability,
+  createLiabilityBalanceObservation,
   listLiabilities,
   updateLiability,
   type Liability,
@@ -34,6 +35,7 @@ const formatThb = (value: number) => value.toLocaleString("th-TH", {
 });
 const messageFor = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback;
 const inputClass = "mt-1 block w-full border rounded px-3 py-2";
+const today = () => new Date().toISOString().slice(0, 10);
 
 export default function LiabilitiesPage() {
   const [liabilities, setLiabilities] = useState<Liability[]>([]);
@@ -55,6 +57,9 @@ export default function LiabilitiesPage() {
   const [editNote, setEditNote] = useState("");
   const [balanceTarget, setBalanceTarget] = useState<Liability | null>(null);
   const [replacementBalance, setReplacementBalance] = useState("");
+  const [recordTarget, setRecordTarget] = useState<Liability | null>(null);
+  const [recordDate, setRecordDate] = useState(today());
+  const [recordBalance, setRecordBalance] = useState("");
 
   async function load(includeArchived = showArchived) {
     setLoading(true);
@@ -107,6 +112,7 @@ export default function LiabilitiesPage() {
   function openEdit(item: Liability) {
     setMutationError("");
     setBalanceTarget(null);
+    setRecordTarget(null);
     setEditing(item);
     setEditName(item.name);
     setEditType(item.liability_type);
@@ -139,6 +145,7 @@ export default function LiabilitiesPage() {
   function openBalanceUpdate(item: Liability) {
     setMutationError("");
     setEditing(null);
+    setRecordTarget(null);
     setBalanceTarget(item);
     setReplacementBalance(String(item.balance));
   }
@@ -158,6 +165,33 @@ export default function LiabilitiesPage() {
       await load();
     } catch (err) {
       setMutationError(messageFor(err, "Unable to update liability balance."));
+    }
+  }
+
+  function openRecord(item: Liability) {
+    setMutationError("");
+    setEditing(null);
+    setBalanceTarget(null);
+    setRecordTarget(item);
+    setRecordDate(today());
+    setRecordBalance(String(item.balance));
+  }
+
+  async function handleRecord(event: FormEvent) {
+    event.preventDefault();
+    if (!recordTarget) return;
+    setMutationError("");
+    const parsed = Number(recordBalance);
+    if (!recordDate.trim() || !recordBalance.trim() || !Number.isFinite(parsed) || parsed < 0) {
+      setMutationError("Enter a date and a non-negative observed balance.");
+      return;
+    }
+    try {
+      await createLiabilityBalanceObservation(recordTarget.id, { balance: parsed, observed_on: recordDate });
+      setRecordTarget(null);
+      await load();
+    } catch (err) {
+      setMutationError(messageFor(err, "Unable to record balance history."));
     }
   }
 
@@ -229,6 +263,18 @@ export default function LiabilitiesPage() {
         </form>
       )}
 
+      {recordTarget && (
+        <form onSubmit={handleRecord} className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-3">
+          <h2 className="font-semibold">Record balance — {recordTarget.name}</h2>
+          <p className="text-sm text-gray-600">Record a dated observed balance. Earlier history is not reconstructed — only explicit dated observations become available for lookup.</p>
+          <div className="grid gap-3 sm:grid-cols-2 max-w-md">
+            <Field label="Observed date"><input aria-label="Observed date" type="date" value={recordDate} onChange={(event) => setRecordDate(event.target.value)} className={inputClass} /></Field>
+            <Field label="Observed balance (THB)"><input aria-label="Observed balance on date" type="number" step="0.01" value={recordBalance} onChange={(event) => setRecordBalance(event.target.value)} className={inputClass} /></Field>
+          </div>
+          <Actions><PrimaryButton>Record balance</PrimaryButton><Cancel onClick={() => setRecordTarget(null)} /></Actions>
+        </form>
+      )}
+
       <section className="space-y-3">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div>
@@ -237,7 +283,7 @@ export default function LiabilitiesPage() {
           </div>
           <button type="button" onClick={() => void toggleArchived()} className="text-sm text-blue-600 hover:underline">{showArchived ? "Hide archived" : "Show archived"}</button>
         </div>
-        {loading ? <p className="text-sm text-gray-400">Loading liabilities…</p> : error ? <div className="text-sm text-red-600 space-y-2"><p role="alert">{error}</p><button type="button" onClick={() => void load()} className="text-blue-600 hover:underline">Try again</button></div> : active.length === 0 ? <p className="text-sm text-gray-500">No active liabilities yet. Add your first liability above.</p> : <div className="space-y-3">{active.map((item) => <LiabilityCard key={item.id} item={item} onEdit={openEdit} onBalance={openBalanceUpdate} onArchive={() => void setArchived(item, true)} />)}</div>}
+        {loading ? <p className="text-sm text-gray-400">Loading liabilities…</p> : error ? <div className="text-sm text-red-600 space-y-2"><p role="alert">{error}</p><button type="button" onClick={() => void load()} className="text-blue-600 hover:underline">Try again</button></div> : active.length === 0 ? <p className="text-sm text-gray-500">No active liabilities yet. Add your first liability above.</p> : <div className="space-y-3">{active.map((item) => <LiabilityCard key={item.id} item={item} onEdit={openEdit} onBalance={openBalanceUpdate} onRecord={openRecord} onArchive={() => void setArchived(item, true)} />)}</div>}
       </section>
 
       {showArchived && !loading && !error && (
@@ -250,8 +296,8 @@ export default function LiabilitiesPage() {
   );
 }
 
-function LiabilityCard({ item, onEdit, onBalance, onArchive }: { item: Liability; onEdit: (item: Liability) => void; onBalance: (item: Liability) => void; onArchive: () => void }) {
-  return <div className="bg-white border rounded-xl p-4 shadow-sm space-y-3"><div className="flex items-start justify-between gap-4 flex-wrap"><div><p className="font-semibold">{item.name}</p><p className="text-sm text-gray-500">{typeLabel(item.liability_type)}{item.lender ? ` · ${item.lender}` : ""}</p><p className="text-lg font-medium mt-1">{item.balance === 0 ? "Paid off" : formatThb(item.balance)} <span className="text-xs text-gray-500">THB</span></p>{item.note && <p className="text-sm text-gray-500 mt-1">{item.note}</p>}</div><div className="flex gap-3 text-sm flex-wrap"><button type="button" onClick={() => onEdit(item)} className="text-blue-600 hover:underline">Edit</button><button type="button" onClick={() => onBalance(item)} className="text-blue-600 hover:underline">Update balance</button><button type="button" onClick={onArchive} className="text-red-600 hover:underline">Archive</button></div></div></div>;
+function LiabilityCard({ item, onEdit, onBalance, onRecord, onArchive }: { item: Liability; onEdit: (item: Liability) => void; onBalance: (item: Liability) => void; onRecord: (item: Liability) => void; onArchive: () => void }) {
+  return <div className="bg-white border rounded-xl p-4 shadow-sm space-y-3"><div className="flex items-start justify-between gap-4 flex-wrap"><div><p className="font-semibold">{item.name}</p><p className="text-sm text-gray-500">{typeLabel(item.liability_type)}{item.lender ? ` · ${item.lender}` : ""}</p><p className="text-lg font-medium mt-1">{item.balance === 0 ? "Paid off" : formatThb(item.balance)} <span className="text-xs text-gray-500">THB</span></p>{item.note && <p className="text-sm text-gray-500 mt-1">{item.note}</p>}<p className="text-xs text-gray-400 mt-1">{item.first_observation_on ? `History tracking started ${item.first_observation_on}` : "No balance history recorded yet"}</p></div><div className="flex gap-3 text-sm flex-wrap"><button type="button" onClick={() => onEdit(item)} className="text-blue-600 hover:underline">Edit</button><button type="button" onClick={() => onBalance(item)} className="text-blue-600 hover:underline">Update balance</button><button type="button" onClick={() => onRecord(item)} className="text-blue-600 hover:underline">Record balance</button><button type="button" onClick={onArchive} className="text-red-600 hover:underline">Archive</button></div></div></div>;
 }
 
 function TypeSelect({ ariaLabel, value, onChange }: { ariaLabel: string; value: LiabilityType; onChange: (value: LiabilityType) => void }) {

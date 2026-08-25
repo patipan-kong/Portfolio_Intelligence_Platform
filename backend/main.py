@@ -21,7 +21,7 @@ import uuid as _uuid
 from models.database import (
     init_db, migrate_legacy_data, get_db, SessionLocal,
     Workspace, get_default_workspace,
-    Portfolio, PortfolioItem, CashAccount, CashAccountBaseline, CashAccountTransfer, CashAccountTransaction, Liability, Watchlist,
+    Portfolio, PortfolioItem, CashAccount, CashAccountBaseline, CashAccountTransfer, CashAccountTransaction, Liability, LiabilityBalanceObservation, Watchlist,
     AgentCache, AnalysisCache, AnalysisHistory, OptimizerHistory, SignalHistory,
     Settings, UserUsage, Transaction, PortfolioSnapshot, BenchmarkPrice,
     MarketDataCache,
@@ -61,6 +61,7 @@ from services.portfolio_transactions import (
 )
 from services.transaction_canonicalizer import parse_position_conversion_payload
 from services.cash_account_ledger import ADJUSTMENT, EXPENSE, INCOME, TRANSFER, cash_balance_as_of, resulting_balance, signed_amount
+from services.liability_balance import liability_balance_as_of
 from services.portfolio_snapshots import generate_daily_snapshot, SnapshotCoverageError
 from services.snapshot_scheduler import setup_scheduler, shutdown_scheduler
 from services.analytics.system_health import compute_system_health, compute_ai_reliability
@@ -1163,6 +1164,9 @@ def _liability_payload(liability: Liability) -> dict:
         "is_archived": liability.is_archived,
         "created_at": liability.created_at.isoformat(),
         "updated_at": liability.updated_at.isoformat(),
+        # Phase 5: presence alone tells the UI whether dated history exists,
+        # without a second request — never a substitute for the As-Of read.
+        "first_observation_on": min((o.observed_on for o in liability.observations), default=None),
     }
 
 
@@ -1262,9 +1266,21 @@ async def update_liability(liability_id: int, body: LiabilityUpdate, db: Session
         lender = fields["lender"]
         liability.lender = lender.strip() or None if lender is not None else None
     if "balance" in fields:
-        # This is an observed-balance replacement only; no payment or ledger
-        # event is created and no CashAccount is changed.
-        liability.balance = fields["balance"]
+        # A Liability with dated observations already has an auditable
+        # history; a bare balance PATCH must not silently bypass it, so it is
+        # routed through the same canonical observation-writing function,
+        # dated today. A Liability with no observations yet keeps the
+        # original unaudited direct-replacement behavior.
+        has_history = (
+            db.query(LiabilityBalanceObservation.id)
+            .filter(LiabilityBalanceObservation.liability_id == liability.id)
+            .first()
+            is not None
+        )
+        if has_history:
+            _write_liability_observation(db, liability, fields["balance"], date.today().isoformat())
+        else:
+            liability.balance = fields["balance"]
     if "note" in fields:
         note = fields["note"]
         liability.note = note.strip() or None if note is not None else None
@@ -1273,6 +1289,142 @@ async def update_liability(liability_id: int, body: LiabilityUpdate, db: Session
     db.commit()
     db.refresh(liability)
     return _liability_payload(liability)
+
+
+def _write_liability_observation(
+    db: Session, liability: Liability, balance: float, observed_on: str
+) -> LiabilityBalanceObservation:
+    """Record (or same-day replace) a dated observed-balance fact.
+
+    A second observation for a date that already has one is an atomic
+    in-place correction, never a duplicate row. Liability.balance is updated
+    only when this observation is the newest by observed_on across all of the
+    liability's observations — a backdated correction enriches history
+    without overwriting a later-known current balance. Does not commit; the
+    caller commits once so the observation write and the current-balance
+    update land in a single transaction.
+    """
+    existing = (
+        db.query(LiabilityBalanceObservation)
+        .filter(
+            LiabilityBalanceObservation.liability_id == liability.id,
+            LiabilityBalanceObservation.observed_on == observed_on,
+        )
+        .first()
+    )
+    if existing is not None:
+        existing.balance = balance
+        observation = existing
+    else:
+        observation = LiabilityBalanceObservation(
+            workspace_id=liability.workspace_id,
+            liability_id=liability.id,
+            balance=balance,
+            observed_on=observed_on,
+        )
+        db.add(observation)
+    db.flush()
+
+    latest_date = (
+        db.query(func.max(LiabilityBalanceObservation.observed_on))
+        .filter(LiabilityBalanceObservation.liability_id == liability.id)
+        .scalar()
+    )
+    if latest_date == observed_on:
+        liability.balance = balance
+
+    return observation
+
+
+def _liability_observation_payload(observation: LiabilityBalanceObservation) -> dict:
+    return {
+        "id": observation.id,
+        "workspace_id": observation.workspace_id,
+        "liability_id": observation.liability_id,
+        "balance": observation.balance,
+        "observed_on": observation.observed_on,
+        "created_at": observation.created_at.isoformat(),
+    }
+
+
+class LiabilityBalanceObservationCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    balance: float
+    observed_on: date
+
+    @model_validator(mode="after")
+    def validate_observation(self):
+        if not math.isfinite(self.balance) or self.balance < 0:
+            raise ValueError("balance must be finite and non-negative")
+        return self
+
+
+@app.post("/liabilities/{liability_id}/observations", status_code=201)
+async def create_liability_balance_observation(
+    liability_id: int,
+    body: LiabilityBalanceObservationCreate,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Record an explicit dated observed-balance fact for a Liability.
+
+    Never fabricates history: this is the only way historical coverage comes
+    into existence for a Liability, and only from this call forward — no
+    observation is ever created implicitly from Liability.created_at or a
+    migration. Rejected on an archived Liability, matching the CashAccount
+    precedent of archived rows keeping their history but not receiving new
+    activity.
+    """
+    liability = _liability_or_404(db, liability_id, _ws_id(db))
+    if liability.is_archived:
+        raise HTTPException(status_code=409, detail="Archived liabilities cannot receive new balance observations")
+    observation = _write_liability_observation(db, liability, body.balance, body.observed_on.isoformat())
+    db.commit()
+    db.refresh(observation)
+    db.refresh(liability)
+    return _liability_observation_payload(observation)
+
+
+@app.get("/liabilities/{liability_id}/observations")
+async def list_liability_balance_observations(liability_id: int, db: Session = Depends(get_db)) -> list[dict]:
+    """Read-only, always available regardless of archive status — archiving is
+    a current/management-only flag and never erases history."""
+    liability = _liability_or_404(db, liability_id, _ws_id(db))
+    rows = (
+        db.query(LiabilityBalanceObservation)
+        .filter(LiabilityBalanceObservation.liability_id == liability.id)
+        .order_by(LiabilityBalanceObservation.observed_on.desc(), LiabilityBalanceObservation.id.desc())
+        .all()
+    )
+    return [_liability_observation_payload(row) for row in rows]
+
+
+@app.get("/liabilities/{liability_id}/as-of")
+async def get_liability_balance_as_of(
+    liability_id: int,
+    date: date,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Read-only historical Liability balance via the effective-state rule
+    (services.liability_balance.liability_balance_as_of): the latest
+    observation with observed_on <= date, never Liability.balance,
+    created_at, or updated_at. Available for archived Liabilities."""
+    liability = _liability_or_404(db, liability_id, _ws_id(db))
+    as_of_date = date.isoformat()
+    observations = (
+        (row.observed_on, row.balance)
+        for row in db.query(LiabilityBalanceObservation)
+        .filter(LiabilityBalanceObservation.liability_id == liability.id)
+        .all()
+    )
+    balance = liability_balance_as_of(observations, as_of_date)
+    return {
+        "liability_id": liability.id,
+        "date": as_of_date,
+        "currency": liability.currency,
+        "balance": balance,
+        "available": balance is not None,
+    }
 
 
 # ─── Portfolios ───────────────────────────────────────────────────────────────

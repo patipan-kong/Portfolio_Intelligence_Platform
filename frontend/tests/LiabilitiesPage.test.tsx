@@ -1,10 +1,11 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import LiabilitiesPage from "@/app/liabilities/page";
-import { createLiability, listLiabilities, updateLiability, type Liability } from "@/lib/api";
+import { createLiability, createLiabilityBalanceObservation, listLiabilities, updateLiability, type Liability } from "@/lib/api";
 
 vi.mock("@/lib/api", () => ({
   createLiability: vi.fn(),
+  createLiabilityBalanceObservation: vi.fn(),
   listLiabilities: vi.fn(),
   updateLiability: vi.fn(),
 }));
@@ -26,6 +27,7 @@ const liability: Liability = {
 const listMock = vi.mocked(listLiabilities);
 const createMock = vi.mocked(createLiability);
 const updateMock = vi.mocked(updateLiability);
+const recordMock = vi.mocked(createLiabilityBalanceObservation);
 
 describe("LiabilitiesPage", () => {
   beforeEach(() => {
@@ -33,6 +35,7 @@ describe("LiabilitiesPage", () => {
     listMock.mockResolvedValue([]);
     createMock.mockResolvedValue(liability);
     updateMock.mockResolvedValue(liability);
+    recordMock.mockResolvedValue({ id: 1, workspace_id: 1, liability_id: 1, balance: 2500000, observed_on: "2026-08-25", created_at: "2026-08-25T00:00:00" });
   });
 
   it("shows a loading state and fixed THB", () => {
@@ -101,6 +104,42 @@ describe("LiabilitiesPage", () => {
     fireEvent.change(screen.getByLabelText("Observed balance"), { target: { value: "2400000" } });
     fireEvent.click(screen.getByRole("button", { name: "Save balance" }));
     await waitFor(() => expect(updateMock).toHaveBeenCalledWith(1, { balance: 2400000 }));
+  });
+
+  it("records a dated balance observation and shows tracking status, never payment/Net Worth terms", async () => {
+    let current: Liability[] = [liability];
+    listMock.mockImplementation(async () => current);
+    recordMock.mockImplementation(async (id, body) => {
+      current = current.map((item) => item.id === id ? { ...item, first_observation_on: body.observed_on, balance: body.balance } : item) as Liability[];
+      return { id: 1, workspace_id: 1, liability_id: id, balance: body.balance, observed_on: body.observed_on, created_at: "2026-08-25T00:00:00" };
+    });
+    render(<LiabilitiesPage />);
+    await screen.findByText("Home Loan");
+    expect(screen.getByText("No balance history recorded yet")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Record balance" }));
+    expect(screen.queryByText(/amortization|APR|payoff schedule/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Net Worth/i)).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Observed date"), { target: { value: "2026-08-10" } });
+    fireEvent.change(screen.getByLabelText("Observed balance on date"), { target: { value: "2450000" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Record balance" }).find((button) => button.getAttribute("type") === "submit")!);
+
+    await waitFor(() => expect(recordMock).toHaveBeenCalledWith(1, { balance: 2450000, observed_on: "2026-08-10" }));
+    expect(await screen.findByText("History tracking started 2026-08-10")).toBeInTheDocument();
+  });
+
+  it("surfaces a failed balance recording without silently succeeding", async () => {
+    listMock.mockResolvedValue([liability]);
+    recordMock.mockRejectedValue(new Error("observation rejected"));
+    render(<LiabilitiesPage />);
+    await screen.findByText("Home Loan");
+
+    fireEvent.click(screen.getByRole("button", { name: "Record balance" }));
+    fireEvent.change(screen.getByLabelText("Observed date"), { target: { value: "2026-08-10" } });
+    fireEvent.change(screen.getByLabelText("Observed balance on date"), { target: { value: "2450000" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Record balance" }).find((button) => button.getAttribute("type") === "submit")!);
+
+    expect(await screen.findByText("observation rejected")).toBeInTheDocument();
   });
 
   it("keeps zero-balance active liabilities visible as Paid off", async () => {

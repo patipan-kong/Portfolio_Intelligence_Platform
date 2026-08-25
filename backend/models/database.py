@@ -68,6 +68,7 @@ class Workspace(Base):
     portfolios = relationship("Portfolio", back_populates="workspace", cascade="all, delete-orphan")
     cash_accounts = relationship("CashAccount", back_populates="workspace", cascade="all, delete-orphan")
     liabilities = relationship("Liability", back_populates="workspace", cascade="all, delete-orphan")
+    liability_balance_observations = relationship("LiabilityBalanceObservation", back_populates="workspace", cascade="all, delete-orphan")
     cash_account_transactions = relationship("CashAccountTransaction", back_populates="workspace", cascade="all, delete-orphan")
     cash_account_transfers = relationship("CashAccountTransfer", back_populates="workspace", cascade="all, delete-orphan")
     watchlist_items = relationship("Watchlist", back_populates="workspace", cascade="all, delete-orphan")
@@ -168,6 +169,7 @@ class Liability(Base):
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     workspace = relationship("Workspace", back_populates="liabilities")
+    observations = relationship("LiabilityBalanceObservation", back_populates="liability", cascade="all, delete-orphan")
 
     __table_args__ = (
         CheckConstraint(
@@ -177,6 +179,33 @@ class Liability(Base):
         CheckConstraint("currency = 'THB'", name="ck_liabilities_currency_thb"),
         CheckConstraint("balance >= 0", name="ck_liabilities_balance_nonnegative"),
         Index("ix_liabilities_workspace_archived", "workspace_id", "is_archived"),
+    )
+
+
+class LiabilityBalanceObservation(Base):
+    """A dated, explicitly recorded observed-balance fact for a Liability.
+
+    Effective-state model: an observation's balance is the liability's
+    effective (last-known-true) balance from its observed_on date onward,
+    until a later observation supersedes it — not a payment, ledger event,
+    amortization step, or system-generated snapshot. Never derived from
+    Liability.balance, created_at, or updated_at.
+    """
+    __tablename__ = "liability_balance_observations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    liability_id = Column(Integer, ForeignKey("liabilities.id", ondelete="CASCADE"), nullable=False, index=True)
+    balance = Column(Float, nullable=False)
+    observed_on = Column(String(10), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    workspace = relationship("Workspace", back_populates="liability_balance_observations")
+    liability = relationship("Liability", back_populates="observations")
+
+    __table_args__ = (
+        UniqueConstraint("liability_id", "observed_on", name="uq_liability_balance_observations_liability_date"),
+        CheckConstraint("balance >= 0", name="ck_liability_balance_observations_balance_nonnegative"),
     )
 
 
