@@ -1,293 +1,191 @@
-# Portfolio Intelligence Roadmap
+# Wealth OS Product Roadmap
 
-> Last Updated: 2026-07 (v2.0 — aligned with the constitutional domains)
+> Last Updated: 2026-08 (v3.0 — Wealth OS product rebaseline)
 >
 > Current Status:
 >
-> **Phase 3 in progress**
+> **Phase 1 — Investment Core is complete.**
 >
-> Phases 1–2 are complete: core investment engine, execution intelligence,
-> AI evaluation, and accounting correctness. The Asset Registry — Phase 3's
-> identity keystone — completed 2026-07.
+> **Phase 2 — Wealth Accounts** is active. Its current milestone is
+> **Cash Accounts v1**.
 >
-> This roadmap states **what will be built, and in what order**. Why the
-> platform is designed this way is stated once, in
-> [platform_architecture.md](platform_architecture.md) (the constitution);
-> this document is subordinate to it (constitution §11) and uses its domain
-> vocabulary (§6, [GLOSSARY.md](../GLOSSARY.md)).
+> This roadmap states the product capability sequence, active delivery
+> direction, and parallel future tracks. Platform domains, boundaries, laws,
+> and evolution principles are defined by
+> [platform_architecture.md](platform_architecture.md) (the constitution).
+> This document is subordinate to it under the constitution's governance
+> hierarchy (§11) and uses its domain vocabulary
+> ([GLOSSARY.md](../GLOSSARY.md)).
 
 ---
 
-## Phase Map
+## Product Baseline — Investment Core ✅ COMPLETE
 
-Each phase advances one transition of the constitution's evolution arc (§9).
+Investment Core is the completed product baseline for trustworthy investment
+management and intelligence.
 
-| Phase | Constitutional stage | Primary domains |
-|---|---|---|
-| 1 — Foundation ✅ | Portfolio Platform | Ledger & Accounting, Experience Platform |
-| 2 — Investment Intelligence ✅ | Investment Intelligence | Portfolio Intelligence, Decision Intelligence, Trust & Evaluation |
-| 3 — Platform Evolution | → Multi-Asset Platform (groundwork) | Asset Foundation, Market Intelligence, Portfolio Intelligence |
-| 4 — SaaS Platform | (operational widening) | Experience Platform |
-| 5 — Personal Wealth Platform | → Wealth Platform | Asset Foundation, Connectivity & Ingestion, Wealth Intelligence |
-| 6 — Personal AI Wealth Advisor | → AI Wealth Advisor | Experience Platform, Decision Intelligence, Trust & Evaluation |
+### Investment accounting
 
----
+- Investment portfolios, holdings, and a transaction ledger
+- Deterministic replay and accounting correctness, including brokerage cash
+- Portfolio snapshots, performance history, and benchmark foundations
 
-# Phase 1 — Foundation ✅ COMPLETE
+### Investment intelligence
 
-Build a trustworthy investment platform.
+- Performance and risk analytics
+- Optimizer, recommendation, and execution-intelligence capabilities
+- AI evaluation and trust capabilities within their existing boundaries
 
-## Platform
+### Multi-portfolio product capability
 
-- ✅ Portfolio
-- ✅ Watchlist
-- ✅ Workspace
-- ✅ User Wallet
-- ✅ Billing
-- ✅ Settings
+- Combined Wealth Overview for current investment assets
+- Cross-portfolio dividend income and Investment Wealth History
+- Combined cash-flow-adjusted Investment Performance
 
-## Infrastructure
+### Data portability and history
 
-- ✅ PostgreSQL
-- ✅ VPS Deployment
-- ✅ Vercel
-- ✅ CI/CD Pipeline
+- Transaction history
+- CSV import and bounded CSV export
 
-## Portfolio Engine
+### Bounded corporate-action capability
 
-- ✅ Transactions
-- ✅ Replay Engine
-- ✅ Portfolio Snapshots
-- ✅ Portfolio Metrics Engine
-- ✅ Ledger Validation
-- ✅ Ledger Repair
-- ✅ Benchmark Engine
-- ✅ Performance History
-- ✅ Accounting Rules
+`POSITION_CONVERSION` is supported through the current bounded
+corporate-action path and is visible in transaction history. This does not
+represent a generic, complete Corporate Actions engine.
 
 ---
 
-# Phase 2 — Investment Intelligence ✅ COMPLETE
+# Phase 2 — Wealth Accounts
 
-Transform portfolio data into actionable investment intelligence.
+Expand beyond investment portfolios into first-class owned wealth accounts
+without weakening Investment Core semantics.
 
-_Recorded as achieved. Section names predate the constitution and are preserved as history. The optional analytics formerly pending here now live in Phase 3 under Portfolio Intelligence._
+## Cash Accounts v1
 
-## Performance Analytics
+Cash Accounts v1 introduces standalone external Cash Accounts with a current
+observed balance. They support an explicit currency, optional
+institution/provider, and create, edit, archive, and manual balance-update
+workflows.
 
-- ✅ Total Return
-- ✅ Annualized Return
-- ✅ Volatility
-- ✅ Max Drawdown
-- ✅ Sharpe Ratio
-- ✅ Alpha
-- ✅ Beta
-- ✅ Correlation
-- ✅ Tracking Error
-- ✅ Information Ratio
-- ✅ Benchmark Comparison
-- ✅ Cash Utilization
+- Dashboard aggregation will present **Total Assets**: current investment
+  assets plus external Cash Account balances.
+- Portfolio cash (brokerage cash) remains inside its investment Portfolio NAV;
+  it must not be added again as a separate Cash Account balance.
+- The existing historical chart remains **Investment Wealth History**. Cash
+  Accounts v1 has no cash historical series yet.
+- Asset Foundation is intentionally not the Cash Account ownership or balance
+  model for this milestone.
 
-## Portfolio Optimizer
-
-- ✅ Three-layer Optimizer
-- ✅ Deterministic Scoring
-- ✅ Confidence Calibration
-- ✅ Funding-aware Execution
-- ✅ Execution Optimization
-- ✅ Recommendation Snapshot
-- ✅ Recommendation Explainability
+`Total Assets` is not `Net Worth`: liabilities are not yet represented.
 
 ---
 
-## Execution Intelligence
+# Phase 3 — Personal Cash Flow
 
-- ✅ Shadow Portfolio
-- ✅ Shadow Portfolio Snapshots
-- ✅ Execution Analysis
-- ✅ Recommendation Report Card
-- ✅ Plan Grading
-- ✅ Horizon Grading
+Future direction: income, expenses, transfers, recurring flows, and
+cash-account ledger discipline.
 
 ---
 
-## AI Evaluation
+# Phase 4 — Liabilities
 
-- ✅ Human vs AI
-- ✅ Opportunity Cost
-- ✅ Three Portfolios
-- ✅ Attribution Waterfall
-- ✅ Trust Report
-- ✅ AI Evaluation Hub
+Future direction: debts, loans, mortgages, other obligations, and payment
+tracking.
 
 ---
 
-## Accounting Correctness
+# Phase 5 — True Net Worth & Wealth Intelligence
 
-- ✅ Deterministic Replay
-- ✅ NAV Conservation
-- ✅ Cash Preservation
-- ✅ Historical Regeneration
-- ✅ Replay Validation
-- ✅ Integration Consistency
+This is the first phase in which **Net Worth = Assets − Liabilities** becomes
+semantically valid. Future direction includes a household wealth view,
+historical net-worth evolution, emergency-fund intelligence, and cash-flow /
+wealth insight.
 
 ---
 
-# Phase 3 — Platform Evolution (in progress)
+# Phase 6 — Planning, Goals & Scenarios
 
-Lay the identity, valuation, and analytics groundwork the multi-asset
-platform stands on.
-
-## Asset Foundation
-
-- ✅ Asset Registry — permanent identity, adjudication, classification
-  consolidation, read-path adoption (completed 2026-07)
-- Registry-Native Integration — ledger references and optimizer internals
-  keyed to permanent identity
-- Asset Definitions
-- Asset Search
-- Corporate Actions
-
-## Market Intelligence
-
-- Multiple Price Providers — provider independence behind one boundary
-- Market Calendar
-- Historical Services
-
-## Portfolio Intelligence
-
-- Rolling Analytics — rolling return, Sharpe, volatility
-- Advanced Risk Metrics — including Sortino
-- Position Attribution
-- Sector Attribution Timeline
+Future direction includes goals, retirement, house or major purchases, FIRE /
+financial-independence planning, what-if scenarios, scenario comparison, and
+future probabilistic or Monte Carlo simulation.
 
 ---
 
-# Phase 4 — SaaS Platform
+# Phase 7 — AI Wealth Advisor
 
-Scale from a personal platform to a production SaaS.
-
-## Experience Platform — Multi-user
-
-- Multi-workspace
-- Team Accounts
-- RBAC
-
-## Experience Platform — Operations
-
-- Usage Reports
-- Credits
-- Billing
-- API Keys
-- Audit Logs
+Future direction includes natural-language wealth review, goal-aware
+recommendations, risk-aware coaching, and scenario-aware advice. Learning and
+evaluation remain constrained by the existing trust and configuration
+boundaries; current AI investment evaluation is not yet a whole-life Wealth
+Advisor.
 
 ---
 
-# Phase 5 — Personal Wealth Platform
+## Multi-Asset Investment Evolution
 
-Expand from portfolio management to complete wealth management.
+Investment instrument expansion is a parallel track that can proceed
+independently when prioritized. Candidate classes include ETFs, Mutual Funds,
+Gold, Crypto, and Property or other valued assets where the architecture
+supports them.
 
-## Asset Foundation — Asset Classes
+Asset-definition groundwork alone does not indicate complete user-facing
+support for a class. In particular, Mutual Funds are a separate multi-asset
+investment milestone, not part of Phase 2 Wealth Accounts.
 
-Each class arrives as an asset definition, never as engine surgery
-(constitution §9).
+## Asset Foundation Status
 
-- ✅ Stocks
-- ETFs
-- Mutual Funds
-- Gold
-- Crypto
-- Cash (multi-currency)
-- Property
-
-## Connectivity & Ingestion
-
-The doors through which a whole financial life enters
-(architected in [BROKER_ACCOUNT_DOMAIN.md](BROKER_ACCOUNT_DOMAIN.md)).
-
-- File & Statement Import
-- Broker Account Integration
-- Import Review & Reconciliation
-
-## Wealth Intelligence — Financial Planning
-
-- Net Worth
-- Income
-- Expenses
-- Budget
-- Cash Flow
-- Emergency Fund
-
-## Wealth Intelligence — Goals
-
-- Retirement
-- House
-- Wedding
-- Education
-- Vacation
-- FIRE
-
-## Wealth Intelligence — Wealth Planning
-
-- Debt Management
-- Tax Planning
-- Insurance Planning
-- Estate Planning
+**Asset Foundation is partially integrated platform infrastructure.** Canonical
+asset identity and asset definitions exist; nullable ledger identity links are
+live; selected read/write and guarded replay paths use registry identity.
+Registry-native adoption remains staged, and public asset search remains
+feature-flagged. Cash Accounts v1 intentionally does not use Asset Foundation
+as its ownership or balance model.
 
 ---
 
-# Phase 6 — Personal AI Wealth Advisor
+## Parallel Platform Evolution
 
-Transform the platform from dashboards into an intelligent financial partner.
+These platform capabilities can continue without redefining the active Wealth
+OS product phase:
 
-## Experience Platform — AI Experience
+- Registry-native adoption
+- Broader corporate-action support
+- Market-provider maturity and market calendar capabilities
+- Historical services
+- Advanced analytics and attribution
 
-- Daily Portfolio Brief
-- Natural Language Portfolio Review
-- Portfolio Copilot
+## Parallel SaaS / Commercialization Track
 
-## Decision Intelligence
-
-- Goal-aware Recommendations
-- Tax-aware Suggestions
-- Risk-aware Coaching
-- Scenario Simulation
-
-## Trust & Evaluation — Learning
-
-Learning consumes the evaluation record and changes future behavior only
-through the configuration gate (constitution §7.2).
-
-- Recommendation Learning
-- Confidence Calibration Learning
-- Strategy Performance Learning
-- Regime Learning
-- Model Evaluation & Auto Calibration
+SaaS operational widening is a future parallel track, not a mandatory
+predecessor to Personal Wealth development. Potential capabilities include
+multi-workspace support, team accounts, RBAC, usage reporting,
+credits/billing, API keys, and audit logs. These are not represented as
+complete product capabilities today.
 
 ---
 
 # Open Engineering Backlog
 
-These are important engineering improvements but are intentionally kept
-outside the roadmap phases: the roadmap tracks product capabilities;
-perpetual engineering quality work is tracked here
-([ENGINEERING_PRINCIPLES.md](../engineering/ENGINEERING_PRINCIPLES.md),
+These important engineering improvements remain outside product phase gates.
+The roadmap tracks product capabilities; perpetual engineering quality work is
+tracked here ([ENGINEERING_PRINCIPLES.md](../engineering/ENGINEERING_PRINCIPLES.md),
 "Capability vs. Quality").
 
 ## Accounting
 
 - STATIC_FROZEN fallback correction
-- Historical cash timeline fidelity
 
 ## Portfolio
 
-- Decision → Transaction linkage
+- Complete and expose Decision → Transaction linkage where coverage remains
+  incomplete
 - System-deferral pricing
 
 ## Analytics
 
 - Sector BHB attribution
-- Multi-portfolio analytics
+- Cross-portfolio exposure and allocation analysis
+- Total Assets History after external Cash Accounts have dated balance evidence
 
 ## Architecture
 
@@ -307,11 +205,24 @@ perpetual engineering quality work is tracked here
 
 ---
 
+## Historical Architecture Evolution Baseline
+
+The prior v2.0 roadmap recorded the 2026-07 architecture-era evolution:
+
+Portfolio Platform → Investment Intelligence → Multi-Asset Platform groundwork
+→ SaaS operational widening → Personal Wealth Platform → AI Wealth Advisor.
+
+It remains useful historical architectural context, but it is no longer the
+active product-delivery phase numbering. The product roadmap above preserves
+that intent while sequencing the Wealth OS capabilities from the completed
+Investment Core.
+
 # Governance
 
-This roadmap is an implementation-level artifact under the constitution's
-governance hierarchy ([platform_architecture.md](platform_architecture.md)
-§11). The platform's guiding principles are the constitution's laws (§4)
-and are deliberately not restated here. Where this document and the
-constitution appear to disagree, the constitution states the intent and
-this document states the schedule.
+This roadmap is an implementation-level product artifact under the
+constitution's governance hierarchy
+([platform_architecture.md](platform_architecture.md) §11). The constitution
+owns the platform's domains, boundaries, laws, and architectural evolution
+principles; this roadmap expresses product capability sequence, active
+delivery direction, and parallel tracks. Where they appear to disagree, the
+constitution states the intent and this document states the delivery plan.
