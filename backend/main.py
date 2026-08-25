@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import math
 import random
 import re
 from contextlib import asynccontextmanager
@@ -7,7 +8,7 @@ from datetime import datetime, timezone, timedelta
 from fastapi import FastAPI, HTTPException, Depends, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_ as sa_or
 
@@ -19,7 +20,7 @@ import uuid as _uuid
 from models.database import (
     init_db, migrate_legacy_data, get_db, SessionLocal,
     Workspace, get_default_workspace,
-    Portfolio, PortfolioItem, Watchlist,
+    Portfolio, PortfolioItem, CashAccount, Watchlist,
     AgentCache, AnalysisCache, AnalysisHistory, OptimizerHistory, SignalHistory,
     Settings, UserUsage, Transaction, PortfolioSnapshot, BenchmarkPrice,
     MarketDataCache,
@@ -547,6 +548,112 @@ def _enrich_holdings(
             "upside_reference_price": upside_price if is_dr else None,
         })
     return result
+
+
+# ─── Cash Accounts ────────────────────────────────────────────────────────────
+
+
+def _cash_account_payload(account: CashAccount) -> dict:
+    return {
+        "id": account.id,
+        "workspace_id": account.workspace_id,
+        "name": account.name,
+        "institution": account.institution,
+        "currency": account.currency,
+        "balance": account.balance,
+        "is_archived": account.is_archived,
+        "created_at": account.created_at.isoformat(),
+        "updated_at": account.updated_at.isoformat(),
+    }
+
+
+def _cash_account_or_404(db: Session, cash_account_id: int, workspace_id: int) -> CashAccount:
+    account = (
+        db.query(CashAccount)
+        .filter(CashAccount.id == cash_account_id, CashAccount.workspace_id == workspace_id)
+        .first()
+    )
+    if account is None:
+        raise HTTPException(status_code=404, detail="Cash account not found")
+    return account
+
+
+class CashAccountCreate(BaseModel):
+    name: str
+    currency: str
+    institution: str | None = None
+    balance: float = 0.0
+
+    @model_validator(mode="after")
+    def validate_cash_account(self):
+        if not self.name.strip():
+            raise ValueError("name must not be blank")
+        if self.currency != "THB":
+            raise ValueError("currency must be THB")
+        if not math.isfinite(self.balance) or self.balance < 0:
+            raise ValueError("balance must be finite and non-negative")
+        return self
+
+
+class CashAccountUpdate(BaseModel):
+    name: str | None = None
+    institution: str | None = None
+    balance: float | None = None
+    is_archived: bool | None = None
+
+    @model_validator(mode="after")
+    def validate_cash_account_update(self):
+        if not self.model_fields_set:
+            raise ValueError("at least one field is required")
+        if "name" in self.model_fields_set:
+            if self.name is None or not self.name.strip():
+                raise ValueError("name must not be blank")
+        if "balance" in self.model_fields_set:
+            if self.balance is None or not math.isfinite(self.balance) or self.balance < 0:
+                raise ValueError("balance must be finite and non-negative")
+        return self
+
+
+@app.get("/cash-accounts")
+async def list_cash_accounts(include_archived: bool = False, db: Session = Depends(get_db)) -> list[dict]:
+    ws = _ws_id(db)
+    query = db.query(CashAccount).filter(CashAccount.workspace_id == ws)
+    if not include_archived:
+        query = query.filter(CashAccount.is_archived.is_(False))
+    return [_cash_account_payload(account) for account in query.order_by(CashAccount.name, CashAccount.id).all()]
+
+
+@app.post("/cash-accounts", status_code=201)
+async def create_cash_account(body: CashAccountCreate, db: Session = Depends(get_db)) -> dict:
+    account = CashAccount(
+        workspace_id=_ws_id(db),
+        name=body.name.strip(),
+        institution=body.institution.strip() or None if body.institution is not None else None,
+        currency=body.currency,
+        balance=body.balance,
+    )
+    db.add(account)
+    db.commit()
+    db.refresh(account)
+    return _cash_account_payload(account)
+
+
+@app.patch("/cash-accounts/{cash_account_id}")
+async def update_cash_account(cash_account_id: int, body: CashAccountUpdate, db: Session = Depends(get_db)) -> dict:
+    account = _cash_account_or_404(db, cash_account_id, _ws_id(db))
+    fields = body.model_dump(exclude_unset=True)
+    if "name" in fields:
+        account.name = fields["name"].strip()
+    if "institution" in fields:
+        institution = fields["institution"]
+        account.institution = institution.strip() or None if institution is not None else None
+    if "balance" in fields:
+        account.balance = fields["balance"]
+    if "is_archived" in fields:
+        account.is_archived = fields["is_archived"]
+    db.commit()
+    db.refresh(account)
+    return _cash_account_payload(account)
 
 
 # ─── Portfolios ───────────────────────────────────────────────────────────────

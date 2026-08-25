@@ -47,6 +47,18 @@ export interface Portfolio {
   created_at: string;
 }
 
+export interface CashAccount {
+  id: number;
+  workspace_id: number;
+  name: string;
+  institution: string | null;
+  currency: "THB";
+  balance: number;
+  is_archived: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 export const updatePortfolioGoal = (portfolioId: number, goal: number | null) =>
   apiFetch<{ id: number; goal_target_value: number | null; ok: boolean }>(
     `/portfolios/${portfolioId}/goal`,
@@ -341,6 +353,31 @@ export const updatePortfolioCash = (id: number, cash_balance: number) =>
     method: "PATCH",
     body: JSON.stringify({ cash_balance }),
   });
+
+// ─── Cash Accounts ──────────────────────────────────────────────────────────
+
+export type CashAccountCreate = {
+  name: string;
+  currency: "THB";
+  institution?: string | null;
+  balance?: number;
+};
+
+export type CashAccountUpdate = {
+  name?: string;
+  institution?: string | null;
+  balance?: number;
+  is_archived?: boolean;
+};
+
+export const listCashAccounts = (includeArchived = false) =>
+  apiFetch<CashAccount[]>(`/cash-accounts${includeArchived ? "?include_archived=true" : ""}`);
+
+export const createCashAccount = (body: CashAccountCreate) =>
+  apiFetch<CashAccount>("/cash-accounts", { method: "POST", body: JSON.stringify(body) });
+
+export const updateCashAccount = (id: number, body: CashAccountUpdate) =>
+  apiFetch<CashAccount>(`/cash-accounts/${id}`, { method: "PATCH", body: JSON.stringify(body) });
 
 // ─── Holdings ────────────────────────────────────────────────────────────────
 

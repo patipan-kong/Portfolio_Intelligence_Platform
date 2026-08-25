@@ -66,6 +66,7 @@ class Workspace(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     portfolios = relationship("Portfolio", back_populates="workspace", cascade="all, delete-orphan")
+    cash_accounts = relationship("CashAccount", back_populates="workspace", cascade="all, delete-orphan")
     watchlist_items = relationship("Watchlist", back_populates="workspace", cascade="all, delete-orphan")
     settings = relationship("Settings", back_populates="workspace", cascade="all, delete-orphan")
     analysis_cache_items = relationship("AnalysisCache", back_populates="workspace", cascade="all, delete-orphan")
@@ -110,6 +111,29 @@ class Portfolio(Base):
     items = relationship("PortfolioItem", back_populates="portfolio", cascade="all, delete-orphan")
     transactions = relationship("Transaction", back_populates="portfolio", cascade="all, delete-orphan")
     snapshots = relationship("PortfolioSnapshot", back_populates="portfolio", cascade="all, delete-orphan")
+
+
+class CashAccount(Base):
+    """A workspace-owned external cash balance, independent from portfolios."""
+    __tablename__ = "cash_accounts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    institution = Column(String, nullable=True)
+    currency = Column(String(3), nullable=False, default="THB")
+    balance = Column(Float, nullable=False, default=0.0)
+    is_archived = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    workspace = relationship("Workspace", back_populates="cash_accounts")
+
+    __table_args__ = (
+        CheckConstraint("currency = 'THB'", name="ck_cash_accounts_currency_thb"),
+        CheckConstraint("balance >= 0", name="ck_cash_accounts_balance_nonnegative"),
+        Index("ix_cash_accounts_workspace_archived", "workspace_id", "is_archived"),
+    )
 
 
 class PortfolioItem(Base):

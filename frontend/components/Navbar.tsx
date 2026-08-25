@@ -19,6 +19,7 @@ const NAV_MAIN: { label: string; href: string; match: string[] }[] = [
     href: "/portfolio",
     match: ["/portfolio", "/performance", "/analytics", "/stock"],
   },
+  { label: "บัญชีเงินสด", href: "/cash", match: ["/cash"] },
   { label: "รายการเฝ้าดู", href: "/watchlist", match: ["/watchlist"] },
   {
     label: "ศูนย์บัญชาการ AI",
