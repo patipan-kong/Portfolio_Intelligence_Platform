@@ -1,16 +1,18 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import DashboardPage from "@/app/page";
-import type { Portfolio, PortfolioItem, PriceRefreshItem, TransactionRecord, PortfolioSnapshotRow } from "@/lib/api";
+import type { CashAccount, Portfolio, PortfolioItem, PriceRefreshItem, TransactionRecord, PortfolioSnapshotRow } from "@/lib/api";
 
-const { getHoldings, getPortfolioPrices, getTransactionHistory, getSnapshots, portfolioState } = vi.hoisted(() => ({
+const { getHoldings, getPortfolioPrices, getTransactionHistory, getSnapshots, listCashAccounts, portfolioState } = vi.hoisted(() => ({
   getHoldings: vi.fn(),
   getPortfolioPrices: vi.fn(),
   getTransactionHistory: vi.fn(),
   getSnapshots: vi.fn(),
+  listCashAccounts: vi.fn(),
   portfolioState: {
     portfolios: [] as Portfolio[],
     loading: false,
+    error: null as string | null,
   },
 }));
 
@@ -19,6 +21,7 @@ vi.mock("@/lib/api", () => ({
   getPortfolioPrices,
   getTransactionHistory,
   getSnapshots,
+  listCashAccounts,
 }));
 
 vi.mock("@/lib/PortfolioContext", () => ({
@@ -53,6 +56,21 @@ function makePortfolio(id: number, cash_balance = 0): Portfolio {
     name: `Portfolio ${id}`,
     cash_balance,
     created_at: "2026-01-01T00:00:00Z",
+  };
+}
+
+function makeCashAccount(id: number, balance: number, overrides: Partial<CashAccount> = {}): CashAccount {
+  return {
+    id,
+    workspace_id: 1,
+    name: `Cash ${id}`,
+    institution: null,
+    currency: "THB",
+    balance,
+    is_archived: false,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    ...overrides,
   };
 }
 
@@ -169,8 +187,11 @@ beforeEach(() => {
   getTransactionHistory.mockResolvedValue([]);
   getSnapshots.mockReset();
   getSnapshots.mockResolvedValue([]);
+  listCashAccounts.mockReset();
+  listCashAccounts.mockResolvedValue([]);
   portfolioState.portfolios = [];
   portfolioState.loading = false;
+  portfolioState.error = null;
 });
 
 describe("Dashboard pricing", () => {
@@ -252,11 +273,11 @@ describe("Dashboard pricing", () => {
 
     // Wealth Overview reflects only the portfolio it could load — the
     // broken one's much larger value is never silently counted as 0. Both
-    // the Total Wealth card and the healthy portfolio's own card read
-    // 110.00, since it's the only portfolio counted in the total. Wait for
-    // the live price (Phase 2) to land, not just holdings (Phase 1).
-    await waitFor(() => expect(screen.getAllByText("฿110.00").length).toBe(2));
-    expect(screen.getByText(/Excludes 1 portfolio that failed to load/)).toBeInTheDocument();
+    // The healthy portfolio card still shows its known value, but the current
+    // Investment Assets/Total Assets headline remains unavailable because one
+    // required portfolio failed. Wait for the live price phase to settle.
+    await waitFor(() => expect(screen.getAllByText("฿110.00").length).toBe(1));
+    expect(screen.getByText(/Investment Assets unavailable/)).toBeInTheDocument();
   });
 
   test("marks a tile with a stale-price indicator when its live quote came from an expired-cache fallback", async () => {
@@ -288,6 +309,164 @@ describe("Dashboard pricing", () => {
 
     await waitFor(() => expect(screen.getByRole("link", { name: /AAA/ })).toHaveTextContent("+25.00%"));
     expect(screen.getByRole("link", { name: /AAA/ })).not.toHaveAttribute("title");
+  });
+});
+
+describe("Dashboard current assets and external cash", () => {
+  test("fetches active cash accounts and adds external cash exactly once", async () => {
+    const portfolio = makePortfolio(1, 100);
+    portfolioState.portfolios = [portfolio];
+    getHoldings.mockResolvedValue([makeHolding(portfolio.id, 1, "AAA")]);
+    getPortfolioPrices.mockResolvedValue([makeQuote("AAA", 900, 800)]);
+    listCashAccounts.mockResolvedValue([makeCashAccount(1, 200)]);
+
+    render(<DashboardPage />);
+
+    await waitFor(() => expect(screen.getByText("฿1,200.00")).toBeInTheDocument());
+    expect(listCashAccounts).toHaveBeenCalledWith(false);
+    expect(screen.getByText("Investment Assets")).toBeInTheDocument();
+    expect(screen.getByText("Cash")).toBeInTheDocument();
+    expect(screen.getByText("Total Assets")).toBeInTheDocument();
+    expect(screen.getByText("฿200.00")).toBeInTheDocument();
+    // Portfolio brokerage cash is already part of Investment Assets (100 + 900).
+    expect(screen.queryByText("฿1,300.00")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Manage Cash Accounts/ })).toHaveAttribute("href", "/cash");
+  });
+
+  test("zero external cash keeps Total Assets equal to Investment Assets", async () => {
+    const portfolio = makePortfolio(1, 100);
+    portfolioState.portfolios = [portfolio];
+    getHoldings.mockResolvedValue([makeHolding(portfolio.id, 1, "AAA")]);
+    getPortfolioPrices.mockResolvedValue([makeQuote("AAA", 900, 800)]);
+    listCashAccounts.mockResolvedValue([]);
+
+    render(<DashboardPage />);
+
+    await waitFor(() => expect(screen.getAllByText("฿1,000.00").length).toBeGreaterThanOrEqual(2));
+    expect(screen.getByText("฿0.00")).toBeInTheDocument();
+    expect(screen.queryByText("฿1,200.00")).not.toBeInTheDocument();
+  });
+
+  test("no portfolios is a valid empty Investment Core and cash becomes the total", async () => {
+    portfolioState.portfolios = [];
+    listCashAccounts.mockResolvedValue([makeCashAccount(1, 350)]);
+
+    render(<DashboardPage />);
+
+    await waitFor(() => expect(screen.getAllByText("฿350.00").length).toBe(2));
+    expect(screen.getByText("฿0.00")).toBeInTheDocument();
+    expect(screen.getByText(/No portfolios yet/)).toBeInTheDocument();
+    expect(screen.queryByText("Unavailable")).not.toBeInTheDocument();
+  });
+
+  test("archived cash rows never contribute to Total Assets", async () => {
+    const portfolio = makePortfolio(1, 100);
+    portfolioState.portfolios = [portfolio];
+    getHoldings.mockResolvedValue([makeHolding(portfolio.id, 1, "AAA")]);
+    getPortfolioPrices.mockResolvedValue([makeQuote("AAA", 900, 800)]);
+    listCashAccounts.mockResolvedValue([
+      makeCashAccount(1, 200),
+      makeCashAccount(2, 999, { is_archived: true }),
+    ]);
+
+    render(<DashboardPage />);
+
+    await waitFor(() => expect(screen.getByText("฿1,200.00")).toBeInTheDocument());
+    expect(screen.queryByText("฿2,199.00")).not.toBeInTheDocument();
+  });
+
+  test("cash failure shows known investment assets but prevents a Total Assets claim", async () => {
+    const portfolio = makePortfolio(1, 100);
+    portfolioState.portfolios = [portfolio];
+    getHoldings.mockResolvedValue([makeHolding(portfolio.id, 1, "AAA")]);
+    getPortfolioPrices.mockResolvedValue([makeQuote("AAA", 900, 800)]);
+    listCashAccounts.mockRejectedValue(new Error("cash backend unavailable"));
+
+    render(<DashboardPage />);
+
+    await waitFor(() => expect(screen.getByText(/Cash Accounts unavailable — Total Assets cannot be calculated/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getAllByText("฿1,000.00").length).toBeGreaterThanOrEqual(2));
+    expect(screen.getAllByText("Unavailable").length).toBe(2);
+    expect(screen.queryByText("฿1,200.00")).not.toBeInTheDocument();
+  });
+
+  test("investment failure shows known cash but prevents a Total Assets claim", async () => {
+    const portfolio = makePortfolio(1, 100);
+    portfolioState.portfolios = [portfolio];
+    getHoldings.mockRejectedValue(new Error("investment backend unavailable"));
+    getPortfolioPrices.mockResolvedValue([]);
+    listCashAccounts.mockResolvedValue([makeCashAccount(1, 200)]);
+
+    render(<DashboardPage />);
+
+    await waitFor(() => expect(screen.getByText(/Investment Assets unavailable/)).toBeInTheDocument());
+    expect(screen.getByText("฿200.00")).toBeInTheDocument();
+    expect(screen.getAllByText("Unavailable").length).toBe(2);
+    expect(screen.queryByText("฿200.00")).not.toBeNull();
+  });
+
+  test("malformed non-THB cash is not silently summed", async () => {
+    const portfolio = makePortfolio(1, 100);
+    portfolioState.portfolios = [portfolio];
+    getHoldings.mockResolvedValue([makeHolding(portfolio.id, 1, "AAA")]);
+    getPortfolioPrices.mockResolvedValue([makeQuote("AAA", 900, 800)]);
+    listCashAccounts.mockResolvedValue([
+      makeCashAccount(1, 200, { currency: "USD" as CashAccount["currency"] }),
+    ]);
+
+    render(<DashboardPage />);
+
+    await waitFor(() => expect(screen.getByText(/Cash Accounts unavailable — Total Assets cannot be calculated/)).toBeInTheDocument());
+    expect(screen.queryByText("฿1,200.00")).not.toBeInTheDocument();
+    expect(screen.queryByText("฿200.00")).not.toBeInTheDocument();
+  });
+
+  test("Cash Accounts do not alter investment history or combined performance", async () => {
+    const portfolio = makePortfolio(1, 0);
+    portfolioState.portfolios = [portfolio];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    listCashAccounts.mockResolvedValue([makeCashAccount(1, 999)]);
+    getSnapshots.mockResolvedValue([
+      perfSnapshot(portfolio.id, "2026-06-01", { beginningNav: 1000, gain: 100 }),
+      perfSnapshot(portfolio.id, "2026-06-02", { beginningNav: 1100, gain: 0 }),
+    ]);
+
+    render(<DashboardPage />);
+
+    await waitFor(() => expect(screen.getByTestId("wealth-history-chart")).toBeInTheDocument());
+    expect(screen.getByText("Investment Wealth History")).toBeInTheDocument();
+    expect(screen.getByTestId("wealth-history-chart")).toHaveTextContent("2026-06-01=1100");
+    expect(screen.getByText("+10.00%")).toBeInTheDocument();
+    expect(screen.queryByText("฿2,099.00")).not.toBeInTheDocument();
+  });
+
+  test("a late cash response cannot overwrite a newer context fetch", async () => {
+    const first = makePortfolio(1);
+    const second = makePortfolio(2);
+    const firstCash = deferred<CashAccount[]>();
+    const secondCash = deferred<CashAccount[]>();
+
+    portfolioState.portfolios = [first];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    listCashAccounts
+      .mockImplementationOnce(() => firstCash.promise)
+      .mockImplementationOnce(() => secondCash.promise);
+
+    const view = render(<DashboardPage />);
+    await waitFor(() => expect(listCashAccounts).toHaveBeenCalledWith(false));
+
+    portfolioState.portfolios = [second];
+    view.rerender(<DashboardPage />);
+    await waitFor(() => expect(listCashAccounts).toHaveBeenCalledTimes(2));
+
+    await act(async () => { secondCash.resolve([makeCashAccount(2, 200)]); });
+    await waitFor(() => expect(screen.getAllByText("฿200.00").length).toBe(2));
+
+    await act(async () => { firstCash.resolve([makeCashAccount(1, 999)]); });
+    expect(screen.getAllByText("฿200.00").length).toBe(2);
+    expect(screen.queryByText("฿999.00")).not.toBeInTheDocument();
   });
 });
 
@@ -467,7 +646,7 @@ describe("Cross-portfolio wealth history", () => {
     render(<DashboardPage />);
 
     await waitFor(() =>
-      expect(screen.getByText(/Wealth history will appear after portfolio snapshots are recorded/)).toBeInTheDocument()
+      expect(screen.getByText(/Investment wealth history will appear after portfolio snapshots are recorded/)).toBeInTheDocument()
     );
   });
 
@@ -557,10 +736,11 @@ describe("Cross-portfolio investment performance", () => {
     render(<DashboardPage />);
 
     await waitFor(() => expect(screen.getByText("Investment Performance")).toBeInTheDocument());
-    expect(screen.getByText("Wealth History")).toBeInTheDocument();
+    expect(screen.getByText("Investment Wealth History")).toBeInTheDocument();
     expect(screen.getByText("Value Change vs Previous Point")).toBeInTheDocument();
     expect(screen.queryByText(/Return vs Previous Point/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/SET|Benchmark/i)).not.toBeInTheDocument();
+    expect(screen.queryByText("SET")).not.toBeInTheDocument();
+    expect(screen.queryByText("Benchmark")).not.toBeInTheDocument();
   });
 
   test("incomplete coverage across portfolios is disclosed and excluded from the combined return", async () => {

@@ -53,7 +53,7 @@ export default function CrossPortfolioWealthHistory({
   return (
     <section className="space-y-3">
       <div className="flex items-center justify-between">
-        <h2 className="text-base font-semibold text-gray-500 uppercase tracking-wide">Wealth History</h2>
+        <h2 className="text-base font-semibold text-gray-500 uppercase tracking-wide">Investment Wealth History</h2>
         <Link href="/performance" className="text-xs text-blue-600 hover:text-blue-800 font-medium">
           View Performance →
         </Link>
@@ -61,7 +61,7 @@ export default function CrossPortfolioWealthHistory({
 
       {!summary.hasAnySnapshots ? (
         <div className="bg-white border rounded-xl p-6 shadow-sm text-center space-y-1">
-          <p className="text-sm text-gray-500">Wealth history will appear after portfolio snapshots are recorded.</p>
+          <p className="text-sm text-gray-500">Investment wealth history will appear after portfolio snapshots are recorded.</p>
           {summary.anyFailed && (
             <p className="text-xs text-red-500">
               Excludes {failedCount} portfolio{failedCount === 1 ? "" : "s"} that failed to load.
@@ -71,7 +71,7 @@ export default function CrossPortfolioWealthHistory({
       ) : !summary.latest ? (
         <div className="bg-white border rounded-xl p-6 shadow-sm text-center space-y-1">
           <p className="text-sm text-gray-500">
-            No date yet has a complete snapshot across all your portfolios — wealth history will appear once one does.
+            No date yet has a complete snapshot across all your portfolios — investment wealth history will appear once one does.
           </p>
           {summary.anyFailed && (
             <p className="text-xs text-red-500">
@@ -83,7 +83,7 @@ export default function CrossPortfolioWealthHistory({
         <div className="bg-white border rounded-xl p-5 shadow-sm space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Latest Combined Wealth</p>
+              <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Latest Combined Investment Wealth</p>
               <p className="text-2xl font-bold text-gray-800">฿{fmtTHB(summary.latest.totalValue)}</p>
               <p className="text-xs text-gray-400 mt-0.5">as of {fullDate(summary.latest.date)}</p>
             </div>
@@ -121,8 +121,8 @@ export default function CrossPortfolioWealthHistory({
       <div className="bg-white border rounded-xl p-5 shadow-sm space-y-3">
         <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Investment Performance</h3>
         <p className="text-xs text-gray-400">
-          Cash-flow-adjusted return across your portfolios — excludes deposits, withdrawals, and imported positions.
-          Distinct from the wealth value change above.
+          Cash-flow-adjusted investment return across your portfolios — excludes deposits, withdrawals, and imported positions.
+          Distinct from the investment wealth value change above; external Cash Accounts are not included.
         </p>
 
         {!performance.hasAnySnapshots ? (

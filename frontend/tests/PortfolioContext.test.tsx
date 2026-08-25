@@ -69,6 +69,14 @@ describe("PortfolioContext hydration", () => {
     expect(result.current.currentSelection).toBeNull();
     expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
   });
+
+  test("portfolio list failure exposes an error distinct from a valid empty list", async () => {
+    listPortfolios.mockRejectedValueOnce(new Error("backend unavailable"));
+    const view = renderHook(() => usePortfolio(), { wrapper: PortfolioProvider });
+    await waitFor(() => expect(view.result.current.loading).toBe(false));
+    expect(view.result.current.portfolios).toEqual([]);
+    expect(view.result.current.error).toBe("Cannot load portfolios");
+  });
 });
 
 describe("PortfolioContext explicit selection transitions", () => {

@@ -37,6 +37,8 @@ interface PortfolioContextValue {
   deletePortfolio: (id: number) => Promise<void>;
   refreshPortfolios: () => Promise<void>;
   loading: boolean;
+  /** Non-null when the workspace portfolio list could not be loaded. */
+  error: string | null;
 }
 
 const PortfolioContext = createContext<PortfolioContextValue | null>(null);
@@ -66,11 +68,14 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
   const [portfolios, setPortfolios] = useState<Portfolio[]>([]);
   const [activeId, setActiveIdState] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    setError(null);
     listPortfolios()
       .then((list) => {
         setPortfolios(list);
+        setError(null);
         const saved = readPersistedSelection();
         const resolved = resolvePortfolioReference(list, saved);
         if (resolved === null) {
@@ -83,7 +88,10 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
           setActiveIdState(resolved.id);
         }
       })
-      .catch(() => {})
+      .catch(() => {
+        setPortfolios([]);
+        setError("Cannot load portfolios");
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -127,6 +135,7 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
     listPortfolios()
       .then((list) => {
         setPortfolios(list);
+        setError(null);
         setActiveIdState((prev) => {
           if (prev !== id) return prev;
           if (resolvePortfolioReference(list, prev) !== null) return prev;
@@ -158,6 +167,7 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
   const refreshPortfolios = useCallback(async (): Promise<void> => {
     const list = await listPortfolios();
     setPortfolios(list);
+    setError(null);
   }, []);
 
   return (
@@ -173,6 +183,7 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
         deletePortfolio,
         refreshPortfolios,
         loading,
+        error,
       }}
     >
       {children}

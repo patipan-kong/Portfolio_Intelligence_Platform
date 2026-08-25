@@ -1,7 +1,7 @@
 import { describe, test, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import WealthOverview from "@/components/WealthOverview";
-import type { Portfolio, PortfolioItem, PriceRefreshItem } from "@/lib/api";
+import type { CashAccount, Portfolio, PortfolioItem, PriceRefreshItem } from "@/lib/api";
 
 const { selectPortfolio } = vi.hoisted(() => ({
   selectPortfolio: vi.fn(),
@@ -42,6 +42,21 @@ function makeQuote(symbol: string, current: number): PriceRefreshItem {
   return { symbol, current_price: current, previous_close: current, change_percent: 0, last_updated: null };
 }
 
+function makeCashAccount(id: number, balance: number, overrides: Partial<CashAccount> = {}): CashAccount {
+  return {
+    id,
+    workspace_id: 1,
+    name: `Cash ${id}`,
+    institution: null,
+    currency: "THB",
+    balance,
+    is_archived: false,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   selectPortfolio.mockReset();
 });
@@ -76,7 +91,7 @@ describe("WealthOverview", () => {
     expect(screen.getByRole("link", { name: /Create your first portfolio/ })).toHaveAttribute("href", "/portfolio");
   });
 
-  test("shows combined total wealth and correct per-portfolio cash/holdings breakdown", () => {
+  test("shows investment assets and correct per-portfolio brokerage cash/holdings breakdown", () => {
     const portfolios = [makePortfolio(1, "Growth", 1000), makePortfolio(2, "Income", 500)];
     const holdingsMap = {
       1: [makeHolding({ symbol: "AAA", shares: 10, avg_cost: 50 })],
@@ -98,13 +113,14 @@ describe("WealthOverview", () => {
       />
     );
 
-    // Total: (1000 + 600) + (500 + 125) = 2225.00
-    expect(screen.getByText("฿2,225.00")).toBeInTheDocument();
+    // Investment Assets: (1000 + 600) + (500 + 125) = 2225.00.
+    // With no external accounts, Total Assets is the same value.
+    expect(screen.getAllByText("฿2,225.00")).toHaveLength(2);
     // Growth card total: 1600.00
     expect(screen.getByText("฿1,600.00")).toBeInTheDocument();
     // Income card total: 625.00
     expect(screen.getByText("฿625.00")).toBeInTheDocument();
-    // Share of wealth: 1600/2225 = 71.9%, 625/2225 = 28.1%
+    // Share of investment assets: 1600/2225 = 71.9%, 625/2225 = 28.1%
     expect(screen.getByText("71.9%")).toBeInTheDocument();
     expect(screen.getByText("28.1%")).toBeInTheDocument();
   });
@@ -121,9 +137,9 @@ describe("WealthOverview", () => {
         loading={false}
       />
     );
-    // Total Wealth card, the portfolio card's total, and its Cash line all
-    // read 900.00 since holdings value is 0 (cash accounts for the whole total).
-    expect(screen.getAllByText("฿900.00").length).toBe(3);
+    // Investment Assets, Total Assets, portfolio total, and brokerage cash all
+    // read 900.00 since holdings value is 0.
+    expect(screen.getAllByText("฿900.00").length).toBe(4);
     expect(screen.getByText("100.0%")).toBeInTheDocument();
   });
 
@@ -144,10 +160,10 @@ describe("WealthOverview", () => {
     );
 
     // Total excludes the broken portfolio's (much larger) unknown value.
-    // Both the Total Wealth card and Good's own card total read 110.00,
-    // since Good is the only portfolio counted in the total.
-    expect(screen.getAllByText("฿110.00").length).toBe(2);
-    expect(screen.getByText(/Excludes 1 portfolio that failed to load/)).toBeInTheDocument();
+    // Investment Assets is unavailable while one portfolio is failed; only
+    // the healthy portfolio card shows its known 110.00 value.
+    expect(screen.getAllByText("฿110.00").length).toBe(1);
+    expect(screen.getByText(/Investment Assets unavailable/)).toBeInTheDocument();
     expect(screen.getByText(/Unable to load holdings/)).toBeInTheDocument();
     // The healthy portfolio is unaffected.
     expect(screen.getByText("Good")).toBeInTheDocument();
@@ -248,5 +264,70 @@ describe("WealthOverview", () => {
     );
 
     expect(screen.queryByText(/live fetch was unavailable/)).not.toBeInTheDocument();
+  });
+
+  test("adds active external cash once and exposes the cash management link", () => {
+    const portfolios = [makePortfolio(1, "Growth", 1000)];
+    const holdingsMap = { 1: [makeHolding({ symbol: "AAA", shares: 10, avg_cost: 50 })] };
+    const priceMap = { 1: [makeQuote("AAA", 60)] };
+
+    render(
+      <WealthOverview
+        portfolios={portfolios}
+        holdingsMap={holdingsMap}
+        priceMap={priceMap}
+        holdingsFailedMap={{}}
+        pricesLoaded
+        loading={false}
+        cashAccounts={[makeCashAccount(1, 200)]}
+        cashStatus="success"
+      />
+    );
+
+    // Investment Assets already includes the portfolio's 1,000 brokerage cash
+    // and 600 market value; only the standalone 200 is added here.
+    expect(screen.getAllByText("฿1,600.00").length).toBeGreaterThan(0);
+    expect(screen.getByText("฿200.00")).toBeInTheDocument();
+    expect(screen.getByText("฿1,800.00")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Manage Cash Accounts/ })).toHaveAttribute("href", "/cash");
+  });
+
+  test("cash failure shows known investment assets but no total assets number", () => {
+    const portfolios = [makePortfolio(1, "Growth", 1000)];
+    render(
+      <WealthOverview
+        portfolios={portfolios}
+        holdingsMap={{ 1: [] }}
+        priceMap={{}}
+        holdingsFailedMap={{}}
+        pricesLoaded
+        loading={false}
+        cashStatus="error"
+      />
+    );
+
+    expect(screen.getByText("Investment Assets")).toBeInTheDocument();
+    expect(screen.getAllByText("฿1,000.00").length).toBeGreaterThan(0);
+    expect(screen.getByText(/Cash Accounts unavailable — Total Assets cannot be calculated/)).toBeInTheDocument();
+    expect(screen.getAllByText("Unavailable").length).toBe(2);
+  });
+
+  test("empty investment core plus valid cash produces a cash-only total", () => {
+    render(
+      <WealthOverview
+        portfolios={[]}
+        holdingsMap={{}}
+        priceMap={{}}
+        holdingsFailedMap={{}}
+        pricesLoaded={false}
+        loading={false}
+        cashAccounts={[makeCashAccount(1, 350)]}
+        cashStatus="success"
+      />
+    );
+
+    expect(screen.getByText("฿0.00")).toBeInTheDocument();
+    expect(screen.getAllByText("฿350.00")).toHaveLength(2);
+    expect(screen.getByText(/No portfolios yet/)).toBeInTheDocument();
   });
 });

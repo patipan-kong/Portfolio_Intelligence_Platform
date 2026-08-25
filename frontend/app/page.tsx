@@ -3,8 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePortfolio } from "@/lib/PortfolioContext";
-import { getHoldings, getPortfolioPrices, getTransactionHistory, getSnapshots } from "@/lib/api";
-import type { Portfolio, PortfolioItem, PriceRefreshItem, TransactionRecord, PortfolioSnapshotRow } from "@/lib/api";
+import { getHoldings, getPortfolioPrices, getTransactionHistory, getSnapshots, listCashAccounts } from "@/lib/api";
+import type { CashAccount, Portfolio, PortfolioItem, PriceRefreshItem, TransactionRecord, PortfolioSnapshotRow } from "@/lib/api";
+import type { AssetLoadStatus } from "@/lib/totalAssets";
 import WealthOverview from "@/components/WealthOverview";
 import CrossPortfolioIncome from "@/components/CrossPortfolioIncome";
 import CrossPortfolioWealthHistory from "@/components/CrossPortfolioWealthHistory";
@@ -154,7 +155,7 @@ function DashboardHeatmap({
 }
 
 export default function DashboardPage() {
-  const { portfolios, loading: ctxLoading } = usePortfolio();
+  const { portfolios, loading: ctxLoading, error: portfolioError } = usePortfolio();
   const [holdingsMap, setHoldingsMap] = useState<Record<number, PortfolioItem[]>>({});
   const [holdingsFailedMap, setHoldingsFailedMap] = useState<Record<number, boolean>>({});
   const [priceMap, setPriceMap] = useState<Record<number, PriceRefreshItem[]>>({});
@@ -169,6 +170,12 @@ export default function DashboardPage() {
   const holdingsRequestIdRef = useRef(0);
   const priceRequestIdRef = useRef(0);
 
+  // External cash is an independent dashboard phase. It intentionally does
+  // not enter PortfolioContext or any investment loading/error state.
+  const [cashAccounts, setCashAccounts] = useState<CashAccount[]>([]);
+  const [cashStatus, setCashStatus] = useState<AssetLoadStatus>("loading");
+  const cashRequestIdRef = useRef(0);
+
   // Dividend income aggregation — independent of holdings/prices, so it runs
   // as its own phase rather than gating on (or being gated by) Phase 1/2.
   const [transactionsMap, setTransactionsMap] = useState<Record<number, TransactionRecord[]>>({});
@@ -182,6 +189,31 @@ export default function DashboardPage() {
   const [snapshotsFailedMap, setSnapshotsFailedMap] = useState<Record<number, boolean>>({});
   const [loadingSnapshots, setLoadingSnapshots] = useState(false);
   const snapshotsRequestIdRef = useRef(0);
+
+  // Cash phase — active accounts only. The request id and effect cleanup keep
+  // a response from an abandoned portfolio/context state from overwriting the
+  // current dashboard's cash state.
+  useEffect(() => {
+    const requestId = ++cashRequestIdRef.current;
+    let active = true;
+    setCashStatus("loading");
+    setCashAccounts([]);
+
+    listCashAccounts(false)
+      .then((accounts) => {
+        if (!active || cashRequestIdRef.current !== requestId) return;
+        setCashAccounts(accounts);
+        setCashStatus("success");
+      })
+      .catch((reason) => {
+        if (!active || cashRequestIdRef.current !== requestId) return;
+        console.error("Failed to load cash accounts:", reason);
+        setCashAccounts([]);
+        setCashStatus("error");
+      });
+
+    return () => { active = false; };
+  }, [portfolios, ctxLoading, portfolioError]);
 
   // Phase 1: load holdings from DB (fast, no yfinance)
   useEffect(() => {
@@ -367,6 +399,7 @@ export default function DashboardPage() {
       <section>
         <h1 className="text-2xl font-bold mb-1">Wealth Overview</h1>
         {error && <p className="mt-2 text-sm text-red-500">{error}</p>}
+        {portfolioError && <p className="mt-2 text-sm text-red-500">{portfolioError}</p>}
       </section>
 
       <WealthOverview
@@ -376,6 +409,9 @@ export default function DashboardPage() {
         holdingsFailedMap={holdingsFailedMap}
         pricesLoaded={pricesLoaded}
         loading={isLoading}
+        cashAccounts={cashAccounts}
+        cashStatus={cashStatus}
+        portfolioLoadError={portfolioError}
       />
 
       <CrossPortfolioIncome
