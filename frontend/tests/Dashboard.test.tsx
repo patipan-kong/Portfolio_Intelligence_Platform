@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import DashboardPage from "@/app/page";
-import type { CashAccount, CashAccountBalanceAsOf, Liability, Portfolio, PortfolioItem, PriceRefreshItem, TransactionRecord, PortfolioSnapshotRow } from "@/lib/api";
+import type { CashAccount, CashAccountBalanceAsOf, Liability, LiabilityBalanceAsOf, Portfolio, PortfolioItem, PriceRefreshItem, TransactionRecord, PortfolioSnapshotRow } from "@/lib/api";
 
 const {
   getHoldings,
@@ -11,6 +11,7 @@ const {
   listCashAccounts,
   listLiabilities,
   getCashAccountBalanceAsOf,
+  getLiabilityBalanceAsOf,
   portfolioState,
 } = vi.hoisted(() => ({
   getHoldings: vi.fn(),
@@ -20,6 +21,7 @@ const {
   listCashAccounts: vi.fn(),
   listLiabilities: vi.fn(),
   getCashAccountBalanceAsOf: vi.fn(),
+  getLiabilityBalanceAsOf: vi.fn(),
   portfolioState: {
     portfolios: [] as Portfolio[],
     loading: false,
@@ -35,6 +37,7 @@ vi.mock("@/lib/api", () => ({
   listCashAccounts,
   listLiabilities,
   getCashAccountBalanceAsOf,
+  getLiabilityBalanceAsOf,
 }));
 
 vi.mock("@/lib/PortfolioContext", () => ({
@@ -201,6 +204,16 @@ function cashAsOf(accountId: number, date: string, balance: number | null, avail
   };
 }
 
+function liabilityAsOf(liabilityId: number, date: string, balance: number | null, available = balance !== null): LiabilityBalanceAsOf {
+  return {
+    liability_id: liabilityId,
+    date,
+    currency: "THB",
+    balance,
+    available,
+  };
+}
+
 function dividend(portfolioId: number, id: number, amount: number, date = "2026-06-01T00:00:00Z"): TransactionRecord {
   return {
     id,
@@ -237,6 +250,10 @@ beforeEach(() => {
   // CashAccounts AND Investment Wealth History dates at the same time —
   // otherwise the bounded (account x date) fan-out never fires at all.
   getCashAccountBalanceAsOf.mockResolvedValue(cashAsOf(0, "", null, false));
+  getLiabilityBalanceAsOf.mockReset();
+  // Same rationale as getCashAccountBalanceAsOf's default above, for the
+  // Liability As-Of fan-out.
+  getLiabilityBalanceAsOf.mockResolvedValue(liabilityAsOf(0, "", null, false));
   portfolioState.portfolios = [];
   portfolioState.loading = false;
   portfolioState.error = null;
@@ -487,9 +504,10 @@ describe("Dashboard current assets and external cash", () => {
 
     render(<DashboardPage />);
 
-    await waitFor(() => expect(screen.getByTestId("wealth-history-chart")).toBeInTheDocument());
-    expect(screen.getByText("Investment Wealth History")).toBeInTheDocument();
-    expect(screen.getByTestId("wealth-history-chart")).toHaveTextContent("2026-06-01=1100");
+    await waitFor(() => {
+      const investmentSection = screen.getByText("Investment Wealth History").closest("section")!;
+      expect(within(investmentSection).getByTestId("wealth-history-chart")).toHaveTextContent("2026-06-01=1100");
+    });
     expect(screen.getByText("+10.00%")).toBeInTheDocument();
     expect(screen.queryByText("฿2,099.00")).not.toBeInTheDocument();
   });
@@ -670,16 +688,23 @@ describe("Dashboard current liabilities", () => {
     portfolioState.portfolios = [first];
     getHoldings.mockResolvedValue([]);
     getPortfolioPrices.mockResolvedValue([]);
-    listLiabilities
-      .mockImplementationOnce(() => firstLiabilities.promise)
-      .mockImplementationOnce(() => secondLiabilities.promise);
+    // Two call sites now share listLiabilities: this test's own active-only
+    // phase (false) and Total Liabilities History's archived-inclusive phase
+    // (true) — the latter is not this test's concern, so it resolves
+    // immediately while the active-only calls are sequenced as before.
+    let activeOnlyCallCount = 0;
+    listLiabilities.mockImplementation((includeArchived: boolean) => {
+      if (includeArchived) return Promise.resolve([]);
+      activeOnlyCallCount += 1;
+      return activeOnlyCallCount === 1 ? firstLiabilities.promise : secondLiabilities.promise;
+    });
 
     const view = render(<DashboardPage />);
     await waitFor(() => expect(listLiabilities).toHaveBeenCalledWith(false));
 
     portfolioState.portfolios = [second];
     view.rerender(<DashboardPage />);
-    await waitFor(() => expect(listLiabilities).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(activeOnlyCallCount).toBe(2));
 
     await act(async () => { secondLiabilities.resolve([makeLiability(2, 200)]); });
     await waitFor(() => expect(screen.getByText("฿200.00")).toBeInTheDocument());
@@ -1154,6 +1179,218 @@ describe("Total Assets History (Phase 5, Milestone 1)", () => {
       const investmentSection = screen.getByText("Investment Wealth History").closest("section")!;
       expect(within(investmentSection).getByText("฿500,000.00")).toBeInTheDocument();
       expect(within(investmentSection).queryByText(/999,999|1,499,999/)).not.toBeInTheDocument();
+    });
+  });
+});
+
+describe("Total Liabilities History (Phase 5, Milestone 2)", () => {
+  test("renders complete Total Liabilities History from Liability As-Of evidence", async () => {
+    const p1 = makePortfolio(1);
+    portfolioState.portfolios = [p1];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    listLiabilities.mockResolvedValue([makeLiability(1, 50_000, { created_at: "2026-01-01T00:00:00Z" })]);
+    getSnapshots.mockResolvedValue([
+      snapshot(1, "2026-06-01", 500_000),
+      snapshot(1, "2026-06-02", 520_000),
+    ]);
+    getLiabilityBalanceAsOf.mockImplementation((_id: number, date: string) =>
+      Promise.resolve(liabilityAsOf(1, date, 50_000))
+    );
+
+    render(<DashboardPage />);
+
+    await waitFor(() => {
+      const section = screen.getByText("Total Liabilities History").closest("section")!;
+      expect(within(section).getByText("฿50,000.00")).toBeInTheDocument();
+    });
+  });
+
+  test("multiple liabilities aggregate into Total Liabilities History", async () => {
+    const p1 = makePortfolio(1);
+    portfolioState.portfolios = [p1];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    listLiabilities.mockResolvedValue([
+      makeLiability(1, 30_000, { created_at: "2026-01-01T00:00:00Z" }),
+      makeLiability(2, 20_000, { created_at: "2026-01-01T00:00:00Z" }),
+    ]);
+    getSnapshots.mockResolvedValue([snapshot(1, "2026-06-01", 500_000)]);
+    getLiabilityBalanceAsOf.mockImplementation((id: number, date: string) =>
+      Promise.resolve(liabilityAsOf(id, date, id === 1 ? 30_000 : 20_000))
+    );
+
+    render(<DashboardPage />);
+
+    await waitFor(() => {
+      const section = screen.getByText("Total Liabilities History").closest("section")!;
+      expect(within(section).getByText("฿50,000.00")).toBeInTheDocument();
+    });
+  });
+
+  test("incomplete Liability As-Of coverage excludes the affected date and discloses it, without fabricating a partial sum", async () => {
+    const p1 = makePortfolio(1);
+    portfolioState.portfolios = [p1];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    listLiabilities.mockResolvedValue([makeLiability(1, 40_000, { created_at: "2026-01-01T00:00:00Z" })]);
+    getSnapshots.mockResolvedValue([
+      snapshot(1, "2026-06-01", 500_000),
+      snapshot(1, "2026-06-02", 520_000),
+    ]);
+    // Evidence only available on 06-01 — no observation on or before 06-02.
+    getLiabilityBalanceAsOf.mockImplementation((_id: number, date: string) =>
+      Promise.resolve(liabilityAsOf(1, date, date === "2026-06-01" ? 40_000 : null, date === "2026-06-01"))
+    );
+
+    render(<DashboardPage />);
+
+    await waitFor(() => {
+      const section = screen.getByText("Total Liabilities History").closest("section")!;
+      expect(within(section).getByText("฿40,000.00")).toBeInTheDocument();
+      expect(within(section).getByText(/1 historical date excluded/)).toBeInTheDocument();
+    });
+  });
+
+  test("archived liabilities still contribute to Total Liabilities History", async () => {
+    const p1 = makePortfolio(1);
+    portfolioState.portfolios = [p1];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    listLiabilities.mockResolvedValue([
+      makeLiability(1, 25_000, { created_at: "2026-01-01T00:00:00Z", is_archived: true }),
+    ]);
+    getSnapshots.mockResolvedValue([snapshot(1, "2026-06-01", 500_000)]);
+    getLiabilityBalanceAsOf.mockResolvedValue(liabilityAsOf(1, "2026-06-01", 25_000));
+
+    render(<DashboardPage />);
+
+    await waitFor(() => {
+      const section = screen.getByText("Total Liabilities History").closest("section")!;
+      expect(within(section).getByText("฿25,000.00")).toBeInTheDocument();
+    });
+  });
+
+  test("a failed Liability As-Of request keeps the affected date incomplete rather than fabricating zero", async () => {
+    const p1 = makePortfolio(1);
+    portfolioState.portfolios = [p1];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    listLiabilities.mockResolvedValue([makeLiability(1, 10_000, { created_at: "2026-01-01T00:00:00Z" })]);
+    getSnapshots.mockResolvedValue([
+      snapshot(1, "2026-06-01", 500_000),
+      snapshot(1, "2026-06-02", 520_000),
+    ]);
+    getLiabilityBalanceAsOf.mockImplementation((_id: number, date: string) =>
+      date === "2026-06-01"
+        ? Promise.resolve(liabilityAsOf(1, date, 10_000))
+        : Promise.reject(new Error("liability as-of backend unavailable"))
+    );
+
+    render(<DashboardPage />);
+
+    await waitFor(() => {
+      const section = screen.getByText("Total Liabilities History").closest("section")!;
+      expect(within(section).getByText("฿10,000.00")).toBeInTheDocument(); // only 06-01 is complete
+      expect(within(section).getByText(/1 historical date excluded/)).toBeInTheDocument();
+    });
+  });
+
+  test("a stale Liability As-Of response cannot overwrite a newer portfolio context", async () => {
+    const first = makePortfolio(1);
+    const second = makePortfolio(2);
+    const firstAsOf = deferred<LiabilityBalanceAsOf>();
+    const secondAsOf = deferred<LiabilityBalanceAsOf>();
+
+    portfolioState.portfolios = [first];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    listLiabilities.mockResolvedValue([makeLiability(1, 0, { created_at: "2026-01-01T00:00:00Z" })]);
+    getSnapshots.mockImplementation((portfolioId: number) =>
+      Promise.resolve(portfolioId === 1 ? [snapshot(1, "2026-06-01", 500_000)] : [snapshot(2, "2026-07-01", 200_000)])
+    );
+    getLiabilityBalanceAsOf.mockImplementation((_id: number, date: string) =>
+      date === "2026-06-01" ? firstAsOf.promise : secondAsOf.promise
+    );
+
+    const view = render(<DashboardPage />);
+    await waitFor(() => expect(getLiabilityBalanceAsOf).toHaveBeenCalledWith(1, "2026-06-01"));
+
+    portfolioState.portfolios = [second];
+    view.rerender(<DashboardPage />);
+    await waitFor(() => expect(getLiabilityBalanceAsOf).toHaveBeenCalledWith(1, "2026-07-01"));
+
+    await act(async () => { secondAsOf.resolve(liabilityAsOf(1, "2026-07-01", 50_000)); });
+    await waitFor(() => {
+      const section = screen.getByText("Total Liabilities History").closest("section")!;
+      expect(within(section).getByText("฿50,000.00")).toBeInTheDocument();
+    });
+
+    // The abandoned first context's Liability As-Of resolves after the
+    // second context has already rendered its own figures — it must not
+    // replace them.
+    await act(async () => { firstAsOf.resolve(liabilityAsOf(1, "2026-06-01", 999_999)); });
+
+    await waitFor(() => {
+      const section = screen.getByText("Total Liabilities History").closest("section")!;
+      expect(within(section).getByText("฿50,000.00")).toBeInTheDocument();
+      expect(within(section).queryByText(/999,999/)).not.toBeInTheDocument();
+    });
+  });
+
+  test("Investment Wealth History remains investment-only despite liabilities contributing to Total Liabilities History", async () => {
+    const p1 = makePortfolio(1);
+    portfolioState.portfolios = [p1];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    listLiabilities.mockResolvedValue([makeLiability(1, 0, { created_at: "2026-01-01T00:00:00Z" })]);
+    getSnapshots.mockResolvedValue([snapshot(1, "2026-06-01", 500_000)]);
+    getLiabilityBalanceAsOf.mockResolvedValue(liabilityAsOf(1, "2026-06-01", 999_999));
+
+    render(<DashboardPage />);
+
+    await waitFor(() => {
+      const investmentSection = screen.getByText("Investment Wealth History").closest("section")!;
+      expect(within(investmentSection).getByText("฿500,000.00")).toBeInTheDocument();
+      expect(within(investmentSection).queryByText(/999,999/)).not.toBeInTheDocument();
+    });
+  });
+
+  test("Total Assets History remains unaffected by liabilities", async () => {
+    const p1 = makePortfolio(1);
+    portfolioState.portfolios = [p1];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    listLiabilities.mockResolvedValue([makeLiability(1, 0, { created_at: "2026-01-01T00:00:00Z" })]);
+    getSnapshots.mockResolvedValue([snapshot(1, "2026-06-01", 500_000)]);
+    getLiabilityBalanceAsOf.mockResolvedValue(liabilityAsOf(1, "2026-06-01", 999_999));
+
+    render(<DashboardPage />);
+
+    await waitFor(() => {
+      const assetsSection = screen.getByText("Total Assets History").closest("section")!;
+      expect(within(assetsSection).getByText("฿500,000.00")).toBeInTheDocument();
+      expect(within(assetsSection).queryByText(/999,999/)).not.toBeInTheDocument();
+    });
+  });
+
+  test("current Total Liabilities uses Liability.balance, independent of differing historical As-Of evidence", async () => {
+    const p1 = makePortfolio(1);
+    portfolioState.portfolios = [p1];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    listLiabilities.mockResolvedValue([makeLiability(1, 12_000, { created_at: "2026-01-01T00:00:00Z" })]);
+    getSnapshots.mockResolvedValue([snapshot(1, "2026-06-01", 500_000)]);
+    getLiabilityBalanceAsOf.mockResolvedValue(liabilityAsOf(1, "2026-06-01", 999_999));
+
+    render(<DashboardPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Total Liabilities").parentElement).toHaveTextContent("฿12,000.00");
+    });
+    await waitFor(() => {
+      const historySection = screen.getByText("Total Liabilities History").closest("section")!;
+      expect(within(historySection).getByText("฿999,999.00")).toBeInTheDocument();
     });
   });
 });

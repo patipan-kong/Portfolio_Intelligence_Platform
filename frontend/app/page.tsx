@@ -11,11 +11,13 @@ import {
   listCashAccounts,
   listLiabilities,
   getCashAccountBalanceAsOf,
+  getLiabilityBalanceAsOf,
 } from "@/lib/api";
 import type {
   CashAccount,
   CashAccountBalanceAsOf,
   Liability,
+  LiabilityBalanceAsOf,
   Portfolio,
   PortfolioItem,
   PriceRefreshItem,
@@ -26,10 +28,12 @@ import type { AssetLoadStatus } from "@/lib/totalAssets";
 import type { LiabilityLoadStatus } from "@/lib/totalLiabilities";
 import { computeWealthHistory } from "@/lib/wealthHistory";
 import { computeTotalAssetsHistory } from "@/lib/totalAssetsHistory";
+import { computeTotalLiabilitiesHistory } from "@/lib/totalLiabilitiesHistory";
 import WealthOverview from "@/components/WealthOverview";
 import CrossPortfolioIncome from "@/components/CrossPortfolioIncome";
 import CrossPortfolioWealthHistory from "@/components/CrossPortfolioWealthHistory";
 import TotalAssetsHistoryCard from "@/components/TotalAssetsHistoryCard";
+import TotalLiabilitiesHistoryCard from "@/components/TotalLiabilitiesHistoryCard";
 
 // Matches the per-portfolio Income page's cap (backend's hard limit is 500)
 // so cross-portfolio dividend aggregation isn't silently truncated either.
@@ -554,6 +558,103 @@ export default function DashboardPage() {
     cashAsOfMap
   );
 
+  // Total Liabilities History (Phase 5, Milestone 2) — composes the same
+  // shared historical date spine (investmentHistoryDates, above) with the
+  // existing Liability As-Of contract. Independent phase pair, same shape
+  // as the Cash phases above: (a) ALL Liabilities, active + archived, since
+  // archived liabilities' historical evidence remains valid; (b) a bounded
+  // Liability As-Of fan-out over (liability × investment-history-date)
+  // pairs only — never a daily calendar series.
+  const [liabilitiesAll, setLiabilitiesAll] = useState<Liability[]>([]);
+  const [liabilitiesAllStatus, setLiabilitiesAllStatus] = useState<LiabilityLoadStatus>("loading");
+  const liabilitiesAllRequestIdRef = useRef(0);
+
+  useEffect(() => {
+    const requestId = ++liabilitiesAllRequestIdRef.current;
+    let active = true;
+    setLiabilitiesAllStatus("loading");
+    setLiabilitiesAll([]);
+
+    listLiabilities(true)
+      .then((items) => {
+        if (!active || liabilitiesAllRequestIdRef.current !== requestId) return;
+        setLiabilitiesAll(items);
+        setLiabilitiesAllStatus("success");
+      })
+      .catch((reason) => {
+        if (!active || liabilitiesAllRequestIdRef.current !== requestId) return;
+        console.error("Failed to load liabilities (including archived) for Total Liabilities History:", reason);
+        setLiabilitiesAll([]);
+        setLiabilitiesAllStatus("error");
+      });
+
+    return () => { active = false; };
+  }, [portfolios, ctxLoading, portfolioError]);
+
+  const [liabilityAsOfMap, setLiabilityAsOfMap] = useState<Record<number, Record<string, LiabilityBalanceAsOf>>>({});
+  const [liabilityAsOfLoading, setLiabilityAsOfLoading] = useState(false);
+  const liabilityAsOfRequestIdRef = useRef(0);
+
+  useEffect(() => {
+    const requestId = ++liabilityAsOfRequestIdRef.current;
+    let active = true;
+
+    // Wait for both dependent phases to settle before fanning out, same
+    // rationale as the Cash As-Of fan-out above.
+    if (ctxLoading || loadingSnapshots || liabilitiesAllStatus === "loading") {
+      return () => { active = false; };
+    }
+
+    if (liabilitiesAllStatus === "error" || liabilitiesAll.length === 0 || investmentHistoryDates.length === 0) {
+      setLiabilityAsOfMap({});
+      setLiabilityAsOfLoading(false);
+      return () => { active = false; };
+    }
+
+    setLiabilityAsOfLoading(true);
+    const pairs = liabilitiesAll.flatMap((liability) =>
+      investmentHistoryDates.map((date) => ({ liabilityId: liability.id, date }))
+    );
+
+    Promise.allSettled(
+      pairs.map(({ liabilityId, date }) =>
+        getLiabilityBalanceAsOf(liabilityId, date).then((result) => ({ liabilityId, date, result }))
+      )
+    )
+      .then((results) => {
+        if (!active || liabilityAsOfRequestIdRef.current !== requestId) return;
+        const map: Record<number, Record<string, LiabilityBalanceAsOf>> = {};
+        results.forEach((result, i) => {
+          if (result.status === "fulfilled") {
+            const { liabilityId, date, result: asOf } = result.value;
+            if (!map[liabilityId]) map[liabilityId] = {};
+            map[liabilityId][date] = asOf;
+          } else {
+            // One failed pair must not fabricate a zero and must not discard
+            // every other pair's evidence — it simply stays absent from the
+            // map, which the pure helper treats as expected-but-unavailable.
+            const { liabilityId, date } = pairs[i];
+            console.error(`Failed to load Liability As-Of for liability ${liabilityId} on ${date}:`, result.reason);
+          }
+        });
+        setLiabilityAsOfMap(map);
+      })
+      .finally(() => {
+        if (active && liabilityAsOfRequestIdRef.current === requestId) setLiabilityAsOfLoading(false);
+      });
+
+    return () => { active = false; };
+  }, [ctxLoading, loadingSnapshots, liabilitiesAllStatus, liabilitiesAll, investmentHistoryDates]);
+
+  const totalLiabilitiesHistoryLoading =
+    ctxLoading || loadingSnapshots || liabilitiesAllStatus === "loading" || liabilityAsOfLoading;
+  const totalLiabilitiesHistorySummary = computeTotalLiabilitiesHistory(
+    investmentHistoryDates,
+    liabilitiesAllStatus,
+    liabilitiesAll,
+    liabilityAsOfMap
+  );
+
   const isLoading = ctxLoading || loadingHoldings;
 
   return (
@@ -593,6 +694,8 @@ export default function DashboardPage() {
       />
 
       <TotalAssetsHistoryCard summary={totalAssetsHistorySummary} loading={totalAssetsHistoryLoading} />
+
+      <TotalLiabilitiesHistoryCard summary={totalLiabilitiesHistorySummary} loading={totalLiabilitiesHistoryLoading} />
 
       {isLoading ? (
         <p className="text-sm text-gray-400">Loading…</p>
