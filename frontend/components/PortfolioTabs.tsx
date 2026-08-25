@@ -12,6 +12,7 @@ const TABS = [
   { label: "วิเคราะห์เชิงลึก", href: "/analytics" },
   { label: "ประวัติธุรกรรม",   href: "/history" },
   { label: "เงินปันผล",       href: "/income" },
+  { label: "นำเข้าธุรกรรม",   href: "/import" },
 ];
 
 export default function PortfolioTabs() {
