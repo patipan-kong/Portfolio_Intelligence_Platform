@@ -60,7 +60,7 @@ from services.portfolio_transactions import (
     execute_dividend,
 )
 from services.transaction_canonicalizer import parse_position_conversion_payload
-from services.cash_account_ledger import ADJUSTMENT, EXPENSE, INCOME, TRANSFER, resulting_balance, signed_amount
+from services.cash_account_ledger import ADJUSTMENT, EXPENSE, INCOME, TRANSFER, cash_balance_as_of, resulting_balance, signed_amount
 from services.portfolio_snapshots import generate_daily_snapshot, SnapshotCoverageError
 from services.snapshot_scheduler import setup_scheduler, shutdown_scheduler
 from services.analytics.system_health import compute_system_health, compute_ai_reliability
@@ -1092,6 +1092,50 @@ async def reconcile_cash_account(
     db.refresh(account)
     db.refresh(transaction)
     return {"account": _cash_account_payload(account), "adjustment": _cash_account_transaction_payload(transaction)}
+
+
+@app.get("/cash-accounts/{cash_account_id}/as-of")
+async def get_cash_account_balance_as_of(
+    cash_account_id: int,
+    date: date,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Read-only historical CashAccount balance reconstruction.
+
+    Derives exclusively from the account's baseline and its immutable ledger
+    events (services.cash_account_ledger.cash_balance_as_of) — never from the
+    account's current `balance`, so an archived account's history remains
+    readable and a date before tracking began is reported as unavailable, not
+    zero. Current-state fields (balance, is_archived) are untouched.
+    """
+    account = _cash_account_or_404(db, cash_account_id, _ws_id(db))
+    as_of_date = date.isoformat()
+    baseline = account.baseline
+    events = (
+        (tx.transaction_type, tx.amount, tx.occurred_on)
+        for tx in (
+            db.query(CashAccountTransaction)
+            .filter(
+                CashAccountTransaction.cash_account_id == account.id,
+                CashAccountTransaction.workspace_id == account.workspace_id,
+            )
+            .all()
+        )
+    ) if baseline is not None else ()
+    balance = cash_balance_as_of(
+        baseline.effective_on if baseline is not None else None,
+        baseline.observed_balance if baseline is not None else None,
+        events,
+        as_of_date,
+    )
+    return {
+        "cash_account_id": account.id,
+        "date": as_of_date,
+        "currency": account.currency,
+        "balance": balance,
+        "available": balance is not None,
+        "baseline_effective_on": baseline.effective_on if baseline is not None else None,
+    }
 
 
 # ─── Liabilities ──────────────────────────────────────────────────────────────

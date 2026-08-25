@@ -3,13 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import CashAccountsPage from "@/app/cash/page";
 import {
   createCashAccount, createCashAccountBaseline, createCashAccountTransaction,
-  listCashAccountTransactions, listCashAccounts, reconcileCashAccount, updateCashAccount,
+  getCashAccountBalanceAsOf, listCashAccountTransactions, listCashAccounts, reconcileCashAccount, updateCashAccount,
 } from "@/lib/api";
 
 vi.mock("@/lib/api", () => ({
   createCashAccount: vi.fn(),
   createCashAccountBaseline: vi.fn(),
   createCashAccountTransaction: vi.fn(),
+  getCashAccountBalanceAsOf: vi.fn(),
   listCashAccountTransactions: vi.fn(),
   listCashAccounts: vi.fn(),
   reconcileCashAccount: vi.fn(),
@@ -36,6 +37,7 @@ const transactionMock = vi.mocked(createCashAccountTransaction);
 const activityMock = vi.mocked(listCashAccountTransactions);
 const reconcileMock = vi.mocked(reconcileCashAccount);
 const updateMock = vi.mocked(updateCashAccount);
+const asOfMock = vi.mocked(getCashAccountBalanceAsOf);
 
 describe("CashAccountsPage", () => {
   beforeEach(() => {
@@ -47,6 +49,7 @@ describe("CashAccountsPage", () => {
     transactionMock.mockResolvedValue({ id: 1, workspace_id: 1, cash_account_id: 1, transaction_type: "INCOME", amount: 20, signed_amount: 20, occurred_on: "2026-08-25", category: "Salary", note: null, created_at: "2026-08-25T00:00:00" });
     reconcileMock.mockResolvedValue({ account, adjustment: null });
     updateMock.mockResolvedValue(account);
+    asOfMock.mockResolvedValue({ cash_account_id: 1, date: "2026-08-25", currency: "THB", balance: 1250.5, available: true, baseline_effective_on: "2026-08-20" });
   });
 
   it("shows a loading state and fixed THB", () => {
@@ -177,5 +180,32 @@ describe("CashAccountsPage", () => {
     render(<CashAccountsPage />);
     expect(await screen.findByText(/Transfer to Savings B/)).toBeInTheDocument();
     expect(screen.getByText(/−฿100.00/)).toBeInTheDocument();
+  });
+
+  it("looks up a historical balance for a tracked account", async () => {
+    const tracked = { ...account, baseline: { id: 1, cash_account_id: 1, effective_on: "2026-08-20", observed_balance: 1250.5, created_at: "2026-08-20T00:00:00" } };
+    listMock.mockResolvedValue([tracked]);
+    render(<CashAccountsPage />);
+    await screen.findByText("Emergency Fund");
+
+    fireEvent.click(screen.getByRole("button", { name: "Balance on date" }));
+    expect(screen.getByText(/never the current balance/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("As-of date"), { target: { value: "2026-08-25" } });
+    fireEvent.click(screen.getByRole("button", { name: "Look up" }));
+    await waitFor(() => expect(asOfMock).toHaveBeenCalledWith(1, "2026-08-25"));
+    expect(await screen.findByText(/THB as of 2026-08-25/)).toBeInTheDocument();
+  });
+
+  it("reports a pre-baseline date as unavailable, never as zero", async () => {
+    const tracked = { ...account, baseline: { id: 1, cash_account_id: 1, effective_on: "2026-08-20", observed_balance: 1250.5, created_at: "2026-08-20T00:00:00" } };
+    listMock.mockResolvedValue([tracked]);
+    asOfMock.mockResolvedValue({ cash_account_id: 1, date: "2026-08-01", currency: "THB", balance: null, available: false, baseline_effective_on: "2026-08-20" });
+    render(<CashAccountsPage />);
+    await screen.findByText("Emergency Fund");
+
+    fireEvent.click(screen.getByRole("button", { name: "Balance on date" }));
+    fireEvent.change(screen.getByLabelText("As-of date"), { target: { value: "2026-08-01" } });
+    fireEvent.click(screen.getByRole("button", { name: "Look up" }));
+    expect(await screen.findByText(/Unavailable — before tracking began \(2026-08-20\)/)).toBeInTheDocument();
   });
 });

@@ -522,6 +522,23 @@ export const createCashAccountTransaction = (id: number, body: CashAccountTransa
 export const reconcileCashAccount = (id: number, body: CashAccountReconcile) =>
   apiFetch<{ account: CashAccount; adjustment: CashAccountTransaction | null }>(`/cash-accounts/${id}/reconcile`, { method: "POST", body: JSON.stringify(body) });
 
+// ─── Cash As-Of Read (Phase 5) ────────────────────────────────────────────────
+// Read-only historical balance reconstruction from baseline + ledger. `balance`
+// is null and `available` is false for any date before tracking began — never
+// a fabricated zero or the account's current balance.
+
+export interface CashAccountBalanceAsOf {
+  cash_account_id: number;
+  date: string;
+  currency: "THB";
+  balance: number | null;
+  available: boolean;
+  baseline_effective_on: string | null;
+}
+
+export const getCashAccountBalanceAsOf = (id: number, date: string) =>
+  apiFetch<CashAccountBalanceAsOf>(`/cash-accounts/${id}/as-of?date=${encodeURIComponent(date)}`);
+
 export const createCashAccountTransfer = (body: CashAccountTransferCreate) =>
   apiFetch<CashAccountTransfer>("/cash-account-transfers", { method: "POST", body: JSON.stringify(body) });
 
