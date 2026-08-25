@@ -1,4 +1,4 @@
-import { describe, test, expect, vi, beforeEach } from "vitest";
+import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
 import { PortfolioProvider, usePortfolio } from "@/lib/PortfolioContext";
 import TransactionHistoryPage from "@/app/history/page";
@@ -95,7 +95,7 @@ test("selecting a portfolio requests that portfolio's transaction history and re
 
   await act(async () => screen.getByText("select-A").click());
 
-  expect(getTransactionHistory).toHaveBeenCalledWith(1);
+  expect(getTransactionHistory).toHaveBeenCalledWith(1, undefined, 500);
   await waitFor(() => expect(screen.getAllByText("Buy").length).toBeGreaterThan(0));
   expect(screen.getAllByText("PTT").length).toBeGreaterThan(0);
 });
@@ -309,11 +309,157 @@ test("a late response for an abandoned portfolio does not repopulate the page af
   await waitFor(() => expect(screen.getByText(/Select a portfolio/)).toBeInTheDocument());
 
   await act(async () => screen.getByText("select-A").click());
-  await waitFor(() => expect(getTransactionHistory).toHaveBeenCalledWith(1));
+  await waitFor(() => expect(getTransactionHistory).toHaveBeenCalledWith(1, undefined, 500));
 
   await act(async () => screen.getByText("clear").click());
   expect(screen.getByText(/Select a portfolio/)).toBeInTheDocument();
 
   await act(async () => resolve([tx()]));
   expect(screen.getByText(/Select a portfolio/)).toBeInTheDocument();
+});
+
+describe("CSV export", () => {
+  let capturedBlobs: Blob[];
+  let anchorClicks: { href: string; download: string }[];
+  let originalCreateObjectURL: typeof URL.createObjectURL | undefined;
+  let originalRevokeObjectURL: typeof URL.revokeObjectURL | undefined;
+  let clickSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    capturedBlobs = [];
+    anchorClicks = [];
+    originalCreateObjectURL = URL.createObjectURL;
+    originalRevokeObjectURL = URL.revokeObjectURL;
+    URL.createObjectURL = vi.fn((blob: Blob) => {
+      capturedBlobs.push(blob);
+      return `blob:mock-${capturedBlobs.length}`;
+    });
+    URL.revokeObjectURL = vi.fn();
+    // Real anchor.click() triggers jsdom navigation (which isn't
+    // implemented and only logs a warning) — intercepting it here keeps
+    // the test hermetic and avoids depending on an actual file download.
+    clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+      anchorClicks.push({ href: this.href, download: this.download });
+    });
+  });
+
+  afterEach(() => {
+    URL.createObjectURL = originalCreateObjectURL as typeof URL.createObjectURL;
+    URL.revokeObjectURL = originalRevokeObjectURL as typeof URL.revokeObjectURL;
+    clickSpy.mockRestore();
+  });
+
+  test("no records: Export CSV control is absent, not merely disabled", async () => {
+    listPortfolios.mockResolvedValue([makePortfolio(1)]);
+    getTransactionHistory.mockResolvedValue([]);
+
+    render(
+      <PortfolioProvider>
+        <SwitcherProbe />
+        <TransactionHistoryPage />
+      </PortfolioProvider>
+    );
+    await waitFor(() => expect(screen.getByText(/Select a portfolio/)).toBeInTheDocument());
+    await act(async () => screen.getByText("select-A").click());
+
+    await waitFor(() => expect(screen.getByText(/No transactions recorded/)).toBeInTheDocument());
+    expect(screen.queryByText("Export CSV")).not.toBeInTheDocument();
+  });
+
+  test("records loaded: Export CSV control appears alongside honest bounded-export wording", async () => {
+    listPortfolios.mockResolvedValue([makePortfolio(1)]);
+    getTransactionHistory.mockResolvedValue([tx()]);
+
+    render(
+      <PortfolioProvider>
+        <SwitcherProbe />
+        <TransactionHistoryPage />
+      </PortfolioProvider>
+    );
+    await waitFor(() => expect(screen.getByText(/Select a portfolio/)).toBeInTheDocument());
+    await act(async () => screen.getByText("select-A").click());
+
+    await waitFor(() => expect(screen.getByText("Export CSV")).toBeInTheDocument());
+    expect(screen.getByText(/Exports up to the most recent 500 transactions\./)).toBeInTheDocument();
+  });
+
+  test("clicking Export CSV downloads a CSV of the loaded records, unaffected by active filters", async () => {
+    listPortfolios.mockResolvedValue([makePortfolio(1, "Retirement Fund")]);
+    getTransactionHistory.mockResolvedValue([
+      tx({ id: 1, symbol: "BANPU.BK" }),
+      tx({ id: 2, symbol: "PTT.BK" }),
+    ]);
+
+    render(
+      <PortfolioProvider>
+        <SwitcherProbe />
+        <TransactionHistoryPage />
+      </PortfolioProvider>
+    );
+    await waitFor(() => expect(screen.getByText(/Select a portfolio/)).toBeInTheDocument());
+    await act(async () => screen.getByText("select-A").click());
+    await waitFor(() => expect(screen.getAllByText("BANPU").length).toBeGreaterThan(0));
+
+    // Narrow the visible table with a search filter — export must still
+    // reflect the full loaded history (Option A), not this filtered view.
+    await act(async () => {
+      fireEvent.change(screen.getByPlaceholderText("Search symbol or notes"), { target: { value: "banpu" } });
+    });
+    expect(screen.queryByText("PTT")).not.toBeInTheDocument();
+
+    await act(async () => screen.getByText("Export CSV").click());
+
+    expect(anchorClicks.length).toBe(1);
+    expect(anchorClicks[0].download).toMatch(/^wealth-os-transactions-Retirement-Fund-\d{4}-\d{2}-\d{2}\.csv$/);
+    expect(capturedBlobs.length).toBe(1);
+    const text = await capturedBlobs[0].text();
+    expect(text).toContain("BANPU.BK");
+    expect(text).toContain("PTT.BK"); // filtered out on screen, still present in the export
+    expect(text).not.toMatch(/[{}[\]]/); // no raw JSON leaking into the export
+
+    // The UTF-8 BOM bytes are present in the Blob (for Excel/Thai-text
+    // compatibility) even though Blob.text()'s decoder transparently strips
+    // them back out of the decoded string above — check the raw bytes instead.
+    const bytes = new Uint8Array(await capturedBlobs[0].arrayBuffer()).slice(0, 3);
+    expect(Array.from(bytes)).toEqual([0xef, 0xbb, 0xbf]);
+  });
+
+  test("switching portfolios exports the newly selected portfolio's records, never the previous one's", async () => {
+    const portfolios = [makePortfolio(1, "A"), makePortfolio(2, "B")];
+    listPortfolios.mockResolvedValue(portfolios);
+    getTransactionHistory.mockImplementation((portfolioId: number) =>
+      Promise.resolve([tx({ id: portfolioId, symbol: portfolioId === 1 ? "AAA.BK" : "BBB.BK" })])
+    );
+
+    function TwoPortfolioSwitcher() {
+      const { selectPortfolio } = usePortfolio();
+      return (
+        <div>
+          <button onClick={() => selectPortfolio(1)}>select-1</button>
+          <button onClick={() => selectPortfolio(2)}>select-2</button>
+        </div>
+      );
+    }
+
+    render(
+      <PortfolioProvider>
+        <TwoPortfolioSwitcher />
+        <TransactionHistoryPage />
+      </PortfolioProvider>
+    );
+    await waitFor(() => expect(screen.getByText(/Select a portfolio/)).toBeInTheDocument());
+
+    await act(async () => screen.getByText("select-1").click());
+    await waitFor(() => expect(screen.getAllByText("AAA").length).toBeGreaterThan(0));
+
+    await act(async () => screen.getByText("select-2").click());
+    await waitFor(() => expect(screen.getAllByText("BBB").length).toBeGreaterThan(0));
+
+    await act(async () => screen.getByText("Export CSV").click());
+
+    const text = await capturedBlobs[0].text();
+    expect(text).toContain("BBB.BK");
+    expect(text).not.toContain("AAA.BK");
+    expect(anchorClicks[0].download).toContain("-B-");
+  });
 });
