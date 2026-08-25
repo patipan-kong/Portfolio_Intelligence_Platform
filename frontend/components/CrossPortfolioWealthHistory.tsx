@@ -3,9 +3,15 @@
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { computeWealthHistory, type WealthHistoryPortfolio } from "@/lib/wealthHistory";
+import { computeCombinedPerformance } from "@/lib/combinedPerformance";
 import type { PortfolioSnapshotRow } from "@/lib/api";
 
 const WealthHistoryChart = dynamic(() => import("@/components/WealthHistoryChart"), {
+  ssr: false,
+  loading: () => <div className="h-40 bg-gray-50 rounded-lg animate-pulse" />,
+});
+
+const CombinedPerformanceChart = dynamic(() => import("@/components/CombinedPerformanceChart"), {
   ssr: false,
   loading: () => <div className="h-40 bg-gray-50 rounded-lg animate-pulse" />,
 });
@@ -41,6 +47,7 @@ export default function CrossPortfolioWealthHistory({
   if (portfolios.length === 0) return null;
 
   const summary = computeWealthHistory(portfolios, snapshotsByPortfolio, failedMap);
+  const performance = computeCombinedPerformance(portfolios, snapshotsByPortfolio, failedMap);
   const failedCount = portfolios.filter((p) => failedMap[p.id]).length;
 
   return (
@@ -81,7 +88,7 @@ export default function CrossPortfolioWealthHistory({
               <p className="text-xs text-gray-400 mt-0.5">as of {fullDate(summary.latest.date)}</p>
             </div>
             <div>
-              <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Change vs Previous Point</p>
+              <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Value Change vs Previous Point</p>
               {summary.delta ? (
                 <>
                   <p className={`text-2xl font-bold ${summary.delta.change >= 0 ? "text-emerald-700" : "text-red-600"}`}>
@@ -110,6 +117,42 @@ export default function CrossPortfolioWealthHistory({
           )}
         </div>
       )}
+
+      <div className="bg-white border rounded-xl p-5 shadow-sm space-y-3">
+        <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Investment Performance</h3>
+        <p className="text-xs text-gray-400">
+          Cash-flow-adjusted return across your portfolios — excludes deposits, withdrawals, and imported positions.
+          Distinct from the wealth value change above.
+        </p>
+
+        {!performance.hasAnySnapshots ? (
+          <p className="text-sm text-gray-400">Investment performance will appear after portfolio snapshots are recorded.</p>
+        ) : performance.cumulativeReturnPct == null ? (
+          <p className="text-sm text-gray-400">
+            No combined return yet — every active portfolio needs a comparable, eligible snapshot on a shared date.
+          </p>
+        ) : (
+          <>
+            <p className={`text-2xl font-bold ${performance.cumulativeReturnPct >= 0 ? "text-emerald-700" : "text-red-600"}`}>
+              {performance.cumulativeReturnPct >= 0 ? "+" : ""}
+              {performance.cumulativeReturnPct.toFixed(2)}%
+            </p>
+            <p className="text-xs text-gray-400">
+              {fullDate(performance.startDate!)} – {fullDate(performance.endDate!)}
+            </p>
+            {performance.points.length >= 2 && <CombinedPerformanceChart points={performance.points} />}
+          </>
+        )}
+
+        {(performance.excludedCount > 0 || performance.anyFailed) && (
+          <p className="text-xs text-gray-400">
+            {performance.anyFailed &&
+              `${failedCount} portfolio${failedCount === 1 ? "" : "s"} could not be loaded and ${failedCount === 1 ? "is" : "are"} left out of this figure. `}
+            {performance.excludedCount > 0 &&
+              `${performance.excludedCount} date${performance.excludedCount === 1 ? "" : "s"} skipped — not every active portfolio had comparable coverage.`}
+          </p>
+        )}
+      </div>
     </section>
   );
 }

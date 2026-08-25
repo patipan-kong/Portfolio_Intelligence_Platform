@@ -36,6 +36,17 @@ vi.mock("@/components/WealthHistoryChart", () => ({
   ),
 }));
 
+// Same convention as the WealthHistoryChart mock above — this suite cares
+// that CrossPortfolioWealthHistory computes and surfaces the right combined
+// performance figures and coverage state, not recharts' own rendering.
+vi.mock("@/components/CombinedPerformanceChart", () => ({
+  default: ({ points }: { points: Array<{ date: string; cumulativeReturnPct: number }> }) => (
+    <div data-testid="combined-performance-chart">
+      {points.map((p) => `${p.date}=${p.cumulativeReturnPct}`).join(",")}
+    </div>
+  ),
+}));
+
 function makePortfolio(id: number, cash_balance = 0): Portfolio {
   return {
     id,
@@ -110,6 +121,24 @@ function snapshot(portfolioId: number, date: string, totalValue: number): Portfo
     sector_breakdown: null,
     holdings: null,
     created_at: null,
+  };
+}
+
+// beginningNav/gain fully determine the row's eligibility and weight — see
+// frontend/lib/combinedPerformance.ts's own eligibleObservation() for the
+// algebraic inversion this fixture's total_value must satisfy.
+function perfSnapshot(
+  portfolioId: number,
+  date: string,
+  opts: { beginningNav?: number; gain?: number | null; netExternalCashFlow?: number }
+): PortfolioSnapshotRow {
+  const { beginningNav = 1000, gain = 0, netExternalCashFlow = 0 } = opts;
+  const totalValue = gain == null ? beginningNav : beginningNav + gain + netExternalCashFlow;
+  return {
+    ...snapshot(portfolioId, date, totalValue),
+    investment_return_amount: gain,
+    investment_return_pct: gain == null ? null : (gain / beginningNav) * 100,
+    net_external_cash_flow: netExternalCashFlow,
   };
 }
 
@@ -491,5 +520,143 @@ describe("Cross-portfolio wealth history", () => {
 
     expect(screen.getByText("฿200,000.00")).toBeInTheDocument();
     expect(screen.queryByText(/999,999/)).not.toBeInTheDocument();
+  });
+});
+
+describe("Cross-portfolio investment performance", () => {
+  test("renders a beginning-NAV-weighted combined return, distinct from equal-weighting", async () => {
+    const p1 = makePortfolio(1);
+    const p2 = makePortfolio(2);
+    portfolioState.portfolios = [p1, p2];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    // A: 100 -> +50% return. B: 900 -> 0% return.
+    // Equal-weight average would read +25.00%; NAV-weighted correct answer is +5.00%.
+    getSnapshots.mockImplementation((portfolioId: number) =>
+      Promise.resolve(
+        portfolioId === 1
+          ? [perfSnapshot(1, "2026-06-01", { beginningNav: 100, gain: 50 })]
+          : [perfSnapshot(2, "2026-06-01", { beginningNav: 900, gain: 0 })]
+      )
+    );
+
+    render(<DashboardPage />);
+
+    await waitFor(() => expect(screen.getByText("Investment Performance")).toBeInTheDocument());
+    expect(screen.getByText("+5.00%")).toBeInTheDocument();
+    expect(screen.queryByText("+25.00%")).not.toBeInTheDocument();
+  });
+
+  test("Wealth History and Investment Performance are visibly distinguished, with no combined benchmark shown", async () => {
+    const p1 = makePortfolio(1);
+    portfolioState.portfolios = [p1];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    getSnapshots.mockResolvedValue([perfSnapshot(1, "2026-06-01", { beginningNav: 1000, gain: 100 })]);
+
+    render(<DashboardPage />);
+
+    await waitFor(() => expect(screen.getByText("Investment Performance")).toBeInTheDocument());
+    expect(screen.getByText("Wealth History")).toBeInTheDocument();
+    expect(screen.getByText("Value Change vs Previous Point")).toBeInTheDocument();
+    expect(screen.queryByText(/Return vs Previous Point/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/SET|Benchmark/i)).not.toBeInTheDocument();
+  });
+
+  test("incomplete coverage across portfolios is disclosed and excluded from the combined return", async () => {
+    const p1 = makePortfolio(1);
+    const p2 = makePortfolio(2);
+    portfolioState.portfolios = [p1, p2];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    getSnapshots.mockImplementation((portfolioId: number) =>
+      Promise.resolve(
+        portfolioId === 1
+          ? [
+              perfSnapshot(1, "2026-06-01", { beginningNav: 1000, gain: 100 }),
+              perfSnapshot(1, "2026-06-02", { beginningNav: 1100, gain: 50 }),
+            ]
+          : [perfSnapshot(2, "2026-06-01", { beginningNav: 500, gain: 0 })] // missing on 06-02
+      )
+    );
+
+    render(<DashboardPage />);
+
+    await waitFor(() => expect(screen.getByText(/1 date skipped/)).toBeInTheDocument());
+    // Only the complete 06-01 observation contributes: (100+0)/(1000+500) = +6.67%.
+    expect(screen.getByText("+6.67%")).toBeInTheDocument();
+  });
+
+  test("no eligible snapshot data yet shows a graceful empty state, not an error", async () => {
+    const p1 = makePortfolio(1);
+    portfolioState.portfolios = [p1];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    // First-ever snapshot: no prior NAV, matching the backend's own convention.
+    getSnapshots.mockResolvedValue([perfSnapshot(1, "2026-06-01", { beginningNav: 1000, gain: null })]);
+
+    render(<DashboardPage />);
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/No combined return yet — every active portfolio needs a comparable, eligible snapshot/)
+      ).toBeInTheDocument()
+    );
+  });
+
+  test("one portfolio's snapshot fetch failing never fabricates a combined return", async () => {
+    const good = makePortfolio(1);
+    const broken = makePortfolio(2);
+    portfolioState.portfolios = [good, broken];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    getSnapshots.mockImplementation((portfolioId: number) =>
+      portfolioId === good.id
+        ? Promise.resolve([perfSnapshot(good.id, "2026-06-01", { beginningNav: 1000, gain: 100 })])
+        : Promise.reject(new Error("backend unavailable"))
+    );
+
+    render(<DashboardPage />);
+
+    await waitFor(() => expect(screen.getByText("Investment Performance")).toBeInTheDocument());
+    expect(
+      screen.getByText(/No combined return yet — every active portfolio needs a comparable, eligible snapshot/)
+    ).toBeInTheDocument();
+    expect(screen.queryByText("+10.00%")).not.toBeInTheDocument();
+  });
+
+  test("a stale portfolio-set snapshot response cannot overwrite the current combined performance", async () => {
+    const first = makePortfolio(1);
+    const second = makePortfolio(2);
+    const firstSnaps = deferred<PortfolioSnapshotRow[]>();
+    const secondSnaps = deferred<PortfolioSnapshotRow[]>();
+
+    portfolioState.portfolios = [first];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    getSnapshots.mockImplementation((portfolioId: number) => (
+      portfolioId === 1 ? firstSnaps.promise : secondSnaps.promise
+    ));
+
+    const view = render(<DashboardPage />);
+    await waitFor(() => expect(getSnapshots).toHaveBeenCalledWith(first.id, 365));
+
+    portfolioState.portfolios = [second];
+    view.rerender(<DashboardPage />);
+    await waitFor(() => expect(getSnapshots).toHaveBeenCalledWith(second.id, 365));
+
+    await act(async () => {
+      secondSnaps.resolve([perfSnapshot(2, "2026-06-01", { beginningNav: 1000, gain: 40 })]);
+    });
+    await waitFor(() => expect(screen.getByText("+4.00%")).toBeInTheDocument());
+
+    // The abandoned first request resolves after the second portfolio set has
+    // already rendered its own figures — it must not replace them.
+    await act(async () => {
+      firstSnaps.resolve([perfSnapshot(1, "2026-06-01", { beginningNav: 1000, gain: 999 })]);
+    });
+
+    expect(screen.getByText("+4.00%")).toBeInTheDocument();
+    expect(screen.queryByText(/99\.90%/)).not.toBeInTheDocument();
   });
 });
