@@ -45,6 +45,7 @@ function roundCurrency(value: number): number {
 function eventSignedAmount(event: CashFlowEvent): number {
   if (event.transaction_type === "INCOME") return Math.abs(event.amount);
   if (event.transaction_type === "EXPENSE") return -Math.abs(event.amount);
+  if (event.transaction_type === "TRANSFER") return 0;
   return Number.isFinite(event.signed_amount) ? event.signed_amount : event.amount;
 }
 
@@ -74,10 +75,10 @@ export function aggregateMonthlyCashFlow(events: CashFlowEvent[], month: string)
   for (const event of selected) {
     if (event.transaction_type === "INCOME") {
       income += Math.abs(event.amount);
-      addCategory(incomeCategories, event.category, Math.abs(event.amount));
+      addCategory(incomeCategories, event.category ?? "", Math.abs(event.amount));
     } else if (event.transaction_type === "EXPENSE") {
       expenses += Math.abs(event.amount);
-      addCategory(expenseCategories, event.category, Math.abs(event.amount));
+      addCategory(expenseCategories, event.category ?? "", Math.abs(event.amount));
     } else if (event.transaction_type === "ADJUSTMENT") {
       adjustments += eventSignedAmount(event);
     }

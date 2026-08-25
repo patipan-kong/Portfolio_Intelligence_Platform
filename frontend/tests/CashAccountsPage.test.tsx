@@ -155,4 +155,27 @@ describe("CashAccountsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save reconciliation" }));
     await waitFor(() => expect(reconcileMock).toHaveBeenCalledWith(1, expect.objectContaining({ observed_balance: 1300 })));
   });
+
+  it("shows transfer legs with directional account-level labels", async () => {
+    const tracked = { ...account, baseline: { id: 1, cash_account_id: 1, effective_on: "2026-08-20", observed_balance: 1250.5, created_at: "2026-08-20T00:00:00Z" } };
+    listMock.mockResolvedValue([tracked]);
+    activityMock.mockResolvedValue([{
+      id: 9,
+      workspace_id: 1,
+      cash_account_id: 1,
+      transaction_type: "TRANSFER",
+      amount: -100,
+      signed_amount: -100,
+      occurred_on: "2026-08-25",
+      category: null,
+      note: null,
+      transfer_id: 4,
+      transfer_destination_account_name: "Savings B",
+      transfer_direction: "OUT",
+      created_at: "2026-08-25T00:00:00Z",
+    }]);
+    render(<CashAccountsPage />);
+    expect(await screen.findByText(/Transfer to Savings B/)).toBeInTheDocument();
+    expect(screen.getByText(/−฿100.00/)).toBeInTheDocument();
+  });
 });

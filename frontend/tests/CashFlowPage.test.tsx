@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import CashFlowPage from "@/app/cash-flow/page";
 import {
+  createCashAccountTransfer,
   createCashAccountTransaction,
   getCashFlowReport,
   listCashAccounts,
@@ -10,6 +11,7 @@ import {
 } from "@/lib/api";
 
 vi.mock("@/lib/api", () => ({
+  createCashAccountTransfer: vi.fn(),
   createCashAccountTransaction: vi.fn(),
   getCashFlowReport: vi.fn(),
   listCashAccounts: vi.fn(),
@@ -23,6 +25,7 @@ vi.mock("@/lib/cashFlow", async () => {
 const reportMock = vi.mocked(getCashFlowReport);
 const accountsMock = vi.mocked(listCashAccounts);
 const createMock = vi.mocked(createCashAccountTransaction);
+const transferMock = vi.mocked(createCashAccountTransfer);
 
 function account(overrides: Partial<CashAccount> = {}): CashAccount {
   return {
@@ -74,6 +77,18 @@ describe("CashFlowPage", () => {
     accountsMock.mockResolvedValue([account()]);
     setReport();
     createMock.mockResolvedValue(event({ id: 9 }));
+    transferMock.mockResolvedValue({
+      id: 7,
+      workspace_id: 1,
+      source_cash_account_id: 1,
+      destination_cash_account_id: 2,
+      source_account_name: "Savings A",
+      destination_account_name: "Savings B",
+      amount: 100,
+      occurred_on: "2026-08-15",
+      note: null,
+      created_at: "2026-08-15T08:00:00Z",
+    });
   });
 
   it("shows the current-month empty state with zero summary", async () => {
@@ -195,6 +210,83 @@ describe("CashFlowPage", () => {
     await waitFor(() => expect(createMock).toHaveBeenCalledWith(1, expect.objectContaining({ transaction_type: "EXPENSE", amount: 80, category: "Food" })));
     expect((await screen.findAllByText(/−฿80\.00/)).length).toBeGreaterThanOrEqual(1);
     expect(reportMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("offers Transfer only for active tracked accounts and renders one neutral logical activity", async () => {
+    const savings = account({ id: 1, name: "Savings A" });
+    const emergency = account({ id: 2, name: "Savings B", balance: 500 });
+    accountsMock.mockResolvedValue([
+      savings,
+      emergency,
+      account({ id: 3, name: "Untracked", baseline: null }),
+      account({ id: 4, name: "Archived", is_archived: true }),
+    ]);
+    let events: CashFlowEvent[] = [];
+    reportMock.mockImplementation(async (selectedMonth) => ({ month: selectedMonth, events }));
+    transferMock.mockImplementation(async (body) => {
+      events = [event({
+        id: 7,
+        transaction_type: "TRANSFER",
+        amount: body.amount,
+        signed_amount: 0,
+        category: null,
+        transfer_id: 7,
+        transfer_source_account_name: "Savings A",
+        transfer_destination_account_name: "Savings B",
+      })];
+      return {
+        id: 7,
+        workspace_id: 1,
+        source_cash_account_id: body.source_cash_account_id,
+        destination_cash_account_id: body.destination_cash_account_id,
+        source_account_name: "Savings A",
+        destination_account_name: "Savings B",
+        amount: body.amount,
+        occurred_on: body.occurred_on,
+        note: body.note ?? null,
+        created_at: "2026-08-15T08:00:00Z",
+      };
+    });
+    render(<CashFlowPage />);
+    await screen.findByText("No cash flow events in August 2026. Income, Expenses, and Net Cash Flow are all ฿0.00.");
+    fireEvent.click(screen.getByRole("button", { name: "Transfer" }));
+    expect(screen.getByRole("option", { name: "Savings A" })).toBeInTheDocument();
+    expect(screen.getAllByRole("option", { name: "Savings B" })).toHaveLength(2);
+    expect(screen.queryByRole("option", { name: "Untracked" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Archived" })).not.toBeInTheDocument();
+    expect(screen.getByText((_, element) => element?.textContent === "Transfer preview: Savings A → Savings B")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Transfer amount"), { target: { value: "100" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save transfer" }));
+    await waitFor(() => expect(transferMock).toHaveBeenCalledWith(expect.objectContaining({
+      source_cash_account_id: 1,
+      destination_cash_account_id: 2,
+      amount: 100,
+    })));
+    expect(await screen.findByText("2026-08-15 · Savings A → Savings B")).toBeInTheDocument();
+    expect(screen.getAllByText("Transfer").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByRole("region", { name: "Monthly summary" })).toHaveTextContent("฿0.00");
+    expect(screen.getAllByText(/Savings A → Savings B/)).toHaveLength(1);
+  });
+
+  it("prevents selecting the same account and handles insufficient funds honestly", async () => {
+    accountsMock.mockResolvedValue([account({ id: 1, name: "Savings A" }), account({ id: 2, name: "Savings B" })]);
+    transferMock.mockRejectedValue(new Error("Insufficient funds in source cash account"));
+    render(<CashFlowPage />);
+    await screen.findByText("No cash flow events in August 2026. Income, Expenses, and Net Cash Flow are all ฿0.00.");
+    fireEvent.click(screen.getByRole("button", { name: "Transfer" }));
+    const destination = screen.getByLabelText("Transfer to account") as HTMLSelectElement;
+    expect(Array.from(destination.options).map((option) => option.text)).toEqual(["Savings B"]);
+    fireEvent.change(screen.getByLabelText("Transfer amount"), { target: { value: "100" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save transfer" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Insufficient funds in source cash account");
+    expect(screen.getByText("No cash flow events in August 2026. Income, Expenses, and Net Cash Flow are all ฿0.00.")).toBeInTheDocument();
+  });
+
+  it("explains that transfers need two tracked accounts", async () => {
+    accountsMock.mockResolvedValue([account({ id: 1, name: "Only account" })]);
+    render(<CashFlowPage />);
+    expect(await screen.findByText(/Transfer requires at least two active tracked Cash Accounts/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Add or start tracking another account/ })).toHaveAttribute("href", "/cash");
   });
 
   it("guides the user to Cash Accounts when no active tracked account exists", async () => {

@@ -72,18 +72,26 @@ export interface CashAccountTransaction {
   id: number;
   workspace_id: number;
   cash_account_id: number;
-  transaction_type: "INCOME" | "EXPENSE" | "ADJUSTMENT";
+  transaction_type: "INCOME" | "EXPENSE" | "ADJUSTMENT" | "TRANSFER";
   amount: number;
   signed_amount: number;
   occurred_on: string;
-  category: string;
+  category: string | null;
   note: string | null;
+  transfer_id?: number | null;
+  transfer_source_cash_account_id?: number;
+  transfer_destination_cash_account_id?: number;
+  transfer_source_account_name?: string;
+  transfer_destination_account_name?: string;
+  transfer_direction?: "OUT" | "IN";
   created_at: string;
 }
 
 export interface CashFlowEvent extends CashAccountTransaction {
   account_name: string;
   account_is_archived: boolean;
+  source_account_is_archived?: boolean;
+  destination_account_is_archived?: boolean;
 }
 
 export interface CashFlowReport {
@@ -430,6 +438,27 @@ export type CashAccountReconcile = {
   note?: string | null;
 };
 
+export type CashAccountTransferCreate = {
+  source_cash_account_id: number;
+  destination_cash_account_id: number;
+  amount: number;
+  occurred_on: string;
+  note?: string | null;
+};
+
+export interface CashAccountTransfer {
+  id: number;
+  workspace_id: number;
+  source_cash_account_id: number;
+  destination_cash_account_id: number;
+  source_account_name: string;
+  destination_account_name: string;
+  amount: number;
+  occurred_on: string;
+  note: string | null;
+  created_at: string;
+}
+
 export const createCashAccountBaseline = (id: number, body: CashAccountBaselineCreate) =>
   apiFetch<CashAccountBaseline>(`/cash-accounts/${id}/baseline`, { method: "POST", body: JSON.stringify(body) });
 
@@ -441,6 +470,9 @@ export const createCashAccountTransaction = (id: number, body: CashAccountTransa
 
 export const reconcileCashAccount = (id: number, body: CashAccountReconcile) =>
   apiFetch<{ account: CashAccount; adjustment: CashAccountTransaction | null }>(`/cash-accounts/${id}/reconcile`, { method: "POST", body: JSON.stringify(body) });
+
+export const createCashAccountTransfer = (body: CashAccountTransferCreate) =>
+  apiFetch<CashAccountTransfer>("/cash-account-transfers", { method: "POST", body: JSON.stringify(body) });
 
 export const getCashFlowReport = (month: string) =>
   apiFetch<CashFlowReport>(`/cash-flow?month=${encodeURIComponent(month)}`);

@@ -68,6 +68,7 @@ class Workspace(Base):
     portfolios = relationship("Portfolio", back_populates="workspace", cascade="all, delete-orphan")
     cash_accounts = relationship("CashAccount", back_populates="workspace", cascade="all, delete-orphan")
     cash_account_transactions = relationship("CashAccountTransaction", back_populates="workspace", cascade="all, delete-orphan")
+    cash_account_transfers = relationship("CashAccountTransfer", back_populates="workspace", cascade="all, delete-orphan")
     watchlist_items = relationship("Watchlist", back_populates="workspace", cascade="all, delete-orphan")
     settings = relationship("Settings", back_populates="workspace", cascade="all, delete-orphan")
     analysis_cache_items = relationship("AnalysisCache", back_populates="workspace", cascade="all, delete-orphan")
@@ -131,6 +132,16 @@ class CashAccount(Base):
     workspace = relationship("Workspace", back_populates="cash_accounts")
     baseline = relationship("CashAccountBaseline", back_populates="cash_account", uselist=False, cascade="all, delete-orphan")
     transactions = relationship("CashAccountTransaction", back_populates="cash_account", cascade="all, delete-orphan")
+    outgoing_transfers = relationship(
+        "CashAccountTransfer",
+        foreign_keys="CashAccountTransfer.source_cash_account_id",
+        back_populates="source_account",
+    )
+    incoming_transfers = relationship(
+        "CashAccountTransfer",
+        foreign_keys="CashAccountTransfer.destination_cash_account_id",
+        back_populates="destination_account",
+    )
 
     __table_args__ = (
         CheckConstraint("currency = 'THB'", name="ck_cash_accounts_currency_thb"),
@@ -156,6 +167,39 @@ class CashAccountBaseline(Base):
     )
 
 
+class CashAccountTransfer(Base):
+    """A logical internal movement between two workspace-owned cash accounts."""
+    __tablename__ = "cash_account_transfers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    source_cash_account_id = Column(Integer, ForeignKey("cash_accounts.id", ondelete="RESTRICT"), nullable=False, index=True)
+    destination_cash_account_id = Column(Integer, ForeignKey("cash_accounts.id", ondelete="RESTRICT"), nullable=False, index=True)
+    amount = Column(Float, nullable=False)
+    occurred_on = Column(String(10), nullable=False)
+    note = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    workspace = relationship("Workspace", back_populates="cash_account_transfers")
+    source_account = relationship(
+        "CashAccount",
+        foreign_keys=[source_cash_account_id],
+        back_populates="outgoing_transfers",
+    )
+    destination_account = relationship(
+        "CashAccount",
+        foreign_keys=[destination_cash_account_id],
+        back_populates="incoming_transfers",
+    )
+    legs = relationship("CashAccountTransaction", back_populates="transfer")
+
+    __table_args__ = (
+        CheckConstraint("source_cash_account_id <> destination_cash_account_id", name="ck_cash_account_transfers_distinct_accounts"),
+        CheckConstraint("amount > 0", name="ck_cash_account_transfers_amount_positive"),
+        Index("ix_cash_account_transfers_workspace_occurred", "workspace_id", "occurred_on"),
+    )
+
+
 class CashAccountTransaction(Base):
     """An immutable prospective cash-flow fact, separate from investment transactions."""
     __tablename__ = "cash_account_transactions"
@@ -166,17 +210,19 @@ class CashAccountTransaction(Base):
     transaction_type = Column(String(16), nullable=False)
     amount = Column(Float, nullable=False)
     occurred_on = Column(String(10), nullable=False)
-    category = Column(String, nullable=False)
+    category = Column(String, nullable=True)
     note = Column(Text, nullable=True)
+    transfer_id = Column(Integer, ForeignKey("cash_account_transfers.id", ondelete="SET NULL"), nullable=True, index=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     workspace = relationship("Workspace", back_populates="cash_account_transactions")
     cash_account = relationship("CashAccount", back_populates="transactions")
+    transfer = relationship("CashAccountTransfer", back_populates="legs")
 
     __table_args__ = (
         CheckConstraint(
             "(transaction_type IN ('INCOME', 'EXPENSE') AND amount > 0) "
-            "OR (transaction_type = 'ADJUSTMENT' AND amount <> 0)",
+            "OR (transaction_type IN ('ADJUSTMENT', 'TRANSFER') AND amount <> 0)",
             name="ck_cash_account_transactions_type_amount",
         ),
         Index("ix_cash_account_transactions_account_occurred", "cash_account_id", "occurred_on"),

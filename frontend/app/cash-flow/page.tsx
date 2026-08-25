@@ -3,6 +3,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
+  createCashAccountTransfer,
   createCashAccountTransaction,
   getCashFlowReport,
   listCashAccounts,
@@ -40,6 +41,12 @@ export default function CashFlowPage() {
   const [entryDate, setEntryDate] = useState(localDateKey());
   const [entryCategory, setEntryCategory] = useState("");
   const [entryNote, setEntryNote] = useState("");
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [transferSourceId, setTransferSourceId] = useState("");
+  const [transferDestinationId, setTransferDestinationId] = useState("");
+  const [transferAmount, setTransferAmount] = useState("");
+  const [transferDate, setTransferDate] = useState(localDateKey());
+  const [transferNote, setTransferNote] = useState("");
   const [mutationError, setMutationError] = useState("");
   const reportRequestId = useRef(0);
 
@@ -99,6 +106,21 @@ export default function CashFlowPage() {
     setMutationError("");
   }
 
+  function openTransfer() {
+    setMutationError("");
+    setTransferOpen(true);
+    setTransferSourceId(String(trackedAccounts[0]?.id ?? ""));
+    setTransferDestinationId(String(trackedAccounts[1]?.id ?? ""));
+    setTransferAmount("");
+    setTransferDate(`${month}-01`);
+    setTransferNote("");
+  }
+
+  function closeTransfer() {
+    setTransferOpen(false);
+    setMutationError("");
+  }
+
   async function handleEntry(event: FormEvent) {
     event.preventDefault();
     if (!entryType) return;
@@ -122,6 +144,34 @@ export default function CashFlowPage() {
       await Promise.all([loadReport(month), loadAccounts()]);
     } catch (error) {
       setMutationError(messageFor(error, `Unable to add ${entryType === "INCOME" ? "income" : "expense"}.`));
+    }
+  }
+
+  async function handleTransfer(event: FormEvent) {
+    event.preventDefault();
+    setMutationError("");
+    const sourceId = Number(transferSourceId);
+    const destinationId = Number(transferDestinationId);
+    const amount = Number(transferAmount);
+    if (!Number.isInteger(sourceId) || !Number.isInteger(destinationId) || sourceId === destinationId ||
+      !trackedAccounts.some((account) => account.id === sourceId) ||
+      !trackedAccounts.some((account) => account.id === destinationId) ||
+      !transferDate || !Number.isFinite(amount) || amount <= 0) {
+      setMutationError("Choose two different tracked accounts and enter a positive amount and date.");
+      return;
+    }
+    try {
+      await createCashAccountTransfer({
+        source_cash_account_id: sourceId,
+        destination_cash_account_id: destinationId,
+        amount,
+        occurred_on: transferDate,
+        note: transferNote.trim() || null,
+      });
+      closeTransfer();
+      await Promise.all([loadReport(month), loadAccounts()]);
+    } catch (error) {
+      setMutationError(messageFor(error, "Unable to transfer cash between accounts."));
     }
   }
 
@@ -190,6 +240,20 @@ export default function CashFlowPage() {
             setEntryDate={setEntryDate}
             setEntryCategory={setEntryCategory}
             setEntryNote={setEntryNote}
+            transferOpen={transferOpen}
+            transferSourceId={transferSourceId}
+            transferDestinationId={transferDestinationId}
+            transferAmount={transferAmount}
+            transferDate={transferDate}
+            transferNote={transferNote}
+            onOpenTransfer={openTransfer}
+            onCloseTransfer={closeTransfer}
+            onSubmitTransfer={handleTransfer}
+            setTransferSourceId={setTransferSourceId}
+            setTransferDestinationId={setTransferDestinationId}
+            setTransferAmount={setTransferAmount}
+            setTransferDate={setTransferDate}
+            setTransferNote={setTransferNote}
           />
 
           {expenseCategories.length > 0 && (
@@ -220,6 +284,9 @@ function EntrySection({
   accounts, accountsLoading, accountsError, onRetryAccounts, entryType, entryAccountId, entryAmount,
   entryDate, entryCategory, entryNote, mutationError, onOpen, onClose, onSubmit, setEntryAccountId,
   setEntryAmount, setEntryDate, setEntryCategory, setEntryNote,
+  transferOpen, transferSourceId, transferDestinationId, transferAmount, transferDate, transferNote,
+  onOpenTransfer, onCloseTransfer, onSubmitTransfer, setTransferSourceId, setTransferDestinationId,
+  setTransferAmount, setTransferDate, setTransferNote,
 }: {
   accounts: CashAccount[];
   accountsLoading: boolean;
@@ -240,27 +307,56 @@ function EntrySection({
   setEntryDate: (value: string) => void;
   setEntryCategory: (value: string) => void;
   setEntryNote: (value: string) => void;
+  transferOpen: boolean;
+  transferSourceId: string;
+  transferDestinationId: string;
+  transferAmount: string;
+  transferDate: string;
+  transferNote: string;
+  onOpenTransfer: () => void;
+  onCloseTransfer: () => void;
+  onSubmitTransfer: (event: FormEvent) => void;
+  setTransferSourceId: (value: string) => void;
+  setTransferDestinationId: (value: string) => void;
+  setTransferAmount: (value: string) => void;
+  setTransferDate: (value: string) => void;
+  setTransferNote: (value: string) => void;
 }) {
+  const source = accounts.find((account) => account.id === Number(transferSourceId));
+  const destination = accounts.find((account) => account.id === Number(transferDestinationId));
+  const transferAmountValue = Number(transferAmount);
   return (
     <section className="bg-white border rounded-xl p-4 shadow-sm space-y-3">
       <div><h2 className="font-semibold">Add activity</h2><p className="text-xs text-gray-500 mt-1">Only active accounts with explicit Cash Flow tracking can receive new events.</p></div>
       {accountsLoading && <p className="text-sm text-gray-400">Loading tracked accounts…</p>}
       {!accountsLoading && accountsError && <div role="alert" className="text-sm text-red-600 space-y-1"><p>{accountsError}</p><button type="button" onClick={onRetryAccounts} className="text-blue-600 hover:underline">Try again</button></div>}
-      {!accountsLoading && !accountsError && accounts.length === 0 && <p className="text-sm text-gray-500">No active tracked cash account is available. <Link href="/cash" className="text-blue-600 hover:underline">Start tracking under Cash Accounts →</Link></p>}
-      {!accountsLoading && !accountsError && accounts.length > 0 && !entryType && <div className="flex gap-3 flex-wrap"><button type="button" onClick={() => onOpen("INCOME")} className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700">Add income</button><button type="button" onClick={() => onOpen("EXPENSE")} className="border border-blue-600 text-blue-700 px-3 py-1.5 rounded text-sm hover:bg-blue-50">Add expense</button></div>}
+      {!accountsLoading && !accountsError && accounts.length === 0 && <p className="text-sm text-gray-500">No active tracked cash account is available. Transfers need two active tracked accounts. <Link href="/cash" className="text-blue-600 hover:underline">Start tracking under Cash Accounts →</Link></p>}
+      {!accountsLoading && !accountsError && accounts.length > 0 && !entryType && !transferOpen && <div className="flex gap-3 flex-wrap"><button type="button" onClick={() => onOpen("INCOME")} className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700">Add income</button><button type="button" onClick={() => onOpen("EXPENSE")} className="border border-blue-600 text-blue-700 px-3 py-1.5 rounded text-sm hover:bg-blue-50">Add expense</button>{accounts.length >= 2 && <button type="button" onClick={onOpenTransfer} className="border border-gray-500 text-gray-700 px-3 py-1.5 rounded text-sm hover:bg-gray-50">Transfer</button>}</div>}
+      {!accountsLoading && !accountsError && accounts.length === 1 && !entryType && !transferOpen && <p className="text-xs text-gray-500">Transfer requires at least two active tracked Cash Accounts. <Link href="/cash" className="text-blue-600 hover:underline">Add or start tracking another account →</Link></p>}
       {entryType && <form onSubmit={onSubmit} className="border-t pt-3 space-y-3"><h3 className="font-medium">Add {entryType === "INCOME" ? "income" : "expense"}</h3><div className="grid gap-3 sm:grid-cols-2"><label className="text-sm">Cash account<select aria-label="Cash flow account" value={entryAccountId} onChange={(event) => setEntryAccountId(event.target.value)} className={inputClass}>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label><label className="text-sm">Amount (THB)<input aria-label="Cash flow amount" type="number" min="0.01" step="0.01" value={entryAmount} onChange={(event) => setEntryAmount(event.target.value)} className={inputClass} /></label><label className="text-sm">Occurred date<input aria-label="Cash flow date" type="date" value={entryDate} onChange={(event) => setEntryDate(event.target.value)} className={inputClass} /></label><label className="text-sm">Category<input aria-label="Cash flow category" value={entryCategory} onChange={(event) => setEntryCategory(event.target.value)} className={inputClass} /></label><label className="text-sm sm:col-span-2">Note (optional)<input aria-label="Cash flow note" value={entryNote} onChange={(event) => setEntryNote(event.target.value)} className={inputClass} /></label></div>{mutationError && <p role="alert" className="text-sm text-red-600">{mutationError}</p>}<div className="flex gap-2"><button type="submit" className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700">Save {entryType === "INCOME" ? "income" : "expense"}</button><button type="button" onClick={onClose} className="text-sm text-gray-600">Cancel</button></div></form>}
+      {transferOpen && <form onSubmit={onSubmitTransfer} className="border-t pt-3 space-y-3"><h3 className="font-medium">Transfer between Cash Accounts</h3><div className="grid gap-3 sm:grid-cols-2"><label className="text-sm">From Account<select aria-label="Transfer from account" value={transferSourceId} onChange={(event) => { setTransferSourceId(event.target.value); if (event.target.value === transferDestinationId) setTransferDestinationId(String(accounts.find((account) => account.id !== Number(event.target.value))?.id ?? "")); }} className={inputClass}>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label><label className="text-sm">To Account<select aria-label="Transfer to account" value={transferDestinationId} onChange={(event) => setTransferDestinationId(event.target.value)} className={inputClass}>{accounts.filter((account) => account.id !== Number(transferSourceId)).map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label><label className="text-sm">Amount (THB)<input aria-label="Transfer amount" type="number" min="0.01" step="0.01" value={transferAmount} onChange={(event) => setTransferAmount(event.target.value)} className={inputClass} /></label><label className="text-sm">Occurred date<input aria-label="Transfer date" type="date" value={transferDate} onChange={(event) => setTransferDate(event.target.value)} className={inputClass} /></label><label className="text-sm sm:col-span-2">Note (optional)<input aria-label="Transfer note" value={transferNote} onChange={(event) => setTransferNote(event.target.value)} className={inputClass} /></label></div><p className="text-sm text-gray-700">Transfer preview: <strong>{source?.name ?? "—"} → {destination?.name ?? "—"}</strong>{Number.isFinite(transferAmountValue) && transferAmountValue > 0 ? ` · ${formatThb(transferAmountValue)}` : ""}</p>{mutationError && <p role="alert" className="text-sm text-red-600">{mutationError}</p>}<div className="flex gap-2"><button type="submit" className="bg-gray-700 text-white px-3 py-1.5 rounded text-sm hover:bg-gray-800">Save transfer</button><button type="button" onClick={onCloseTransfer} className="text-sm text-gray-600">Cancel</button></div></form>}
     </section>
   );
 }
 
 function ActivityList({ events }: { events: CashFlowEvent[] }) {
-  return <ul className="mt-3 divide-y">{events.map((event) => <li key={event.id} className="py-3 flex items-start justify-between gap-4"><div className="min-w-0"><p className="text-sm font-medium">{event.occurred_on} · {event.account_name}{event.account_is_archived ? " (Archived)" : ""}</p><p className="text-xs text-gray-500 mt-0.5">{eventTypeLabel(event)} · {event.category}</p>{event.note && <p className="text-xs text-gray-600 mt-1 break-words">{event.note}</p>}</div><span className={`text-sm font-medium whitespace-nowrap ${signedPresentationAmount(event) >= 0 ? "text-green-700" : "text-red-700"}`}>{formatSigned(signedPresentationAmount(event))}</span></li>)}</ul>;
+  return <ul className="mt-3 divide-y">{events.map((event) => <li key={event.transfer_id ? `transfer-${event.transfer_id}` : `transaction-${event.id}`} className="py-3 flex items-start justify-between gap-4"><div className="min-w-0"><p className="text-sm font-medium">{event.occurred_on} · {eventActivityLabel(event)}</p><p className="text-xs text-gray-500 mt-0.5">{eventTypeLabel(event)}{event.category ? ` · ${event.category}` : ""}</p>{event.note && <p className="text-xs text-gray-600 mt-1 break-words">{event.note}</p>}</div><span className={`text-sm font-medium whitespace-nowrap ${event.transaction_type === "TRANSFER" ? "text-gray-700" : signedPresentationAmount(event) >= 0 ? "text-green-700" : "text-red-700"}`}>{event.transaction_type === "TRANSFER" ? formatThb(event.amount) : formatSigned(signedPresentationAmount(event))}</span></li>)}</ul>;
 }
 
 function eventTypeLabel(event: CashFlowEvent): string {
   if (event.transaction_type === "INCOME") return "Income";
   if (event.transaction_type === "EXPENSE") return "Expense";
+  if (event.transaction_type === "TRANSFER") return "Transfer";
   return "Adjustment";
+}
+
+function eventActivityLabel(event: CashFlowEvent): string {
+  if (event.transaction_type === "TRANSFER") {
+    const source = `${event.transfer_source_account_name ?? event.account_name}${event.source_account_is_archived ? " (Archived)" : ""}`;
+    const destination = `${event.transfer_destination_account_name ?? "destination"}${event.destination_account_is_archived ? " (Archived)" : ""}`;
+    return `${source} → ${destination}`;
+  }
+  return `${event.account_name}${event.account_is_archived ? " (Archived)" : ""}`;
 }
 
 function formatSigned(value: number): string {

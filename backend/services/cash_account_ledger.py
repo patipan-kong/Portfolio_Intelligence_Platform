@@ -5,6 +5,7 @@ from __future__ import annotations
 INCOME = "INCOME"
 EXPENSE = "EXPENSE"
 ADJUSTMENT = "ADJUSTMENT"
+TRANSFER = "TRANSFER"
 
 
 def signed_amount(transaction_type: str, amount: float) -> float:
@@ -18,6 +19,10 @@ def signed_amount(transaction_type: str, amount: float) -> float:
     if transaction_type == EXPENSE:
         return -amount
     if transaction_type == ADJUSTMENT:
+        return amount
+    if transaction_type == TRANSFER:
+        # Transfer legs store their signed balance effect directly: the source
+        # leg is negative and the destination leg is positive.
         return amount
     raise ValueError(f"Unsupported cash transaction type: {transaction_type}")
 

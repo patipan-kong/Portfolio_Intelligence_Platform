@@ -21,7 +21,7 @@ import uuid as _uuid
 from models.database import (
     init_db, migrate_legacy_data, get_db, SessionLocal,
     Workspace, get_default_workspace,
-    Portfolio, PortfolioItem, CashAccount, CashAccountBaseline, CashAccountTransaction, Watchlist,
+    Portfolio, PortfolioItem, CashAccount, CashAccountBaseline, CashAccountTransfer, CashAccountTransaction, Watchlist,
     AgentCache, AnalysisCache, AnalysisHistory, OptimizerHistory, SignalHistory,
     Settings, UserUsage, Transaction, PortfolioSnapshot, BenchmarkPrice,
     MarketDataCache,
@@ -60,7 +60,7 @@ from services.portfolio_transactions import (
     execute_dividend,
 )
 from services.transaction_canonicalizer import parse_position_conversion_payload
-from services.cash_account_ledger import ADJUSTMENT, EXPENSE, INCOME, resulting_balance, signed_amount
+from services.cash_account_ledger import ADJUSTMENT, EXPENSE, INCOME, TRANSFER, resulting_balance, signed_amount
 from services.portfolio_snapshots import generate_daily_snapshot, SnapshotCoverageError
 from services.snapshot_scheduler import setup_scheduler, shutdown_scheduler
 from services.analytics.system_health import compute_system_health, compute_ai_reliability
@@ -582,7 +582,7 @@ def _cash_account_baseline_payload(baseline: CashAccountBaseline) -> dict:
 
 
 def _cash_account_transaction_payload(transaction: CashAccountTransaction) -> dict:
-    return {
+    payload = {
         "id": transaction.id,
         "workspace_id": transaction.workspace_id,
         "cash_account_id": transaction.cash_account_id,
@@ -592,7 +592,62 @@ def _cash_account_transaction_payload(transaction: CashAccountTransaction) -> di
         "occurred_on": transaction.occurred_on,
         "category": transaction.category,
         "note": transaction.note,
+        "transfer_id": transaction.transfer_id,
         "created_at": transaction.created_at.isoformat(),
+    }
+    transfer = transaction.transfer
+    if transfer is not None:
+        source = transfer.source_account
+        destination = transfer.destination_account
+        payload.update({
+            "transfer_source_cash_account_id": source.id,
+            "transfer_destination_cash_account_id": destination.id,
+            "transfer_source_account_name": source.name,
+            "transfer_destination_account_name": destination.name,
+            "transfer_direction": "OUT" if transaction.cash_account_id == source.id else "IN",
+        })
+    return payload
+
+
+def _cash_account_transfer_payload(transfer: CashAccountTransfer) -> dict:
+    return {
+        "id": transfer.id,
+        "workspace_id": transfer.workspace_id,
+        "source_cash_account_id": transfer.source_cash_account_id,
+        "destination_cash_account_id": transfer.destination_cash_account_id,
+        "source_account_name": transfer.source_account.name,
+        "destination_account_name": transfer.destination_account.name,
+        "amount": transfer.amount,
+        "occurred_on": transfer.occurred_on,
+        "note": transfer.note,
+        "created_at": transfer.created_at.isoformat(),
+    }
+
+
+def _cash_account_transfer_activity_payload(transfer: CashAccountTransfer) -> dict:
+    source = transfer.source_account
+    destination = transfer.destination_account
+    return {
+        "id": transfer.id,
+        "workspace_id": transfer.workspace_id,
+        "cash_account_id": source.id,
+        "transaction_type": TRANSFER,
+        "amount": transfer.amount,
+        "signed_amount": 0.0,
+        "occurred_on": transfer.occurred_on,
+        "category": None,
+        "note": transfer.note,
+        "transfer_id": transfer.id,
+        "transfer_source_cash_account_id": source.id,
+        "transfer_destination_cash_account_id": destination.id,
+        "transfer_source_account_name": source.name,
+        "transfer_destination_account_name": destination.name,
+        "transfer_direction": "OUT",
+        "account_name": source.name,
+        "account_is_archived": bool(source.is_archived),
+        "source_account_is_archived": bool(source.is_archived),
+        "destination_account_is_archived": bool(destination.is_archived),
+        "created_at": transfer.created_at.isoformat(),
     }
 
 
@@ -670,6 +725,22 @@ class CashAccountTransactionCreate(BaseModel):
         return self
 
 
+class CashAccountTransferCreate(BaseModel):
+    source_cash_account_id: int
+    destination_cash_account_id: int
+    amount: float
+    occurred_on: date
+    note: str | None = None
+
+    @model_validator(mode="after")
+    def validate_transfer(self):
+        if self.source_cash_account_id == self.destination_cash_account_id:
+            raise ValueError("source and destination cash accounts must differ")
+        if not math.isfinite(self.amount) or self.amount <= 0:
+            raise ValueError("amount must be finite and greater than zero")
+        return self
+
+
 class CashAccountReconcile(BaseModel):
     observed_balance: float
     occurred_on: date
@@ -735,6 +806,30 @@ def _record_cash_account_transaction(
         occurred_on=occurred_on,
         category=category,
         note=note.strip() or None if note is not None else None,
+    )
+    db.add(transaction)
+    account.balance = next_balance
+    return transaction
+
+
+def _record_cash_account_transfer_leg(
+    db: Session,
+    transfer: CashAccountTransfer,
+    account: CashAccount,
+    signed_effect: float,
+) -> CashAccountTransaction:
+    next_balance = resulting_balance(account.balance, TRANSFER, signed_effect)
+    if next_balance < 0:
+        raise HTTPException(status_code=422, detail="Cash transfer cannot make the source balance negative")
+    transaction = CashAccountTransaction(
+        workspace_id=transfer.workspace_id,
+        cash_account_id=account.id,
+        transaction_type=TRANSFER,
+        amount=signed_effect,
+        occurred_on=transfer.occurred_on,
+        category=None,
+        note=None,
+        transfer_id=transfer.id,
     )
     db.add(transaction)
     account.balance = next_balance
@@ -860,6 +955,7 @@ async def get_cash_flow_report(month: str, db: Session = Depends(get_db)) -> dic
         .filter(
             CashAccountTransaction.workspace_id == workspace_id,
             CashAccount.workspace_id == workspace_id,
+            CashAccountTransaction.transaction_type != TRANSFER,
             CashAccountTransaction.occurred_on >= start_on,
             CashAccountTransaction.occurred_on <= end_on,
             CashAccountTransaction.occurred_on >= CashAccountBaseline.effective_on,
@@ -873,7 +969,84 @@ async def get_cash_flow_report(month: str, db: Session = Depends(get_db)) -> dic
         event["account_name"] = account.name
         event["account_is_archived"] = bool(account.is_archived)
         events.append(event)
+    transfer_ids: set[int] = set()
+    transfer_rows = (
+        db.query(CashAccountTransaction)
+        .filter(
+            CashAccountTransaction.workspace_id == workspace_id,
+            CashAccountTransaction.transaction_type == TRANSFER,
+            CashAccountTransaction.occurred_on >= start_on,
+            CashAccountTransaction.occurred_on <= end_on,
+        )
+        .order_by(CashAccountTransaction.occurred_on.desc(), CashAccountTransaction.id.desc())
+        .all()
+    )
+    for leg in transfer_rows:
+        transfer = leg.transfer
+        if transfer is None or transfer.id in transfer_ids or transfer.workspace_id != workspace_id:
+            continue
+        source = transfer.source_account
+        destination = transfer.destination_account
+        if (
+            source.workspace_id != workspace_id
+            or destination.workspace_id != workspace_id
+            or source.baseline is None
+            or destination.baseline is None
+            or transfer.occurred_on < source.baseline.effective_on
+            or transfer.occurred_on < destination.baseline.effective_on
+        ):
+            continue
+        transfer_ids.add(transfer.id)
+        events.append(_cash_account_transfer_activity_payload(transfer))
+    events.sort(key=lambda event: (event["occurred_on"], event["id"]), reverse=True)
     return {"month": month, "events": events}
+
+
+@app.post("/cash-account-transfers", status_code=201)
+async def create_cash_account_transfer(body: CashAccountTransferCreate, db: Session = Depends(get_db)) -> dict:
+    workspace_id = _ws_id(db)
+    accounts = (
+        db.query(CashAccount)
+        .filter(
+            CashAccount.workspace_id == workspace_id,
+            CashAccount.id.in_([body.source_cash_account_id, body.destination_cash_account_id]),
+        )
+        .all()
+    )
+    accounts_by_id = {account.id: account for account in accounts}
+    if len(accounts_by_id) != 2:
+        raise HTTPException(status_code=404, detail="Cash accounts not found")
+    source = accounts_by_id[body.source_cash_account_id]
+    destination = accounts_by_id[body.destination_cash_account_id]
+    _require_active_cash_account(source)
+    _require_active_cash_account(destination)
+    if source.currency != "THB" or destination.currency != "THB":
+        raise HTTPException(status_code=422, detail="Cash transfers require THB accounts")
+    source_baseline = _require_cash_tracking(source)
+    destination_baseline = _require_cash_tracking(destination)
+    occurred_on = body.occurred_on.isoformat()
+    if occurred_on < source_baseline.effective_on or occurred_on < destination_baseline.effective_on:
+        raise HTTPException(status_code=422, detail="Cash transfer cannot predate either tracking baseline")
+    if source.balance < body.amount:
+        raise HTTPException(status_code=422, detail="Insufficient funds in source cash account")
+
+    transfer = CashAccountTransfer(
+        workspace_id=workspace_id,
+        source_cash_account_id=source.id,
+        destination_cash_account_id=destination.id,
+        amount=body.amount,
+        occurred_on=occurred_on,
+        note=body.note.strip() or None if body.note is not None else None,
+    )
+    db.add(transfer)
+    # Flush obtains the logical identity; no commit occurs until both legs and
+    # both authoritative current balances have been written.
+    db.flush()
+    _record_cash_account_transfer_leg(db, transfer, source, -body.amount)
+    _record_cash_account_transfer_leg(db, transfer, destination, body.amount)
+    _commit_cash_mutation(db)
+    db.refresh(transfer)
+    return _cash_account_transfer_payload(transfer)
 
 
 @app.post("/cash-accounts/{cash_account_id}/transactions", status_code=201)

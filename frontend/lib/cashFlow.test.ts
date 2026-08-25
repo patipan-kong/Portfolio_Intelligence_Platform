@@ -52,6 +52,27 @@ test("ADJUSTMENT is excluded from Income, Expenses, and Net Cash Flow", () => {
   assert.equal(summary.eventCount, 1);
 });
 
+test("TRANSFER is excluded from all economic totals and categories", () => {
+  const summary = aggregateMonthlyCashFlow([
+    event({
+      transaction_type: "TRANSFER",
+      amount: 1000,
+      signed_amount: 0,
+      category: null,
+      transfer_id: 7,
+      transfer_source_account_name: "Savings A",
+      transfer_destination_account_name: "Savings B",
+    }),
+  ], "2026-08");
+  assert.equal(summary.income, 0);
+  assert.equal(summary.expenses, 0);
+  assert.equal(summary.netCashFlow, 0);
+  assert.deepEqual(summary.expenseCategories, {});
+  assert.deepEqual(summary.incomeCategories, {});
+  assert.equal(summary.eventCount, 1);
+  assert.equal(summary.events.length, 1);
+});
+
 test("first and last day of the selected month are included", () => {
   const summary = aggregateMonthlyCashFlow([
     event({ id: 1, occurred_on: "2026-08-01", amount: 10 }),
