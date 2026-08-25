@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import DashboardPage from "@/app/page";
-import type { Portfolio, PortfolioItem, PriceRefreshItem, TransactionRecord } from "@/lib/api";
+import type { Portfolio, PortfolioItem, PriceRefreshItem, TransactionRecord, PortfolioSnapshotRow } from "@/lib/api";
 
-const { getHoldings, getPortfolioPrices, getTransactionHistory, portfolioState } = vi.hoisted(() => ({
+const { getHoldings, getPortfolioPrices, getTransactionHistory, getSnapshots, portfolioState } = vi.hoisted(() => ({
   getHoldings: vi.fn(),
   getPortfolioPrices: vi.fn(),
   getTransactionHistory: vi.fn(),
+  getSnapshots: vi.fn(),
   portfolioState: {
     portfolios: [] as Portfolio[],
     loading: false,
@@ -17,10 +18,22 @@ vi.mock("@/lib/api", () => ({
   getHoldings,
   getPortfolioPrices,
   getTransactionHistory,
+  getSnapshots,
 }));
 
 vi.mock("@/lib/PortfolioContext", () => ({
   usePortfolio: () => portfolioState,
+}));
+
+// The wealth-history chart is a recharts component behind next/dynamic — its
+// own rendering isn't this suite's concern (recharts tests itself, same
+// convention as DividendMonthlyChart in DividendIncomeView.test.tsx); what
+// matters here is that CrossPortfolioWealthHistory computes and surfaces the
+// right summary figures and coverage state.
+vi.mock("@/components/WealthHistoryChart", () => ({
+  default: ({ points }: { points: Array<{ date: string; totalValue: number }> }) => (
+    <div data-testid="wealth-history-chart">{points.map((p) => `${p.date}=${p.totalValue}`).join(",")}</div>
+  ),
 }));
 
 function makePortfolio(id: number, cash_balance = 0): Portfolio {
@@ -73,6 +86,33 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+function snapshot(portfolioId: number, date: string, totalValue: number): PortfolioSnapshotRow {
+  return {
+    id: portfolioId * 1000 + date.replace(/-/g, "").length,
+    portfolio_id: portfolioId,
+    snapshot_date: date,
+    total_value: totalValue,
+    cash_balance: 0,
+    total_invested: 0,
+    unrealized_pnl: null,
+    unrealized_pnl_pct: null,
+    realized_pnl: null,
+    daily_return_pct: null,
+    investment_return_pct: null,
+    investment_return_amount: null,
+    net_external_cash_flow: null,
+    imported_asset_value: null,
+    manual_adjustment_value: null,
+    period_realized_pnl: null,
+    period_dividend_income: null,
+    period_fees_paid: null,
+    holdings_count: null,
+    sector_breakdown: null,
+    holdings: null,
+    created_at: null,
+  };
+}
+
 function dividend(portfolioId: number, id: number, amount: number, date = "2026-06-01T00:00:00Z"): TransactionRecord {
   return {
     id,
@@ -98,6 +138,8 @@ beforeEach(() => {
   getPortfolioPrices.mockReset();
   getTransactionHistory.mockReset();
   getTransactionHistory.mockResolvedValue([]);
+  getSnapshots.mockReset();
+  getSnapshots.mockResolvedValue([]);
   portfolioState.portfolios = [];
   portfolioState.loading = false;
 });
@@ -317,6 +359,137 @@ describe("Cross-portfolio dividend income", () => {
     await act(async () => { firstTx.resolve([dividend(1, 1, 999999)]); });
 
     expect(screen.getAllByText("THB 200.00").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/999,999/)).not.toBeInTheDocument();
+  });
+});
+
+describe("Cross-portfolio wealth history", () => {
+  test("aggregates combined wealth history from multiple portfolios with aligned dates", async () => {
+    const p1 = makePortfolio(1);
+    const p2 = makePortfolio(2);
+    portfolioState.portfolios = [p1, p2];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    getSnapshots.mockImplementation((portfolioId: number) =>
+      Promise.resolve(portfolioId === 1 ? [snapshot(1, "2026-06-01", 500_000)] : [snapshot(2, "2026-06-01", 300_000)])
+    );
+
+    render(<DashboardPage />);
+
+    await waitFor(() => expect(screen.getByText("฿800,000.00")).toBeInTheDocument());
+    expect(screen.queryByText(/Excludes/)).not.toBeInTheDocument();
+  });
+
+  test("computes the headline delta between the two most recent complete-coverage points", async () => {
+    const p1 = makePortfolio(1);
+    const p2 = makePortfolio(2);
+    portfolioState.portfolios = [p1, p2];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    getSnapshots.mockImplementation((portfolioId: number) =>
+      Promise.resolve(
+        portfolioId === 1
+          ? [snapshot(1, "2026-06-01", 500_000), snapshot(1, "2026-06-02", 520_000)]
+          : [snapshot(2, "2026-06-01", 300_000), snapshot(2, "2026-06-02", 300_000)]
+      )
+    );
+
+    render(<DashboardPage />);
+
+    await waitFor(() => expect(screen.getByText("฿820,000.00")).toBeInTheDocument());
+    expect(screen.getByText("+฿20,000.00")).toBeInTheDocument();
+  });
+
+  test("a partially covered date is excluded from the headline and does not fabricate a wealth loss", async () => {
+    const p1 = makePortfolio(1);
+    const p2 = makePortfolio(2);
+    portfolioState.portfolios = [p1, p2];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    // 06-01: both report (complete, 800,000). 06-02: only p1 reports a much
+    // smaller number alone — this must never read as an 800,000 -> 500,000 loss.
+    getSnapshots.mockImplementation((portfolioId: number) =>
+      Promise.resolve(
+        portfolioId === 1
+          ? [snapshot(1, "2026-06-01", 500_000), snapshot(1, "2026-06-02", 500_000)]
+          : [snapshot(2, "2026-06-01", 300_000)]
+      )
+    );
+
+    render(<DashboardPage />);
+
+    // Latest combined wealth falls back to the last COMPLETE point (06-01),
+    // not the partial 06-02 point.
+    await waitFor(() => expect(screen.getByText("฿800,000.00")).toBeInTheDocument());
+    // Only one complete point exists, so no delta can be computed — never a
+    // manufactured -300,000 "loss".
+    expect(screen.getByText(/Not enough comparable history yet/)).toBeInTheDocument();
+    expect(screen.queryByText(/-฿300,000/)).not.toBeInTheDocument();
+    expect(screen.getByText(/1 historical date excluded from the chart/)).toBeInTheDocument();
+  });
+
+  test("no snapshots recorded yet shows a graceful empty state, not an error", async () => {
+    const p1 = makePortfolio(1);
+    portfolioState.portfolios = [p1];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    getSnapshots.mockResolvedValue([]);
+
+    render(<DashboardPage />);
+
+    await waitFor(() =>
+      expect(screen.getByText(/Wealth history will appear after portfolio snapshots are recorded/)).toBeInTheDocument()
+    );
+  });
+
+  test("one portfolio's snapshot request failing is reported honestly and never yields a fabricated complete total", async () => {
+    const good = makePortfolio(1);
+    const broken = makePortfolio(2);
+    portfolioState.portfolios = [good, broken];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    getSnapshots.mockImplementation((portfolioId: number) =>
+      portfolioId === good.id
+        ? Promise.resolve([snapshot(good.id, "2026-06-01", 500_000)])
+        : Promise.reject(new Error("backend unavailable"))
+    );
+
+    render(<DashboardPage />);
+
+    // broken's snapshot for 06-01 is unknown, not zero — that date never
+    // qualifies as complete, so no combined total is shown as if it were whole.
+    await waitFor(() => expect(screen.getByText(/Excludes 1 portfolio that failed to load/)).toBeInTheDocument());
+    expect(screen.queryByText("฿500,000.00")).not.toBeInTheDocument();
+  });
+
+  test("a stale snapshot response from a previous portfolio set does not overwrite the current view", async () => {
+    const first = makePortfolio(1);
+    const second = makePortfolio(2);
+    const firstSnaps = deferred<PortfolioSnapshotRow[]>();
+    const secondSnaps = deferred<PortfolioSnapshotRow[]>();
+
+    portfolioState.portfolios = [first];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    getSnapshots.mockImplementation((portfolioId: number) => (
+      portfolioId === 1 ? firstSnaps.promise : secondSnaps.promise
+    ));
+
+    const view = render(<DashboardPage />);
+    await waitFor(() => expect(getSnapshots).toHaveBeenCalledWith(first.id, 365));
+
+    portfolioState.portfolios = [second];
+    view.rerender(<DashboardPage />);
+    await waitFor(() => expect(getSnapshots).toHaveBeenCalledWith(second.id, 365));
+
+    await act(async () => { secondSnaps.resolve([snapshot(2, "2026-06-01", 200_000)]); });
+    await waitFor(() => expect(screen.getByText("฿200,000.00")).toBeInTheDocument());
+
+    // The abandoned first request resolves after the second portfolio set has
+    // already rendered its own figures — it must not replace them.
+    await act(async () => { firstSnaps.resolve([snapshot(1, "2026-06-01", 999_999)]); });
+
+    expect(screen.getByText("฿200,000.00")).toBeInTheDocument();
     expect(screen.queryByText(/999,999/)).not.toBeInTheDocument();
   });
 });

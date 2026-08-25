@@ -3,14 +3,18 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePortfolio } from "@/lib/PortfolioContext";
-import { getHoldings, getPortfolioPrices, getTransactionHistory } from "@/lib/api";
-import type { Portfolio, PortfolioItem, PriceRefreshItem, TransactionRecord } from "@/lib/api";
+import { getHoldings, getPortfolioPrices, getTransactionHistory, getSnapshots } from "@/lib/api";
+import type { Portfolio, PortfolioItem, PriceRefreshItem, TransactionRecord, PortfolioSnapshotRow } from "@/lib/api";
 import WealthOverview from "@/components/WealthOverview";
 import CrossPortfolioIncome from "@/components/CrossPortfolioIncome";
+import CrossPortfolioWealthHistory from "@/components/CrossPortfolioWealthHistory";
 
 // Matches the per-portfolio Income page's cap (backend's hard limit is 500)
 // so cross-portfolio dividend aggregation isn't silently truncated either.
 const MAX_TRANSACTIONS = 500;
+// Matches the Performance page's own getSnapshots() default — a full year of
+// daily history per portfolio, the backend's own cap (min(limit, 365)).
+const MAX_SNAPSHOTS = 365;
 
 function heatTileColor(cp: number | null, pricesLoaded: boolean): string {
   if (!pricesLoaded) return "#374151"; // dark gray — still loading
@@ -172,6 +176,13 @@ export default function DashboardPage() {
   const [loadingTransactions, setLoadingTransactions] = useState(false);
   const transactionsRequestIdRef = useRef(0);
 
+  // Wealth history aggregation — same independence rationale as the dividend
+  // income phase: reads DB snapshot history only, no yfinance, own phase.
+  const [snapshotsMap, setSnapshotsMap] = useState<Record<number, PortfolioSnapshotRow[]>>({});
+  const [snapshotsFailedMap, setSnapshotsFailedMap] = useState<Record<number, boolean>>({});
+  const [loadingSnapshots, setLoadingSnapshots] = useState(false);
+  const snapshotsRequestIdRef = useRef(0);
+
   // Phase 1: load holdings from DB (fast, no yfinance)
   useEffect(() => {
     const requestId = ++holdingsRequestIdRef.current;
@@ -307,6 +318,48 @@ export default function DashboardPage() {
     return () => { active = false; };
   }, [portfolios, ctxLoading]);
 
+  // Wealth history phase — reads DB snapshot history only, no yfinance, so it
+  // can run independently of the holdings/price/transactions phases above.
+  useEffect(() => {
+    const requestId = ++snapshotsRequestIdRef.current;
+    let active = true;
+
+    if (ctxLoading || portfolios.length === 0) {
+      setSnapshotsMap({});
+      setSnapshotsFailedMap({});
+      setLoadingSnapshots(false);
+      return () => { active = false; };
+    }
+
+    setLoadingSnapshots(true);
+    Promise.allSettled(
+      portfolios.map((p) =>
+        getSnapshots(p.id, MAX_SNAPSHOTS).then((items) => ({ id: p.id, items }))
+      )
+    )
+      .then((results) => {
+        if (!active || snapshotsRequestIdRef.current !== requestId) return;
+        const map: Record<number, PortfolioSnapshotRow[]> = {};
+        const failed: Record<number, boolean> = {};
+        results.forEach((result, i) => {
+          const pid = portfolios[i].id;
+          if (result.status === "fulfilled") {
+            map[result.value.id] = result.value.items;
+          } else {
+            failed[pid] = true;
+            console.error(`Failed to load snapshots for portfolio ${pid}:`, result.reason);
+          }
+        });
+        setSnapshotsMap(map);
+        setSnapshotsFailedMap(failed);
+      })
+      .finally(() => {
+        if (active && snapshotsRequestIdRef.current === requestId) setLoadingSnapshots(false);
+      });
+
+    return () => { active = false; };
+  }, [portfolios, ctxLoading]);
+
   const isLoading = ctxLoading || loadingHoldings;
 
   return (
@@ -330,6 +383,13 @@ export default function DashboardPage() {
         transactionsByPortfolio={transactionsMap}
         failedMap={transactionsFailedMap}
         loading={ctxLoading || loadingTransactions}
+      />
+
+      <CrossPortfolioWealthHistory
+        portfolios={portfolios}
+        snapshotsByPortfolio={snapshotsMap}
+        failedMap={snapshotsFailedMap}
+        loading={ctxLoading || loadingSnapshots}
       />
 
       {isLoading ? (
