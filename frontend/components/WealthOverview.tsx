@@ -4,7 +4,8 @@ import Link from "next/link";
 import { usePortfolio } from "@/lib/PortfolioContext";
 import { computeWealthSummary, sharePct } from "@/lib/wealthOverview";
 import { computeTotalAssets, type AssetLoadStatus } from "@/lib/totalAssets";
-import type { CashAccount, Portfolio, PortfolioItem, PriceRefreshItem } from "@/lib/api";
+import { computeTotalLiabilities, type LiabilityLoadStatus } from "@/lib/totalLiabilities";
+import type { CashAccount, Liability, Portfolio, PortfolioItem, PriceRefreshItem } from "@/lib/api";
 
 function fmtTHB(n: number): string {
   return n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -23,6 +24,8 @@ export default function WealthOverview({
   loading,
   cashAccounts = [],
   cashStatus = "success",
+  liabilities = [],
+  liabilityStatus = "success",
   portfolioLoadError = null,
 }: {
   portfolios: Portfolio[];
@@ -33,6 +36,8 @@ export default function WealthOverview({
   loading: boolean;
   cashAccounts?: CashAccount[];
   cashStatus?: AssetLoadStatus;
+  liabilities?: Liability[];
+  liabilityStatus?: LiabilityLoadStatus;
   portfolioLoadError?: string | null;
 }) {
   const { selectPortfolio } = usePortfolio();
@@ -62,6 +67,7 @@ export default function WealthOverview({
     cashStatus,
     cashAccounts,
   });
+  const totalLiabilities = computeTotalLiabilities({ liabilities, liabilityStatus });
   const failedCount = summary.portfolios.filter((row) => row.failed).length;
   const investmentMessage = portfolioLoadError
     ? "Investment Assets unavailable — portfolios could not be loaded."
@@ -75,18 +81,24 @@ export default function WealthOverview({
     : cashStatus === "loading"
     ? "Loading Cash Accounts…"
     : null;
+  const liabilityMessage = totalLiabilities.invalidLiabilityCount > 0 || liabilityStatus === "error" ||
+    (liabilityStatus === "success" && !totalLiabilities.liabilityComplete)
+    ? "Liabilities unavailable — current balances could not be verified."
+    : liabilityStatus === "loading"
+    ? "Loading Liabilities…"
+    : null;
 
   return (
     <section className="space-y-4">
       <div className="bg-white border rounded-xl p-6 shadow-sm">
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div>
             <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Investment Assets</p>
             <p className="text-2xl font-bold text-gray-800">{fmtMetric(totalAssets.investmentAssets)}</p>
             <p className="text-xs text-gray-400 mt-0.5">Portfolios, including brokerage cash</p>
           </div>
           <div>
-            <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Cash</p>
+            <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">External Cash</p>
             <p className="text-2xl font-bold text-gray-800">{fmtMetric(totalAssets.externalCash)}</p>
             <p className="text-xs text-gray-400 mt-0.5">Active external Cash Accounts</p>
           </div>
@@ -95,24 +107,33 @@ export default function WealthOverview({
             <p className="text-2xl font-bold text-gray-800">{fmtMetric(totalAssets.totalAssets)}</p>
             <p className="text-xs text-gray-400 mt-0.5">Only shown when both sides are complete</p>
           </div>
+          <div>
+            <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Total Liabilities</p>
+            <p className="text-2xl font-bold text-gray-800">{fmtMetric(totalLiabilities.totalLiabilities)}</p>
+            <p className="text-xs text-gray-400 mt-0.5">Active observed balances owed</p>
+          </div>
         </div>
-        {(investmentMessage || cashMessage || summary.anyEstimated || summary.anyStale) && (
+        {(investmentMessage || cashMessage || liabilityMessage || summary.anyEstimated || summary.anyStale) && (
           <div className="mt-3 flex flex-col gap-0.5 text-xs text-gray-400">
             {investmentMessage && <span className={summary.anyFailed || portfolioLoadError ? "text-red-500" : ""}>{investmentMessage}</span>}
             {cashMessage && <span className="text-red-500">{cashMessage}</span>}
-            {!cashMessage && !investmentMessage && summary.anyEstimated && (
+            {liabilityMessage && <span className="text-red-500">{liabilityMessage}</span>}
+            {!cashMessage && !liabilityMessage && !investmentMessage && summary.anyEstimated && (
               <span>Some holdings use a last-known price — Investment Assets may be approximate.</span>
             )}
-            {!cashMessage && !investmentMessage && summary.anyStale && (
+            {!cashMessage && !liabilityMessage && !investmentMessage && summary.anyStale && (
               <span>Some holdings show a cached price because a live fetch was unavailable — Investment Assets may not be fully current.</span>
             )}
-            {!cashMessage && !investmentMessage && !totalAssets.investmentComplete && totalAssets.cashComplete && (
+            {!cashMessage && !liabilityMessage && !investmentMessage && !totalAssets.investmentComplete && totalAssets.cashComplete && (
               <span className="text-red-500">Investment Assets unavailable — Total Assets cannot be calculated.</span>
             )}
           </div>
         )}
         <Link href="/cash" className="inline-block mt-3 text-xs text-blue-600 hover:text-blue-800 font-medium">
           Manage Cash Accounts →
+        </Link>
+        <Link href="/liabilities" className="inline-block mt-3 ml-4 text-xs text-blue-600 hover:text-blue-800 font-medium">
+          Manage liabilities →
         </Link>
       </div>
 

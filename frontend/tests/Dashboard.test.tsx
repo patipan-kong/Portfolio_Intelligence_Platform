@@ -1,14 +1,15 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import DashboardPage from "@/app/page";
-import type { CashAccount, Portfolio, PortfolioItem, PriceRefreshItem, TransactionRecord, PortfolioSnapshotRow } from "@/lib/api";
+import type { CashAccount, Liability, Portfolio, PortfolioItem, PriceRefreshItem, TransactionRecord, PortfolioSnapshotRow } from "@/lib/api";
 
-const { getHoldings, getPortfolioPrices, getTransactionHistory, getSnapshots, listCashAccounts, portfolioState } = vi.hoisted(() => ({
+const { getHoldings, getPortfolioPrices, getTransactionHistory, getSnapshots, listCashAccounts, listLiabilities, portfolioState } = vi.hoisted(() => ({
   getHoldings: vi.fn(),
   getPortfolioPrices: vi.fn(),
   getTransactionHistory: vi.fn(),
   getSnapshots: vi.fn(),
   listCashAccounts: vi.fn(),
+  listLiabilities: vi.fn(),
   portfolioState: {
     portfolios: [] as Portfolio[],
     loading: false,
@@ -22,6 +23,7 @@ vi.mock("@/lib/api", () => ({
   getTransactionHistory,
   getSnapshots,
   listCashAccounts,
+  listLiabilities,
 }));
 
 vi.mock("@/lib/PortfolioContext", () => ({
@@ -67,6 +69,23 @@ function makeCashAccount(id: number, balance: number, overrides: Partial<CashAcc
     institution: null,
     currency: "THB",
     balance,
+    is_archived: false,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    ...overrides,
+  };
+}
+
+function makeLiability(id: number, balance: number, overrides: Partial<Liability> = {}): Liability {
+  return {
+    id,
+    workspace_id: 1,
+    name: `Liability ${id}`,
+    liability_type: "OTHER",
+    lender: null,
+    balance,
+    currency: "THB",
+    note: null,
     is_archived: false,
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
@@ -189,6 +208,8 @@ beforeEach(() => {
   getSnapshots.mockResolvedValue([]);
   listCashAccounts.mockReset();
   listCashAccounts.mockResolvedValue([]);
+  listLiabilities.mockReset();
+  listLiabilities.mockResolvedValue([]);
   portfolioState.portfolios = [];
   portfolioState.loading = false;
   portfolioState.error = null;
@@ -325,7 +346,7 @@ describe("Dashboard current assets and external cash", () => {
     await waitFor(() => expect(screen.getByText("฿1,200.00")).toBeInTheDocument());
     expect(listCashAccounts).toHaveBeenCalledWith(false);
     expect(screen.getByText("Investment Assets")).toBeInTheDocument();
-    expect(screen.getByText("Cash")).toBeInTheDocument();
+    expect(screen.getByText("External Cash")).toBeInTheDocument();
     expect(screen.getByText("Total Assets")).toBeInTheDocument();
     expect(screen.getByText("฿200.00")).toBeInTheDocument();
     // Portfolio brokerage cash is already part of Investment Assets (100 + 900).
@@ -343,7 +364,7 @@ describe("Dashboard current assets and external cash", () => {
     render(<DashboardPage />);
 
     await waitFor(() => expect(screen.getAllByText("฿1,000.00").length).toBeGreaterThanOrEqual(2));
-    expect(screen.getByText("฿0.00")).toBeInTheDocument();
+    expect(screen.getByText("External Cash").parentElement).toHaveTextContent("฿0.00");
     expect(screen.queryByText("฿1,200.00")).not.toBeInTheDocument();
   });
 
@@ -354,7 +375,7 @@ describe("Dashboard current assets and external cash", () => {
     render(<DashboardPage />);
 
     await waitFor(() => expect(screen.getAllByText("฿350.00").length).toBe(2));
-    expect(screen.getByText("฿0.00")).toBeInTheDocument();
+    expect(screen.getByText("Investment Assets").parentElement).toHaveTextContent("฿0.00");
     expect(screen.getByText(/No portfolios yet/)).toBeInTheDocument();
     expect(screen.queryByText("Unavailable")).not.toBeInTheDocument();
   });
@@ -467,6 +488,182 @@ describe("Dashboard current assets and external cash", () => {
     await act(async () => { firstCash.resolve([makeCashAccount(1, 999)]); });
     expect(screen.getAllByText("฿200.00").length).toBe(2);
     expect(screen.queryByText("฿999.00")).not.toBeInTheDocument();
+  });
+});
+
+describe("Dashboard current liabilities", () => {
+  test("fetches active liabilities and aggregates multiple observed balances exactly once", async () => {
+    const portfolio = makePortfolio(1, 100);
+    portfolioState.portfolios = [portfolio];
+    getHoldings.mockResolvedValue([makeHolding(portfolio.id, 1, "AAA")]);
+    getPortfolioPrices.mockResolvedValue([makeQuote("AAA", 900, 800)]);
+    listCashAccounts.mockResolvedValue([makeCashAccount(1, 200)]);
+    listLiabilities.mockResolvedValue([makeLiability(1, 125), makeLiability(2, 75)]);
+
+    render(<DashboardPage />);
+
+    await waitFor(() => expect(screen.getByText("Total Liabilities").parentElement).toHaveTextContent("฿200.00"));
+    expect(listLiabilities).toHaveBeenCalledWith(false);
+    expect(screen.getByText("Total Liabilities")).toBeInTheDocument();
+    expect(screen.getByText("Total Liabilities").parentElement).toHaveTextContent("฿200.00");
+    // Total Assets remains investment assets (1,000) plus external cash (200),
+    // and never subtracts or double-adds the liability balance.
+    await waitFor(() => expect(screen.getByText("Total Assets").parentElement).toHaveTextContent("฿1,200.00"));
+    expect(screen.queryByText("฿2,200.00")).not.toBeInTheDocument();
+  });
+
+  test("successful empty active response shows zero, distinct from a failure", async () => {
+    portfolioState.portfolios = [];
+    listLiabilities.mockResolvedValue([]);
+
+    render(<DashboardPage />);
+
+    await waitFor(() => expect(screen.getByText("Total Liabilities")).toBeInTheDocument());
+    expect(screen.getByText("Total Liabilities").parentElement).toHaveTextContent("฿0.00");
+    expect(screen.queryByText(/Liabilities unavailable/)).not.toBeInTheDocument();
+  });
+
+  test("zero-balance active rows remain a known zero and archived rows do not contribute", async () => {
+    portfolioState.portfolios = [];
+    listLiabilities.mockResolvedValue([
+      makeLiability(1, 0),
+      makeLiability(2, 999_999, { is_archived: true }),
+    ]);
+
+    render(<DashboardPage />);
+
+    await waitFor(() => expect(screen.getByText("Total Liabilities")).toBeInTheDocument());
+    expect(screen.getByText("Total Liabilities").parentElement).toHaveTextContent("฿0.00");
+    expect(screen.queryByText("฿999,999.00")).not.toBeInTheDocument();
+  });
+
+  test("liability failure shows unavailable without invalidating known asset figures", async () => {
+    const portfolio = makePortfolio(1, 100);
+    portfolioState.portfolios = [portfolio];
+    getHoldings.mockResolvedValue([makeHolding(portfolio.id, 1, "AAA")]);
+    getPortfolioPrices.mockResolvedValue([makeQuote("AAA", 900, 800)]);
+    listCashAccounts.mockResolvedValue([makeCashAccount(1, 200)]);
+    listLiabilities.mockRejectedValue(new Error("liability backend unavailable"));
+
+    render(<DashboardPage />);
+
+    await waitFor(() => expect(screen.getByText(/Liabilities unavailable/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Total Assets").parentElement).toHaveTextContent("฿1,200.00"));
+    const metric = screen.getByText("Total Liabilities").parentElement;
+    expect(metric).toHaveTextContent("Unavailable");
+    expect(metric).not.toHaveTextContent("฿0.00");
+  });
+
+  test("asset failure does not suppress known total liabilities", async () => {
+    const portfolio = makePortfolio(1, 100);
+    portfolioState.portfolios = [portfolio];
+    getHoldings.mockRejectedValue(new Error("investment backend unavailable"));
+    getPortfolioPrices.mockResolvedValue([]);
+    listCashAccounts.mockResolvedValue([makeCashAccount(1, 200)]);
+    listLiabilities.mockResolvedValue([makeLiability(1, 350)]);
+
+    render(<DashboardPage />);
+
+    await waitFor(() => expect(screen.getByText(/Investment Assets unavailable/)).toBeInTheDocument());
+    const metric = screen.getByText("Total Liabilities").parentElement;
+    expect(metric).toHaveTextContent("฿350.00");
+    expect(screen.getByText("฿200.00")).toBeInTheDocument();
+  });
+
+  test("cash failure does not fabricate Total Assets while liabilities remain visible", async () => {
+    const portfolio = makePortfolio(1, 100);
+    portfolioState.portfolios = [portfolio];
+    getHoldings.mockResolvedValue([makeHolding(portfolio.id, 1, "AAA")]);
+    getPortfolioPrices.mockResolvedValue([makeQuote("AAA", 900, 800)]);
+    listCashAccounts.mockRejectedValue(new Error("cash backend unavailable"));
+    listLiabilities.mockResolvedValue([makeLiability(1, 350)]);
+
+    render(<DashboardPage />);
+
+    await waitFor(() => expect(screen.getByText(/Cash Accounts unavailable — Total Assets cannot be calculated/)).toBeInTheDocument());
+    const liabilityMetric = screen.getByText("Total Liabilities").parentElement;
+    expect(liabilityMetric).toHaveTextContent("฿350.00");
+    const assetsMetric = screen.getByText("Total Assets").parentElement;
+    expect(assetsMetric).toHaveTextContent("Unavailable");
+  });
+
+  test("defensive invalid current liability data is unavailable rather than silently summed", async () => {
+    portfolioState.portfolios = [];
+    listLiabilities.mockResolvedValue([
+      makeLiability(1, 200, { currency: "USD" as Liability["currency"] }),
+    ]);
+
+    render(<DashboardPage />);
+
+    await waitFor(() => expect(screen.getByText(/Liabilities unavailable/)).toBeInTheDocument());
+    const metric = screen.getByText("Total Liabilities").parentElement;
+    expect(metric).toHaveTextContent("Unavailable");
+    expect(metric).not.toHaveTextContent("฿200.00");
+  });
+
+  test("a stale liability response cannot overwrite a newer dashboard context", async () => {
+    const first = makePortfolio(1);
+    const second = makePortfolio(2);
+    const firstLiabilities = deferred<Liability[]>();
+    const secondLiabilities = deferred<Liability[]>();
+
+    portfolioState.portfolios = [first];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    listLiabilities
+      .mockImplementationOnce(() => firstLiabilities.promise)
+      .mockImplementationOnce(() => secondLiabilities.promise);
+
+    const view = render(<DashboardPage />);
+    await waitFor(() => expect(listLiabilities).toHaveBeenCalledWith(false));
+
+    portfolioState.portfolios = [second];
+    view.rerender(<DashboardPage />);
+    await waitFor(() => expect(listLiabilities).toHaveBeenCalledTimes(2));
+
+    await act(async () => { secondLiabilities.resolve([makeLiability(2, 200)]); });
+    await waitFor(() => expect(screen.getByText("฿200.00")).toBeInTheDocument());
+
+    await act(async () => { firstLiabilities.resolve([makeLiability(1, 999)]); });
+    const metric = screen.getByText("Total Liabilities").parentElement;
+    expect(metric).toHaveTextContent("฿200.00");
+    expect(metric).not.toHaveTextContent("฿999.00");
+  });
+
+  test("liabilities do not enter investment wealth history, performance, or dividend income", async () => {
+    const portfolio = makePortfolio(1, 0);
+    portfolioState.portfolios = [portfolio];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    listLiabilities.mockResolvedValue([makeLiability(1, 999)]);
+    getTransactionHistory.mockResolvedValue([dividend(portfolio.id, 1, 100)]);
+    getSnapshots.mockResolvedValue([
+      perfSnapshot(portfolio.id, "2026-06-01", { beginningNav: 1000, gain: 100 }),
+      perfSnapshot(portfolio.id, "2026-06-02", { beginningNav: 1100, gain: 0 }),
+    ]);
+
+    render(<DashboardPage />);
+
+    await waitFor(() => expect(screen.getByTestId("wealth-history-chart")).toBeInTheDocument());
+    expect(screen.getByTestId("wealth-history-chart")).toHaveTextContent("2026-06-01=1100");
+    expect(screen.getByText("+10.00%")).toBeInTheDocument();
+    expect(screen.getAllByText("THB 100.00").length).toBeGreaterThan(0);
+    expect(screen.getByText("฿999.00")).toBeInTheDocument();
+    expect(screen.queryByText("฿1,099.00")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Net Worth/i)).not.toBeInTheDocument();
+  });
+
+  test("provides the liability management link and keeps asset terminology separate", async () => {
+    portfolioState.portfolios = [];
+    listLiabilities.mockResolvedValue([]);
+
+    render(<DashboardPage />);
+
+    await waitFor(() => expect(screen.getByRole("link", { name: /Manage liabilities/ })).toBeInTheDocument());
+    expect(screen.getByRole("link", { name: /Manage liabilities/ })).toHaveAttribute("href", "/liabilities");
+    expect(screen.getByText("External Cash")).toBeInTheDocument();
+    expect(screen.getByText("Total Assets")).toBeInTheDocument();
+    expect(screen.queryByText(/Net Worth/i)).not.toBeInTheDocument();
   });
 });
 

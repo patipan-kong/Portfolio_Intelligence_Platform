@@ -3,9 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePortfolio } from "@/lib/PortfolioContext";
-import { getHoldings, getPortfolioPrices, getTransactionHistory, getSnapshots, listCashAccounts } from "@/lib/api";
-import type { CashAccount, Portfolio, PortfolioItem, PriceRefreshItem, TransactionRecord, PortfolioSnapshotRow } from "@/lib/api";
+import { getHoldings, getPortfolioPrices, getTransactionHistory, getSnapshots, listCashAccounts, listLiabilities } from "@/lib/api";
+import type { CashAccount, Liability, Portfolio, PortfolioItem, PriceRefreshItem, TransactionRecord, PortfolioSnapshotRow } from "@/lib/api";
 import type { AssetLoadStatus } from "@/lib/totalAssets";
+import type { LiabilityLoadStatus } from "@/lib/totalLiabilities";
 import WealthOverview from "@/components/WealthOverview";
 import CrossPortfolioIncome from "@/components/CrossPortfolioIncome";
 import CrossPortfolioWealthHistory from "@/components/CrossPortfolioWealthHistory";
@@ -176,6 +177,12 @@ export default function DashboardPage() {
   const [cashStatus, setCashStatus] = useState<AssetLoadStatus>("loading");
   const cashRequestIdRef = useRef(0);
 
+  // Liability data is an independent current-balance phase. It intentionally
+  // does not enter PortfolioContext or any investment/asset loading state.
+  const [liabilities, setLiabilities] = useState<Liability[]>([]);
+  const [liabilityStatus, setLiabilityStatus] = useState<LiabilityLoadStatus>("loading");
+  const liabilityRequestIdRef = useRef(0);
+
   // Dividend income aggregation — independent of holdings/prices, so it runs
   // as its own phase rather than gating on (or being gated by) Phase 1/2.
   const [transactionsMap, setTransactionsMap] = useState<Record<number, TransactionRecord[]>>({});
@@ -210,6 +217,31 @@ export default function DashboardPage() {
         console.error("Failed to load cash accounts:", reason);
         setCashAccounts([]);
         setCashStatus("error");
+      });
+
+    return () => { active = false; };
+  }, [portfolios, ctxLoading, portfolioError]);
+
+  // Liability phase — active workspace liabilities only. The request id and
+  // effect cleanup mirror the CashAccount phase so a late response from an
+  // abandoned dashboard context cannot overwrite current debt state.
+  useEffect(() => {
+    const requestId = ++liabilityRequestIdRef.current;
+    let active = true;
+    setLiabilityStatus("loading");
+    setLiabilities([]);
+
+    listLiabilities(false)
+      .then((items) => {
+        if (!active || liabilityRequestIdRef.current !== requestId) return;
+        setLiabilities(items);
+        setLiabilityStatus("success");
+      })
+      .catch((reason) => {
+        if (!active || liabilityRequestIdRef.current !== requestId) return;
+        console.error("Failed to load liabilities:", reason);
+        setLiabilities([]);
+        setLiabilityStatus("error");
       });
 
     return () => { active = false; };
@@ -411,6 +443,8 @@ export default function DashboardPage() {
         loading={isLoading}
         cashAccounts={cashAccounts}
         cashStatus={cashStatus}
+        liabilities={liabilities}
+        liabilityStatus={liabilityStatus}
         portfolioLoadError={portfolioError}
       />
 
