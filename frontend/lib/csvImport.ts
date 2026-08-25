@@ -191,6 +191,20 @@ export function validateRows(rows: ImportRowInput[]): ParsedImportRow[] {
   return rows.map(validateRow);
 }
 
+// A small, realistic file a first-time importer can download, adapt, and
+// re-upload as-is. Built from REQUIRED_COLUMNS so it can never drift out of
+// sync with the format the parser actually accepts.
+const EXAMPLE_ROWS: ImportRowInput[] = [
+  { rowNumber: 1, date: "2026-01-15", type: "BUY", symbol: "PTT.BK", shares: "100", price: "35.50", amount: "", notes: "Initial purchase" },
+  { rowNumber: 2, date: "2026-02-01", type: "DEPOSIT", symbol: "", shares: "", price: "", amount: "10000", notes: "Cash deposit" },
+  { rowNumber: 3, date: "2026-03-10", type: "DIVIDEND", symbol: "PTT.BK", shares: "", price: "", amount: "150", notes: "Quarterly dividend" },
+];
+
+export function buildExampleCsv(): string {
+  const lines = EXAMPLE_ROWS.map((row) => REQUIRED_COLUMNS.map((col) => row[col]).join(","));
+  return [REQUIRED_COLUMNS.join(","), ...lines].join("\n");
+}
+
 export type ImportPayload =
   | { type: "BUY"; payload: BuyPayload }
   | { type: "SELL"; payload: SellPayload }

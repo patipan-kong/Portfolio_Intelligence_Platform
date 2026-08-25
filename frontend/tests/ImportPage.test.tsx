@@ -158,6 +158,8 @@ test("import calls the correct API for each transaction type and reports success
   expect(dividendTransaction).toHaveBeenCalledWith(1, expect.objectContaining({ symbol: "PTT.BK", amount: 250 }));
   expect(depositTransaction).toHaveBeenCalledWith(1, expect.objectContaining({ amount: 10000 }));
   expect(withdrawTransaction).toHaveBeenCalledWith(1, expect.objectContaining({ amount: 5000 }));
+  // Nothing failed, so there is nothing to retry.
+  expect(screen.queryByText("Retry failed rows")).not.toBeInTheDocument();
 });
 
 test("a failed row does not stop later rows from being imported, and the summary reflects the partial result", async () => {
@@ -178,6 +180,108 @@ test("a failed row does not stop later rows from being imported, and the summary
   await waitFor(() => expect(screen.getByText(/Imported 1 of 2 transaction/)).toBeInTheDocument());
   expect(buyTransaction).toHaveBeenCalledTimes(2);
   expect(screen.getByText(/API 422: shares must be positive/)).toBeInTheDocument();
+});
+
+test("retry failed rows resubmits only the failed subset, preserves the earlier success, and updates the summary", async () => {
+  buyTransaction
+    .mockRejectedValueOnce(new Error("API 422: shares must be positive"))
+    .mockResolvedValueOnce(txResult({ symbol: "SCB.BK" }))
+    .mockResolvedValueOnce(txResult({ symbol: "PTT.BK" }));
+
+  const input = await selectPortfolioAndGetInput();
+  const text = [HEADER, "2026-08-10,BUY,PTT.BK,100,35,,", "2026-08-11,BUY,SCB.BK,10,120,,"].join("\n");
+
+  await act(async () => {
+    fireEvent.change(input, { target: { files: [csvFile(text)] } });
+  });
+  await waitFor(() => expect(screen.getByText(/valid,.*invalid/)).toBeInTheDocument());
+  await act(async () => screen.getByText(/Import \d+ valid transaction/).click());
+  await waitFor(() => expect(screen.getByText(/Imported 1 of 2 transaction/)).toBeInTheDocument());
+  expect(buyTransaction).toHaveBeenCalledTimes(2);
+  expect(screen.getByText("Retry failed rows")).toBeInTheDocument();
+
+  await act(async () => screen.getByText("Retry failed rows").click());
+  await waitFor(() => expect(screen.getByText(/Imported 2 of 2 transaction/)).toBeInTheDocument());
+
+  // Only the previously-failed PTT.BK row was resubmitted — the already-
+  // successful SCB.BK row must not have been sent again.
+  expect(buyTransaction).toHaveBeenCalledTimes(3);
+  expect(buyTransaction).toHaveBeenNthCalledWith(3, 1, expect.objectContaining({ symbol: "PTT.BK" }));
+  expect(screen.queryByText("Retry failed rows")).not.toBeInTheDocument();
+  expect(screen.queryByText(/API 422: shares must be positive/)).not.toBeInTheDocument();
+});
+
+test("retry failed rows can be repeated if a retried row fails again", async () => {
+  buyTransaction
+    .mockRejectedValueOnce(new Error("first failure"))
+    .mockRejectedValueOnce(new Error("second failure"))
+    .mockResolvedValueOnce(txResult());
+
+  const input = await selectPortfolioAndGetInput();
+  const text = [HEADER, "2026-08-10,BUY,PTT.BK,100,35,,"].join("\n");
+  await act(async () => {
+    fireEvent.change(input, { target: { files: [csvFile(text)] } });
+  });
+  await waitFor(() => expect(screen.getByText(/valid,.*invalid/)).toBeInTheDocument());
+  await act(async () => screen.getByText(/Import \d+ valid transaction/).click());
+  await waitFor(() => expect(screen.getByText(/Imported 0 of 1 transaction/)).toBeInTheDocument());
+  expect(screen.getByText(/first failure/)).toBeInTheDocument();
+
+  await act(async () => screen.getByText("Retry failed rows").click());
+  await waitFor(() => expect(screen.getByText(/second failure/)).toBeInTheDocument());
+  // Still failing — the retry action must still be offered.
+  expect(screen.getByText("Retry failed rows")).toBeInTheDocument();
+
+  await act(async () => screen.getByText("Retry failed rows").click());
+  await waitFor(() => expect(screen.getByText(/Imported 1 of 1 transaction/)).toBeInTheDocument());
+  expect(buyTransaction).toHaveBeenCalledTimes(3);
+  expect(screen.queryByText("Retry failed rows")).not.toBeInTheDocument();
+});
+
+test("a portfolio switch that happens while a retry is still running does not let the stale result overwrite the new portfolio's reset state", async () => {
+  listPortfolios.mockResolvedValue([makePortfolio(1), makePortfolio(2)]);
+  buyTransaction.mockRejectedValueOnce(new Error("first failure"));
+
+  render(
+    <PortfolioProvider>
+      <SwitcherProbe />
+      <CsvImportPage />
+    </PortfolioProvider>
+  );
+  await waitFor(() => expect(screen.getByText(/Select a portfolio/)).toBeInTheDocument());
+  await act(async () => screen.getByText("select-A").click());
+  const input = await screen.findByLabelText("Upload CSV file");
+
+  const text = [HEADER, "2026-08-10,BUY,PTT.BK,100,35,,"].join("\n");
+  await act(async () => {
+    fireEvent.change(input, { target: { files: [csvFile(text)] } });
+  });
+  await waitFor(() => expect(screen.getByText(/valid,.*invalid/)).toBeInTheDocument());
+  await act(async () => screen.getByText(/Import \d+ valid transaction/).click());
+  await waitFor(() => expect(screen.getByText(/Imported 0 of 1 transaction/)).toBeInTheDocument());
+
+  let resolveRetry!: (v: TransactionResult) => void;
+  buyTransaction.mockReturnValue(new Promise<TransactionResult>((resolve) => { resolveRetry = resolve; }));
+
+  await act(async () => {
+    screen.getByText("Retry failed rows").click();
+  });
+  await waitFor(() => expect(screen.getByText(/Retrying/)).toBeInTheDocument());
+
+  // Switch away from portfolio 1 while its retry is still in flight.
+  await act(async () => screen.getByText("select-B").click());
+  await waitFor(() => expect(screen.getByLabelText("Upload CSV file")).toBeInTheDocument());
+
+  // Now let the slow retry call for portfolio 1's row resolve.
+  await act(async () => {
+    resolveRetry(txResult());
+  });
+
+  expect(buyTransaction).toHaveBeenCalledTimes(2);
+  // The now-finished retry for the abandoned portfolio must not jump the
+  // UI (currently on portfolio 2) to a summary screen.
+  expect(screen.getByLabelText("Upload CSV file")).toBeInTheDocument();
+  expect(screen.queryByText(/Imported \d+ of \d+ transaction/)).not.toBeInTheDocument();
 });
 
 test("a portfolio switch that happens while an import is still running does not let the stale result overwrite the new portfolio's reset state", async () => {
