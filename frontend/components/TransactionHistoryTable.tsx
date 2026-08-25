@@ -26,7 +26,7 @@ function fmt(n: number | null | undefined, decimals = 2): string {
 // elsewhere in the app (transaction action buttons on /portfolio, and the
 // non-performance disclosure banner on /performance) so a given type reads
 // the same way everywhere.
-const TYPE_STYLE: Record<TransactionType, { label: string; color: string; bg: string }> = {
+export const TYPE_STYLE: Record<TransactionType, { label: string; color: string; bg: string }> = {
   BUY:                  { label: "Buy",                color: "#27500A", bg: "#27500A18" },
   SELL:                 { label: "Sell",               color: "#854F0B", bg: "#854F0B18" },
   DEPOSIT:              { label: "Deposit",             color: "#0C447C", bg: "#0C447C18" },
