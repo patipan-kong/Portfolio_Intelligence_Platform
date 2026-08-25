@@ -1422,6 +1422,31 @@ export type TransactionType =
   | "QUANTITY_CORRECTION"
   | "POSITION_CONVERSION";
 
+// Structured, display-ready detail for a POSITION_CONVERSION transaction —
+// parsed server-side through the canonical conversion payload contract
+// (backend/services/transaction_canonicalizer.py::parse_position_conversion_payload).
+// Present only for valid POSITION_CONVERSION rows; null for every other
+// transaction type and for legacy/malformed conversion payloads.
+export interface PositionConversionCashInLieu {
+  fractional_entitlement_shares: number;
+  net_cash: number;
+  realized_pnl: number;
+}
+
+export interface PositionConversionDetail {
+  predecessor_symbol: string;
+  successor_symbol: string;
+  conversion_ratio: number;
+  shares_surrendered: number;
+  shares_entitled: number;
+  shares_received: number;
+  legal_effective_date: string; // "YYYY-MM-DD"
+  valuation_transition_date: string; // "YYYY-MM-DD"
+  cost_basis_before: number;
+  cost_basis_carried: number;
+  cash_in_lieu: PositionConversionCashInLieu | null;
+}
+
 export interface TransactionRecord {
   id: number;
   portfolio_id: number;
@@ -1438,6 +1463,7 @@ export interface TransactionRecord {
   notes: string | null;
   sector: string | null;
   created_at: string | null;
+  conversion_detail?: PositionConversionDetail | null;
 }
 
 export interface TransactionHolding {

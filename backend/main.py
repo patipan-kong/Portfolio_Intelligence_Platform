@@ -57,6 +57,7 @@ from services.portfolio_transactions import (
     execute_quantity_correction,
     execute_dividend,
 )
+from services.transaction_canonicalizer import parse_position_conversion_payload
 from services.portfolio_snapshots import generate_daily_snapshot, SnapshotCoverageError
 from services.snapshot_scheduler import setup_scheduler, shutdown_scheduler
 from services.analytics.system_health import compute_system_health, compute_ai_reliability
@@ -3725,6 +3726,43 @@ def _parse_tx_date(raw: str | None) -> datetime | None:
         return None
 
 
+def _conversion_detail(tx: Transaction) -> dict | None:
+    """Structured, display-ready POSITION_CONVERSION detail.
+
+    Parses tx.conversion_payload through the canonical parser (the single
+    authoritative contract in transaction_canonicalizer.py) rather than
+    exposing the raw JSON. Returns None for non-POSITION_CONVERSION rows and
+    for legacy/malformed payloads that fail validation — callers must never
+    treat None as "no cash impact" or otherwise fabricate detail from it.
+    """
+    if tx.transaction_type != "POSITION_CONVERSION":
+        return None
+    result = parse_position_conversion_payload(tx.conversion_payload)
+    if not result.is_valid or result.value is None:
+        return None
+    c = result.value
+    cash_in_lieu = None
+    if c.cash_in_lieu is not None:
+        cash_in_lieu = {
+            "fractional_entitlement_shares": float(c.cash_in_lieu.fractional_entitlement_shares),
+            "net_cash": float(c.cash_in_lieu.net_cash),
+            "realized_pnl": float(c.cash_in_lieu.realized_pnl),
+        }
+    return {
+        "predecessor_symbol": c.predecessor.symbol,
+        "successor_symbol": c.successor.symbol,
+        "conversion_ratio": float(c.conversion_ratio),
+        "shares_surrendered": float(c.predecessor.shares_surrendered),
+        "shares_entitled": float(c.successor.shares_entitled),
+        "shares_received": float(c.successor.shares_received),
+        "legal_effective_date": c.dates.legal_effective_date.isoformat(),
+        "valuation_transition_date": c.dates.valuation_transition_date.isoformat(),
+        "cost_basis_before": float(c.basis.before),
+        "cost_basis_carried": float(c.basis.carried_to_successor),
+        "cash_in_lieu": cash_in_lieu,
+    }
+
+
 def _tx_row(tx: Transaction) -> dict:
     return {
         "id": tx.id,
@@ -3743,6 +3781,7 @@ def _tx_row(tx: Transaction) -> dict:
         "sector": tx.sector,
         "execution_decision_id": tx.execution_decision_id,
         "created_at": tx.created_at.isoformat() + "Z" if tx.created_at else None,
+        "conversion_detail": _conversion_detail(tx),
     }
 
 
