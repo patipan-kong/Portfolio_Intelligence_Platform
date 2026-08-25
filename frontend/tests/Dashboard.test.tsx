@@ -265,6 +265,7 @@ describe("Dashboard pricing", () => {
 
     await act(async () => { secondPrices.resolve([makeQuote("BBB", 200, 100)]); });
     await waitFor(() => expect(screen.getByRole("link", { name: /BBB/ })).toHaveTextContent("+100.00%"));
+    await waitFor(() => expect(screen.getByText("Net Worth").parentElement).toHaveTextContent("฿200.00"));
 
     // The abandoned first request returns after the current portfolio has
     // rendered. It must not replace the current portfolio's quote map.
@@ -272,6 +273,7 @@ describe("Dashboard pricing", () => {
 
     expect(screen.getByRole("link", { name: /BBB/ })).toHaveTextContent("+100.00%");
     expect(screen.queryByRole("link", { name: /AAA/ })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("Net Worth").parentElement).toHaveTextContent("฿200.00"));
   });
 
   test("one portfolio's holdings request failing does not block the others from loading", async () => {
@@ -343,11 +345,12 @@ describe("Dashboard current assets and external cash", () => {
 
     render(<DashboardPage />);
 
-    await waitFor(() => expect(screen.getByText("฿1,200.00")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getAllByText("฿1,200.00").length).toBeGreaterThanOrEqual(2));
     expect(listCashAccounts).toHaveBeenCalledWith(false);
     expect(screen.getByText("Investment Assets")).toBeInTheDocument();
     expect(screen.getByText("External Cash")).toBeInTheDocument();
     expect(screen.getByText("Total Assets")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("Net Worth").parentElement).toHaveTextContent("฿1,200.00"));
     expect(screen.getByText("฿200.00")).toBeInTheDocument();
     // Portfolio brokerage cash is already part of Investment Assets (100 + 900).
     expect(screen.queryByText("฿1,300.00")).not.toBeInTheDocument();
@@ -365,6 +368,7 @@ describe("Dashboard current assets and external cash", () => {
 
     await waitFor(() => expect(screen.getAllByText("฿1,000.00").length).toBeGreaterThanOrEqual(2));
     expect(screen.getByText("External Cash").parentElement).toHaveTextContent("฿0.00");
+    await waitFor(() => expect(screen.getByText("Net Worth").parentElement).toHaveTextContent("฿1,000.00"));
     expect(screen.queryByText("฿1,200.00")).not.toBeInTheDocument();
   });
 
@@ -374,8 +378,9 @@ describe("Dashboard current assets and external cash", () => {
 
     render(<DashboardPage />);
 
-    await waitFor(() => expect(screen.getAllByText("฿350.00").length).toBe(2));
+    await waitFor(() => expect(screen.getAllByText("฿350.00").length).toBe(3));
     expect(screen.getByText("Investment Assets").parentElement).toHaveTextContent("฿0.00");
+    await waitFor(() => expect(screen.getByText("Net Worth").parentElement).toHaveTextContent("฿350.00"));
     expect(screen.getByText(/No portfolios yet/)).toBeInTheDocument();
     expect(screen.queryByText("Unavailable")).not.toBeInTheDocument();
   });
@@ -392,7 +397,7 @@ describe("Dashboard current assets and external cash", () => {
 
     render(<DashboardPage />);
 
-    await waitFor(() => expect(screen.getByText("฿1,200.00")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getAllByText("฿1,200.00").length).toBeGreaterThanOrEqual(2));
     expect(screen.queryByText("฿2,199.00")).not.toBeInTheDocument();
   });
 
@@ -407,7 +412,7 @@ describe("Dashboard current assets and external cash", () => {
 
     await waitFor(() => expect(screen.getByText(/Cash Accounts unavailable — Total Assets cannot be calculated/)).toBeInTheDocument());
     await waitFor(() => expect(screen.getAllByText("฿1,000.00").length).toBeGreaterThanOrEqual(2));
-    expect(screen.getAllByText("Unavailable").length).toBe(2);
+    expect(screen.getAllByText("Unavailable").length).toBe(3);
     expect(screen.queryByText("฿1,200.00")).not.toBeInTheDocument();
   });
 
@@ -422,7 +427,7 @@ describe("Dashboard current assets and external cash", () => {
 
     await waitFor(() => expect(screen.getByText(/Investment Assets unavailable/)).toBeInTheDocument());
     expect(screen.getByText("฿200.00")).toBeInTheDocument();
-    expect(screen.getAllByText("Unavailable").length).toBe(2);
+    expect(screen.getAllByText("Unavailable").length).toBe(3);
     expect(screen.queryByText("฿200.00")).not.toBeNull();
   });
 
@@ -483,10 +488,12 @@ describe("Dashboard current assets and external cash", () => {
     await waitFor(() => expect(listCashAccounts).toHaveBeenCalledTimes(2));
 
     await act(async () => { secondCash.resolve([makeCashAccount(2, 200)]); });
-    await waitFor(() => expect(screen.getAllByText("฿200.00").length).toBe(2));
+    await waitFor(() => expect(screen.getAllByText("฿200.00").length).toBe(3));
+    await waitFor(() => expect(screen.getByText("Net Worth").parentElement).toHaveTextContent("฿200.00"));
 
     await act(async () => { firstCash.resolve([makeCashAccount(1, 999)]); });
-    expect(screen.getAllByText("฿200.00").length).toBe(2);
+    expect(screen.getAllByText("฿200.00").length).toBe(3);
+    await waitFor(() => expect(screen.getByText("Net Worth").parentElement).toHaveTextContent("฿200.00"));
     expect(screen.queryByText("฿999.00")).not.toBeInTheDocument();
   });
 });
@@ -506,6 +513,7 @@ describe("Dashboard current liabilities", () => {
     expect(listLiabilities).toHaveBeenCalledWith(false);
     expect(screen.getByText("Total Liabilities")).toBeInTheDocument();
     expect(screen.getByText("Total Liabilities").parentElement).toHaveTextContent("฿200.00");
+    await waitFor(() => expect(screen.getByText("Net Worth").parentElement).toHaveTextContent("฿1,000.00"));
     // Total Assets remains investment assets (1,000) plus external cash (200),
     // and never subtracts or double-adds the liability balance.
     await waitFor(() => expect(screen.getByText("Total Assets").parentElement).toHaveTextContent("฿1,200.00"));
@@ -520,7 +528,20 @@ describe("Dashboard current liabilities", () => {
 
     await waitFor(() => expect(screen.getByText("Total Liabilities")).toBeInTheDocument());
     expect(screen.getByText("Total Liabilities").parentElement).toHaveTextContent("฿0.00");
+    await waitFor(() => expect(screen.getByText("Net Worth").parentElement).toHaveTextContent("฿0.00"));
     expect(screen.queryByText(/Liabilities unavailable/)).not.toBeInTheDocument();
+  });
+
+  test("a liability-only workspace produces a negative current Net Worth", async () => {
+    portfolioState.portfolios = [];
+    listCashAccounts.mockResolvedValue([]);
+    listLiabilities.mockResolvedValue([makeLiability(1, 400)]);
+
+    render(<DashboardPage />);
+
+    await waitFor(() => expect(screen.getByText("Net Worth").parentElement).toHaveTextContent("฿-400.00"));
+    expect(screen.getByText("Total Assets").parentElement).toHaveTextContent("฿0.00");
+    expect(screen.getByText("Total Liabilities").parentElement).toHaveTextContent("฿400.00");
   });
 
   test("zero-balance active rows remain a known zero and archived rows do not contribute", async () => {
@@ -534,6 +555,7 @@ describe("Dashboard current liabilities", () => {
 
     await waitFor(() => expect(screen.getByText("Total Liabilities")).toBeInTheDocument());
     expect(screen.getByText("Total Liabilities").parentElement).toHaveTextContent("฿0.00");
+    await waitFor(() => expect(screen.getByText("Net Worth").parentElement).toHaveTextContent("฿0.00"));
     expect(screen.queryByText("฿999,999.00")).not.toBeInTheDocument();
   });
 
@@ -552,6 +574,7 @@ describe("Dashboard current liabilities", () => {
     const metric = screen.getByText("Total Liabilities").parentElement;
     expect(metric).toHaveTextContent("Unavailable");
     expect(metric).not.toHaveTextContent("฿0.00");
+    await waitFor(() => expect(screen.getByText("Net Worth").parentElement).toHaveTextContent("Unavailable"));
   });
 
   test("asset failure does not suppress known total liabilities", async () => {
@@ -568,6 +591,7 @@ describe("Dashboard current liabilities", () => {
     const metric = screen.getByText("Total Liabilities").parentElement;
     expect(metric).toHaveTextContent("฿350.00");
     expect(screen.getByText("฿200.00")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("Net Worth").parentElement).toHaveTextContent("Unavailable"));
   });
 
   test("cash failure does not fabricate Total Assets while liabilities remain visible", async () => {
@@ -585,6 +609,7 @@ describe("Dashboard current liabilities", () => {
     expect(liabilityMetric).toHaveTextContent("฿350.00");
     const assetsMetric = screen.getByText("Total Assets").parentElement;
     expect(assetsMetric).toHaveTextContent("Unavailable");
+    await waitFor(() => expect(screen.getByText("Net Worth").parentElement).toHaveTextContent("Unavailable"));
   });
 
   test("defensive invalid current liability data is unavailable rather than silently summed", async () => {
@@ -599,6 +624,7 @@ describe("Dashboard current liabilities", () => {
     const metric = screen.getByText("Total Liabilities").parentElement;
     expect(metric).toHaveTextContent("Unavailable");
     expect(metric).not.toHaveTextContent("฿200.00");
+    await waitFor(() => expect(screen.getByText("Net Worth").parentElement).toHaveTextContent("Unavailable"));
   });
 
   test("a stale liability response cannot overwrite a newer dashboard context", async () => {
@@ -628,6 +654,7 @@ describe("Dashboard current liabilities", () => {
     const metric = screen.getByText("Total Liabilities").parentElement;
     expect(metric).toHaveTextContent("฿200.00");
     expect(metric).not.toHaveTextContent("฿999.00");
+    await waitFor(() => expect(screen.getByText("Net Worth").parentElement).toHaveTextContent("฿-200.00"));
   });
 
   test("liabilities do not enter investment wealth history, performance, or dividend income", async () => {
@@ -650,7 +677,7 @@ describe("Dashboard current liabilities", () => {
     expect(screen.getAllByText("THB 100.00").length).toBeGreaterThan(0);
     expect(screen.getByText("฿999.00")).toBeInTheDocument();
     expect(screen.queryByText("฿1,099.00")).not.toBeInTheDocument();
-    expect(screen.queryByText(/Net Worth/i)).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("Net Worth").parentElement).toHaveTextContent("฿-999.00"));
   });
 
   test("provides the liability management link and keeps asset terminology separate", async () => {
@@ -663,7 +690,7 @@ describe("Dashboard current liabilities", () => {
     expect(screen.getByRole("link", { name: /Manage liabilities/ })).toHaveAttribute("href", "/liabilities");
     expect(screen.getByText("External Cash")).toBeInTheDocument();
     expect(screen.getByText("Total Assets")).toBeInTheDocument();
-    expect(screen.queryByText(/Net Worth/i)).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("Net Worth").parentElement).toHaveTextContent("฿0.00"));
   });
 });
 

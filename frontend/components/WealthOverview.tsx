@@ -5,6 +5,7 @@ import { usePortfolio } from "@/lib/PortfolioContext";
 import { computeWealthSummary, sharePct } from "@/lib/wealthOverview";
 import { computeTotalAssets, type AssetLoadStatus } from "@/lib/totalAssets";
 import { computeTotalLiabilities, type LiabilityLoadStatus } from "@/lib/totalLiabilities";
+import { computeNetWorth } from "@/lib/netWorth";
 import type { CashAccount, Liability, Portfolio, PortfolioItem, PriceRefreshItem } from "@/lib/api";
 
 function fmtTHB(n: number): string {
@@ -68,6 +69,7 @@ export default function WealthOverview({
     cashAccounts,
   });
   const totalLiabilities = computeTotalLiabilities({ liabilities, liabilityStatus });
+  const netWorth = computeNetWorth(totalAssets, totalLiabilities);
   const failedCount = summary.portfolios.filter((row) => row.failed).length;
   const investmentMessage = portfolioLoadError
     ? "Investment Assets unavailable — portfolios could not be loaded."
@@ -91,7 +93,7 @@ export default function WealthOverview({
   return (
     <section className="space-y-4">
       <div className="bg-white border rounded-xl p-6 shadow-sm">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
           <div>
             <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Investment Assets</p>
             <p className="text-2xl font-bold text-gray-800">{fmtMetric(totalAssets.investmentAssets)}</p>
@@ -111,6 +113,11 @@ export default function WealthOverview({
             <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Total Liabilities</p>
             <p className="text-2xl font-bold text-gray-800">{fmtMetric(totalLiabilities.totalLiabilities)}</p>
             <p className="text-xs text-gray-400 mt-0.5">Active observed balances owed</p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Net Worth</p>
+            <p className="text-2xl font-bold text-gray-800">{fmtMetric(netWorth.netWorth)}</p>
+            <p className="text-xs text-gray-400 mt-0.5">Total Assets less Total Liabilities</p>
           </div>
         </div>
         {(investmentMessage || cashMessage || liabilityMessage || summary.anyEstimated || summary.anyStale) && (
