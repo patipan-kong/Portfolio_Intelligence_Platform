@@ -353,6 +353,8 @@ class RebuildResult:
     committed:        bool                   = False
     backup_path:      str | None             = None
     elapsed_seconds:  float                  = 0.0
+    reconstructed_realized_pnl: float | None = None
+    reconstructed_holding_basis: dict[str, Decimal] = field(default_factory=dict)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -392,6 +394,31 @@ class PositionConversionReplayError(Exception):
         self.transaction_id = transaction_id
         self.reason = reason
         super().__init__(f"POSITION_CONVERSION tx{transaction_id}: {reason}")
+
+
+class PositionConversionRebuildBoundaryError(Exception):
+    """Refusal to rebuild snapshots across an unprotected conversion boundary.
+
+    BANPU-WP5-C3/C4. Raised before any Stage 2-3 snapshot read, provider
+    fetch, or write when a portfolio's ledger contains a POSITION_CONVERSION
+    and `from_date` is absent or predates the earliest conversion's
+    transaction_date — pre-transition snapshots must be priced from their
+    stored values and must never be re-fetched under a reused ticker. Caught
+    by the same generic handler that already turns
+    PositionConversionReplayError into RebuildResult(success=False, error=...);
+    no dedicated except clause is added for it.
+    """
+
+    reason = "POSITION_CONVERSION_REBUILD_BOUNDARY"
+
+    def __init__(self, earliest_transition_date: str, from_date: str | None) -> None:
+        self.earliest_transition_date = earliest_transition_date
+        self.from_date = from_date
+        super().__init__(
+            f"{self.reason}: from_date={from_date!r} is not on/after the "
+            f"earliest POSITION_CONVERSION transition date "
+            f"{earliest_transition_date!r}"
+        )
 
 
 @dataclass(frozen=True)
@@ -2244,6 +2271,15 @@ async def rebuild_portfolio(
         print(final_state.holdings.keys())
         result.reconstructed_holdings_count = len(final_state.holdings)
         result.reconstructed_cash           = _f(final_state.cash_balance)
+        result.reconstructed_realized_pnl   = _f(final_state.cumulative_realized_pnl)
+        holding_basis: dict[str, Decimal] = {}
+        for h in final_state.holdings.values():
+            if h.report_symbol in holding_basis:
+                raise ValueError(
+                    f"Duplicate report_symbol in reconstructed holdings: {h.report_symbol}"
+                )
+            holding_basis[h.report_symbol] = h.shares * h.avg_cost
+        result.reconstructed_holding_basis = holding_basis
         _progress(
             f"  → cash={result.reconstructed_cash:,.2f}  "
             f"holdings={result.reconstructed_holdings_count}"
@@ -2257,6 +2293,25 @@ async def rebuild_portfolio(
         # case). Raises fail-closed on a genuine stored-identity conflict or
         # ambiguity, aborting before any reconciliation row or DB write.
         conversion_successors = _resolve_conversion_successors(db, portfolio_id, all_txs)
+
+        # ── BANPU-WP5-C3: POSITION_CONVERSION_REBUILD_BOUNDARY ─────────────────
+        # Refuse before any Stage 2-3 snapshot read, provider fetch, or write
+        # when the ledger contains a conversion and from_date is absent or
+        # predates the earliest transition. Uses all_txs (the effective,
+        # already-repair-overlaid and conversion-reinstated list) so an
+        # excluded conversion — already authoritative per §7.1 — still
+        # establishes the boundary.
+        if not skip_snapshots:
+            conversion_dates = [
+                ctx.transaction_date for ctx in all_txs
+                if ctx.transaction_type == "POSITION_CONVERSION"
+            ]
+            if conversion_dates:
+                earliest_transition_date = min(conversion_dates).isoformat()
+                if from_date is None or from_date < earliest_transition_date:
+                    raise PositionConversionRebuildBoundaryError(
+                        earliest_transition_date, from_date
+                    )
 
         # ── Stages 2–3: historical snapshots ──────────────────────────────────
         snapshot_days: list[_SnapshotDay] = []

@@ -63,6 +63,7 @@ def _sps_at_or_before(db: Session, shadow_id: int, target_date: str):
 def score_directional_calls(
     inception_holdings: list[dict],
     horizon_holdings_json: str | None,
+    symbol_translation: dict[str, str] | None = None,
 ) -> tuple[float | None, bool | None, dict]:
     """Directional correctness of each BUY/ACCUMULATE/SELL/REDUCE call at horizon.
 
@@ -77,6 +78,17 @@ def score_directional_calls(
 
     Directional convention mirrors services/decision_memory/calibration.py:
     BUY/ACCUMULATE expects price up, SELL/REDUCE expects price down.
+
+    symbol_translation (WP6-C1/WP6-C5), if supplied, maps an inception
+    holding's frozen symbol to the identity-correct symbol to look up in
+    horizon_holdings_json. Without it, a converted holding's frozen
+    predecessor symbol never matches a post-boundary shadow snapshot keyed
+    by the successor symbol and silently falls into the "no evaluable
+    calls" exclusion below (BANPU_WP6_WORK_PACKAGE_PLAN.md §7.3). The
+    frozen inception_holdings entry itself — its own stored symbol, action,
+    and inception_price — is never rewritten; only the lookup key used to
+    find the matching horizon entry changes. Omitting it (None, the
+    default) preserves today's exact behavior for every non-converted call.
 
     Returns (score_pct 0-100 | None, directional_correct bool | None, detail dict).
     directional_correct is None when there are zero evaluable calls (e.g. an
@@ -100,7 +112,8 @@ def score_directional_calls(
         if not sym or action not in ("BUY", "ACCUMULATE", "SELL", "REDUCE"):
             continue
         entry_price = h.get("inception_price")
-        horizon = horizon_holdings.get(sym)
+        lookup_sym = (symbol_translation or {}).get(sym, sym)
+        horizon = horizon_holdings.get(lookup_sym)
         horizon_price = horizon.get("current_price") if horizon else None
         if not entry_price or not horizon_price or entry_price <= 0 or horizon_price <= 0:
             continue
@@ -149,6 +162,7 @@ def grade_due_recommendations(db: Session, portfolio_id: int | None = None) -> d
         RecommendationGrade, Workspace,
     )
     from services.analytics.attribution_engine import compute_max_drawdown
+    from services import position_conversion as pc
 
     graded: list[dict] = []
     skipped: list[dict] = []
@@ -244,8 +258,28 @@ def grade_due_recommendations(db: Session, portfolio_id: int | None = None) -> d
                         inception_holdings = json.loads(shadow.inception_holdings_json)
                 except Exception:
                     pass
+                # WP6-C1/WP6-C5: translate each inception holding's frozen
+                # symbol forward to its horizon-date identity so a
+                # conversion that occurred before the horizon date does not
+                # silently exclude the call (§7.3). Genuinely unregistered
+                # symbols (not BANPU-tracked) are left untranslated — the
+                # fail-open counterpart to §7.1's fail-closed non-resolution.
+                symbol_translation: dict[str, str] = {}
+                for h in inception_holdings:
+                    sym = h.get("symbol")
+                    if not sym or sym in symbol_translation:
+                        continue
+                    try:
+                        resolved = pc.resolve_identity(
+                            db, symbol=sym, as_of_date=sps.snapshot_date,
+                        )
+                    except pc.PositionConversionLookupError:
+                        continue
+                    if resolved.converted:
+                        symbol_translation[sym] = resolved.symbol
+
                 score, directional_correct, detail = score_directional_calls(
-                    inception_holdings, sps.holdings_json
+                    inception_holdings, sps.holdings_json, symbol_translation or None,
                 )
 
                 grade = RecommendationGrade(

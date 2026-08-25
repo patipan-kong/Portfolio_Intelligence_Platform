@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePortfolio } from "@/lib/PortfolioContext";
 import { getHoldings, getPortfolioPrices } from "@/lib/api";
 import type { Portfolio, PortfolioItem, PriceRefreshItem } from "@/lib/api";
+import WealthOverview from "@/components/WealthOverview";
 
 function heatTileColor(cp: number | null, pricesLoaded: boolean): string {
   if (!pricesLoaded) return "#374151"; // dark gray — still loading
@@ -32,7 +33,9 @@ function DashboardHeatmap({
     symbol: string;
     mv: number;
     cp: number | null;
+    livePrice: number | null;
     priceConfirmed: boolean;
+    isStale: boolean;
   }>();
 
   portfolios.forEach((p) => {
@@ -43,15 +46,23 @@ function DashboardHeatmap({
       const price = live?.current_price ?? item.current_price ?? item.avg_cost;
       const mv = item.shares * price;
       const cp = live?.change_percent ?? null;
-      const priceConfirmed = pricesLoaded && !!live;
+      // live?.current_price may itself be null (quarantined/no-data quote),
+      // so a truthy `live` lookup alone doesn't mean we have a confirmed price.
+      const livePrice = live?.current_price ?? null;
+      const priceConfirmed = pricesLoaded && livePrice != null;
+      // is_stale is only ever true alongside a real current_price, so this
+      // never fires for the "no data" case above.
+      const isStale = live?.is_stale === true;
 
       const existing = aggregated.get(item.symbol);
       if (existing) {
         existing.mv += mv;
         if (cp != null) existing.cp = cp;
+        if (livePrice != null) existing.livePrice = livePrice;
         if (priceConfirmed) existing.priceConfirmed = true;
+        if (isStale) existing.isStale = true;
       } else {
-        aggregated.set(item.symbol, { symbol: item.symbol, mv, cp, priceConfirmed });
+        aggregated.set(item.symbol, { symbol: item.symbol, mv, cp, livePrice, priceConfirmed, isStale });
       }
     });
   });
@@ -82,9 +93,15 @@ function DashboardHeatmap({
           if (!pricesLoaded) {
             changeText = "…";
             changeColor = "text-gray-400";
-          } else if (tile.cp == null) {
+          } else if (!tile.priceConfirmed) {
+            // no confirmed current price at all (fetch failed/quarantined) — the only true "no data" case
             changeText = "No price data";
             changeColor = "text-gray-500";
+          } else if (tile.cp == null) {
+            // current price is confirmed but daily change is unavailable (e.g. no previous close) —
+            // fall back to the price itself rather than mislabeling this as "no price data"
+            changeText = tile.livePrice != null ? `฿${tile.livePrice.toFixed(2)}` : "No change data";
+            changeColor = "text-gray-300";
           } else {
             changeText = `${tile.cp > 0 ? "+" : ""}${tile.cp.toFixed(2)}%`;
             changeColor = tile.cp > 0.3 ? "text-green-200" : tile.cp < -0.3 ? "text-red-200" : "text-gray-300";
@@ -94,6 +111,7 @@ function DashboardHeatmap({
             <Link
               key={tile.symbol}
               href={`/stock/${encodeURIComponent(tile.symbol)}`}
+              title={tile.isStale ? "Live price unavailable; showing the last cached price." : undefined}
               style={{
                 flexBasis: `${Math.max(6, weightPct - 0.5)}%`,
                 flexGrow: 0,
@@ -101,9 +119,18 @@ function DashboardHeatmap({
                 background: heatTileColor(tile.cp, pricesLoaded || tile.priceConfirmed),
                 minWidth: 72,
                 minHeight: 72,
+                position: "relative",
               }}
               className="rounded-lg p-2 flex flex-col justify-between hover:brightness-110 transition-all cursor-pointer"
             >
+              {tile.isStale && (
+                <span
+                  className="absolute top-1 right-1 text-amber-300 text-[10px] leading-none"
+                  aria-label="Stale price"
+                >
+                  ⏱
+                </span>
+              )}
               <span className="text-white text-xs font-bold truncate leading-tight">{display}</span>
               <div>
                 <div className={`text-xs font-semibold leading-tight ${changeColor}`}>{changeText}</div>
@@ -120,53 +147,129 @@ function DashboardHeatmap({
 export default function DashboardPage() {
   const { portfolios, loading: ctxLoading } = usePortfolio();
   const [holdingsMap, setHoldingsMap] = useState<Record<number, PortfolioItem[]>>({});
+  const [holdingsFailedMap, setHoldingsFailedMap] = useState<Record<number, boolean>>({});
   const [priceMap, setPriceMap] = useState<Record<number, PriceRefreshItem[]>>({});
   const [loadingHoldings, setLoadingHoldings] = useState(false);
+  // True once Phase 1 has settled (every portfolio either loaded or failed) —
+  // distinct from holdingsMap containing every id, since a failed portfolio
+  // never gets a holdingsMap entry. Gates Phase 2 so it doesn't fire against
+  // a stale/incomplete holdingsMap from a previous portfolio list.
+  const [holdingsSettled, setHoldingsSettled] = useState(false);
   const [pricesLoaded, setPricesLoaded] = useState(false);
   const [error, setError] = useState("");
+  const holdingsRequestIdRef = useRef(0);
+  const priceRequestIdRef = useRef(0);
 
   // Phase 1: load holdings from DB (fast, no yfinance)
   useEffect(() => {
-    if (ctxLoading || portfolios.length === 0) return;
+    const requestId = ++holdingsRequestIdRef.current;
+    // Any holdings reload invalidates an in-flight price response as well.
+    // The quote set belongs to the holdings request that triggered it.
+    ++priceRequestIdRef.current;
+    let active = true;
+
+    if (ctxLoading || portfolios.length === 0) {
+      setHoldingsMap({});
+      setHoldingsFailedMap({});
+      setPriceMap({});
+      setPricesLoaded(false);
+      setLoadingHoldings(false);
+      setHoldingsSettled(!ctxLoading);
+      return () => { active = false; };
+    }
+
     setLoadingHoldings(true);
+    setHoldingsSettled(false);
     setPricesLoaded(false);
-    Promise.all(
+    setPriceMap({});
+    setError("");
+    // Promise.allSettled — one portfolio's holdings request failing must not
+    // wipe out the others. The dashboard/wealth overview should still show
+    // every portfolio it *could* load; the failed one is flagged, not hidden.
+    Promise.allSettled(
       portfolios.map((p) => getHoldings(p.id).then((items) => ({ id: p.id, items })))
     )
       .then((results) => {
+        if (!active || holdingsRequestIdRef.current !== requestId) return;
         const map: Record<number, PortfolioItem[]> = {};
-        results.forEach(({ id, items }) => { map[id] = items; });
+        const failed: Record<number, boolean> = {};
+        results.forEach((result, i) => {
+          const pid = portfolios[i].id;
+          if (result.status === "fulfilled") {
+            map[result.value.id] = result.value.items;
+          } else {
+            failed[pid] = true;
+            console.error(`Failed to load holdings for portfolio ${pid}:`, result.reason);
+          }
+        });
         setHoldingsMap(map);
+        setHoldingsFailedMap(failed);
+        setError(Object.keys(failed).length === portfolios.length ? "Cannot connect to backend" : "");
       })
-      .catch(() => setError("Cannot connect to backend"))
-      .finally(() => setLoadingHoldings(false));
+      .finally(() => {
+        if (active && holdingsRequestIdRef.current === requestId) {
+          setLoadingHoldings(false);
+          setHoldingsSettled(true);
+        }
+      });
+
+    return () => { active = false; };
   }, [portfolios, ctxLoading]);
 
   // Phase 2: fetch live prices once holdings are known (hits yfinance cache)
   useEffect(() => {
-    if (portfolios.length === 0 || Object.keys(holdingsMap).length === 0) return;
-    Promise.all(
+    const requestId = ++priceRequestIdRef.current;
+    const holdingsRequestId = holdingsRequestIdRef.current;
+    let active = true;
+
+    if (!holdingsSettled || portfolios.length === 0) {
+      return () => { active = false; };
+    }
+
+    setPriceMap({});
+    setPricesLoaded(false);
+    Promise.allSettled(
       portfolios.map((p) => getPortfolioPrices(p.id).then((prices) => ({ id: p.id, prices })))
-    )
-      .then((results) => {
-        const map: Record<number, PriceRefreshItem[]> = {};
-        results.forEach(({ id, prices }) => { map[id] = prices; });
-        setPriceMap(map);
-      })
-      .catch(() => {
-        // prices failing is non-fatal — heatmap shows "No price data"
-      })
-      .finally(() => setPricesLoaded(true));
-  }, [holdingsMap, portfolios]);
+    ).then((results) => {
+      if (
+        !active ||
+        priceRequestIdRef.current !== requestId ||
+        holdingsRequestIdRef.current !== holdingsRequestId
+      ) return;
+      const map: Record<number, PriceRefreshItem[]> = {};
+      results.forEach((result, i) => {
+        if (result.status === "fulfilled") {
+          map[result.value.id] = result.value.prices;
+        } else {
+          // one portfolio's price fetch failing must not discard the others —
+          // heatmap shows "No price data" for just this portfolio's holdings
+          console.error(`Failed to load prices for portfolio ${portfolios[i].id}:`, result.reason);
+        }
+      });
+      setPriceMap(map);
+      setPricesLoaded(true);
+    });
+
+    return () => { active = false; };
+  }, [holdingsSettled, holdingsMap, portfolios]);
 
   const isLoading = ctxLoading || loadingHoldings;
 
   return (
     <div className="space-y-10">
       <section>
-        <h1 className="text-2xl font-bold mb-1">Dashboard</h1>
+        <h1 className="text-2xl font-bold mb-1">Wealth Overview</h1>
         {error && <p className="mt-2 text-sm text-red-500">{error}</p>}
       </section>
+
+      <WealthOverview
+        portfolios={portfolios}
+        holdingsMap={holdingsMap}
+        priceMap={priceMap}
+        holdingsFailedMap={holdingsFailedMap}
+        pricesLoaded={pricesLoaded}
+        loading={isLoading}
+      />
 
       {isLoading ? (
         <p className="text-sm text-gray-400">Loading…</p>

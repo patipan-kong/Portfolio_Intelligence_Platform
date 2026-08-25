@@ -2879,3 +2879,550 @@ lifecycle is closed. This synchronization creates no implementation,
 allocation, authorization, release, WP3, or successor authority. No
 implementation artifact, planning artifact, frozen artifact, WP1 artifact,
 M46 artifact, or Implementation INDEX entry is modified by this entry.
+
+---
+
+## BANPU-WP3 Decision Log Synchronization
+
+**Date:** 2026-08-11
+
+**Decision:** Record repository synchronization for the completed BANPU-WP3
+implementation governance lifecycle. BANPU-WP3's pre-amendment planning corpus
+identity was `C7B6CEEFF29565AC84C83FCF0F61E52303989B1D03DBAC6E1144566C0670638A`;
+its current BPA-1 amended and frozen governing planning corpus identity is
+`3A04B06A9AF5A405EC6EA6C08A2C98519FA3B2FC963AFC5EA584655294D8F43D`.
+The approved amended Work Package Plan identity is
+`84E1EC24ACF436AFCC26BFABB4E982692BDB80AAF24B02828356D0F69B23045D`.
+
+The completed lifecycle is recorded by the [BPA-1 Accessor Delta
+Acceptance](../implementation/BANPU_WP3_BPA1_C3_ACCESSOR_DELTA_ACCEPTANCE.md),
+[Step 4.1 Call-Path Evidence](../implementation/BANPU_WP3_STEP_4_1_CALL_PATH_EVIDENCE.md),
+[C4 Acceptance Record](../implementation/BANPU_WP3_C4_ACCEPTANCE_RECORD.md),
+[Implementation Confirmation](../implementation/BANPU_WP3_IMPLEMENTATION_CONFIRMATION.md),
+[Implementation Freeze Record](../implementation/BANPU_WP3_IMPLEMENTATION_FREEZE_RECORD.md),
+and [Epic Closeout](../implementation/BANPU_WP3_EPIC_CLOSEOUT.md).
+
+The final constitutional state is:
+
+- BPA-1 amended planning: `COMPLETE AND FROZEN`;
+- WP3.1 through WP3.4 / C1 through C4: `ACCEPTED`;
+- BPA-1 accessor delta: `INDEPENDENTLY ACCEPTED`;
+- Implementation Confirmation: `COMPLETE`;
+- Implementation Freeze: `COMPLETE`;
+- frozen implementation corpus: 9 members,
+  `E2C44B920D533D386FE3C470C48A8701806D14BA4C1866A7F9058C700FB0E7B8`; and
+- BANPU-WP3: `COMPLETE`, `FROZEN`, and `CLOSED`.
+
+**Reasoning:** This entry synchronizes the Decision Log to state already
+established by the authoritative BANPU-WP3 lifecycle records. It does not
+reopen or reinterpret a planning, implementation, review, confirmation, freeze,
+or closeout decision.
+
+**Impact:** WP4's S7 entry prerequisite is satisfied, but WP4 remains `NOT
+ALLOCATED` and `NOT AUTHORIZED`. This synchronization creates no implementation,
+allocation, authorization, release, deployment, or successor authority. No
+implementation, test, frozen planning, Work Package Plan, approval,
+confirmation, freeze, closeout, WP1/WP2, M46, or Implementation INDEX artifact
+is modified by this entry. The separately identified successor synchronization
+act is BANPU-WP3 Implementation INDEX synchronization.
+
+**Disposition:** `BANPU-WP3 DECISION LOG SYNCHRONIZED`
+
+---
+
+## BANPU-WP4 Decision Log Synchronization
+
+**Date:** 2026-08-14
+
+**Decision:** Record repository synchronization for the completed BANPU-WP4
+implementation lifecycle. The Third Renewed Independent Implementation Review
+identity is `6FC13EDA1E43FF4584B2E4A8B272A8EC030BAE740395D0C46D31A9FC805A79EC`,
+disposition `BANPU-WP4 IMPLEMENTATION CANDIDATE — INDEPENDENTLY APPROVED`. The
+Implementation Confirmation identity is
+`AC1EF60A75FE53AD77A7B60BE28672DD3809B31B0E2D6DAF9879C74CF57B8910`, disposition
+`BANPU-WP4 IMPLEMENTATION CONFIRMED`. The Implementation Freeze identity is
+`628CE4E4460A23AB9F28ADC69ACA50BFB233AD71E2B95FA469929EC8BDBBE283`, disposition
+`BANPU-WP4 IMPLEMENTATION FROZEN`. The frozen implementation corpus aggregate
+identity (canonical-LF manifest, 6 members) is
+`2C22C139F1C013CFF8DAB210CFBABA866A4DF42BBBFF05EBDD735603488D9FBE`.
+
+The completed lifecycle is recorded by the [Third Renewed Independent
+Implementation Review](../implementation/BANPU_WP4_THIRD_RENEWED_INDEPENDENT_IMPLEMENTATION_REVIEW.md),
+[Implementation Confirmation](../implementation/BANPU_WP4_IMPLEMENTATION_CONFIRMATION.md),
+[Implementation Freeze Record](../implementation/BANPU_WP4_IMPLEMENTATION_FREEZE_RECORD.md),
+and [Epic Closeout](../implementation/BANPU_WP4_EPIC_CLOSEOUT.md).
+
+The final constitutional state is:
+
+- BANPU-WP4 Work Package Plan and retry-order amendment lifecycle:
+  `COMPLETE AND FROZEN`;
+- Implementation review (original, renewed, second-renewed, third renewed):
+  `INDEPENDENTLY APPROVED`;
+- Implementation Confirmation: `COMPLETE`;
+- Implementation Freeze: `COMPLETE`;
+- frozen implementation corpus: 6 members,
+  `2C22C139F1C013CFF8DAB210CFBABA866A4DF42BBBFF05EBDD735603488D9FBE`;
+- Epic Closeout: `BANPU-WP4 EPIC CLOSEOUT COMPLETE`; and
+- BANPU-WP4: `COMPLETE`, `FROZEN`, and `CLOSED`.
+
+**Reasoning:** This entry synchronizes the Decision Log to state already
+established by the authoritative BANPU-WP4 lifecycle records. It does not
+reopen or reinterpret a planning, implementation, review, confirmation,
+freeze, or closeout decision, and does not resolve, waive, or reclassify the
+carried baseline missing-log assertion, the reviewed temporary-path
+permission condition, or any other residual preserved by those records.
+
+**Impact:** WP5's entry prerequisite is satisfied, but WP5 remains `NOT
+ALLOCATED` and `NOT AUTHORIZED`. This synchronization creates no
+implementation, allocation, authorization, release, deployment, production
+conversion, snapshot mutation, WP5+, or M46 authority. No implementation,
+test, frozen planning, Work Package Plan, approval, confirmation, freeze,
+closeout, WP1/WP2/WP3, M46, or Implementation INDEX artifact is modified by
+this entry. The separately identified successor synchronization act is
+BANPU-WP4 Implementation INDEX synchronization.
+
+**Disposition:** `BANPU-WP4 DECISION LOG SYNCHRONIZED`
+
+---
+
+## BANPU-WP5 Decision Log Synchronization
+
+**Date:** 2026-08-17
+
+**Decision:** Record repository synchronization for the completed BANPU-WP5
+implementation lifecycle. The Second Fresh Independent Implementation
+Re-Review identity is `D323891303DF0A5FF032BD181B20ECC9DA52653C47897ACE66400A472B5E79A3`,
+disposition `BANPU-WP5 FRESH INDEPENDENT IMPLEMENTATION RE-REVIEW — PASSED`.
+The Implementation Confirmation identity is
+`548876808A8515666FF3B3DC8CD4B42B5923E84C348C52C5D42BB874766820DE`,
+disposition `BANPU-WP5 IMPLEMENTATION CONFIRMED`. The Implementation Freeze
+identity is `8FE512A22BD0979B274C211BA48E4EB10B7CD5E82F42950C617DBE856A570E54`,
+disposition `BANPU-WP5 IMPLEMENTATION FROZEN`. The frozen implementation
+corpus aggregate identity (canonical-LF manifest, 9 members) is
+`8646BEE6C08C92F938F5B8B530039F032CDAA9A92E803E4A847DB661B960AC0D`. The Epic
+Closeout identity is
+`46AC7C4B5517F5DCE3978CE292ABDD4B8D6783D6C86A20DE8191291C55103E4A`,
+disposition `BANPU-WP5 EPIC CLOSEOUT COMPLETE`.
+
+The completed lifecycle is recorded by the [Second Fresh Independent
+Implementation Re-Review](../implementation/BANPU_WP5_SECOND_FRESH_INDEPENDENT_IMPLEMENTATION_REVIEW.md),
+[Implementation Confirmation](../implementation/BANPU_WP5_IMPLEMENTATION_CONFIRMATION.md),
+[Implementation Freeze Record](../implementation/BANPU_WP5_IMPLEMENTATION_FREEZE_RECORD.md),
+and [Epic Closeout](../implementation/BANPU_WP5_EPIC_CLOSEOUT.md).
+
+The final constitutional state is:
+
+- BANPU-WP5 Work Package Plan, Mechanical Continuity Amendment, and D7
+  Implementation Authorization Amendment lifecycle: `COMPLETE AND FROZEN`;
+- Implementation review: the original review and the first fresh re-review
+  each concluded `FAIL — IMPLEMENTATION CORRECTION REQUIRED`; the second
+  fresh re-review concluded `PASSED`;
+- Implementation Confirmation: `COMPLETE`;
+- Implementation Freeze: `COMPLETE`;
+- frozen implementation corpus: 9 members,
+  `8646BEE6C08C92F938F5B8B530039F032CDAA9A92E803E4A847DB661B960AC0D`;
+- Epic Closeout: `BANPU-WP5 EPIC CLOSEOUT COMPLETE`; and
+- BANPU-WP5: `COMPLETE`, `FROZEN`, and `CLOSED`.
+
+**Reasoning:** This entry synchronizes the Decision Log to state already
+established by the authoritative BANPU-WP5 lifecycle records. It does not
+reopen or reinterpret a planning, implementation, review, confirmation,
+freeze, or closeout decision, and does not resolve, waive, or reclassify
+`MINOR-2` (WP5 half) or `POSITION_CONVERSION_REBUILD_BOUNDARY`, both of which
+remain exactly as the Epic Closeout recorded them: `TECHNICALLY SATISFIED —
+CARRIED FORWARD; NOT DISCHARGED`, or any other residual preserved by those
+records.
+
+**Impact:** This synchronization satisfies the Decision Log component of
+WP6's allocation entry-state prerequisite; the Implementation INDEX
+component remains outstanding. WP6 remains `NOT ALLOCATED` and `NOT
+AUTHORIZED`. This synchronization creates no implementation, allocation,
+authorization, release, deployment, production conversion, snapshot
+mutation, WP6+, or M46 authority. No implementation, test, frozen planning,
+Work Package Plan, approval, confirmation, freeze, closeout,
+WP1/WP2/WP3/WP4, M46, or Implementation INDEX artifact is modified by this
+entry. The separately identified successor synchronization act is
+BANPU-WP5 Implementation INDEX synchronization.
+
+**Disposition:** `BANPU-WP5 DECISION LOG SYNCHRONIZED`
+
+---
+
+## BANPU-WP6 Decision Log Synchronization
+
+**Date:** 2026-08-18
+
+**Decision:** Record repository synchronization for the completed BANPU-WP6
+implementation lifecycle. The Second Fresh Independent Implementation
+Re-Review identity is `3A720877B82B41BF9A266F05D2C4E22D2EC4935E47C720EFA57C8922C307C962`,
+disposition `BANPU-WP6 INDEPENDENT IMPLEMENTATION RE-REVIEW PASSED`. The
+Implementation Confirmation identity is
+`1235431FF77AB919FA0BFE3521ABB6E03B18B9F55FEE204DCC9B836A88F349FD`,
+disposition `BANPU-WP6 IMPLEMENTATION CONFIRMED`. The Implementation Freeze
+identity is `DC65D5F573D78AF8563D74FAE7B31087D7232097AC7583A29553373FEE4BBE63`,
+disposition `BANPU-WP6 IMPLEMENTATION FROZEN`. The frozen implementation
+corpus is bound at two independently preserved identities: a raw continuity
+aggregate `0CB01B5849062C141F9BCEA477A4E633AFA6BB220691251B3DC624EE9B72F9B7`
+(7 members) and a canonical-LF frozen identity of record
+`384FB879DB3CCE8BDA16AC059317A7712AE8CB29B7EFF3DEE37870878EF1AFD8`. The Epic
+Closeout identity is
+`274DD341C793B0A8A163B4383183BC6D9619154EB21F195E06C1C0A8E7BBE886`,
+disposition `BANPU-WP6 EPIC CLOSEOUT COMPLETE`.
+
+The completed lifecycle is recorded by the [Second Fresh Independent
+Implementation Re-Review](../implementation/BANPU_WP6_SECOND_FRESH_INDEPENDENT_IMPLEMENTATION_REVIEW.md),
+[Implementation Confirmation](../implementation/BANPU_WP6_IMPLEMENTATION_CONFIRMATION.md),
+[Implementation Freeze Record](../implementation/BANPU_WP6_IMPLEMENTATION_FREEZE_RECORD.md),
+and [Epic Closeout](../implementation/BANPU_WP6_EPIC_CLOSEOUT.md).
+
+The final constitutional state is:
+
+- BANPU-WP6 Allocation, Implementation Authorization, Work Package Plan,
+  Planning Confirmation, and Planning Freeze lifecycle: `COMPLETE AND
+  FROZEN`;
+- Implementation review: the original review and the first fresh re-review
+  each concluded `FAIL — IMPLEMENTATION CORRECTION REQUIRED` (the first fresh
+  re-review failing on `WP6-RR-B1` only); the second fresh re-review
+  concluded `BANPU-WP6 INDEPENDENT IMPLEMENTATION RE-REVIEW PASSED`;
+- Implementation Confirmation: `COMPLETE`;
+- Implementation Freeze: `COMPLETE`;
+- frozen implementation corpus: 7 members, raw continuity aggregate
+  `0CB01B5849062C141F9BCEA477A4E633AFA6BB220691251B3DC624EE9B72F9B7`,
+  canonical-LF identity of record
+  `384FB879DB3CCE8BDA16AC059317A7712AE8CB29B7EFF3DEE37870878EF1AFD8`;
+- Epic Closeout: `BANPU-WP6 EPIC CLOSEOUT COMPLETE`;
+- implementation authority: `EXHAUSTED / CLOSED`; and
+- BANPU-WP6: `COMPLETE`, `FROZEN`, and `CLOSED`.
+
+**Reasoning:** This entry synchronizes the Decision Log to state already
+established by the authoritative BANPU-WP6 lifecycle records. It does not
+reopen or reinterpret a planning, implementation, review, confirmation,
+freeze, or closeout decision, and does not resolve, waive, or reclassify
+`MINOR-2`, `POSITION_CONVERSION_REBUILD_BOUNDARY`, `PD-3`, or any WP1–WP4
+carried residual. Consistent with the Epic Closeout §§13–14, `MINOR-2` and
+`POSITION_CONVERSION_REBUILD_BOUNDARY` are not WP6-owned and remain exactly
+as `BANPU_WP5_EPIC_CLOSEOUT.md` recorded them: `TECHNICALLY SATISFIED —
+CARRIED FORWARD; NOT DISCHARGED`. The Epic Closeout independently
+re-verified, rather than merely repeated, that BANPU-WP6 carries forward
+zero WP6-native residuals; `WP6-RR-B1` remains a closed, resolved review
+finding and is not reclassified as a residual by this entry. The WPP
+`.delete()` / `regenerate_static_shadow` citation remains a `NON-BLOCKING
+DOCUMENTARY INACCURACY`, unmodified, and the Work Package Plan is not
+reopened.
+
+**Impact:** This synchronization satisfies the Decision Log component of
+WP7's allocation entry-state prerequisite; the Implementation INDEX
+component remains outstanding. WP7+ remains `NOT ALLOCATED` and `NOT
+AUTHORIZED`. This synchronization creates no implementation, allocation,
+authorization, release, deployment, production conversion, snapshot
+mutation, WP7+, or M46 authority. No implementation, test, frozen planning,
+Work Package Plan, approval, confirmation, freeze, closeout,
+WP1/WP2/WP3/WP4/WP5, M46, or Implementation INDEX artifact is modified by
+this entry. The separately identified successor synchronization act is
+BANPU-WP6 Implementation INDEX synchronization.
+
+**Disposition:** `BANPU-WP6 DECISION LOG SYNCHRONIZED`
+
+---
+
+## BANPU-WP7 Decision Log Synchronization
+
+**Date:** 2026-08-19
+
+**Decision:** Record repository synchronization for the completed BANPU-WP7
+implementation lifecycle. The Third Fresh Independent Implementation
+Re-Review identity is `B96B08CCAED2B0980D205A8ED2D85AD04984A2022D687984182019CF80A27550`,
+disposition `BANPU-WP7 IMPLEMENTATION RE-REVIEW PASSED`. The Implementation
+Confirmation identity is
+`B0C5B7D4282F8317D4136B1F5589236C6164B3AA55BBFB0C7A9CE212AAF5736C`,
+disposition `BANPU-WP7 IMPLEMENTATION CONFIRMED`. The Implementation Freeze
+identity is `53748C5175A2966AAD846742AE6A49631565861B988DA8629A46FE2F134B8A57`,
+disposition `BANPU-WP7 IMPLEMENTATION FROZEN`. The frozen implementation
+corpus is bound at two independently preserved identities: a raw continuity
+aggregate `1D1B101E9B8874D1B8EAD3CA2EEE5678A1A37FB6C7E3FB3A0AF76FC7743B5B5C`
+(3 members) and a canonical-LF frozen identity of record
+`B0C7C52B1C21A4F5D1E61FA1B5CE783B1005D629D2CCCC1722A13210A1467F06`. Unlike
+WP6, the WP7 corpus consumes the frozen BANPU-WP5 `RebuildResult`
+`reconstructed_realized_pnl`/`reconstructed_holding_basis` fields by
+reference, not ownership; the active WP5 predecessor overlay canonical-LF
+identity is `89AA23712BE8177F8D363587343B520CB7DCC2C950BB6AE8B08E27A6D519C6F0`,
+unchanged since Freeze. The Epic Closeout identity is
+`A89F4D3119AA0AD17CE76BD037DA1F6EA654B33A5BF7EFA5E34D174A58484061`,
+disposition `BANPU-WP7 EPIC CLOSEOUT COMPLETE`.
+
+The completed lifecycle is recorded by the [Third Fresh Independent
+Implementation Re-Review](../implementation/BANPU_WP7_THIRD_FRESH_INDEPENDENT_IMPLEMENTATION_REVIEW.md),
+[Implementation Confirmation](../implementation/BANPU_WP7_IMPLEMENTATION_CONFIRMATION.md),
+[Implementation Freeze Record](../implementation/BANPU_WP7_IMPLEMENTATION_FREEZE_RECORD.md),
+and [Epic Closeout](../implementation/BANPU_WP7_EPIC_CLOSEOUT.md).
+
+The final constitutional state is:
+
+- BANPU-WP7 Allocation, Implementation Authorization, Identity Ingress
+  Design Clarification, Work Package Plan, Planning Confirmation, and
+  Planning Freeze lifecycle: `COMPLETE AND FROZEN`;
+- Implementation review: the original review, the first fresh re-review,
+  and the second fresh re-review each concluded
+  `BANPU-WP7 IMPLEMENTATION RE-REVIEW FAILED — IMPLEMENTATION CORRECTION
+  REQUIRED` (the original review's disposition was recorded as `FAIL —
+  IMPLEMENTATION CORRECTION REQUIRED`); the third fresh re-review concluded
+  `BANPU-WP7 IMPLEMENTATION RE-REVIEW PASSED`;
+- Implementation Confirmation: `COMPLETE`;
+- Implementation Freeze: `COMPLETE`;
+- frozen implementation corpus: 3 members, raw continuity aggregate
+  `1D1B101E9B8874D1B8EAD3CA2EEE5678A1A37FB6C7E3FB3A0AF76FC7743B5B5C`,
+  canonical-LF identity of record
+  `B0C7C52B1C21A4F5D1E61FA1B5CE783B1005D629D2CCCC1722A13210A1467F06`;
+- active WP5 predecessor overlay: unchanged, canonical-LF
+  `89AA23712BE8177F8D363587343B520CB7DCC2C950BB6AE8B08E27A6D519C6F0`;
+- Epic Closeout: `BANPU-WP7 EPIC CLOSEOUT COMPLETE`;
+- implementation authority: `EXHAUSTED / CLOSED`; and
+- BANPU-WP7: `COMPLETE`, `FROZEN`, and `CLOSED`.
+
+**Reasoning:** This entry synchronizes the Decision Log to state already
+established by the authoritative BANPU-WP7 lifecycle records. It does not
+reopen or reinterpret a planning, implementation, review, confirmation,
+freeze, or closeout decision, and does not resolve, waive, or reclassify
+LM13, the WP7-bound portions of `MINOR-5` or `NEW-MINOR-A`, or any
+rehearsal-dependent acceptance item. LM13
+(`backend/tests/test_position_conversion_live.py`) remains classified
+`STALE PREDECESSOR TEST — WP7 AUTHORITY SUPERSEDES CLI PORTION`, unresolved
+and unsynchronized, exactly as the Epic Closeout §16 recorded it. `A11`,
+`A12`, `A14`, and `A15` remain `NOT EVALUATED — REHEARSAL ENVIRONMENT
+REQUIRED`, exactly as the Implementation Freeze Record §J and Epic Closeout
+§12 recorded them. The WP7-bound portions of `MINOR-5` and `NEW-MINOR-A`
+remain `WP7-BOUND; OPEN; NOT DISCHARGED`, exactly as the Epic Closeout
+§§14–15 recorded them; their WP8-release-evidence and WP4-authoring
+counterparts remain outside WP7's authority and are untouched. Consistent
+with the Epic Closeout §§17–18, `MINOR-2`,
+`POSITION_CONVERSION_REBUILD_BOUNDARY`, and `PD-3` are not WP7-owned and are
+untouched by this entry. The three historical failed reviews (initial,
+first fresh, second fresh) are not erased, rewritten, or reclassified; they
+remain preserved, in full, as the record of the correction path that
+produced the passing third fresh re-review. Independent re-verification of
+the live `BANPU_WP7_THIRD_FRESH_INDEPENDENT_IMPLEMENTATION_REVIEW.md`
+disposition line found it reads exactly `BANPU-WP7 IMPLEMENTATION
+RE-REVIEW PASSED`; the Epic Closeout §5 paraphrase of this disposition
+(`BANPU-WP7 INDEPENDENT IMPLEMENTATION RE-REVIEW PASSED`) inserts a word not
+present in the live artifact. This is a `NON-BLOCKING DOCUMENTARY
+INACCURACY` in a closed, frozen artifact; it is recorded here for accuracy
+and is not corrected in place, since doing so would require reopening a
+closed Epic Closeout. This entry itself quotes the disposition exactly as
+it appears in the live review file.
+
+**Impact:** This synchronization satisfies the Decision Log component of
+WP8's future allocation entry-state prerequisite; the Implementation INDEX
+component remains outstanding. WP8 remains `NOT ALLOCATED` and `NOT
+AUTHORIZED`. This synchronization creates no implementation, allocation,
+authorization, release, deployment, production conversion, snapshot
+mutation, WP8, or M46 authority. No implementation, test, fixture, frozen
+planning, Work Package Plan, approval, confirmation, freeze, closeout,
+WP1–WP6, M46, or Implementation INDEX artifact is modified by this entry.
+The separately identified successor synchronization act is BANPU-WP7
+Implementation INDEX synchronization.
+
+**Disposition:** `BANPU-WP7 DECISION LOG SYNCHRONIZED`
+
+## BANPU-WP5 Fresh Result-Surface Amendments Decision Log Synchronization
+
+**Date:** 2026-08-19
+
+**Decision:** Record repository synchronization for the two completed,
+successor-triggered BANPU-WP5 result-surface amendment lifecycles layered on
+the historically closed BANPU-WP5 epic. The Realized P&L Amendment
+Authorization identity is
+`DFFFF800D9636AB5266846FD750FCE3CD3DF6AFA40EAB3EB43219F280D7D8336`,
+disposition `BANPU-WP5 REALIZED-PNL RESULT-SURFACE AMENDMENT AUTHORIZED`.
+Its Fresh Independent Implementation Review identity is
+`3B3E836377269CAB1E352CC653F4C79E133525761C7ACC097B5A8C3CF8085925`,
+disposition `BANPU-WP5 REALIZED-PNL RESULT-SURFACE IMPLEMENTATION REVIEW
+PASSED`. Its Fresh Implementation Confirmation identity is
+`92CB87DDB7263712EF8CCF640C3A91CDDC36B98CAAAA97B94C4072D739F4E7E4`,
+disposition `BANPU-WP5 REALIZED-PNL RESULT-SURFACE IMPLEMENTATION
+CONFIRMED`. Its Fresh Implementation Freeze identity is
+`D97571815CC841B9CE8EADE4DD385FD2C739C2029D999ADF85EF815838E70ED8`,
+disposition `BANPU-WP5 REALIZED-PNL RESULT-SURFACE IMPLEMENTATION FROZEN`.
+
+The Ordinary Holding Basis Amendment Authorization identity is
+`9A8107A58AB6D4CFC6B360B1F216352F112356C89C293021EAA02D1E1942BED2`,
+disposition `BANPU-WP5 ORDINARY-HOLDING-BASIS RESULT-SURFACE AMENDMENT
+AUTHORIZED`, issued against the WP7-side triggering determination
+`D32DEED16A0BB8C798A3A31C1705BCD64A61194A49E29B31C9E167228C5C0411`
+(disposition `BANPU-WP7 BASIS EVIDENCE SOURCE RESOLVED — PREDECESSOR
+EXPOSURE AMENDMENT REQUIRED`). Its Fresh Independent Implementation Review
+identity is
+`B3E1CB85734E3E8C59CD8B73A3D336190C5FD47F644614EA9FA9C52E0BFA3F82`,
+disposition `BANPU-WP5 ORDINARY-HOLDING-BASIS RESULT-SURFACE IMPLEMENTATION
+REVIEW PASSED`. Its Fresh Implementation Confirmation identity is
+`C655877C8FA90891E6304D198A9C1081970B2D53349767896DFEE93458B1530D`,
+disposition `BANPU-WP5 ORDINARY-HOLDING-BASIS RESULT-SURFACE IMPLEMENTATION
+CONFIRMED`. Its Fresh Implementation Freeze identity is
+`33B7898DCACF71CDDEF352AD6D4898F69C500A01E42B20D0371B7A7C52360176`,
+disposition `BANPU-WP5 ORDINARY-HOLDING-BASIS RESULT-SURFACE IMPLEMENTATION
+FROZEN`.
+
+The two amendments bind the same physical two-member overlay —
+`backend/services/portfolio_rebuilder.py` and
+`backend/tests/test_portfolio_rebuilder.py` — and the ordinary-basis Freeze
+establishes the active frozen overlay identity as canonical-LF
+`89AA23712BE8177F8D363587343B520CB7DCC2C950BB6AE8B08E27A6D519C6F0` (raw
+continuity `E1F8B3E559AC9BD6683F9C1B69FD685C6B9A39934703B6E76AD3FE4720DEDC08`),
+incorporating both the realized-P&L and ordinary-holding-basis observations.
+This is the same identity already cited, as unchanged, by the already-committed
+BANPU-WP7 Decision Log Synchronization entry immediately above.
+
+The completed lineage is recorded by [Realized P&L Amendment
+Authorization](../implementation/BANPU_WP5_IMPLEMENTATION_AUTHORIZATION_AMENDMENT_REBUILDRESULT_REALIZED_PNL_EXPOSURE.md),
+[Fresh Independent Implementation
+Review](../implementation/BANPU_WP5_FRESH_INDEPENDENT_IMPLEMENTATION_REVIEW_REALIZED_PNL_EXPOSURE.md),
+[Fresh Implementation
+Confirmation](../implementation/BANPU_WP5_FRESH_IMPLEMENTATION_CONFIRMATION_REALIZED_PNL_EXPOSURE.md),
+and [Fresh Implementation
+Freeze](../implementation/BANPU_WP5_FRESH_IMPLEMENTATION_FREEZE_REALIZED_PNL_EXPOSURE.md)
+for the realized-P&L observation; and by [Ordinary Holding Basis Amendment
+Authorization](../implementation/BANPU_WP5_IMPLEMENTATION_AUTHORIZATION_AMENDMENT_REBUILDRESULT_ORDINARY_HOLDING_BASIS_EXPOSURE.md),
+[Fresh Independent Implementation
+Review](../implementation/BANPU_WP5_FRESH_INDEPENDENT_IMPLEMENTATION_REVIEW_ORDINARY_HOLDING_BASIS_EXPOSURE.md),
+[Fresh Implementation
+Confirmation](../implementation/BANPU_WP5_FRESH_IMPLEMENTATION_CONFIRMATION_ORDINARY_HOLDING_BASIS_EXPOSURE.md),
+and [Fresh Implementation
+Freeze](../implementation/BANPU_WP5_FRESH_IMPLEMENTATION_FREEZE_ORDINARY_HOLDING_BASIS_EXPOSURE.md)
+for the ordinary-holding-basis observation, together with the WP7-side
+[Basis Evidence Source
+Determination](../implementation/BANPU_WP7_WP5_ORDINARY_HOLDING_BASIS_EVIDENCE_SOURCE_DETERMINATION.md)
+that triggered it.
+
+The final constitutional state is:
+
+- historical BANPU-WP5 nine-member corpus: unchanged, `COMPLETE`,
+  `IMPLEMENTATION FROZEN`, and `EPIC CLOSED` at its original recorded
+  identity (`8646BEE6C08C92F938F5B8B530039F032CDAA9A92E803E4A847DB661B960AC0D`,
+  per the original BANPU-WP5 Decision Log Synchronization entry above);
+- realized-P&L result-surface amendment: `AUTHORIZED` → boundedly
+  implemented → fresh independent review `PASSED` → fresh Confirmation
+  `COMPLETE` → fresh Freeze `COMPLETE`; preserved as incorporated frozen
+  history within the active overlay identified below;
+- ordinary-holding-basis result-surface amendment: `AUTHORIZED` → boundedly
+  implemented → fresh independent review `PASSED` → fresh Confirmation
+  `COMPLETE` → fresh Freeze `COMPLETE`;
+- active WP5 result-surface overlay: 2 members
+  (`backend/services/portfolio_rebuilder.py`,
+  `backend/tests/test_portfolio_rebuilder.py`), canonical-LF identity of
+  record `89AA23712BE8177F8D363587343B520CB7DCC2C950BB6AE8B08E27A6D519C6F0`;
+- BANPU-WP7: unaffected and not reopened; its already-committed
+  implementation and Decision Log Synchronization entry consume this
+  overlay by reference only, exactly as already recorded above; and
+- BANPU-WP5: historically `COMPLETE`, `FROZEN`, `CLOSED`, with the above
+  amendment lineage as its only post-closure change-control activity.
+
+**Reasoning:** This entry synchronizes the Decision Log to state already
+established by the authoritative BANPU-WP5 amendment lifecycle records
+above; it does not reopen, reinterpret, or re-verify the historical WP5
+planning, implementation, review, confirmation, freeze, or closeout
+decisions recorded in the original BANPU-WP5 Decision Log Synchronization
+entry, which remain unchanged at their recorded identities. One combined
+entry, rather than two separate entries, is used because the two amendments
+do not each culminate in an independent active frozen identity: the
+ordinary-holding-basis Fresh Implementation Freeze record finds that,
+because both amendments touch the same two physical files, the
+ordinary-basis Freeze "replaces the active two-member byte identity rather
+than creating simultaneous active identities," preserving the realized-P&L
+delta "as incorporated frozen history" inside one active overlay. A single
+Decision Log entry describing that one resulting active identity mirrors
+the repository's own precedent: the original BANPU-WP5 synchronization
+above folded the Work Package Plan, the Mechanical Continuity Amendment,
+and the D7 Implementation Authorization Amendment lifecycle into one entry
+because they, too, culminated in one final frozen corpus rather than
+parallel independent ones. It is also the only choice consistent with the
+already-committed BANPU-WP7 Decision Log Synchronization entry above, which
+already cites this same overlay as a single active WP5 predecessor overlay
+identity, not as two separate predecessor identities. Neither amendment
+record itself performs or claims Decision Log synchronization; this entry
+is the first Decision Log act referencing either amendment.
+
+**Impact:** This synchronization records, but does not itself commit, the
+current working-tree state: at the time of this entry, HEAD is
+`4810d78e43496531aa87c79824484a0d50b31930`, the staging area is empty, and
+the amendment lineage's underlying artifacts — the eight governance records
+cited above and the two amended files
+(`backend/services/portfolio_rebuilder.py`,
+`backend/tests/test_portfolio_rebuilder.py`) — remain uncommitted working-tree
+content; no file is staged or committed by this act. This synchronization
+creates no release, deployment, production-mutation, allocation, or M46
+authority, and no BANPU-WP7 reopening, reinterpretation, or resumption of
+any kind — WP7 is already `COMPLETE`, `FROZEN`, `CLOSED`, and unaffected.
+It does not resolve, discharge, or reclassify LM13
+(`backend/tests/test_position_conversion_live.py`, unchanged at
+`FF7CE1F40B7D62B1D692698054559C8BD5EC86EA2898B2E6914A25D7236918D8`),
+`MINOR-5`, `NEW-MINOR-A`, `PD-3`, or any rehearsal-dependent WP7 acceptance
+item; all remain exactly as the BANPU-WP7 Epic Closeout and Decision Log
+Synchronization above recorded them. It creates no BANPU-WP8 or M46
+allocation or authorization. No original WP5 Freeze/Closeout record, no
+WP7 artifact, and no Implementation INDEX entry is modified by this act.
+The separately identified successor act is BANPU-WP5 Fresh Result-Surface
+Amendments Implementation INDEX Synchronization, not performed here.
+
+**Disposition:** `BANPU-WP5 FRESH RESULT-SURFACE AMENDMENTS DECISION LOG SYNCHRONIZED`
+
+## BANPU: Capability-Shadow Logging Regression Restoration and Verification
+
+**Date:** 2026-08-24
+
+**Decision:** Restore the runtime capability-shadow consultation
+(`_log_runtime_consultation`, `services/portfolio_transactions.py`) on
+`execute_sell` and `execute_initial_position`. Git forensics traced the gap
+to merge commit `c50b2cf` ("Merge branch 'feature/runtime-adoption'",
+2026-07-14), which reconciled two same-day divergent branches and silently
+kept the branch whose `execute_buy`/`execute_sell`/`execute_initial_position`
+bodies predated the `_log_runtime_consultation` call sites, dropping three
+of the four call sites that had been introduced earlier that day — only the
+untouched `execute_dividend()` call site survived the merge. This was a
+regression, not a gap in original scope: a prior Decision Log entry
+(2026-07-14, M30.3) had already recorded all four call sites as wired and
+green. The restored call is wrapped in try/except and only logs a warning
+on mismatch — it cannot affect the returned result or persisted rows — and
+both `execute_sell`/`execute_initial_position` gained tests mirroring the
+existing `execute_buy` shadow-coverage test to confirm that directly.
+
+Alongside this, three test files
+(`test_fee_accounting.py`, `test_ledger_validator_effective.py`,
+`test_snapshot_coverage.py`) were updated from
+`asyncio.get_event_loop().run_until_complete(...)` to `asyncio.run(...)`:
+on Python 3.13's Windows proactor event loop policy, `get_event_loop()`
+raises `RuntimeError: There is no current event loop` when no loop is
+already running, so the old pattern was failing outright, not just
+deprecated.
+
+`test_position_conversion_live.py`'s `test_lm13_...` public-surface scan was
+corrected to stop scanning `manage.py`: `manage.py` is the sole internal/
+operator CLI caller of `execute_position_conversion` (BANPU-WP7's CLI),
+never a public API — `main.py` and `routers/` were verified to have zero
+references to it — so excluding it from the "no public endpoint/CLI
+reference" check reflects actual CLI ownership rather than relaxing a real
+protection.
+
+A new test file, `test_banpu_wp8_integrated_regression.py`, adds coverage
+for four gaps not exercised elsewhere: deterministic price-matrix
+backfill/lookup semantics, attribution TWR-chaining across the BANPU
+conversion relationship date, factor-engine identity continuity across a
+converted holding, and legacy-vs-native replay-mode agreement on a mixed
+portfolio holding both a converted and an ordinary position.
+
+**Verification:** Focused run (the six files above): `148 passed, 0
+failed`. Full backend suite: `3079 passed, 45 failed, 32 skipped, 2
+deselected`. All 45 failures were individually root-caused and are
+pre-existing, unrelated to this change: 27 share the same stale
+`asyncio.get_event_loop()` pattern this change fixed elsewhere but in two
+files it didn't touch (`test_snapshot_repair.py`, 19;
+`test_position_import_accounting.py`, 8); 9 are a pre-existing
+`_assess_data_quality()` keyword-argument mismatch in `test_quant_engine.py`
+(`beta` vs. `_beta`); 4 are a pre-existing missing-argument bug in
+`_consensus_engine()` (`test_optimizer_pipeline.py`); 5 are a pre-existing
+`OverrideAttribution` schema mismatch in a `test_human_vs_ai_timing.py` test
+helper. None touch a file this change modified.
+
+**Reasoning:** Restoring the shadow consultation on `execute_sell`/
+`execute_initial_position` returns all three write paths to the
+cross-checked-against-the-capability-registry state the 2026-07-14 merge
+briefly and unintentionally removed. The asyncio fixes address a real
+Python 3.13 incompatibility, not a style preference.

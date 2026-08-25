@@ -91,7 +91,7 @@ def run_snapshot(db, portfolio_id: int, workspace_id: int, today_str: str, price
         ):
             return await generate_daily_snapshot(db, portfolio_id, workspace_id, today_str)
 
-    return asyncio.get_event_loop().run_until_complete(_go())
+    return asyncio.run(_go())
 
 
 # ── Tests: abort cases ─────────────────────────────────────────────────────────

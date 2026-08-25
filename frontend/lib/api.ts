@@ -126,6 +126,10 @@ export interface PortfolioItem {
   is_dr?: boolean;
   parent_symbol?: string | null;
   upside_reference_price?: number | null;
+  /** true only when current_price came from an expired-cache fallback because
+   * a live fetch was blocked/failed. Patched in from PriceRefreshItem on
+   * price refresh — see applyPrices() in app/portfolio/page.tsx. */
+  is_stale?: boolean;
 }
 
 export interface WatchlistItem {
@@ -350,6 +354,11 @@ export interface PriceRefreshItem {
   change_percent: number | null;
   last_updated: string | null;
   upside_pct?: number | null;
+  /** true only when current_price came from an expired-cache fallback because
+   * a live fetch was blocked/failed — never true when current_price is null.
+   * Optional (like upside_pct) so existing fixtures/mocks built before this
+   * field existed don't need updating; treat missing as false. */
+  is_stale?: boolean;
 }
 
 export const getPortfolioPrices = (portfolioId: number) =>
@@ -1409,7 +1418,9 @@ export type TransactionType =
   | "WITHDRAW"
   | "INITIAL_POSITION"
   | "INITIAL_CASH"
-  | "DIVIDEND";
+  | "DIVIDEND"
+  | "QUANTITY_CORRECTION"
+  | "POSITION_CONVERSION";
 
 export interface TransactionRecord {
   id: number;

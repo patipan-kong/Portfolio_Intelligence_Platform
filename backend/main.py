@@ -39,7 +39,7 @@ from services.optimizer.strategy_profiles import (
 from agents.chart_data import fetch_chart_data
 from services.data_fetcher import (
     fetch_price_info, fetch_info, normalize_dr_symbol, is_dr_symbol,
-    get_cache_stats, calculate_change_percent,
+    get_cache_stats, calculate_change_percent, resolve_successor_bindings,
 )
 from services.scorer import compute_scores
 from services.ai_client import call_ai
@@ -442,13 +442,22 @@ def _risk_level(ta_score: int | None, fa_score: int | None) -> str | None:
 
 
 def _quote_response(price: dict) -> dict:
-    """Attach presentation-only day change without writing it to quote cache."""
+    """Attach presentation-only day change without writing it to quote cache.
+
+    Also translates data_fetcher's private `_stale_data` marker (set only when
+    a price was served from an expired-cache fallback because a live fetch was
+    blocked or failed) into a public `is_stale` boolean, and drops the private
+    key so it never reaches the API response. A missing price is never
+    reported as stale — staleness only describes a real, usable price.
+    """
+    stale = bool(price.pop("_stale_data", False)) and price.get("current_price") is not None
     return {
         **price,
         "change_percent": calculate_change_percent(
             price.get("current_price"),
             price.get("previous_close"),
         ),
+        "is_stale": stale,
     }
 
 
@@ -722,8 +731,20 @@ async def get_portfolio_prices(portfolio_id: int, db: Session = Depends(get_db))
         return []
     symbols = [item.symbol for item in items]
 
+    # BANPU-WP3.4: this endpoint owns portfolio holding identity, so it is the
+    # one call site that supplies the WP3.2/WP3.3 binding for a converted
+    # successor symbol — every other fetch_price_info call site remains
+    # unbound and relies on WP3.3's fail-closed guard (see the WP3.4 unbound
+    # call-site register). A symbol with no binding here is simply unbound,
+    # unconverted, or ambiguous; it proceeds through fetch_price_info exactly
+    # as before.
+    bindings = resolve_successor_bindings(symbols)
+
     # Parallel price fetch — hits DB cache (5-min TTL) before touching yfinance
-    prices = await asyncio.gather(*[asyncio.to_thread(fetch_price_info, item.symbol) for item in items])
+    prices = await asyncio.gather(*[
+        asyncio.to_thread(fetch_price_info, item.symbol, bindings.get(item.symbol))
+        for item in items
+    ])
     price_map = {item.symbol: pr for item, pr in zip(items, prices)}
 
     # FA info for target_price + DR detection (DB only, no yfinance)

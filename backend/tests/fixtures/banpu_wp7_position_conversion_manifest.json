@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "predecessor": {
+    "asset_id": 1001,
+    "symbol": "BANPU.BK",
+    "shares_surrendered": "6700"
+  },
+  "successor": {
+    "asset_id": 1002,
+    "symbol": "BANPUU.BK",
+    "provider_symbol": "BANPUU.BK",
+    "shares_entitled": "2562.214",
+    "shares_received": "2562.214"
+  },
+  "conversion_ratio": "0.38242",
+  "basis": {
+    "before": "48709.00",
+    "allocated_to_cash_in_lieu": "0.00",
+    "carried_to_successor": "48709.00"
+  },
+  "cash_in_lieu": null,
+  "dates": {
+    "legal_effective_date": "2026-03-02",
+    "valuation_transition_date": "2026-03-02",
+    "predecessor_last_price_date": "2026-03-01",
+    "successor_quote_epoch_start_date": "2026-03-02"
+  },
+  "quote_binding": {
+    "provider": "YAHOO",
+    "predecessor_provider_symbol": "BANPU.BK",
+    "successor_provider_symbol": "BANPUU.BK"
+  },
+  "boundary_evidence": {
+    "predecessor_reference_price": "5.60",
+    "successor_reference_price": "14.64",
+    "mechanical_nav_tolerance_pct": "0.50",
+    "suspension_gap_annotation": "Official transition boundary"
+  },
+  "evidence": {
+    "reference": "SANITIZED-TEST-FIXTURE-1",
+    "source": "Sanitized test fixture -- not a real broker statement",
+    "captured_at": "2026-03-02T10:00:00+07:00"
+  }
+}

@@ -23,10 +23,12 @@ Scenarios covered
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 import os
 from datetime import datetime, timedelta
+from decimal import Decimal
 
 import pytest
 
@@ -35,9 +37,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+import models.asset  # noqa: F401 — registers the `assets` FK target table on Base.metadata
 from models.database import (
     Base, Portfolio, PortfolioItem, PortfolioSnapshot, Transaction, Workspace,
 )
+from services import asset_registry as registry
+from services.asset_domain import AssetClaim, AssetType, IdentifierRecord, IdentifierType
+from services.portfolio_snapshots import generate_daily_snapshot
+from services.portfolio_transactions import execute_position_conversion
 from services.snapshot_return_recovery import (
     PortfolioReturnRecoveryResult,
     SnapshotReturnDiff,
@@ -119,20 +126,24 @@ def _tx(
     fees: float = 0.0,
     taxes: float = 0.0,
     notes: str | None = None,
+    asset_id: int | None = None,
+    conversion_payload: dict | None = None,
 ) -> Transaction:
     t = Transaction(
-        workspace_id      = workspace_id,
-        portfolio_id      = portfolio_id,
-        transaction_type  = tx_type,
-        total_amount      = total_amount,
-        symbol            = symbol,
-        shares            = shares,
-        price_per_share   = price_per_share,
-        fees              = fees,
-        taxes             = taxes,
-        transaction_date  = created_at,
-        created_at        = created_at,
-        notes             = notes,
+        workspace_id       = workspace_id,
+        portfolio_id       = portfolio_id,
+        transaction_type   = tx_type,
+        total_amount       = total_amount,
+        symbol             = symbol,
+        shares             = shares,
+        price_per_share    = price_per_share,
+        fees               = fees,
+        taxes              = taxes,
+        transaction_date   = created_at,
+        created_at         = created_at,
+        notes              = notes,
+        asset_id           = asset_id,
+        conversion_payload = conversion_payload,
     )
     db.add(t)
     db.commit()
@@ -313,6 +324,310 @@ def test_sell_transaction_period_realized_pnl_and_fees():
 
     assert d1_diff.new_values["period_realized_pnl"] == pytest.approx(1500.0, abs=0.01)
     assert d1_diff.new_values["period_fees_paid"]    == pytest.approx(107.0,  abs=0.01)
+
+
+# ── BANPU-WP5-A3: POSITION_CONVERSION recovery-path parity ──────────────────
+
+def test_wp5_position_conversion_recovery_path_parity():
+    """The recovery path must classify POSITION_CONVERSION identically to the
+    live snapshot path: admitted cash-in-lieu realized_pnl/fees counted
+    exactly once; no external/import/manual-adjustment contribution."""
+    db = make_session()
+    ws, p = _seed(db)
+
+    d0, d1 = _d(3), _d(2)
+    _snap(db, p.id, ws.id, d0, 100_000.0)
+    _snap(db, p.id, ws.id, d1, 100_050.0)
+
+    # Same validated numbers as test_position_conversion_replay.py's
+    # test_step7_cross_engine_parity_generic_cash_in_lieu fixture — satisfies
+    # every parse_position_conversion_payload() invariant exactly.
+    payload = {
+        "schema_version": 1,
+        "predecessor": {"asset_id": 101, "symbol": "PCONV.BK", "shares_surrendered": "8"},
+        "successor": {
+            "asset_id": 102, "symbol": "SCONV.BK", "provider_symbol": "SCONV.BK",
+            "shares_entitled": "10", "shares_received": "9.5",
+        },
+        "conversion_ratio": "1.25",
+        "basis": {"before": "240", "allocated_to_cash_in_lieu": "12", "carried_to_successor": "228"},
+        "cash_in_lieu": {
+            "fractional_entitlement_shares": "0.5",
+            "gross_proceeds": "15",
+            "fees": "1",
+            "taxes": "0.5",
+            "net_cash": "13.5",
+            "basis_allocated": "12",
+            "realized_pnl": "1.5",
+        },
+        "dates": {
+            "legal_effective_date": "2026-06-01",
+            "valuation_transition_date": "2026-06-01",
+            "predecessor_last_price_date": "2026-05-29",
+            "successor_quote_epoch_start_date": "2026-06-01",
+        },
+        "quote_binding": {
+            "provider": "test-provider",
+            "predecessor_provider_symbol": "PCONV.BK",
+            "successor_provider_symbol": "SCONV.BK",
+        },
+        "boundary_evidence": {
+            "predecessor_reference_price": "100",
+            "successor_reference_price": "200",
+            "mechanical_nav_tolerance_pct": "1.0",
+            "suspension_gap_annotation": "WP5 fixture — no suspension",
+        },
+        "evidence": {
+            "reference": "TEST", "source": "unit-test", "captured_at": "2026-06-01T00:00:00Z",
+        },
+    }
+
+    _tx(
+        db, p.id, ws.id, "POSITION_CONVERSION", 228.0,
+        _dt(2),  # midnight — required by ck_tx_position_conversion_identity_date
+        symbol="PCONV.BK", shares=9.5, price_per_share=228.0 / 9.5,
+        fees=1.0, taxes=0.5,
+        asset_id=101, conversion_payload=payload,
+    )
+
+    result = recover_portfolio_snapshot_returns(db, p.id, ws.id, dry_run=True)
+    d1_diff = result.diffs[1]
+
+    assert d1_diff.new_values["period_realized_pnl"]      == pytest.approx(1.5, abs=0.01)
+    assert d1_diff.new_values["period_fees_paid"]         == pytest.approx(1.5, abs=0.01)
+    assert d1_diff.new_values["net_external_cash_flow"]   is None
+    assert d1_diff.new_values["imported_asset_value"]     is None
+    assert d1_diff.new_values["manual_adjustment_value"]  is None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# BANPU-WP5-A10/A11 — successor identity in generate_daily_snapshot() holdings
+#
+# Relocated here per the Independent Implementation Review correction
+# (docs/implementation/BANPU_WP5_INDEPENDENT_IMPLEMENTATION_REVIEW.md §9/§20
+# item 4): this file is on Authorization Record §4.2's allowlist and already
+# carries the DB/PortfolioItem/asset_id fixture infrastructure (models.asset,
+# _seed, _tx) WP5-A3 established; §4.2 authorizes test FILE paths, not which
+# production module an authorized test file may import, so importing
+# generate_daily_snapshot from services.portfolio_snapshots here is in scope.
+#
+# Live inspection (WP5_WORK_PACKAGE_PLAN.md §13) found the holdings-entry
+# `asset_id` field already sourced directly from PortfolioItem.asset_id (the
+# registry-bound column), never from a cached/display value — no source
+# change was required; these are the regression tests §13 requires in that
+# case. generate_daily_snapshot()'s own price_override parameter avoids any
+# live market-data call.
+#
+# WP5-A10 correction (Fresh Independent Implementation Re-Review §9/§21):
+# the prior A10 test inserted a successor-shaped PortfolioItem directly and
+# so began after the very identity fact it was required to prove. The
+# corrected test below exercises the real, connected provenance chain —
+# registry-minted assets -> execute_position_conversion() (WP4's real
+# materialization service, services/portfolio_transactions.py) -> the
+# PortfolioItem row that service itself writes -> generate_daily_snapshot()
+# -> holdings JSON — and asserts the exact registry-bound successor asset_id
+# that chain produces, never a test-supplied one. _mint_and_prepare_registry/
+# _a10_conversion_payload mirror the established pattern in the WP4-owned
+# tests/test_position_conversion_live.py (not imported from — that file is
+# outside the WP5 §4.2 test allowlist; the pattern is replicated here as a
+# self-contained fixture using only registry/portfolio_transactions imports,
+# the same "authorized file may import any authorized production module"
+# principle already used for generate_daily_snapshot above).
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _mint_and_prepare_registry(
+    db,
+    *,
+    predecessor_symbol: str = "WP5A10PRED",
+    successor_symbol: str = "WP5A10SUCC",
+    predecessor_provider_symbol: str = "WP5A10PRED.BK",
+    successor_provider_symbol: str = "WP5A10SUCC.BK",
+):
+    predecessor = registry.mint(
+        db,
+        AssetClaim(canonical_symbol=predecessor_symbol, asset_type=AssetType.EQUITY,
+                   market="TH", exchange="SET", currency="THB"),
+        identifiers=[IdentifierRecord(IdentifierType.PROVIDER_SYMBOL, predecessor_provider_symbol, source="test")],
+    )
+    successor = registry.mint(
+        db,
+        AssetClaim(canonical_symbol=successor_symbol, asset_type=AssetType.EQUITY,
+                   market="TH", exchange="SET", currency="THB"),
+    )
+    registry.prepare_position_conversion_registry(
+        db, predecessor.id, successor.id, successor_provider_symbol, source="test",
+    )
+    db.commit()
+    return predecessor, successor
+
+
+def _a10_conversion_payload(*, predecessor_asset_id: int, successor_asset_id: int) -> dict:
+    return {
+        "schema_version": 1,
+        "predecessor": {
+            "asset_id": predecessor_asset_id, "symbol": "WP5A10PRED.BK",
+            "shares_surrendered": "100",
+        },
+        "successor": {
+            "asset_id": successor_asset_id, "symbol": "WP5A10SUCC.BK",
+            "provider_symbol": "WP5A10SUCC.BK",
+            "shares_entitled": "50", "shares_received": "50",
+        },
+        "conversion_ratio": "0.5",
+        "basis": {"before": "10000", "allocated_to_cash_in_lieu": "0", "carried_to_successor": "10000"},
+        "cash_in_lieu": None,
+        "dates": {
+            "legal_effective_date": "2026-03-02", "valuation_transition_date": "2026-03-02",
+            "predecessor_last_price_date": "2026-03-01", "successor_quote_epoch_start_date": "2026-03-02",
+        },
+        "quote_binding": {
+            "provider": "YAHOO",
+            "predecessor_provider_symbol": "WP5A10PRED.BK",
+            "successor_provider_symbol": "WP5A10SUCC.BK",
+        },
+        "boundary_evidence": {
+            "predecessor_reference_price": "1.00", "successor_reference_price": "1.00",
+            "mechanical_nav_tolerance_pct": "1.0",
+            "suspension_gap_annotation": "WP5-A10 fixture — no suspension",
+        },
+        "evidence": {
+            "reference": "TEST", "source": "unit-test", "captured_at": "2026-03-02T00:00:00Z",
+        },
+    }
+
+
+def test_wp5_a10_holdings_entry_carries_successor_asset_id():
+    """WP5-A10, corrected: the full connected provenance chain, not a
+    pre-shaped fixture. Would this test still pass if the registry ->
+    conversion -> materialized-successor identity chain were broken but a
+    successor-shaped PortfolioItem were manually inserted instead? No — this
+    test never constructs that PortfolioItem itself; execute_position_
+    conversion() is the only writer of the successor row, and the asserted
+    asset_id is read back from whatever that service actually persisted, not
+    from a value the test chose."""
+    # execute_position_conversion() requires an idle Session (no pending
+    # transaction); expire_on_commit=False avoids the implicit autobegin a
+    # post-commit attribute read (predecessor.id/successor.id below) would
+    # otherwise trigger — same setting test_position_conversion_live.py's own
+    # db_session fixture uses for the identical reason.
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(bind=engine)
+    db = sessionmaker(bind=engine, expire_on_commit=False)()
+    ws, p = _seed(db, cash=1_000.0)
+
+    # 1. Registry-bound predecessor/successor assets — the sole identity
+    #    source; asset_id values below are the registry's own, never a
+    #    test-invented constant.
+    predecessor, successor = _mint_and_prepare_registry(db)
+
+    # 2. Predecessor PortfolioItem, seeded pre-conversion.
+    db.add(PortfolioItem(
+        workspace_id=ws.id, portfolio_id=p.id, symbol="WP5A10PRED.BK",
+        shares=100.0, avg_cost=100.0, asset_id=predecessor.id,
+    ))
+    db.commit()
+
+    # 3. Execute the real WP4 materialization path — this is the only thing
+    #    that writes a successor PortfolioItem row in this test.
+    result = execute_position_conversion(
+        db, ws_id=ws.id, portfolio_id=p.id,
+        conversion_payload=_a10_conversion_payload(
+            predecessor_asset_id=predecessor.id, successor_asset_id=successor.id,
+        ),
+    )
+    assert result["status"] == "applied"
+
+    # 4. Confirm materialization: the row execute_position_conversion() wrote
+    #    carries the registry's own successor.id — establishing the fact A10
+    #    requires, not assuming it.
+    materialized = db.query(PortfolioItem).filter_by(portfolio_id=p.id, asset_id=successor.id).one()
+    assert "WP5A10PRED.BK" not in {
+        i.symbol for i in db.query(PortfolioItem).filter_by(portfolio_id=p.id).all()
+    }
+
+    # 5. Post-boundary snapshot generation — the actual production path,
+    #    reading whatever symbol the conversion service itself assigned
+    #    (never a symbol the test chose).
+    snapshot_result = asyncio.run(generate_daily_snapshot(
+        db, portfolio_id=p.id, workspace_id=ws.id, snapshot_date="2026-03-02",
+        price_override={materialized.symbol: 210.0},
+    ))
+
+    # 6. Holdings JSON must carry the exact registry-bound successor asset_id
+    #    that the connected chain produced, never the predecessor's.
+    holdings = {h["symbol"]: h for h in snapshot_result["holdings"]}
+    assert holdings[materialized.symbol]["asset_id"] == successor.id
+    assert predecessor.id not in {h["asset_id"] for h in snapshot_result["holdings"]}
+
+
+def test_wp5_a11_pre_boundary_predecessor_identity_unaffected():
+    """WP5-A11 (frozen requirement, corrected per Independent Implementation
+    Review §9/§14 — the prior test exercised an ordinary non-conversion
+    holding, not this case): 'a pre-boundary snapshot's holdings entry
+    (generated before any conversion existed) is unaffected.' Non-vacuous:
+    the ledger already contains a POSITION_CONVERSION transaction dated AFTER
+    the snapshot date, and PortfolioItem still reflects the predecessor (WP4's
+    execute_position_conversion() has not retired it yet at this point in
+    time) — proving the holdings-entry construction is driven by current
+    PortfolioItem state, not by the mere existence of a future conversion
+    transaction in the ledger."""
+    db = make_session()
+    ws, p = _seed(db, cash=1_000.0)
+    db.add(PortfolioItem(
+        workspace_id=ws.id, portfolio_id=p.id, symbol="WP5PRED.BK",
+        shares=100.0, avg_cost=100.0, asset_id=5001,
+    ))
+    db.commit()
+
+    _tx(
+        db, p.id, ws.id, "INITIAL_POSITION", 0.0, _dt(20),
+        symbol="WP5PRED.BK", shares=100.0, price_per_share=100.0, asset_id=5001,
+    )
+
+    payload = {
+        "schema_version": 1,
+        "predecessor": {"asset_id": 5001, "symbol": "WP5PRED.BK", "shares_surrendered": "100"},
+        "successor": {
+            "asset_id": 5002, "symbol": "WP5SUCC.BK", "provider_symbol": "WP5SUCC.BK",
+            "shares_entitled": "50", "shares_received": "50",
+        },
+        "conversion_ratio": "0.5",
+        "basis": {"before": "10000", "allocated_to_cash_in_lieu": "0", "carried_to_successor": "10000"},
+        "cash_in_lieu": None,
+        "dates": {
+            "legal_effective_date": _d(5), "valuation_transition_date": _d(5),
+            "predecessor_last_price_date": _d(6), "successor_quote_epoch_start_date": _d(5),
+        },
+        "quote_binding": {
+            "provider": "test-provider",
+            "predecessor_provider_symbol": "WP5PRED.BK",
+            "successor_provider_symbol": "WP5SUCC.BK",
+        },
+        "boundary_evidence": {
+            "predecessor_reference_price": "1.00",
+            "successor_reference_price": "1.00",
+            "mechanical_nav_tolerance_pct": "1.0",
+            "suspension_gap_annotation": "WP5-A11 fixture — no suspension",
+        },
+        "evidence": {
+            "reference": "TEST", "source": "unit-test", "captured_at": f"{_d(5)}T00:00:00Z",
+        },
+    }
+    _tx(
+        db, p.id, ws.id, "POSITION_CONVERSION", 10_000.0, _dt(5),   # AFTER the snapshot date below
+        symbol="WP5PRED.BK", shares=50.0, price_per_share=200.0,
+        fees=0.0, taxes=0.0, asset_id=5001, conversion_payload=payload,
+    )
+
+    result = asyncio.run(generate_daily_snapshot(
+        db, portfolio_id=p.id, workspace_id=ws.id, snapshot_date=_d(10),   # BEFORE the conversion
+        price_override={"WP5PRED.BK": 105.0},
+    ))
+
+    holdings = {h["symbol"]: h for h in result["holdings"]}
+    assert "WP5PRED.BK" in holdings
+    assert holdings["WP5PRED.BK"]["asset_id"] == 5001                # predecessor's own id, unchanged
+    assert 5002 not in {h["asset_id"] for h in result["holdings"]}   # successor id never leaks early
 
 
 # ── Test 8: DIVIDEND creates period_dividend_income ──────────────────────────

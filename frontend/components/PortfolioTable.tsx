@@ -134,6 +134,19 @@ function PriceSkeleton() {
   return <span className="inline-block w-12 h-3.5 bg-gray-200 rounded animate-pulse" />;
 }
 
+// Distinct from the "—" no-data state and from a plain fresh price: a stale
+// price is a real, usable number, just not confirmed current.
+function StaleBadge() {
+  return (
+    <span
+      className="ml-1 text-amber-500 text-[10px] align-top cursor-help"
+      title="Live price unavailable; showing the last cached price."
+    >
+      ⏱
+    </span>
+  );
+}
+
 function SortIcon({ column }: { column: Column<PortfolioItem, unknown> }) {
   if (!column.getCanSort()) return null;
   const sorted = column.getIsSorted();
@@ -241,10 +254,11 @@ export default function PortfolioTable({
       ),
       columnHelper.accessor("current_price", {
         header: "Price", sortingFn: "basic",
-        cell: ({ getValue }) => {
+        cell: ({ getValue, row }) => {
           if (pricesLoading) return <PriceSkeleton />;
           const v = getValue();
-          return v != null ? v.toFixed(2) : "—";
+          if (v == null) return "—";
+          return <>{v.toFixed(2)}{row.original.is_stale && <StaleBadge />}</>;
         },
       }),
       columnHelper.accessor(
@@ -443,7 +457,11 @@ export default function PortfolioTable({
               </div>
               <div className="flex items-center gap-4 text-sm">
                 <span className="font-semibold text-gray-800">
-                  {pricesLoading ? <PriceSkeleton /> : item.current_price != null ? item.current_price.toFixed(2) : "—"}
+                  {pricesLoading
+                    ? <PriceSkeleton />
+                    : item.current_price != null
+                      ? <>{item.current_price.toFixed(2)}{item.is_stale && <StaleBadge />}</>
+                      : "—"}
                 </span>
                 {pricesLoading ? <PriceSkeleton /> : <ChangeCell value={item.change_percent} />}
                 <span className="text-gray-400 text-xs ml-auto">{item.shares} shares</span>

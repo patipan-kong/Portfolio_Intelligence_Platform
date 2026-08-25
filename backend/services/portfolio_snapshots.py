@@ -488,7 +488,7 @@ async def generate_daily_snapshot(
                 Transaction.portfolio_id == portfolio_id,
                 Transaction.transaction_type.in_(list(
                     _CASH_INFLOW_TYPES | _CASH_OUTFLOW_TYPES | _ASSET_IMPORT_TYPES
-                    | _MANUAL_ADJUSTMENT_TYPES | {"SELL", "BUY", "DIVIDEND"}
+                    | _MANUAL_ADJUSTMENT_TYPES | {"SELL", "BUY", "DIVIDEND", "POSITION_CONVERSION"}
                 )),
                 Transaction.created_at >= prev_day_end,
                 Transaction.created_at < today_end,

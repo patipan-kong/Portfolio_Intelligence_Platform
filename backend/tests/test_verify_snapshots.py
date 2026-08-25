@@ -16,25 +16,38 @@ Tests cover all five audit checks:
 """
 from __future__ import annotations
 
+import inspect
 import json
 import sys
 import os
+from decimal import Decimal
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import models.asset  # noqa: F401 — registers the `assets` FK target table on Base.metadata
+from models.database import Base, Portfolio, PortfolioSnapshot as _DbPortfolioSnapshot, Workspace
 from manage import (
     AuditAnomaly,
     AuditCheck,
     AuditSeverity,
+    MechanicalContinuityState,
     PortfolioAuditResult,
+    _assess_tolerance_admissibility,
     _audit_holdings_integrity,
+    _audit_mechanical_continuity,
     _audit_nav_continuity,
     _audit_pnl_continuity,
     _audit_price_integrity,
     _audit_return_sanity,
+    _audit_tolerance_admissibility,
+    _decimal_admissibility,
+    _evaluate_mechanical_continuity,
 )
 
 
@@ -488,3 +501,437 @@ def test_nav_continuity_uses_previous_snapshot_not_arbitrary():
     assert len(_audit_nav_continuity(snap_b, snap_a, 15.0)) == 1
     # C vs B → clean
     assert len(_audit_nav_continuity(snap_c, snap_b, 15.0)) == 0
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 9. Mechanical continuity (BANPU-WP5-C7 / D7) — WP5-A12-A32
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# _evaluate_mechanical_continuity() is a pure function — tested directly with
+# hand-built Decimal/str inputs, no database. _audit_mechanical_continuity()
+# is tested with a lightweight SimpleNamespace conversion_ctx (mirrors the
+# CanonicalTransaction.position_conversion.value.boundary_evidence shape
+# _audit_mechanical_continuity() actually reads) — same pattern as this
+# file's own _snap()/_holding() stubs.
+
+def _conversion_ctx(
+    id: int = 1,
+    predecessor_reference_price=Decimal("100"),
+    successor_reference_price=Decimal("200"),
+    mechanical_nav_tolerance_pct=Decimal("1.0"),
+    conversion_ratio=Decimal("0.5"),
+    suspension_gap_annotation="",
+) -> SimpleNamespace:
+    boundary = SimpleNamespace(
+        predecessor_reference_price=predecessor_reference_price,
+        successor_reference_price=successor_reference_price,
+        mechanical_nav_tolerance_pct=mechanical_nav_tolerance_pct,
+        suspension_gap_annotation=suspension_gap_annotation,
+    )
+    value = SimpleNamespace(boundary_evidence=boundary, conversion_ratio=conversion_ratio)
+    position_conversion = SimpleNamespace(value=value)
+    return SimpleNamespace(id=id, position_conversion=position_conversion)
+
+
+def _evaluate(**overrides):
+    defaults = dict(
+        predecessor_reference_price=Decimal("100"),
+        successor_reference_price=Decimal("200"),
+        mechanical_nav_tolerance_pct=Decimal("1.0"),
+        conversion_ratio=Decimal("0.5"),
+        suspension_gap_annotation="",
+    )
+    defaults.update(overrides)
+    return _evaluate_mechanical_continuity(**defaults)
+
+
+def _audit_status(anomalies: list[AuditAnomaly]) -> str:
+    """Real PortfolioAuditResult.status — the actual exit-code-mapped
+    consumer object (manage.py: FAIL->exit 2, WARNING->exit 1, PASS->exit 0),
+    not a hand-rolled re-implementation of that mapping."""
+    return PortfolioAuditResult(
+        portfolio_id=1, portfolio_name="T", snapshots_checked=1, anomalies=anomalies,
+    ).status
+
+
+# ── WP5-A12-A14 — §10.3 tolerance admissibility (standalone obligation) ──────
+#
+# Corrected per Independent Implementation Review §12/§20 item 1: previously
+# folded into D7's own NOT_EVALUABLE handling with no independently
+# observable §10.3 result. _assess_tolerance_admissibility()/
+# _audit_tolerance_admissibility() are now their own independently invocable
+# functions (manage.py module note) — tested here directly, without going
+# anywhere near D2-D6.
+
+def test_wp5_a12_negative_tolerance_rejected():
+    assert _assess_tolerance_admissibility(Decimal("-0.1")) == "NEGATIVE"
+
+    anomalies = _audit_tolerance_admissibility(
+        _snap(1, "2026-03-02"), _conversion_ctx(mechanical_nav_tolerance_pct=Decimal("-0.1")),
+    )
+    assert len(anomalies) == 1
+    a = anomalies[0]
+    assert a.check == AuditCheck.MECHANICAL_CONTINUITY
+    assert a.severity == AuditSeverity.CRITICAL
+    assert a.details["obligation"] == "tolerance_admissibility"
+    assert a.details["reason"] == "NEGATIVE"
+    assert _audit_status(anomalies) == "FAIL"   # exit-2 contribution
+
+
+def test_wp5_a13_non_finite_or_non_decimal_tolerance_rejected():
+    assert _assess_tolerance_admissibility(Decimal("NaN")) == "NON_FINITE"
+    assert _assess_tolerance_admissibility("1.0") == "NON_DECIMAL_EXACT"
+    assert _assess_tolerance_admissibility(None) == "ABSENT"
+
+    for bad, reason in ((Decimal("NaN"), "NON_FINITE"), ("1.0", "NON_DECIMAL_EXACT"), (None, "ABSENT")):
+        anomalies = _audit_tolerance_admissibility(
+            _snap(1, "2026-03-02"), _conversion_ctx(mechanical_nav_tolerance_pct=bad),
+        )
+        assert len(anomalies) == 1, bad
+        assert anomalies[0].severity == AuditSeverity.CRITICAL, bad
+        assert anomalies[0].details["reason"] == reason, bad
+        assert _audit_status(anomalies) == "FAIL", bad
+
+
+def test_wp5_a14_admissible_tolerance_no_false_positive():
+    # zero is ADMISSIBLE for a tolerance (a stricter, not invalid, requirement)
+    assert _assess_tolerance_admissibility(Decimal("0")) == "ADMISSIBLE"
+    assert _assess_tolerance_admissibility(Decimal("1.0")) == "ADMISSIBLE"
+
+    anomalies = _audit_tolerance_admissibility(
+        _snap(1, "2026-03-02"), _conversion_ctx(mechanical_nav_tolerance_pct=Decimal("0")),
+    )
+    assert anomalies == []                      # ADMISSIBLE, no finding — no false positive
+    assert _audit_status(anomalies) == "PASS"
+
+
+# ── WP5-A15/A16 — reconciliation, PASS ────────────────────────────────────────
+
+def test_wp5_a15_below_tolerance_passes():
+    # P_pre=100, implied=0.5*198=99, gap=1, metric=1.0% < tolerance=2.0%
+    kwargs = dict(successor_reference_price=Decimal("198"), mechanical_nav_tolerance_pct=Decimal("2.0"))
+    r = _evaluate(**kwargs)
+    assert r.state == MechanicalContinuityState.PASS
+    assert r.metric_pct == Decimal("1.0")
+
+    anomalies = _audit_mechanical_continuity(_snap(1, "2026-03-02"), _conversion_ctx(**kwargs))
+    assert anomalies == []                      # no consumer-level anomaly for PASS
+    assert _audit_status(anomalies) == "PASS"
+
+
+def test_wp5_a16_exact_tolerance_boundary_inclusive_passes():
+    # metric=1.0%, tolerance=1.0% exactly — D4 is inclusive (<=)
+    kwargs = dict(successor_reference_price=Decimal("198"), mechanical_nav_tolerance_pct=Decimal("1.0"))
+    r = _evaluate(**kwargs)
+    assert r.state == MechanicalContinuityState.PASS
+    assert r.metric_pct == r.tolerance_pct == Decimal("1.0")
+
+    anomalies = _audit_mechanical_continuity(_snap(1, "2026-03-02"), _conversion_ctx(**kwargs))
+    assert anomalies == []
+    assert _audit_status(anomalies) == "PASS"
+
+
+# ── WP5-A17-A20 — above tolerance, D6 annotation normalization ───────────────
+
+def test_wp5_a17_above_tolerance_no_annotation_is_failure():
+    kwargs = dict(
+        successor_reference_price=Decimal("198"), mechanical_nav_tolerance_pct=Decimal("0.5"),
+        suspension_gap_annotation=None,
+    )
+    r = _evaluate(**kwargs)
+    assert r.state == MechanicalContinuityState.MECHANICAL_CONTINUITY_FAILURE
+    assert r.metric_pct == Decimal("1.0")
+
+    anomalies = _audit_mechanical_continuity(_snap(1, "2026-03-02"), _conversion_ctx(**kwargs))
+    assert len(anomalies) == 1
+    assert anomalies[0].severity == AuditSeverity.CRITICAL
+    assert _audit_status(anomalies) == "FAIL"   # exit-2 contribution
+
+
+def test_wp5_a18_above_tolerance_empty_string_annotation_is_failure():
+    kwargs = dict(
+        successor_reference_price=Decimal("198"), mechanical_nav_tolerance_pct=Decimal("0.5"),
+        suspension_gap_annotation="",
+    )
+    r = _evaluate(**kwargs)
+    assert r.state == MechanicalContinuityState.MECHANICAL_CONTINUITY_FAILURE
+
+    anomalies = _audit_mechanical_continuity(_snap(1, "2026-03-02"), _conversion_ctx(**kwargs))
+    assert len(anomalies) == 1
+    assert anomalies[0].severity == AuditSeverity.CRITICAL
+    assert _audit_status(anomalies) == "FAIL"
+
+
+def test_wp5_a19_above_tolerance_whitespace_only_annotation_is_failure():
+    kwargs = dict(
+        successor_reference_price=Decimal("198"), mechanical_nav_tolerance_pct=Decimal("0.5"),
+        suspension_gap_annotation="   ",
+    )
+    r = _evaluate(**kwargs)
+    assert r.state == MechanicalContinuityState.MECHANICAL_CONTINUITY_FAILURE
+
+    anomalies = _audit_mechanical_continuity(_snap(1, "2026-03-02"), _conversion_ctx(**kwargs))
+    assert len(anomalies) == 1
+    assert anomalies[0].severity == AuditSeverity.CRITICAL
+    assert _audit_status(anomalies) == "FAIL"
+
+
+def test_wp5_a20_above_tolerance_annotated_is_discontinuity_metric_preserved():
+    kwargs = dict(
+        successor_reference_price=Decimal("198"), mechanical_nav_tolerance_pct=Decimal("0.5"),
+        suspension_gap_annotation="Trading suspended — evidence attached",
+    )
+    r = _evaluate(**kwargs)
+    assert r.state == MechanicalContinuityState.ANNOTATED_BOUNDARY_DISCONTINUITY
+    assert r.metric_pct == Decimal("1.0")   # unmodified by annotation presence
+
+    anomalies = _audit_mechanical_continuity(_snap(1, "2026-03-02"), _conversion_ctx(**kwargs))
+    assert len(anomalies) == 1
+    a = anomalies[0]
+    assert a.severity == AuditSeverity.WARNING
+    assert _audit_status(anomalies) == "WARNING"   # exit-1 contribution only, never exit-2
+    # WP5-A20 correction: exact Decimal preserved end-to-end, not float()/rounded
+    assert isinstance(a.details["metric_pct"], Decimal)
+    assert isinstance(a.details["tolerance_pct"], Decimal)
+    assert a.details["metric_pct"] == Decimal("1.0")
+    # no snapshot/NAV/basis/cash-flow field referenced or mutated
+    assert set(a.details) == {"conversion_transaction_id", "metric_pct", "tolerance_pct"}
+
+
+# ── WP5-A21-A25 — NOT_EVALUABLE, missing/malformed/non-finite/non-positive ───
+#
+# Each class now also asserts the audit-consumer state: CRITICAL severity and
+# exit-2 contribution, never a silent PASS or a missing anomaly.
+
+def test_wp5_a21_missing_required_evidence_not_evaluable():
+    for field in ("predecessor_reference_price", "successor_reference_price",
+                  "mechanical_nav_tolerance_pct", "conversion_ratio"):
+        overrides = {field: None}
+        r = _evaluate(**overrides)
+        assert r.state == MechanicalContinuityState.NOT_EVALUABLE, field
+        assert r.invalid_field == field
+        assert r.invalid_reason == "ABSENT"
+        assert r.metric_pct is None
+
+        anomalies = _audit_mechanical_continuity(_snap(1, "2026-03-02"), _conversion_ctx(**overrides))
+        assert len(anomalies) == 1, field
+        assert anomalies[0].severity == AuditSeverity.CRITICAL, field
+        assert anomalies[0].details["invalid_field"] == field, field
+        assert _audit_status(anomalies) == "FAIL", field
+
+
+def test_wp5_a22_malformed_numeric_string_not_evaluable():
+    overrides = dict(predecessor_reference_price="100")   # str, not Decimal
+    r = _evaluate(**overrides)
+    assert r.state == MechanicalContinuityState.NOT_EVALUABLE
+    assert r.invalid_field == "predecessor_reference_price"
+    assert r.invalid_reason == "NON_DECIMAL_EXACT"
+
+    anomalies = _audit_mechanical_continuity(_snap(1, "2026-03-02"), _conversion_ctx(**overrides))
+    assert len(anomalies) == 1
+    assert anomalies[0].severity == AuditSeverity.CRITICAL
+    assert _audit_status(anomalies) == "FAIL"
+
+
+def test_wp5_a23_non_finite_not_evaluable():
+    for value in (Decimal("NaN"), Decimal("Infinity"), Decimal("-Infinity")):
+        overrides = dict(successor_reference_price=value)
+        r = _evaluate(**overrides)
+        assert r.state == MechanicalContinuityState.NOT_EVALUABLE
+        assert r.invalid_reason == "NON_FINITE"
+
+        anomalies = _audit_mechanical_continuity(_snap(1, "2026-03-02"), _conversion_ctx(**overrides))
+        assert len(anomalies) == 1, value
+        assert anomalies[0].severity == AuditSeverity.CRITICAL, value
+        assert _audit_status(anomalies) == "FAIL", value
+
+
+def test_wp5_a24_non_positive_predecessor_price_not_evaluable():
+    for value in (Decimal("0"), Decimal("-1")):
+        overrides = dict(predecessor_reference_price=value)
+        r = _evaluate(**overrides)
+        assert r.state == MechanicalContinuityState.NOT_EVALUABLE
+        assert r.invalid_field == "predecessor_reference_price"
+        assert r.invalid_reason == "NON_POSITIVE"
+
+        anomalies = _audit_mechanical_continuity(_snap(1, "2026-03-02"), _conversion_ctx(**overrides))
+        assert len(anomalies) == 1, value
+        assert anomalies[0].severity == AuditSeverity.CRITICAL, value
+        assert _audit_status(anomalies) == "FAIL", value
+
+
+def test_wp5_a25_invalid_conversion_ratio_not_evaluable():
+    for value in (Decimal("0"), Decimal("-0.5"), "0.5", None):
+        overrides = dict(conversion_ratio=value)
+        r = _evaluate(**overrides)
+        assert r.state == MechanicalContinuityState.NOT_EVALUABLE
+        assert r.invalid_field == "conversion_ratio"
+
+        anomalies = _audit_mechanical_continuity(_snap(1, "2026-03-02"), _conversion_ctx(**overrides))
+        assert len(anomalies) == 1, value
+        assert anomalies[0].severity == AuditSeverity.CRITICAL, value
+        assert _audit_status(anomalies) == "FAIL", value
+
+
+# ── WP5-A26 — NOT_EVALUABLE distinct, never silent PASS ───────────────────────
+
+def test_wp5_a26_not_evaluable_distinct_from_failure_and_never_silent_pass():
+    not_evaluable = _evaluate(predecessor_reference_price=None)
+    failure = _evaluate(successor_reference_price=Decimal("198"), mechanical_nav_tolerance_pct=Decimal("0.5"))
+    assert not_evaluable.state != failure.state
+    assert not_evaluable.state == MechanicalContinuityState.NOT_EVALUABLE
+    assert not_evaluable.state != MechanicalContinuityState.PASS
+
+    a_not_eval = _audit_mechanical_continuity(_snap(1, "2026-03-02"), _conversion_ctx(predecessor_reference_price=None))
+    a_fail = _audit_mechanical_continuity(_snap(1, "2026-03-02"), _conversion_ctx(
+        successor_reference_price=Decimal("198"), mechanical_nav_tolerance_pct=Decimal("0.5")))
+    assert a_not_eval[0].severity == AuditSeverity.CRITICAL
+    assert a_fail[0].severity == AuditSeverity.CRITICAL
+    assert a_not_eval[0].description != a_fail[0].description
+    assert "invalid_field" in a_not_eval[0].details
+    assert "invalid_field" not in a_fail[0].details
+
+
+# ── WP5-A27/A28 — Decimal-only, no quantization ───────────────────────────────
+
+def test_wp5_a27_decimal_only_arithmetic_no_float_leakage():
+    r = _evaluate()
+    assert isinstance(r.metric_pct, Decimal)
+    assert isinstance(r.tolerance_pct, Decimal)
+    src = inspect.getsource(_evaluate_mechanical_continuity)
+    assert "float(" not in src
+
+
+def test_wp5_a28_no_intermediate_or_final_quantization():
+    # P_pre=3, implied=1*2=2, gap=1 -> metric = (1/3)*100, a repeating decimal.
+    # Any premature rounding/quantization would truncate this.
+    r = _evaluate(
+        predecessor_reference_price=Decimal("3"), successor_reference_price=Decimal("2"),
+        conversion_ratio=Decimal("1"), mechanical_nav_tolerance_pct=Decimal("1000"),
+    )
+    expected = (abs(Decimal("3") - Decimal("1") * Decimal("2")) / Decimal("3")) * 100
+    assert r.metric_pct == expected
+    assert len(str(r.metric_pct).split(".")[-1]) > 10   # full ambient-context precision retained
+
+
+# ── WP5-A29 — distinct AuditCheck identity ────────────────────────────────────
+
+def test_wp5_a29_uses_distinct_mechanical_continuity_check_identity():
+    anomalies = _audit_mechanical_continuity(_snap(1, "2026-03-02"), _conversion_ctx(
+        successor_reference_price=Decimal("198"), mechanical_nav_tolerance_pct=Decimal("0.5")))
+    assert len(anomalies) == 1
+    assert anomalies[0].check == AuditCheck.MECHANICAL_CONTINUITY
+    assert anomalies[0].check not in {
+        AuditCheck.NAV_CONTINUITY, AuditCheck.PNL_CONTINUITY,
+        AuditCheck.HOLDINGS_INTEGRITY, AuditCheck.PRICE_INTEGRITY, AuditCheck.RETURN_SANITY,
+    }
+
+
+# ── WP5-A30 — no mutation performed (real before/after DB-state proof) ───────
+#
+# Corrected per Independent Implementation Review §11/§20 item 6: an in-memory
+# SimpleNamespace stub/signature check is not the required DB-state proof. A
+# real (persisted, re-queried after each call) PortfolioSnapshot row now
+# stands in for the stub, across all four D7 outcome states.
+
+def test_wp5_a30_audit_consumer_performs_no_db_mutation_all_outcomes():
+    sig = inspect.signature(_audit_mechanical_continuity)
+    assert "db" not in sig.parameters and "session" not in sig.parameters
+
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    db.add(Workspace(id=1, name="Default"))
+    db.add(Portfolio(id=1, workspace_id=1, name="Test", cash_balance=0.0))
+    db.add(_DbPortfolioSnapshot(
+        id=1, workspace_id=1, portfolio_id=1, snapshot_date="2026-03-02",
+        total_value=100_000.0, cash_balance=10_000.0, total_invested=90_000.0,
+    ))
+    db.commit()
+
+    cases = {
+        "PASS": dict(successor_reference_price=Decimal("198"), mechanical_nav_tolerance_pct=Decimal("2.0")),
+        "ANNOTATED_BOUNDARY_DISCONTINUITY": dict(
+            successor_reference_price=Decimal("198"), mechanical_nav_tolerance_pct=Decimal("0.5"),
+            suspension_gap_annotation="x"),
+        "MECHANICAL_CONTINUITY_FAILURE": dict(
+            successor_reference_price=Decimal("198"), mechanical_nav_tolerance_pct=Decimal("0.5")),
+        "NOT_EVALUABLE": dict(predecessor_reference_price=None),
+    }
+    try:
+        for label, overrides in cases.items():
+            snap = db.query(_DbPortfolioSnapshot).filter_by(id=1).first()
+            before = {c.name: getattr(snap, c.name) for c in _DbPortfolioSnapshot.__table__.columns}
+
+            _audit_mechanical_continuity(snap, _conversion_ctx(**overrides))
+            _audit_tolerance_admissibility(snap, _conversion_ctx(**overrides))
+
+            db.expire_all()
+            refreshed = db.query(_DbPortfolioSnapshot).filter_by(id=1).first()
+            after = {c.name: getattr(refreshed, c.name) for c in _DbPortfolioSnapshot.__table__.columns}
+            assert after == before, label   # zero DB writes for every outcome state
+    finally:
+        db.close()
+
+
+# ── WP5-A31 — independence from POSITION_CONVERSION_REBUILD_BOUNDARY ─────────
+#
+# The rebuild-boundary-guard half of this row lives in
+# test_portfolio_rebuilder.py. This half proves the D7 direction. Corrected
+# per Independent Implementation Review §11/§20 item 6: co_names introspection
+# alone was not accepted as the primary A31 proof — a behavioral test is now
+# primary, with co_names retained only as supplementary evidence.
+
+def test_wp5_a31_d7_independent_of_rebuild_boundary_behavioral():
+    """D7 evaluation and its audit consumer never invoke rebuild-boundary
+    logic — proven by patching rebuild_portfolio and asserting it is never
+    touched while D7 runs to every one of its four outcome states, including
+    a genuine FAILURE."""
+    import services.portfolio_rebuilder as rebuilder_mod
+
+    cases = [
+        dict(successor_reference_price=Decimal("198"), mechanical_nav_tolerance_pct=Decimal("2.0")),  # PASS
+        dict(successor_reference_price=Decimal("198"), mechanical_nav_tolerance_pct=Decimal("0.5"),
+             suspension_gap_annotation="x"),                                                            # ANNOTATED
+        dict(successor_reference_price=Decimal("198"), mechanical_nav_tolerance_pct=Decimal("0.5")),   # FAILURE
+        dict(predecessor_reference_price=None),                                                        # NOT_EVALUABLE
+    ]
+    with patch.object(rebuilder_mod, "rebuild_portfolio") as mock_rebuild:
+        for overrides in cases:
+            _evaluate(**overrides)
+            _audit_mechanical_continuity(_snap(1, "2026-03-02"), _conversion_ctx(**overrides))
+            _audit_tolerance_admissibility(_snap(1, "2026-03-02"), _conversion_ctx(**overrides))
+    mock_rebuild.assert_not_called()   # independent outcome: D7 never triggers reconstruction
+
+
+def test_wp5_a31_supplementary_no_rebuild_boundary_reference():
+    """Supplementary only — see the behavioral test above for the primary
+    A31 proof. No shared predicate, no shared result identity, no call path
+    between D7 mechanical continuity and portfolio_rebuilder's rebuild-
+    boundary guard."""
+    for fn in (_evaluate_mechanical_continuity, _audit_mechanical_continuity, _audit_tolerance_admissibility):
+        names = fn.__code__.co_names
+        assert not any("rebuild" in n.lower() for n in names)
+        assert "PositionConversionRebuildBoundaryError" not in names
+
+    # A FAILURE-state mechanical-continuity result carries no rebuild-boundary
+    # concept anywhere in its evidence.
+    anomalies = _audit_mechanical_continuity(_snap(1, "2026-03-02"), _conversion_ctx(
+        successor_reference_price=Decimal("198"), mechanical_nav_tolerance_pct=Decimal("0.5")))
+    assert "rebuild" not in json.dumps(anomalies[0].details, default=str).lower()
+
+
+# ── WP5-A32 — canonical parser is sole input authority ───────────────────────
+
+def test_wp5_a32_no_provider_or_network_lookup():
+    sig = inspect.signature(_evaluate_mechanical_continuity)
+    assert set(sig.parameters) == {
+        "predecessor_reference_price", "successor_reference_price",
+        "mechanical_nav_tolerance_pct", "conversion_ratio", "suspension_gap_annotation",
+    }
+    names = _evaluate_mechanical_continuity.__code__.co_names
+    for forbidden in ("fetch_price_info", "requests", "yfinance", "get_yfinance_symbol", "urlopen"):
+        assert forbidden not in names
+    names2 = _audit_mechanical_continuity.__code__.co_names
+    for forbidden in ("fetch_price_info", "requests", "yfinance", "get_yfinance_symbol", "urlopen"):
+        assert forbidden not in names2

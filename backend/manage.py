@@ -74,6 +74,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
+import io
 import json
 import sys
 import os
@@ -82,7 +84,9 @@ import textwrap
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
+from decimal import Decimal
 from enum import Enum
+from typing import Any
 
 # Ensure the backend directory is on sys.path when run directly.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -118,6 +122,23 @@ from services.snapshot_return_recovery import (
     _RETURN_FIELDS,
     recover_all_snapshot_returns,
     recover_portfolio_snapshot_returns,
+)
+from services.transaction_canonicalizer import (
+    CanonicalTransaction,
+    canonicalize_transactions,
+    parse_position_conversion_payload,
+)
+from services import asset_registry
+from services.asset_registry import AssetRegistryError
+from services.asset_domain import RelationshipType
+from services.portfolio_transactions import execute_position_conversion, PositionConversionError
+from services.market_data.position_conversion_quote_contract import (
+    build_successor_quote_binding,
+    check_cache_namespace_mismatch,
+    check_reference_price_inadmissible,
+    evaluate_request_identity,
+    history_cache_type,
+    quote_cache_type,
 )
 from services.portfolio_rebuilder import (
     ConfidenceReport,
@@ -798,11 +819,12 @@ class AuditSeverity(Enum):
 
 
 class AuditCheck(Enum):
-    NAV_CONTINUITY     = "nav_continuity"
-    PNL_CONTINUITY     = "pnl_continuity"
-    HOLDINGS_INTEGRITY = "holdings_integrity"
-    PRICE_INTEGRITY    = "price_integrity"
-    RETURN_SANITY      = "return_sanity"
+    NAV_CONTINUITY         = "nav_continuity"
+    PNL_CONTINUITY         = "pnl_continuity"
+    HOLDINGS_INTEGRITY     = "holdings_integrity"
+    PRICE_INTEGRITY        = "price_integrity"
+    RETURN_SANITY          = "return_sanity"
+    MECHANICAL_CONTINUITY  = "mechanical_continuity"
 
 
 @dataclass
@@ -1118,6 +1140,289 @@ def _audit_return_sanity(snap: PortfolioSnapshot) -> list[AuditAnomaly]:
     return anomalies
 
 
+# ── Mechanical continuity (BANPU-WP5-C7 / MINOR-2 WP5 half) ────────────────────
+#
+# Two obligations, each with its own independently invoked/reportable
+# function, sharing only the single authorized AuditCheck identity
+# (AuditCheck.MECHANICAL_CONTINUITY — the amendment authorizes exactly one
+# new enum member, not two):
+#
+#   §10.3 tolerance admissibility (PD-WP5-1) — _assess_tolerance_admissibility()
+#     / _audit_tolerance_admissibility() — is mechanical_nav_tolerance_pct
+#     itself usable (ABSENT/NON_DECIMAL_EXACT/NON_FINITE/NEGATIVE/ADMISSIBLE)?
+#     Independently observable: called on its own, returns its own finding,
+#     testable without going anywhere near D2-D6.
+#   §10.4 reconciliation (D2-D6, BANPU_WP5_WORK_PACKAGE_PLAN_AMENDMENT_
+#     MECHANICAL_CONTINUITY.md) — _evaluate_mechanical_continuity() /
+#     _audit_mechanical_continuity() — does the boundary reconcile within
+#     tolerance?
+#
+# _audit_portfolio() invokes both, alongside (not merged with) each other, for
+# the same class of POSITION_CONVERSION-bearing portfolios (amendment §10).
+# D7's own field-admissibility loop still independently re-checks the
+# tolerance field as one of its four D2-D6 operands — the two obligations may
+# both fire on the same root cause (e.g. a negative tolerance yields both a
+# §10.3 finding and a D7 NOT_EVALUABLE finding); that overlap is exactly what
+# "alongside" means, not a bug to suppress.
+#
+# Fully independent of POSITION_CONVERSION_REBUILD_BOUNDARY (portfolio_
+# rebuilder.py): no shared predicate, no shared result identity, no call path
+# between the two (WP5-A31).
+
+class MechanicalContinuityState(Enum):
+    PASS                              = "PASS"
+    ANNOTATED_BOUNDARY_DISCONTINUITY  = "ANNOTATED_BOUNDARY_DISCONTINUITY"
+    MECHANICAL_CONTINUITY_FAILURE     = "MECHANICAL_CONTINUITY_FAILURE"
+    NOT_EVALUABLE                     = "NOT_EVALUABLE"
+
+
+@dataclass(frozen=True)
+class MechanicalContinuityResult:
+    state          : MechanicalContinuityState
+    metric_pct     : Decimal | None
+    tolerance_pct  : Decimal | None
+    invalid_field  : str | None = None
+    invalid_reason : str | None = None
+
+
+def _decimal_admissibility(
+    value: Any,
+    *,
+    require_positive: bool = False,
+    reject_negative: bool = False,
+) -> str:
+    """Classify one canonical D7 input value.
+
+    Returns ABSENT / NON_DECIMAL_EXACT / NON_FINITE / NON_POSITIVE / NEGATIVE
+    / ADMISSIBLE. Mirrors WP3's assess_reference_price_admissibility() shape
+    (PD-WP5-1) — performs no coercion; a value not already a Decimal is
+    malformed, never parsed or converted here.
+    """
+    if value is None:
+        return "ABSENT"
+    if not isinstance(value, Decimal):
+        return "NON_DECIMAL_EXACT"
+    if not value.is_finite():
+        return "NON_FINITE"
+    if require_positive and value <= 0:
+        return "NON_POSITIVE"
+    if reject_negative and value < 0:
+        return "NEGATIVE"
+    return "ADMISSIBLE"
+
+
+def _assess_tolerance_admissibility(mechanical_nav_tolerance_pct: Any) -> str:
+    """BANPU-WP5 §10.3 (PD-WP5-1) — standalone tolerance-admissibility check.
+
+    Returns ABSENT / NON_DECIMAL_EXACT / NON_FINITE / NEGATIVE / ADMISSIBLE.
+    Zero is ADMISSIBLE for a tolerance (a stricter, not invalid, requirement —
+    unlike price, no require_positive). This is the §10.3 obligation's own
+    entry point, independently invocable and testable without D2-D6; it is
+    not merged into or replaced by D7's own field-admissibility loop, which
+    separately re-checks this same raw value as one of its four D2-D6
+    operands (§10.4 §10 "alongside, not merged").
+    """
+    return _decimal_admissibility(mechanical_nav_tolerance_pct, reject_negative=True)
+
+
+def _audit_tolerance_admissibility(
+    snap: PortfolioSnapshot,
+    conversion_ctx: CanonicalTransaction,
+) -> list[AuditAnomaly]:
+    """§10.3 audit consumer. Read-only; independently observable from D7."""
+    parsed    = conversion_ctx.position_conversion.value if conversion_ctx.position_conversion else None
+    boundary  = parsed.boundary_evidence if parsed else None
+    tolerance = boundary.mechanical_nav_tolerance_pct if boundary else None
+
+    reason = _assess_tolerance_admissibility(tolerance)
+    if reason == "ADMISSIBLE":
+        return []
+
+    return [AuditAnomaly(
+        snapshot_id   = snap.id,
+        snapshot_date = snap.snapshot_date,
+        check         = AuditCheck.MECHANICAL_CONTINUITY,
+        severity      = AuditSeverity.CRITICAL,
+        description   = (
+            f"mechanical_nav_tolerance_pct inadmissible ({reason}) for "
+            f"POSITION_CONVERSION tx{conversion_ctx.id}"
+        ),
+        details       = {
+            "obligation":                "tolerance_admissibility",
+            "conversion_transaction_id": conversion_ctx.id,
+            "reason":                    reason,
+        },
+    )]
+
+
+def _evaluate_mechanical_continuity(
+    *,
+    predecessor_reference_price: Any,
+    successor_reference_price: Any,
+    mechanical_nav_tolerance_pct: Any,
+    conversion_ratio: Any,
+    suspension_gap_annotation: Any,
+) -> MechanicalContinuityResult:
+    """BANPU-WP5-C7 / D7 pure classifier.
+
+    Consumes only the canonical, already-typed WP1 boundary-evidence values
+    plus conversion_ratio; performs no parsing of its own, no re-derivation
+    from ticker/provider/snapshot data, and no mutation (WP5-A32). Decimal-
+    only arithmetic; no intermediate or final quantization; no rounding-mode
+    change (D5, WP5-A27/A28).
+
+    D2: implied_successor_value = R * P_succ
+        absolute_gap             = abs(P_pre - implied_successor_value)
+        metric_pct                = (absolute_gap / P_pre) * 100
+    D4: PASS iff metric_pct <= tolerance (inclusive).
+    D6: absent/empty/whitespace-only annotation -> unannotated; anything else,
+        trimmed non-empty -> annotated. An unannotated above-tolerance result
+        is MECHANICAL_CONTINUITY_FAILURE; an annotated one is
+        ANNOTATED_BOUNDARY_DISCONTINUITY. Annotation never affects PASS,
+        NOT_EVALUABLE, or the computed metric_pct itself.
+    """
+    field_checks: tuple[tuple[str, Any, dict], ...] = (
+        ("predecessor_reference_price",  predecessor_reference_price,  {"require_positive": True}),
+        ("successor_reference_price",    successor_reference_price,    {}),
+        ("conversion_ratio",             conversion_ratio,             {"require_positive": True}),
+        ("mechanical_nav_tolerance_pct", mechanical_nav_tolerance_pct, {"reject_negative": True}),
+    )
+    for field_name, value, kwargs in field_checks:
+        reason = _decimal_admissibility(value, **kwargs)
+        if reason != "ADMISSIBLE":
+            return MechanicalContinuityResult(
+                state          = MechanicalContinuityState.NOT_EVALUABLE,
+                metric_pct     = None,
+                tolerance_pct  = None,
+                invalid_field  = field_name,
+                invalid_reason = reason,
+            )
+
+    p_pre     = predecessor_reference_price
+    p_succ    = successor_reference_price
+    tolerance = mechanical_nav_tolerance_pct
+    ratio     = conversion_ratio
+
+    implied_successor_value = ratio * p_succ
+    absolute_gap            = abs(p_pre - implied_successor_value)
+    metric_pct               = (absolute_gap / p_pre) * 100
+
+    annotated = (
+        isinstance(suspension_gap_annotation, str)
+        and suspension_gap_annotation.strip() != ""
+    )
+
+    if metric_pct <= tolerance:
+        return MechanicalContinuityResult(
+            state         = MechanicalContinuityState.PASS,
+            metric_pct    = metric_pct,
+            tolerance_pct = tolerance,
+        )
+
+    if annotated:
+        return MechanicalContinuityResult(
+            state         = MechanicalContinuityState.ANNOTATED_BOUNDARY_DISCONTINUITY,
+            metric_pct    = metric_pct,
+            tolerance_pct = tolerance,
+        )
+
+    return MechanicalContinuityResult(
+        state         = MechanicalContinuityState.MECHANICAL_CONTINUITY_FAILURE,
+        metric_pct    = metric_pct,
+        tolerance_pct = tolerance,
+    )
+
+
+def _find_position_conversion(db, portfolio_id: int) -> CanonicalTransaction | None:
+    """Return the earliest canonicalized POSITION_CONVERSION for a portfolio.
+
+    Read-only; performs no mutation. A portfolio with no conversion returns
+    None, and the caller skips mechanical-continuity auditing entirely.
+    """
+    raw_txs = (
+        db.query(Transaction)
+        .filter_by(portfolio_id=portfolio_id, transaction_type="POSITION_CONVERSION")
+        .order_by(Transaction.transaction_date, Transaction.id)
+        .all()
+    )
+    if not raw_txs:
+        return None
+    canonical = canonicalize_transactions(raw_txs)
+    return canonical[0] if canonical else None
+
+
+def _audit_mechanical_continuity(
+    snap: PortfolioSnapshot,
+    conversion_ctx: CanonicalTransaction,
+) -> list[AuditAnomaly]:
+    """D7 audit consumer. Read-only; performs no mutation (WP5-A30)."""
+    parsed   = conversion_ctx.position_conversion.value if conversion_ctx.position_conversion else None
+    boundary = parsed.boundary_evidence if parsed else None
+
+    result = _evaluate_mechanical_continuity(
+        predecessor_reference_price  = boundary.predecessor_reference_price if boundary else None,
+        successor_reference_price    = boundary.successor_reference_price if boundary else None,
+        mechanical_nav_tolerance_pct = boundary.mechanical_nav_tolerance_pct if boundary else None,
+        conversion_ratio             = parsed.conversion_ratio if parsed else None,
+        suspension_gap_annotation    = boundary.suspension_gap_annotation if boundary else None,
+    )
+
+    if result.state == MechanicalContinuityState.PASS:
+        return []
+
+    # WP5-A20: metric_pct/tolerance_pct preserved as exact Decimal — no
+    # float() conversion, no rounding, no quantization. _print_audit_anomaly()
+    # renders non-int/float values via plain str(), which is exact for Decimal.
+    details: dict = {
+        "conversion_transaction_id": conversion_ctx.id,
+        "metric_pct":    result.metric_pct,
+        "tolerance_pct": result.tolerance_pct,
+    }
+
+    if result.state == MechanicalContinuityState.ANNOTATED_BOUNDARY_DISCONTINUITY:
+        return [AuditAnomaly(
+            snapshot_id   = snap.id,
+            snapshot_date = snap.snapshot_date,
+            check         = AuditCheck.MECHANICAL_CONTINUITY,
+            severity      = AuditSeverity.WARNING,
+            description   = (
+                f"Annotated mechanical NAV discontinuity at POSITION_CONVERSION "
+                f"tx{conversion_ctx.id} (metric={details['metric_pct']}% > "
+                f"tolerance={details['tolerance_pct']}%)"
+            ),
+            details       = details,
+        )]
+
+    if result.state == MechanicalContinuityState.MECHANICAL_CONTINUITY_FAILURE:
+        return [AuditAnomaly(
+            snapshot_id   = snap.id,
+            snapshot_date = snap.snapshot_date,
+            check         = AuditCheck.MECHANICAL_CONTINUITY,
+            severity      = AuditSeverity.CRITICAL,
+            description   = (
+                f"Unannotated mechanical NAV discontinuity at POSITION_CONVERSION "
+                f"tx{conversion_ctx.id} (metric={details['metric_pct']}% > "
+                f"tolerance={details['tolerance_pct']}%)"
+            ),
+            details       = details,
+        )]
+
+    # NOT_EVALUABLE — distinct diagnostic identity from MECHANICAL_CONTINUITY_FAILURE.
+    details["invalid_field"]  = result.invalid_field
+    details["invalid_reason"] = result.invalid_reason
+    return [AuditAnomaly(
+        snapshot_id   = snap.id,
+        snapshot_date = snap.snapshot_date,
+        check         = AuditCheck.MECHANICAL_CONTINUITY,
+        severity      = AuditSeverity.CRITICAL,
+        description   = (
+            f"Mechanical continuity NOT_EVALUABLE for POSITION_CONVERSION "
+            f"tx{conversion_ctx.id}: {result.invalid_field}={result.invalid_reason}"
+        ),
+        details       = details,
+    )]
+
+
 # ── Portfolio-level audit ─────────────────────────────────────────────────────
 
 def _audit_portfolio(
@@ -1147,6 +1452,14 @@ def _audit_portfolio(
         result.anomalies.extend(_audit_price_integrity(snap))
         result.anomalies.extend(_audit_return_sanity(snap))
         prev = snap
+
+    # BANPU-WP5-C7 — only for a portfolio whose ledger contains a
+    # POSITION_CONVERSION; attached to the most recent snapshot since the
+    # finding is portfolio-level, not tied to any one snapshot's own fields.
+    conversion_ctx = _find_position_conversion(db, portfolio.id)
+    if conversion_ctx is not None and snaps:
+        result.anomalies.extend(_audit_tolerance_admissibility(snaps[-1], conversion_ctx))
+        result.anomalies.extend(_audit_mechanical_continuity(snaps[-1], conversion_ctx))
 
     return result
 
@@ -3913,6 +4226,624 @@ async def _cmd_generate_repair_plan(args: argparse.Namespace) -> int:
     return 0
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# apply_position_conversion (BANPU-WP7)
+#
+# Orchestration only, per the frozen BANPU-WP7 Work Package Plan
+# (docs/implementation/BANPU_WP7_WORK_PACKAGE_PLAN.md §7). This command
+# introduces no new accounting, registry, or quote-protection logic — every
+# check below calls an existing WP1/WP3/WP4/WP5 function or a same-module
+# helper. See WPP §7.1-§7.5 for the authoritative mechanics this mirrors.
+# ══════════════════════════════════════════════════════════════════════════════
+
+class PositionConversionCliError(Exception):
+    """A structured, reportable preflight/parse failure — never a raw
+    traceback surfaced to the operator (WPP §7.1)."""
+
+    def __init__(self, code: str, message: str) -> None:
+        self.code = code
+        self.message = message
+        super().__init__(f"[{code}] {message}")
+
+
+@dataclass
+class PreflightCheckResult:
+    check_id: str
+    label: str
+    passed: bool
+    detail: str = ""
+
+
+def _load_conversion_manifest(manifest_path: str):
+    """WPP §7.1 — read, parse-as-JSON, and canonically validate the manifest.
+
+    Returns ``(raw_dict, parsed_PositionConversion)``. Fails closed with a
+    structured ``POSITION_CONVERSION_PAYLOAD_INVALID`` error; never raises an
+    unstructured exception for malformed input.
+    """
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as fh:
+            raw = json.load(fh)
+    except OSError as exc:
+        raise PositionConversionCliError(
+            "POSITION_CONVERSION_PAYLOAD_INVALID",
+            f"could not read manifest file {manifest_path!r}: {exc}",
+        ) from None
+    except json.JSONDecodeError as exc:
+        raise PositionConversionCliError(
+            "POSITION_CONVERSION_PAYLOAD_INVALID",
+            f"manifest {manifest_path!r} is not valid JSON: {exc}",
+        ) from None
+
+    parse_result = parse_position_conversion_payload(raw)
+    if not parse_result.is_valid:
+        detail = "; ".join(f"[{e.code}] {e.path}: {e.message}" for e in parse_result.errors)
+        raise PositionConversionCliError(
+            "POSITION_CONVERSION_PAYLOAD_INVALID",
+            f"manifest failed schema validation: {detail}",
+        )
+    return raw, parse_result.value
+
+
+def _resolve_portfolio_identity(db, portfolio_arg: int | None) -> "Portfolio":
+    """WPP §7.1 identity ingress — CLI portfolio input, workspace derived.
+
+    ``--portfolio``/``-p`` is required and supplies ``portfolio_id``; the
+    workspace is read from the resolved row's own ``workspace_id`` column —
+    never a second operator-supplied flag, never ``db.query(Workspace).first()``.
+    """
+    if not portfolio_arg:
+        raise PositionConversionCliError(
+            "PORTFOLIO_NOT_SPECIFIED", "--portfolio/-p is required",
+        )
+    portfolio = db.query(Portfolio).filter_by(id=portfolio_arg).first()
+    if portfolio is None:
+        raise PositionConversionCliError(
+            "PORTFOLIO_NOT_FOUND", f"portfolio {portfolio_arg} does not exist",
+        )
+    return portfolio
+
+
+def _preflight_registry_preconditions(db, conversion) -> PreflightCheckResult:
+    """WPP §7.2 step 1 — read-only replication of the exact preconditions
+    ``prepare_position_conversion_registry()`` checks before its first
+    mutating call. Never calls a mutating registry function (WP7-A18)."""
+    pred_id = conversion.predecessor.asset_id
+    succ_id = conversion.successor.asset_id
+    if pred_id == succ_id:
+        return PreflightCheckResult(
+            "REGISTRY_PRECONDITIONS", "Registry pre-preparation preconditions", False,
+            "predecessor and successor asset_id must be distinct",
+        )
+    if asset_registry.get_asset(db, pred_id) is None:
+        return PreflightCheckResult(
+            "REGISTRY_PRECONDITIONS", "Registry pre-preparation preconditions", False,
+            f"no asset with asset_id={pred_id}",
+        )
+    if asset_registry.get_asset(db, succ_id) is None:
+        return PreflightCheckResult(
+            "REGISTRY_PRECONDITIONS", "Registry pre-preparation preconditions", False,
+            f"no asset with asset_id={succ_id}",
+        )
+    conflicting = [
+        row for row in asset_registry.get_relationships(db, pred_id)
+        if row.from_asset_id == pred_id
+        and row.relationship_type == RelationshipType.MERGED_INTO.value
+        and row.to_asset_id != succ_id
+    ]
+    if conflicting:
+        return PreflightCheckResult(
+            "REGISTRY_PRECONDITIONS", "Registry pre-preparation preconditions", False,
+            f"predecessor asset_id={pred_id} already carries a MERGED_INTO relationship "
+            f"to a different successor asset_id={conflicting[0].to_asset_id}",
+        )
+    return PreflightCheckResult("REGISTRY_PRECONDITIONS", "Registry pre-preparation preconditions", True)
+
+
+def _preflight_quote_gate(conversion) -> PreflightCheckResult:
+    """WPP §7.2 step 2 — manifest-only, provider-independent quote-gate
+    components. The live-evidence checks (``EVIDENCE_CONTRACT_NOT_SATISFIED``,
+    served-symbol ``PROVIDER_SYMBOL_MISMATCH``, ``CROSS_EPOCH_TIMESTAMP``)
+    require a live provider observation this CLI never fetches — they remain
+    WP3's continuous fetch-time gate in ``data_fetcher.py`` and are
+    deliberately not duplicated here.
+    """
+    binding = build_successor_quote_binding(conversion.successor, conversion.quote_binding, conversion.dates)
+    findings: list[str] = []
+
+    # Manifest self-consistency: the provider symbol registry preparation
+    # will attach (successor.provider_symbol) must agree with the provider
+    # symbol the quote binding was built from (quote_binding.successor_provider_symbol) —
+    # the one identity mismatch this check can catch before any live fetch.
+    r = evaluate_request_identity(
+        binding,
+        requested_symbol=conversion.successor.provider_symbol,
+        request_provider=conversion.quote_binding.provider,
+    )
+    if r is not None:
+        findings.append(f"{r.reason.value} (asset_id={r.affected_asset_id})")
+
+    r = check_cache_namespace_mismatch(quote_cache_type(binding), binding, kind="quote")
+    if r is not None:
+        findings.append(f"{r.reason.value} (asset_id={r.affected_asset_id})")
+    r = check_cache_namespace_mismatch(history_cache_type(binding), binding, kind="history")
+    if r is not None:
+        findings.append(f"{r.reason.value} (asset_id={r.affected_asset_id})")
+
+    r = check_reference_price_inadmissible(conversion.boundary_evidence, "predecessor_reference_price", binding)
+    if r is not None:
+        findings.append(f"{r.reason.value} (asset_id={r.affected_asset_id})")
+    r = check_reference_price_inadmissible(conversion.boundary_evidence, "successor_reference_price", binding)
+    if r is not None:
+        findings.append(f"{r.reason.value} (asset_id={r.affected_asset_id})")
+
+    return PreflightCheckResult(
+        "QUOTE_GATE", "Quote gate (manifest-only, provider-independent)", not findings, "; ".join(findings)
+    )
+
+
+def _preflight_mechanical_continuity(conversion) -> PreflightCheckResult:
+    """WPP §7.2 step 3 — the pure, same-module ``_evaluate_mechanical_continuity()``
+    classifier only, never ``_audit_mechanical_continuity()`` (WP7-A19)."""
+    boundary = conversion.boundary_evidence
+    result = _evaluate_mechanical_continuity(
+        predecessor_reference_price=boundary.predecessor_reference_price,
+        successor_reference_price=boundary.successor_reference_price,
+        mechanical_nav_tolerance_pct=boundary.mechanical_nav_tolerance_pct,
+        conversion_ratio=conversion.conversion_ratio,
+        suspension_gap_annotation=boundary.suspension_gap_annotation,
+    )
+    passed = result.state in (
+        MechanicalContinuityState.PASS,
+        MechanicalContinuityState.ANNOTATED_BOUNDARY_DISCONTINUITY,
+    )
+    detail = f"state={result.state.value}"
+    if result.metric_pct is not None:
+        detail += f" metric_pct={result.metric_pct} tolerance_pct={result.tolerance_pct}"
+    if result.invalid_field:
+        detail += f" invalid_field={result.invalid_field} invalid_reason={result.invalid_reason}"
+    return PreflightCheckResult("MECHANICAL_CONTINUITY", "Mechanical continuity", passed, detail)
+
+
+def _preflight_broker_facts(conversion) -> PreflightCheckResult:
+    """WPP §7.2 step 4 — no separate broker-fact service exists anywhere in
+    the repository (live inspection, WPP §8 #7). Broker-confirmed facts are
+    manifest-carried values whose validation is discharged entirely by the
+    canonical schema parse (already complete by the time this runs) plus the
+    reference-price-admissibility check already run above — this check
+    exists to make that discharge explicit in the report, not to add a new
+    validation path."""
+    return PreflightCheckResult(
+        "BROKER_FACTS", "Broker facts (schema parse + reference-price admissibility)", True,
+        "discharged by manifest schema parse and quote-gate reference-price check",
+    )
+
+
+def _preflight_rebuild_boundary(conversion) -> PreflightCheckResult:
+    """WPP §7.2 step 5 — read-only consistency check of the manifest's
+    ``valuation_transition_date`` against ``POSITION_CONVERSION_REBUILD_BOUNDARY``
+    semantics (Design §8.4). Does not invoke a rebuild; does not own the
+    boundary predicate (WP5-owned)."""
+    transition = conversion.dates.valuation_transition_date
+    epoch_start = conversion.dates.successor_quote_epoch_start_date
+    if transition != epoch_start:
+        return PreflightCheckResult(
+            "REBUILD_BOUNDARY", "Rebuild boundary consistency", False,
+            f"valuation_transition_date={transition} does not equal "
+            f"successor_quote_epoch_start_date={epoch_start}",
+        )
+    return PreflightCheckResult("REBUILD_BOUNDARY", "Rebuild boundary consistency", True)
+
+
+def _extract_reconstructed_holdings(result: "RebuildResult") -> dict[str, dict[str, float]]:
+    """Return the reconciler's holding evidence keyed by ``report_symbol``.
+
+    This remains the comparison surface for holdings and the pre-existing
+    conversion-specific reconciliation ``basis`` field.  Ordinary reconstructed
+    holding basis is deliberately *not* derived from these display/reconciliation
+    values: its canonical source is the exact Decimal map on ``RebuildResult``.
+    """
+    holdings: dict[str, dict[str, float]] = {}
+    for row in result.reconciliation_report or []:
+        if row.entity_type != "portfolio_item":
+            continue
+        if row.field == "*":
+            # Whole-row MISSING/EXTRA marker; only MISSING carries a
+            # reconstructed_value dict (symbol exists only in reconstruction).
+            if isinstance(row.reconstructed_value, dict):
+                holdings.setdefault(row.identifier, {}).update(row.reconstructed_value)
+            continue
+        if row.reconstructed_value is None:
+            # EXTRA (field-level): this symbol was not reconstructed at all
+            # under this replay mode — deliberately absent, not zero.
+            continue
+        holdings.setdefault(row.identifier, {})[row.field] = row.reconstructed_value
+
+    return holdings
+
+
+_HOLDING_FIELD_TOLERANCE: dict[str, float] = {
+    # Matches _reconcile_portfolio_items' own established tolerances exactly
+    # (portfolio_rebuilder.py), so this comparison applies no new arbitrary
+    # threshold beyond the one the canonical reconciler already uses.
+    "shares":   0.0001,
+    "avg_cost": 0.01,
+    "basis":    0.01,
+}
+
+
+def _diff_reconstructed_holdings(
+    legacy: dict[str, dict[str, float]], native: dict[str, dict[str, float]],
+) -> list[str]:
+    """Deterministic (sorted-by-symbol) diff of two reconstructed-holdings
+    maps. A symbol present under only one replay mode is always a mismatch —
+    never treated as equivalence merely because the missing side has no
+    value to compare (WP7 Bounded Correction §5/§6)."""
+    diffs: list[str] = []
+    for symbol in sorted(set(legacy) | set(native), key=str):
+        l, n = legacy.get(symbol), native.get(symbol)
+        if l is None or n is None:
+            diffs.append(f"symbol={symbol}: present under only one replay mode (legacy={l is not None} native={n is not None})")
+            continue
+        for field, tol in _HOLDING_FIELD_TOLERANCE.items():
+            lv, nv = l.get(field), n.get(field)
+            if lv is None and nv is None:
+                continue
+            if lv is None or nv is None:
+                diffs.append(f"symbol={symbol} field={field}: legacy={lv} native={nv}")
+                continue
+            if abs(float(lv) - float(nv)) > tol:
+                diffs.append(f"symbol={symbol} field={field}: legacy={lv} native={nv}")
+    return diffs
+
+
+def _validate_reconstructed_holding_basis(
+    result: "RebuildResult", holdings: dict[str, dict[str, float]], *, mode: str,
+) -> list[str]:
+    """Fail closed unless WP5's ordinary-basis result surface is complete.
+
+    ``reconstructed_holding_basis`` is the frozen Stage-1 evidence surface.  It
+    must use exactly the final reconstructed holding ``report_symbol`` set and
+    contain finite ``Decimal`` values.  In particular, this function never
+    infers a value from reconciliation fields, floats, or presentation values.
+    """
+    issues: list[str] = []
+    if result.reconstructed_holdings_count != len(holdings):
+        issues.append(
+            f"{mode} holdings evidence incomplete: "
+            f"count={result.reconstructed_holdings_count} symbols={len(holdings)}"
+        )
+    for symbol, fields in sorted(holdings.items(), key=lambda item: str(item[0])):
+        if not isinstance(symbol, str) or not symbol:
+            issues.append(f"{mode} holdings identity invalid")
+        for field in ("shares", "avg_cost"):
+            if fields.get(field) is None:
+                issues.append(f"{mode} holdings evidence incomplete: symbol={symbol} field={field}")
+
+    basis_map = result.reconstructed_holding_basis
+    if not isinstance(basis_map, dict):
+        return issues + [f"{mode} ordinary basis evidence unavailable"]
+    for symbol, basis in sorted(basis_map.items(), key=lambda item: str(item[0])):
+        if not isinstance(symbol, str) or not symbol:
+            issues.append(f"{mode} ordinary basis identity invalid")
+        if not isinstance(basis, Decimal) or not basis.is_finite():
+            issues.append(f"{mode} ordinary basis value invalid: symbol={symbol}")
+
+    expected_symbols = set(holdings)
+    basis_symbols = set(basis_map)
+    for symbol in sorted(expected_symbols - basis_symbols, key=str):
+        issues.append(f"{mode} ordinary basis missing: symbol={symbol}")
+    for symbol in sorted(basis_symbols - expected_symbols, key=str):
+        issues.append(f"{mode} ordinary basis unexpected: symbol={symbol}")
+    return issues
+
+
+def _diff_reconstructed_holding_basis(
+    legacy: dict[str, Decimal], native: dict[str, Decimal],
+) -> list[str]:
+    """Return a stable, exact semantic diff of WP5's ordinary-basis maps."""
+    diffs: list[str] = []
+    for symbol in sorted(set(legacy) | set(native), key=str):
+        legacy_basis, native_basis = legacy.get(symbol), native.get(symbol)
+        if legacy_basis is None or native_basis is None:
+            diffs.append(
+                f"ordinary basis symbol={symbol}: present under only one replay mode "
+                f"(legacy={legacy_basis is not None} native={native_basis is not None})"
+            )
+        elif legacy_basis != native_basis:
+            diffs.append(
+                f"ordinary basis symbol={symbol}: legacy={legacy_basis} native={native_basis}"
+            )
+    return diffs
+
+
+async def _run_one_replay_mode(db, portfolio: "Portfolio", *, native: bool):
+    """Run exactly one replay mode and return ``(RebuildResult | None, error)``.
+
+    ``error`` is a stable, sanitized category, never a raw exception or
+    result-error payload. ``rebuild_portfolio`` already classifies expected
+    replay failures in its result contract; WP7 preserves the distinction
+    between a reported failure and an unexpected exception without exposing
+    arbitrary internal text."""
+    portfolio.replay_asset_id_native = native
+    try:
+        # rebuild_portfolio (frozen WP1-WP6 service, outside this correction's
+        # authorized surface) emits unconditional internal progress/debug
+        # output — including a raw repr of each replayed canonical
+        # transaction, which for a POSITION_CONVERSION row nests the full
+        # manifest evidence block, and a non-deterministic object id().
+        # Suppressed here so this WP7-owned preflight's own report stays
+        # both deterministic and free of manifest evidence content,
+        # without modifying the called service itself (WP7 Bounded
+        # Correction — see final report §14/§15/§20).
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = await rebuild_portfolio(
+                db=db, portfolio_id=portfolio.id, workspace_id=portfolio.workspace_id,
+                dry_run=True, skip_snapshots=True, skip_benchmark=True,
+            )
+    except Exception:  # unexpected — rebuild_portfolio's own contract
+        return None, "REPLAY_EXCEPTION"
+    if not result.success:
+        return None, "REPLAY_FAILED"
+    # RebuildResult's canonical error surface is independent of its success
+    # flag.  A populated error makes this replay unusable even if an
+    # inconsistent producer reported success=True; never let it reach parity
+    # comparison or operator-facing output.
+    if result.error:
+        return None, "REPLAY_FAILED"
+    return result, None
+
+
+async def _preflight_replay_mode_sanity(db, portfolio: "Portfolio", *, label: str) -> PreflightCheckResult:
+    """WPP §7.2 step 6 / §7.3 — both-replay-mode sanity of the EXISTING
+    (already-persisted) ledger. Used both pre-commit (against the
+    pre-conversion ledger) and post-commit (against the now-persisted
+    conversion, same mechanism).
+
+    Corrected per BANPU-WP7 Independent Implementation Review findings:
+    each mode's own reported failure (``success is False``), populated
+    canonical result error, or unexpected exception fails this check closed
+    immediately — a failure in one mode is never accepted as equivalence
+    merely because comparison values happen to look alike. When both modes
+    genuinely succeed with no canonical error, the full frozen result set
+    required by WPP §7.2/§7.3 — reconstructed cash,
+    holdings, basis, and realized P&L — is compared. ``RebuildResult`` owns
+    the canonical Stage-1 realized-P&L calculation; this caller consumes that
+    result surface directly and neither replays accounting nor derives a
+    replacement value.
+
+    Toggles ``Portfolio.replay_asset_id_native`` across both ``dry_run=True``
+    ``rebuild_portfolio`` calls, then unconditionally reverts the flag and
+    rolls back — session mechanics may autoflush an uncommitted ``UPDATE``
+    for the toggle (BANPU-WP7 Planning Freeze §13 Observation A), but the
+    closing ``db.rollback()`` guarantees no lasting mutation regardless of
+    which branch above returned. Full candidate-conversion both-mode parity
+    remains rehearsal-owned, not this preflight (WPP §7.2 step 6).
+    """
+    original = portfolio.replay_asset_id_native
+    try:
+        legacy, legacy_err = await _run_one_replay_mode(db, portfolio, native=False)
+        native, native_err = await _run_one_replay_mode(db, portfolio, native=True)
+    finally:
+        portfolio.replay_asset_id_native = original
+        db.rollback()  # release any autoflushed toggle UPDATE(s); no lasting mutation
+
+    check_id = f"REPLAY_MODE_SANITY_{label.upper()}"
+    check_label = f"Both-replay-mode sanity ({label})"
+
+    if legacy_err is not None:
+        return PreflightCheckResult(check_id, check_label, False, f"legacy-mode replay {legacy_err}")
+    if native_err is not None:
+        return PreflightCheckResult(check_id, check_label, False, f"native-mode replay {native_err}")
+
+    mismatches: list[str] = []
+    legacy_cash = legacy.reconstructed_cash
+    native_cash = native.reconstructed_cash
+    if legacy_cash is None or native_cash is None:
+        mismatches.append(
+            "cash evidence unavailable: "
+            f"legacy={legacy_cash} native={native_cash}"
+        )
+    elif float(legacy_cash) != float(native_cash):
+        mismatches.append(f"cash: legacy={legacy_cash} native={native_cash}")
+    legacy_realized_pnl = legacy.reconstructed_realized_pnl
+    native_realized_pnl = native.reconstructed_realized_pnl
+    if legacy_realized_pnl is None or native_realized_pnl is None:
+        mismatches.append(
+            "realized P&L evidence unavailable: "
+            f"legacy={legacy_realized_pnl} native={native_realized_pnl}"
+        )
+    else:
+        if float(legacy_realized_pnl) != float(native_realized_pnl):
+            mismatches.append(
+                f"realized P&L: legacy={legacy_realized_pnl} native={native_realized_pnl}"
+            )
+    if legacy.reconstructed_holdings_count != native.reconstructed_holdings_count:
+        mismatches.append(
+            f"holdings_count: legacy={legacy.reconstructed_holdings_count} "
+            f"native={native.reconstructed_holdings_count}"
+        )
+    legacy_holdings = _extract_reconstructed_holdings(legacy)
+    native_holdings = _extract_reconstructed_holdings(native)
+    mismatches.extend(_diff_reconstructed_holdings(legacy_holdings, native_holdings))
+    mismatches.extend(_validate_reconstructed_holding_basis(
+        legacy, legacy_holdings, mode="legacy",
+    ))
+    mismatches.extend(_validate_reconstructed_holding_basis(
+        native, native_holdings, mode="native",
+    ))
+    if isinstance(legacy.reconstructed_holding_basis, dict) and isinstance(
+        native.reconstructed_holding_basis, dict
+    ):
+        mismatches.extend(_diff_reconstructed_holding_basis(
+            legacy.reconstructed_holding_basis, native.reconstructed_holding_basis,
+        ))
+
+    if mismatches:
+        return PreflightCheckResult(check_id, check_label, False, "; ".join(mismatches))
+    return PreflightCheckResult(
+        check_id, check_label, True,
+        "cash, holdings, exact ordinary basis, conversion evidence, and realized P&L agree across both replay modes",
+    )
+
+
+def _print_position_conversion_preflight(checks: list[PreflightCheckResult]) -> None:
+    print(f"\n{_hr()}")
+    print("Preflight validation chain")
+    print(_hr())
+    for c in checks:
+        icon = "✓" if c.passed else "✗"
+        print(f"  {icon} {c.label}")
+        if c.detail:
+            print(f"      {c.detail}")
+
+
+def _print_cache_and_rebuild_instructions(conversion) -> None:
+    """WPP §7.5 — instructions and orchestration only; no execution."""
+    binding = build_successor_quote_binding(conversion.successor, conversion.quote_binding, conversion.dates)
+    transition = conversion.dates.valuation_transition_date.isoformat()
+    print(f"\n{_hr()}")
+    print("Post-commit operator instructions (not executed by this command)")
+    print(_hr())
+    print("1. Purge cache namespaces:")
+    print(f"     {quote_cache_type(binding)}")
+    print(f"     {history_cache_type(binding)}")
+    print("2. Bounded rebuild from the transition date:")
+    print(f"     python manage.py rebuild_portfolio --portfolio <ID> --from-date {transition} --commit")
+    print("3. Bounded shadow regeneration:")
+    print("     python manage.py regenerate_paper_portfolios --portfolio <ID> --commit")
+    print("\nIsolated production-shaped rehearsal (MINOR-5 / NEW-MINOR-A WP7 portions):")
+    print("  Not executed by this command. Requires an isolated, production-shaped,")
+    print("  real-PostgreSQL, repeatable, rollback-capable environment with no")
+    print("  production access — see BANPU_WP7_WORK_PACKAGE_PLAN.md §7.5.")
+
+
+async def _cmd_apply_position_conversion(args: argparse.Namespace) -> int:
+    """BANPU-WP7 — apply a reviewed whole-position identity conversion
+    manifest. Default (no flags) and --dry-run perform manifest load and the
+    full preflight chain, then report, without writing. --commit writes only
+    if every preflight check passes."""
+    dry_run = not getattr(args, "commit", False)
+
+    db = SessionLocal()
+    try:
+        try:
+            raw_payload, conversion = _load_conversion_manifest(args.manifest)
+        except PositionConversionCliError as exc:
+            print(f"ERROR: [{exc.code}] {exc.message}", file=sys.stderr)
+            return 1
+
+        try:
+            portfolio = _resolve_portfolio_identity(db, getattr(args, "portfolio", None))
+        except PositionConversionCliError as exc:
+            print(f"ERROR: [{exc.code}] {exc.message}", file=sys.stderr)
+            return 1
+        portfolio_id = portfolio.id
+        ws_id = portfolio.workspace_id
+
+        checks: list[PreflightCheckResult] = [
+            _preflight_registry_preconditions(db, conversion),
+            _preflight_quote_gate(conversion),
+            _preflight_mechanical_continuity(conversion),
+            _preflight_broker_facts(conversion),
+            _preflight_rebuild_boundary(conversion),
+            await _preflight_replay_mode_sanity(db, portfolio, label="pre-commit"),
+        ]
+        preflight_ok = all(c.passed for c in checks)
+        _print_position_conversion_preflight(checks)
+
+        if dry_run:
+            print(f"\n{_hr()}")
+            print(f"Mode: DRY RUN — no database writes")
+            print(f"Preflight: {'PASS' if preflight_ok else 'FAIL'}")
+            print(_hr())
+            print(
+                "Proven above: pre-preparation registry preconditions, manifest-only "
+                "quote-gate components, mechanical continuity, rebuild-boundary "
+                "consistency, and existing-ledger both-replay-mode sanity."
+            )
+            print(
+                "Not provable without a write: post-preparation registry state, "
+                "live-provider quote evidence (WP3's continuous fetch-time gate), "
+                "and both-replay-mode parity of the candidate conversion itself "
+                "(the isolated production-shaped rehearsal)."
+            )
+            return 0 if preflight_ok else 1
+
+        # --commit
+        if not preflight_ok:
+            print("\nERROR: --commit refused — one or more preflight checks failed.", file=sys.stderr)
+            return 1
+
+        try:
+            asset_registry.prepare_position_conversion_registry(
+                db,
+                conversion.predecessor.asset_id,
+                conversion.successor.asset_id,
+                conversion.successor.provider_symbol,
+                source="apply_position_conversion",
+            )
+            db.commit()
+        except AssetRegistryError as exc:
+            db.rollback()
+            print(f"ERROR: REGISTRY_PREPARATION_FAILED — {exc}", file=sys.stderr)
+            return 1
+
+        try:
+            predecessor_provider_symbol = asset_registry.resolve_predecessor_provider_symbol(
+                db, conversion.predecessor.asset_id
+            )
+            asset_registry.validate_position_conversion_registry_state(
+                db,
+                conversion.predecessor.asset_id,
+                conversion.successor.asset_id,
+                conversion.successor.provider_symbol,
+                predecessor_provider_symbol,
+            )
+        except AssetRegistryError as exc:
+            db.rollback()
+            print(f"ERROR: POST_PREPARATION_REGISTRY_VALIDATION_FAILED — {exc}", file=sys.stderr)
+            return 1
+        db.rollback()  # release the read-only autobegin transaction — execute_position_conversion requires an idle session
+
+        try:
+            result = execute_position_conversion(db, ws_id, portfolio_id, raw_payload)
+        except PositionConversionError as exc:
+            print(f"ERROR: POSITION_CONVERSION_FAILED — {exc}", file=sys.stderr)
+            return 1
+
+        print(f"\n{_hr()}")
+        print(f"Status: {result['status']}")
+        print(_hr())
+        for k, v in result.items():
+            if k == "status":
+                continue
+            print(f"  {k}: {v}")
+
+        if result["status"] == "applied":
+            portfolio = db.query(Portfolio).filter_by(id=portfolio_id).one()
+            post_check = await _preflight_replay_mode_sanity(db, portfolio, label="post-commit")
+            print()
+            _print_position_conversion_preflight([post_check])
+            if not post_check.passed:
+                print(
+                    "\nCRITICAL: post-commit both-replay-mode verification mismatch. "
+                    "Recovery proceeds through the existing scoped backup/restore path — "
+                    "no automated rollback is attempted.",
+                    file=sys.stderr,
+                )
+                return 1
+            _print_cache_and_rebuild_instructions(conversion)
+
+        return 0
+
+    except Exception:
+        print("\nERROR: APPLY_POSITION_CONVERSION_UNEXPECTED_FAILURE", file=sys.stderr)
+        return 1
+    finally:
+        db.close()
+
+
 # ── Argument parser ────────────────────────────────────────────────────────────
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -4137,6 +5068,46 @@ def _build_parser() -> argparse.ArgumentParser:
     regen.add_argument("--commit", action="store_true", help="Persist changes (default is dry run)")
     regen.add_argument("--backup", action="store_true", help="Export affected rows to JSON before committing")
     regen.add_argument("--yes", action="store_true", help="Skip the confirmation prompt before committing")
+
+    # ── apply_position_conversion (BANPU-WP7) ────────────────────────────────
+    apply_conversion = sub.add_parser(
+        "apply_position_conversion",
+        help="Apply a reviewed whole-position identity conversion manifest (BANPU-WP7)",
+        description=textwrap.dedent("""\
+            Applies a whole-position identity conversion (e.g. a symbol/listing
+            change such as BANPU.BK -> BANPUU.BK) from an operator-reviewed
+            manifest, per the frozen BANPU-WP7 Work Package Plan.
+
+            Default (no flags) and --dry-run perform manifest load and the full
+            preflight validation chain (registry preconditions, manifest-only
+            quote-gate components, mechanical continuity, rebuild-boundary
+            consistency, existing-ledger both-replay-mode sanity), then report,
+            without writing anything.
+
+            --commit performs the write only if every preflight check passes:
+            registry preparation, post-preparation registry validation,
+            conversion execution, and mandatory post-commit both-replay-mode
+            verification.
+        """),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    apply_conversion.add_argument(
+        "--manifest", required=True, metavar="FILE",
+        help="Path to the reviewed POSITION_CONVERSION manifest JSON file",
+    )
+    apply_conversion.add_argument(
+        "--portfolio", "-p", type=int, required=True, metavar="ID",
+        help="Portfolio ID to apply the conversion against (workspace is derived from the portfolio)",
+    )
+    _conversion_mode = apply_conversion.add_mutually_exclusive_group()
+    _conversion_mode.add_argument(
+        "--dry-run", action="store_true",
+        help="Explicit dry run (default behavior — identical to no mode flag)",
+    )
+    _conversion_mode.add_argument(
+        "--commit", action="store_true",
+        help="Explicit opt-in to persist the conversion; refuses if any preflight check fails",
+    )
 
     # ── rebuild_portfolio ─────────────────────────────────────────────────────
     rebuild = sub.add_parser(
@@ -4995,6 +5966,9 @@ def main() -> None:
         sys.exit(exit_code)
     elif args.command == "regenerate_paper_portfolios":
         exit_code = asyncio.run(_cmd_regenerate_paper_portfolios(args))
+        sys.exit(exit_code)
+    elif args.command == "apply_position_conversion":
+        exit_code = asyncio.run(_cmd_apply_position_conversion(args))
         sys.exit(exit_code)
     elif args.command == "seed_registry_classification":
         exit_code = _cmd_seed_registry_classification(args)

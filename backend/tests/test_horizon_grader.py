@@ -68,6 +68,8 @@ from services.decision_memory.shadow_tracker import create_recommendation_shadow
 
 @pytest.fixture()
 def db():
+    import models.asset  # noqa: F401 — registers Asset*/asset_relationships tables
+
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
@@ -339,6 +341,148 @@ def test_directional_no_evaluable_calls_returns_none():
     score, correct, detail = score_directional_calls(inception, horizon_json)
     assert score is None
     assert correct is None
+
+
+# ── WP6-A10: horizon/evaluation continuity across a conversion ─────────────
+
+def test_directional_without_translation_a_converted_symbol_is_silently_excluded():
+    """Documents the pre-WP6 defect this capability fixes: without a
+    symbol_translation map, a horizon snapshot keyed by the successor's
+    symbol never matches the frozen predecessor symbol."""
+    inception = [{"symbol": "OLD", "action": "BUY", "inception_price": 100.0}]
+    horizon_json = json.dumps([{"symbol": "NEW", "current_price": 120.0}])
+    score, correct, detail = score_directional_calls(inception, horizon_json)
+    assert score is None
+    assert correct is None
+    assert detail["note"] == "no_directional_calls_evaluable"
+
+
+def test_directional_with_translation_converted_symbol_remains_evaluable():
+    """WP6-C1/WP6-C5: with symbol_translation supplied, the same converted
+    holding is correctly matched and scored — no silent exclusion."""
+    inception = [{"symbol": "OLD", "action": "BUY", "inception_price": 100.0}]
+    horizon_json = json.dumps([{"symbol": "NEW", "current_price": 120.0}])
+    score, correct, detail = score_directional_calls(
+        inception, horizon_json, symbol_translation={"OLD": "NEW"},
+    )
+    assert score == 100.0
+    assert correct is True
+    # Immutable evidence (WP6-A12): the frozen inception holding's own
+    # stored symbol is reported unchanged in the detail, never rewritten.
+    assert detail["per_symbol"][0]["symbol"] == "OLD"
+
+
+def test_grade_due_recommendations_evaluates_converted_holding(db, ws_portfolio):
+    """WP6-A10 integration: a recommendation whose holding converted before
+    its horizon date is still graded — grade_due_recommendations resolves
+    the translation itself via position_conversion, using the horizon
+    snapshot's own date, before calling score_directional_calls."""
+    from services import asset_registry as registry
+    from services.asset_domain import AssetClaim, AssetType, RelationshipType
+    from models.database import Transaction
+
+    ws, portfolio = ws_portfolio
+    _set_horizons(db, ws, [7])
+
+    def _claim(symbol):
+        return AssetClaim(
+            canonical_symbol=symbol, asset_type=AssetType.EQUITY,
+            market="TH", exchange="SET", currency="THB",
+        )
+
+    predecessor = registry.mint(db, _claim("OLDH"))
+    successor = registry.mint(db, _claim("NEWH"))
+    created_at = datetime.utcnow() - timedelta(days=10)
+    snap_date = created_at.date()
+    boundary = datetime.combine(snap_date + timedelta(days=3), datetime.min.time())
+    registry.link_relationship(
+        db, predecessor.id, successor.id, RelationshipType.MERGED_INTO,
+        effective_date=boundary,
+    )
+    db.add(Transaction(
+        workspace_id=ws.id, portfolio_id=portfolio.id, symbol="OLDH",
+        transaction_type="POSITION_CONVERSION", asset_id=predecessor.id,
+        total_amount=0.0, fees=0.0, taxes=0.0, transaction_date=boundary,
+        conversion_payload={
+            "schema_version": 1,
+            "predecessor": {"asset_id": predecessor.id, "symbol": "OLDH", "shares_surrendered": "10"},
+            "successor": {
+                "asset_id": successor.id, "symbol": "NEWH", "provider_symbol": "NEWH",
+                "shares_entitled": "10", "shares_received": "10",
+            },
+            "conversion_ratio": "1",
+            "basis": {"before": "1000.00", "allocated_to_cash_in_lieu": "0.00", "carried_to_successor": "1000.00"},
+            "cash_in_lieu": None,
+            "dates": {
+                "legal_effective_date": boundary.date().isoformat(),
+                "valuation_transition_date": boundary.date().isoformat(),
+                "predecessor_last_price_date": (boundary - timedelta(days=1)).date().isoformat(),
+                "successor_quote_epoch_start_date": boundary.date().isoformat(),
+            },
+            "quote_binding": {
+                "provider": "YAHOO", "predecessor_provider_symbol": "OLDH",
+                "successor_provider_symbol": "NEWH",
+            },
+            "boundary_evidence": {
+                "predecessor_reference_price": "100.00", "successor_reference_price": "100.00",
+                "mechanical_nav_tolerance_pct": "0.50", "suspension_gap_annotation": "test",
+            },
+            "evidence": {"reference": "TEST", "source": "test", "captured_at": "2026-08-18T10:00:00+07:00"},
+        },
+    ))
+    db.commit()
+
+    snap = RecommendationSnapshot(
+        workspace_id=ws.id, optimizer_history_id=next(_oh_id_counter), portfolio_id=portfolio.id,
+        total_portfolio_value=1000.0,
+        projected_allocations_json=json.dumps([{"symbol": "OLDH", "action": "BUY", "target_weight": 100.0}]),
+        created_at=created_at,
+    )
+    db.add(snap)
+    db.commit()
+    db.refresh(snap)
+
+    shadow = ShadowPortfolio(
+        workspace_id=ws.id, portfolio_id=portfolio.id, shadow_type="STATIC_FROZEN",
+        name=f"Recommendation @ {snap_date.isoformat()}",
+        inception_date=snap_date.isoformat(), inception_value=1000.0,
+        recommendation_snapshot_id=snap.id, execution_decision_id=None,
+        inception_holdings_json=json.dumps([
+            {"symbol": "OLDH", "action": "BUY", "shares": 10.0,
+             "inception_price": 100.0, "price_frozen": False},
+        ]),
+        paper_cash_balance=0.0, is_active=True, created_at=created_at,
+    )
+    db.add(shadow)
+    db.commit()
+    db.refresh(shadow)
+
+    # Horizon-date (day 7) shadow snapshot already carries the SUCCESSOR
+    # symbol, as WP6-C2/C3's shadow_tracker.py fix produces post-boundary.
+    horizon_date = (snap_date + timedelta(days=7)).isoformat()
+    db.add(ShadowPortfolioSnapshot(
+        shadow_portfolio_id=shadow.id, snapshot_date=horizon_date,
+        total_value=1200.0, return_pct_since_inception=20.0, daily_return_pct=None,
+        holdings_json=json.dumps([
+            {"symbol": "NEWH", "asset_id": successor.id, "action": "BUY",
+             "current_price": 120.0, "inception_price": 100.0, "market_value": 1200.0},
+        ]),
+        benchmark_symbol="^GSPC", benchmark_return_pct=0.0, alpha=20.0, created_at=created_at,
+    ))
+    db.commit()
+
+    result = grade_due_recommendations(db)
+
+    assert len(result["graded"]) == 1
+    grade = db.query(RecommendationGrade).one()
+    assert grade.directional_correct is True  # not silently excluded
+    detail = json.loads(grade.detail_json)
+    assert detail["total"] == 1
+    assert detail["correct"] == 1
+
+    # WP6-A12: the frozen inception_holdings_json is never rewritten.
+    db.refresh(shadow)
+    assert json.loads(shadow.inception_holdings_json)[0]["symbol"] == "OLDH"
 
 
 # ── EXPIRED writer (P4) ─────────────────────────────────────────────────────────

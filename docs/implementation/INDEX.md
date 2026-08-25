@@ -200,6 +200,172 @@ no authority and does not duplicate the Decision Log narrative.
 The corresponding final decision is recorded in the [Decision
 Log](../engineering/DECISION_LOG.md#banpu-wp2-implementation-governance-epic-closeout).
 
+## BANPU-WP3 — Quote Identity and Epoch Protection
+
+This navigation entry records the final BANPU-WP3 repository state. It grants
+no authority and does not duplicate the Decision Log narrative.
+
+| Lifecycle stage | Final state | Record |
+|---|---|---|
+| BANPU-WP3 BPA-1 amended planning | `COMPLETE AND FROZEN` | [Amended Planning Freeze Record](BANPU_WP3_AMENDED_PLANNING_FREEZE_RECORD.md) |
+| BANPU-WP3 Allocation | `COMPLETE` | [Amended Allocation Record](BANPU_WP3_AMENDED_ALLOCATION_RECORD.md) |
+| WP3.1–WP3.4 / C1–C4 | `ACCEPTED` | [C4 Acceptance Record](BANPU_WP3_C4_ACCEPTANCE_RECORD.md) |
+| BPA-1 accessor delta | `INDEPENDENTLY ACCEPTED` | [BPA-1 Accessor Delta Acceptance](BANPU_WP3_BPA1_C3_ACCESSOR_DELTA_ACCEPTANCE.md) |
+| BANPU-WP3 Implementation | `COMPLETE` | [Epic Closeout](BANPU_WP3_EPIC_CLOSEOUT.md) |
+| Implementation Confirmation | `BANPU-WP3 IMPLEMENTATION CONFIRMED` | [Implementation Confirmation](BANPU_WP3_IMPLEMENTATION_CONFIRMATION.md) |
+| Implementation Freeze | `BANPU-WP3 IMPLEMENTATION COMPLETE AND FROZEN` | [Implementation Freeze Record](BANPU_WP3_IMPLEMENTATION_FREEZE_RECORD.md) |
+| Epic Closeout | `BANPU-WP3 EPIC CLOSEOUT COMPLETE` | [Epic Closeout](BANPU_WP3_EPIC_CLOSEOUT.md) |
+| Decision Log synchronization | `BANPU-WP3 DECISION LOG SYNCHRONIZED` | [Decision Log](../engineering/DECISION_LOG.md#banpu-wp3-decision-log-synchronization) |
+
+BANPU-WP3 is `COMPLETE`, `FROZEN`, and `CLOSED`. WP4's S7 entry prerequisite
+is satisfied; WP4 remains `NOT ALLOCATED` and `NOT AUTHORIZED`.
+
+## BANPU-WP4 — Registry Preparation and Live Materialization
+
+This navigation entry records the final BANPU-WP4 repository state. It grants
+no authority and does not duplicate the Decision Log narrative.
+
+| Lifecycle stage | Final state | Record |
+|---|---|---|
+| BANPU-WP4 Work Package Plan / retry-order amendment | `AMENDMENT BOUND / FROZEN / AUTHORITATIVE` | [Retry-Order Amendment Binding/Freeze Record](BANPU_WP4_RETRY_ORDER_AMENDMENT_BINDING_FREEZE_RECORD.md) |
+| BANPU-WP4 Allocation | `BANPU-WP4 ALLOCATED` | [Allocation Record](BANPU_WP4_ALLOCATION_RECORD.md) |
+| BANPU-WP4 Implementation Authorization | `BANPU-WP4 IMPLEMENTATION AUTHORIZED` | [Implementation Authorization](BANPU_WP4_IMPLEMENTATION_AUTHORIZATION_RECORD.md) |
+| Independent Implementation Review (original through Third Renewed) | `BANPU-WP4 IMPLEMENTATION CANDIDATE — INDEPENDENTLY APPROVED` | [Third Renewed Independent Implementation Review](BANPU_WP4_THIRD_RENEWED_INDEPENDENT_IMPLEMENTATION_REVIEW.md) |
+| BANPU-WP4 Implementation | `COMPLETE` | [Epic Closeout](BANPU_WP4_EPIC_CLOSEOUT.md) |
+| Implementation Confirmation | `BANPU-WP4 IMPLEMENTATION CONFIRMED` | [Implementation Confirmation](BANPU_WP4_IMPLEMENTATION_CONFIRMATION.md) |
+| Implementation Freeze | `BANPU-WP4 IMPLEMENTATION FROZEN` | [Implementation Freeze Record](BANPU_WP4_IMPLEMENTATION_FREEZE_RECORD.md) |
+| Epic Closeout | `BANPU-WP4 EPIC CLOSEOUT COMPLETE` | [Epic Closeout](BANPU_WP4_EPIC_CLOSEOUT.md) |
+| Decision Log synchronization | `BANPU-WP4 DECISION LOG SYNCHRONIZED` | [Decision Log](../engineering/DECISION_LOG.md#banpu-wp4-decision-log-synchronization) |
+
+BANPU-WP4 is `COMPLETE`, `FROZEN`, and `CLOSED`. WP5's entry prerequisite is
+satisfied; WP5 remains `NOT ALLOCATED` and `NOT AUTHORIZED`.
+
+## BANPU-WP5 — Accounting Readers and Bounded Reconstruction
+
+This navigation entry records the final BANPU-WP5 repository state. It grants
+no authority and does not duplicate the Decision Log narrative.
+
+| Lifecycle stage | Final state | Record |
+|---|---|---|
+| BANPU-WP5 Work Package Plan / Mechanical Continuity Amendment / D7 Implementation Authorization Amendment lifecycle | `COMPLETE AND FROZEN` | [Planning Freeze Record](BANPU_WP5_PLANNING_FREEZE_RECORD.md) |
+| BANPU-WP5 Allocation | `BANPU-WP5 ALLOCATED` | [Allocation Record](BANPU_WP5_ALLOCATION_RECORD.md) |
+| BANPU-WP5 Implementation Authorization | `BANPU-WP5 IMPLEMENTATION AUTHORIZED` (amended, D7 binding-frozen) | [Implementation Authorization Record](BANPU_WP5_IMPLEMENTATION_AUTHORIZATION_RECORD.md), [D7 Amendment Binding Freeze Record](BANPU_WP5_D7_IMPLEMENTATION_AUTHORIZATION_AMENDMENT_BINDING_FREEZE_RECORD.md) |
+| Independent Implementation Review (original through Second Fresh Re-Review) | `BANPU-WP5 FRESH INDEPENDENT IMPLEMENTATION RE-REVIEW — PASSED` | [Second Fresh Independent Implementation Re-Review](BANPU_WP5_SECOND_FRESH_INDEPENDENT_IMPLEMENTATION_REVIEW.md) |
+| BANPU-WP5 Implementation | `COMPLETE` | [Epic Closeout](BANPU_WP5_EPIC_CLOSEOUT.md) |
+| Implementation Confirmation | `BANPU-WP5 IMPLEMENTATION CONFIRMED` | [Implementation Confirmation](BANPU_WP5_IMPLEMENTATION_CONFIRMATION.md) |
+| Implementation Freeze | `BANPU-WP5 IMPLEMENTATION FROZEN` | [Implementation Freeze Record](BANPU_WP5_IMPLEMENTATION_FREEZE_RECORD.md) |
+| Epic Closeout | `BANPU-WP5 EPIC CLOSEOUT COMPLETE` | [Epic Closeout](BANPU_WP5_EPIC_CLOSEOUT.md) |
+| Decision Log synchronization | `BANPU-WP5 DECISION LOG SYNCHRONIZED` | [Decision Log](../engineering/DECISION_LOG.md#banpu-wp5-decision-log-synchronization) |
+
+BANPU-WP5 is `COMPLETE`, `FROZEN`, and `CLOSED`. WP6's Decision Log and
+Implementation INDEX entry prerequisites are both now satisfied; WP6 remains
+`NOT ALLOCATED` and `NOT AUTHORIZED`.
+
+### Fresh Result-Surface Amendments — Realized P&L and Ordinary Holding Basis Exposure
+
+This navigation entry records the two completed, successor-triggered BANPU-WP5
+result-surface amendments layered on the closed epic above. It grants no
+authority and does not duplicate the Decision Log narrative.
+
+| Lifecycle stage | Final state | Record |
+|---|---|---|
+| Realized P&L exposure — Amendment Authorization | `BANPU-WP5 REALIZED-PNL RESULT-SURFACE AMENDMENT AUTHORIZED` | [Amendment Authorization](BANPU_WP5_IMPLEMENTATION_AUTHORIZATION_AMENDMENT_REBUILDRESULT_REALIZED_PNL_EXPOSURE.md) |
+| Realized P&L exposure — Fresh Independent Review | `BANPU-WP5 REALIZED-PNL RESULT-SURFACE IMPLEMENTATION REVIEW PASSED` | [Fresh Independent Implementation Review](BANPU_WP5_FRESH_INDEPENDENT_IMPLEMENTATION_REVIEW_REALIZED_PNL_EXPOSURE.md) |
+| Realized P&L exposure — Fresh Implementation Confirmation | `BANPU-WP5 REALIZED-PNL RESULT-SURFACE IMPLEMENTATION CONFIRMED` | [Fresh Implementation Confirmation](BANPU_WP5_FRESH_IMPLEMENTATION_CONFIRMATION_REALIZED_PNL_EXPOSURE.md) |
+| Realized P&L exposure — Fresh Implementation Freeze | `BANPU-WP5 REALIZED-PNL RESULT-SURFACE IMPLEMENTATION FROZEN` | [Fresh Implementation Freeze Record](BANPU_WP5_FRESH_IMPLEMENTATION_FREEZE_REALIZED_PNL_EXPOSURE.md) |
+| Ordinary holding basis exposure — triggering determination | `BANPU-WP7 BASIS EVIDENCE SOURCE RESOLVED — PREDECESSOR EXPOSURE AMENDMENT REQUIRED` | [Basis Evidence Source Determination](BANPU_WP7_WP5_ORDINARY_HOLDING_BASIS_EVIDENCE_SOURCE_DETERMINATION.md) |
+| Ordinary holding basis exposure — Amendment Authorization | `BANPU-WP5 ORDINARY-HOLDING-BASIS RESULT-SURFACE AMENDMENT AUTHORIZED` | [Amendment Authorization](BANPU_WP5_IMPLEMENTATION_AUTHORIZATION_AMENDMENT_REBUILDRESULT_ORDINARY_HOLDING_BASIS_EXPOSURE.md) |
+| Ordinary holding basis exposure — Fresh Independent Review | `BANPU-WP5 ORDINARY-HOLDING-BASIS RESULT-SURFACE IMPLEMENTATION REVIEW PASSED` | [Fresh Independent Implementation Review](BANPU_WP5_FRESH_INDEPENDENT_IMPLEMENTATION_REVIEW_ORDINARY_HOLDING_BASIS_EXPOSURE.md) |
+| Ordinary holding basis exposure — Fresh Implementation Confirmation | `BANPU-WP5 ORDINARY-HOLDING-BASIS RESULT-SURFACE IMPLEMENTATION CONFIRMED` | [Fresh Implementation Confirmation](BANPU_WP5_FRESH_IMPLEMENTATION_CONFIRMATION_ORDINARY_HOLDING_BASIS_EXPOSURE.md) |
+| Ordinary holding basis exposure — Fresh Implementation Freeze | `BANPU-WP5 ORDINARY-HOLDING-BASIS RESULT-SURFACE IMPLEMENTATION FROZEN` | [Fresh Implementation Freeze Record](BANPU_WP5_FRESH_IMPLEMENTATION_FREEZE_ORDINARY_HOLDING_BASIS_EXPOSURE.md) |
+| Decision Log synchronization | `BANPU-WP5 FRESH RESULT-SURFACE AMENDMENTS DECISION LOG SYNCHRONIZED` | [Decision Log](../engineering/DECISION_LOG.md#banpu-wp5-fresh-result-surface-amendments-decision-log-synchronization) |
+
+The active WP5 result-surface overlay is 2 members
+(`backend/services/portfolio_rebuilder.py`,
+`backend/tests/test_portfolio_rebuilder.py`), canonical-LF identity of
+record `89AA23712BE8177F8D363587343B520CB7DCC2C950BB6AE8B08E27A6D519C6F0`,
+incorporating both amendments; the realized-P&L delta is preserved as
+incorporated frozen history within it, exactly as its Fresh Implementation
+Freeze recorded. The historical BANPU-WP5 nine-member corpus and table above
+are unchanged and are not re-frozen or superseded by this overlay.
+
+BANPU-WP7 is unaffected and not reopened: its already-committed
+implementation and Decision Log Synchronization entry consume this overlay
+by reference only. LM13 (`backend/tests/test_position_conversion_live.py`)
+remains unresolved and is not synchronized by this entry; `A11`, `A12`,
+`A14`, `A15`, `MINOR-5`, and `NEW-MINOR-A` remain exactly as the BANPU-WP7
+Epic Closeout recorded them. No BANPU-WP8 or M46 allocation or authorization
+exists.
+
+This amendment lineage is `COMPLETE` and `FROZEN`. Its Decision Log and
+Implementation INDEX synchronization are both now complete. The next act is
+BANPU-WP5 Fresh Result-Surface Amendments Final Repository Verification /
+Commit-Readiness; it is not performed by this entry.
+
+## BANPU-WP6 — Shadow and Succession-Aware Time-Series Continuity
+
+This navigation entry records the final BANPU-WP6 repository state. It grants
+no authority and does not duplicate the Decision Log narrative.
+
+| Lifecycle stage | Final state | Record |
+|---|---|---|
+| BANPU-WP6 Work Package Plan / Planning Freeze | `COMPLETE AND FROZEN` | [Planning Freeze Record](BANPU_WP6_PLANNING_FREEZE_RECORD.md) |
+| BANPU-WP6 Allocation | `BANPU-WP6 ALLOCATED` | [Allocation Record](BANPU_WP6_ALLOCATION_RECORD.md) |
+| BANPU-WP6 Implementation Authorization | `BANPU-WP6 IMPLEMENTATION AUTHORIZED` | [Implementation Authorization Record](BANPU_WP6_IMPLEMENTATION_AUTHORIZATION_RECORD.md) |
+| Independent Implementation Review (original through Second Fresh Re-Review) | `BANPU-WP6 INDEPENDENT IMPLEMENTATION RE-REVIEW PASSED` | [Second Fresh Independent Implementation Re-Review](BANPU_WP6_SECOND_FRESH_INDEPENDENT_IMPLEMENTATION_REVIEW.md) |
+| Implementation Confirmation | `BANPU-WP6 IMPLEMENTATION CONFIRMED` | [Implementation Confirmation](BANPU_WP6_IMPLEMENTATION_CONFIRMATION.md) |
+| Implementation Freeze | `BANPU-WP6 IMPLEMENTATION FROZEN` | [Implementation Freeze Record](BANPU_WP6_IMPLEMENTATION_FREEZE_RECORD.md) |
+| Epic Closeout | `BANPU-WP6 EPIC CLOSEOUT COMPLETE` | [Epic Closeout](BANPU_WP6_EPIC_CLOSEOUT.md) |
+| Decision Log synchronization | `BANPU-WP6 DECISION LOG SYNCHRONIZED` | [Decision Log](../engineering/DECISION_LOG.md#banpu-wp6-decision-log-synchronization) |
+
+The independent review chain reached this passing state only after the
+original review concluded `FAIL — IMPLEMENTATION CORRECTION REQUIRED` and a
+first fresh re-review subsequently failed on `WP6-RR-B1`; both failed reviews
+remain preserved, unedited, in the [Epic Closeout](BANPU_WP6_EPIC_CLOSEOUT.md)
+§10 and the governance record set. `MINOR-2` and
+`POSITION_CONVERSION_REBUILD_BOUNDARY` are not WP6-owned and remain exactly
+as recorded by [BANPU-WP5's Epic Closeout](BANPU_WP5_EPIC_CLOSEOUT.md); WP6
+carries forward zero WP6-native residuals.
+
+BANPU-WP6 is `COMPLETE`, `FROZEN`, and `CLOSED`. WP7's Decision Log and
+Implementation INDEX entry prerequisites are both now satisfied; WP7 remains
+`NOT ALLOCATED` and `NOT AUTHORIZED`.
+
+## BANPU-WP7 — Idempotent CLI Position-Conversion Application Tool
+
+This navigation entry records the final BANPU-WP7 repository state. It grants
+no authority and does not duplicate the Decision Log narrative.
+
+| Lifecycle stage | Final state | Record |
+|---|---|---|
+| BANPU-WP7 Work Package Plan / Planning Freeze | `COMPLETE AND FROZEN` | [Planning Freeze Record](BANPU_WP7_PLANNING_FREEZE_RECORD.md) |
+| BANPU-WP7 Allocation | `BANPU-WP7 ALLOCATED` | [Allocation Record](BANPU_WP7_ALLOCATION_RECORD.md) |
+| BANPU-WP7 Implementation Authorization | `BANPU-WP7 IMPLEMENTATION AUTHORIZED` | [Implementation Authorization Record](BANPU_WP7_IMPLEMENTATION_AUTHORIZATION_RECORD.md) |
+| Independent Implementation Review (original through Third Fresh Re-Review) | `BANPU-WP7 IMPLEMENTATION RE-REVIEW PASSED` | [Third Fresh Independent Implementation Re-Review](BANPU_WP7_THIRD_FRESH_INDEPENDENT_IMPLEMENTATION_REVIEW.md) |
+| Implementation Confirmation | `BANPU-WP7 IMPLEMENTATION CONFIRMED` | [Implementation Confirmation](BANPU_WP7_IMPLEMENTATION_CONFIRMATION.md) |
+| Implementation Freeze | `BANPU-WP7 IMPLEMENTATION FROZEN` | [Implementation Freeze Record](BANPU_WP7_IMPLEMENTATION_FREEZE_RECORD.md) |
+| Epic Closeout | `BANPU-WP7 EPIC CLOSEOUT COMPLETE` | [Epic Closeout](BANPU_WP7_EPIC_CLOSEOUT.md) |
+| Decision Log synchronization | `BANPU-WP7 DECISION LOG SYNCHRONIZED` | [Decision Log](../engineering/DECISION_LOG.md#banpu-wp7-decision-log-synchronization) |
+
+The independent review chain reached this passing state only after the
+original review concluded `FAIL — IMPLEMENTATION CORRECTION REQUIRED`, and a
+first fresh re-review and a second fresh re-review each subsequently
+concluded `BANPU-WP7 IMPLEMENTATION RE-REVIEW FAILED — IMPLEMENTATION
+CORRECTION REQUIRED`; all three failed reviews remain preserved, unedited, in
+the [Epic Closeout](BANPU_WP7_EPIC_CLOSEOUT.md) §10 and the governance record
+set. `MINOR-2` and `POSITION_CONVERSION_REBUILD_BOUNDARY` are not WP7-owned
+and remain exactly as recorded by [BANPU-WP6's Epic
+Closeout](BANPU_WP6_EPIC_CLOSEOUT.md). Unlike WP6, WP7 carries forward
+WP7-native open residuals: the WP7-bound portions of `MINOR-5` and
+`NEW-MINOR-A` remain `WP7-BOUND; OPEN; NOT DISCHARGED`, LM13
+(`backend/tests/test_position_conversion_live.py`) remains unresolved, and
+`A11`/`A12`/`A14`/`A15` remain `NOT EVALUATED — REHEARSAL ENVIRONMENT
+REQUIRED`, per [Epic Closeout](BANPU_WP7_EPIC_CLOSEOUT.md) §§12, 14–16.
+
+BANPU-WP7 is `COMPLETE`, `FROZEN`, and `CLOSED`. WP8's Decision Log and
+Implementation INDEX entry prerequisites are both now satisfied; WP8 remains
+`NOT ALLOCATED` and `NOT AUTHORIZED`.
+
 ## Milestone Navigation (M0–current)
 
 | Milestone | Status (as declared in-document) | Primary document(s) | Closeout | Decision Log |

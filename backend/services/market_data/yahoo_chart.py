@@ -32,6 +32,7 @@ import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -167,6 +168,151 @@ def _chart_result_to_df(result: dict) -> Optional[pd.DataFrame]:
     return df if not df.empty else None
 
 
+# ── BANPU-WP3.1 provider evidence (E1-E5) ───────────────────────────────────
+#
+# Provider-neutral, conversion-unaware. This section supplies the raw
+# provider-reported facts named by the WP3 Provider Evidence Contract
+# (docs/implementation/BANPU_WP3_ARCHITECTURE_AND_IMPLEMENTATION_PLAN.md
+# §6.3). It makes no comparison, no binding, and no quarantine decision, and
+# never references PositionConversion or any conversion concept. WP3.2
+# consumes this shape structurally, without importing this module.
+
+_PROVIDER_ID = "yahoo_chart"  # same identity convention already used by
+                               # execution_quote.py's adapt_yahoo_chart_execution_quote()
+
+
+@dataclass(frozen=True)
+class QuoteObservation:
+    """One (timestamp, close) pair from a single provider chart response.
+
+    ``timestamp`` is the provider's raw epoch-seconds value, unmodified, in
+    provider-returned order. ``close`` may be ``None`` (a sparse/no-trade
+    bar) -- carried as-is, never dropped or substituted here.
+    """
+
+    timestamp: int
+    close: Optional[float]
+
+
+@dataclass(frozen=True)
+class ProviderQuoteEvidence:
+    """Provider-neutral, conversion-unaware evidence for one quote response.
+
+    Immutable. Fields correspond 1:1 to the WP3 Provider Evidence Contract:
+
+        E1 provider                  -- the provider identity this adapter acts as
+        E2 served_symbol              -- raw meta.symbol, uncompared against anything
+        E3 observations                -- raw (timestamp, close) pairs, provider order
+        E4 current_close/previous_close -- derived from this one response only
+        E5 exchange_timezone_name       -- raw meta.exchangeTimezoneName
+
+    ``previous_close`` is derived by timestamp-associated matching (skipping
+    sparse/null bars and collapsing duplicate timestamps), never by
+    positional indexing -- this is the PD-1 corrected derivation.
+    ``get_quote()`` calls ``_extract_provider_evidence`` and reuses this same
+    ``previous_close`` value, so the legacy dictionary and this evidence
+    structure share one definition of "previous close".
+
+    Invariant (see ``_previous_close_from_observations`` for the exact
+    algorithm): the observation at the highest chart timestamp is treated as
+    belonging to the same trading session as ``current_close``
+    (``meta.regularMarketPrice``), whether or not that bar's own close is
+    populated -- this matches every provider response observed for the
+    5-day/1-day request this method issues, where the last returned bar is
+    always today's. ``previous_close`` is the close of the most recent
+    *distinct* session strictly before that one. This is not a general
+    exchange-calendar/trading-session classification; it relies on that one
+    observed provider convention and nothing stronger.
+    """
+
+    provider: str
+    requested_symbol: str
+    served_symbol: Optional[str]
+    observations: "tuple[QuoteObservation, ...]"
+    current_close: Optional[float]
+    previous_close: Optional[float]
+    exchange_timezone_name: Optional[str]
+
+
+def _dedup_sessions_by_timestamp(
+    observations: "tuple[QuoteObservation, ...]",
+) -> "tuple[QuoteObservation, ...]":
+    """Collapse same-timestamp observations into one session per timestamp.
+
+    Sorts ascending by timestamp, then for any repeated timestamp keeps the
+    *last* provider-returned value for it. This mirrors the duplicate-index
+    policy ``_chart_result_to_df`` already applies to the same chart payload
+    (``sort_index()`` then ``duplicated(keep="last")``): a stable sort
+    preserves each duplicate's original relative order, so "last after a
+    stable sort" is exactly "last in provider-returned order" -- the same
+    row the history path treats as authoritative.
+    """
+    ordered = sorted(observations, key=lambda obs: obs.timestamp)
+    by_timestamp: dict[int, QuoteObservation] = {}
+    for obs in ordered:
+        by_timestamp[obs.timestamp] = obs  # a later duplicate overwrites the earlier one
+    return tuple(by_timestamp[ts] for ts in sorted(by_timestamp))
+
+
+def _previous_close_from_observations(
+    observations: "tuple[QuoteObservation, ...]",
+) -> Optional[float]:
+    """Derive previous_close per the invariant documented on ProviderQuoteEvidence.
+
+    1. Collapse duplicate timestamps to one session each (``keep last``).
+    2. Drop the single most-recent distinct session -- it is treated as the
+       same session as the live quote (``current_close``), regardless of
+       whether that session's own close is populated (a null close there
+       means today hasn't produced a completed bar yet; a non-null close
+       there means the chart's last bar already reflects today).
+    3. Return the close of the most recent remaining session that has a
+       non-null close, skipping any sparse/no-trade bars in between.
+    """
+    sessions = _dedup_sessions_by_timestamp(observations)
+    if len(sessions) < 2:
+        return None
+    for obs in reversed(sessions[:-1]):
+        if obs.close is not None:
+            return obs.close
+    return None
+
+
+def _extract_provider_evidence(result: dict, requested_symbol: str) -> ProviderQuoteEvidence:
+    """Build the WP3 provider evidence structure from one raw chart result.
+
+    Pure: no I/O, no clock, no registry lookup, no conversion awareness.
+    ``result`` is the same ``chart.result[0]`` shape ``_fetch_chart_result``
+    returns -- the caller supplies it so evidence and any corrected
+    derivation come from a single fetched response (E4).
+    """
+    meta = result.get("meta") or {}
+    indicators = result.get("indicators") or {}
+    quote_list = indicators.get("quote") or [{}]
+    quote0 = quote_list[0] if quote_list else {}
+    closes = quote0.get("close") or []
+    timestamps = result.get("timestamp") or []
+
+    observations = tuple(
+        QuoteObservation(timestamp=ts, close=c) for ts, c in zip(timestamps, closes)
+    )
+
+    # E4 -- see _previous_close_from_observations for the exact algorithm.
+    # This evidence contract is separate from the legacy quote dictionary's
+    # former metadata-driven behavior; get_quote() now reuses this same
+    # derivation instead.
+    previous_close = _previous_close_from_observations(observations)
+
+    return ProviderQuoteEvidence(
+        provider=_PROVIDER_ID,
+        requested_symbol=requested_symbol,
+        served_symbol=meta.get("symbol"),
+        observations=observations,
+        current_close=meta.get("regularMarketPrice"),
+        previous_close=previous_close,
+        exchange_timezone_name=meta.get("exchangeTimezoneName"),
+    )
+
+
 class YahooChartProvider(MarketDataProvider):
     """MarketDataProvider backed directly by the Yahoo Finance Chart API.
 
@@ -199,11 +345,25 @@ class YahooChartProvider(MarketDataProvider):
         if result is None:
             return {"current_price": None, "previous_close": None, "last_updated": None}
 
-        meta = result.get("meta") or {}
-        current_price = meta.get("regularMarketPrice")
-        closes = result["indicators"]["quote"][0]["close"]
-        prev_close = closes[-2] if len(closes) >= 2 else None
-        
+        # Previous close is derived by the same timestamp-associated,
+        # duplicate-collapsing, skip-null evidence logic get_quote_evidence()
+        # uses (E4) -- not from meta.previousClose / meta.chartPreviousClose /
+        # meta.regularMarketPreviousClose. Only meta.chartPreviousClose has
+        # been demonstrated (live, 2026-08-18) to be unsuitable as canonical
+        # previous-session evidence: with this method's fixed 5-day window it
+        # is anchored to the start of that window rather than to the session
+        # immediately before the latest bar, so it silently returns a close
+        # from several trading sessions ago. previousClose and
+        # regularMarketPreviousClose were unpopulated (None) in every
+        # response observed and were never proven to share that same
+        # window-anchoring behavior; they simply aren't consulted anymore
+        # either, since one shared, provider-response-derived definition
+        # keeps get_quote() and get_quote_evidence() from disagreeing about
+        # what "previous close" means.
+        evidence = _extract_provider_evidence(result, requested_symbol=symbol)
+        current_price = evidence.current_close
+        prev_close = evidence.previous_close
+
         return {
             "current_price": round(current_price, 4) if current_price is not None else None,
             "previous_close": prev_close,
@@ -253,6 +413,22 @@ class YahooChartProvider(MarketDataProvider):
                     _log.warning("YahooChartProvider execution quote failed symbol=%s: %s", symbol, exc)
                     results[symbol] = None
         return results
+
+    def get_quote_evidence(self, symbol: str) -> Optional[ProviderQuoteEvidence]:
+        """Fetch one WP3 provider evidence structure (E1-E5).
+
+        ``get_quote()`` derives its ``previous_close`` from this same
+        ``_extract_provider_evidence`` logic, so the two methods cannot
+        disagree about what "previous close" means -- they differ only in
+        return shape (this one is the full E1-E5 evidence structure, built
+        from a single fetched response). This method has no knowledge of
+        PositionConversion, binding, epoch, or quarantine concepts.
+        """
+        with _SEMAPHORE:
+            result = _fetch_chart_result(symbol, range_="5d", interval="1d")
+        if result is None:
+            return None
+        return _extract_provider_evidence(result, requested_symbol=symbol)
 
     def get_history(
         self, symbol: str, period: str = "6mo", interval: str = "1d"
