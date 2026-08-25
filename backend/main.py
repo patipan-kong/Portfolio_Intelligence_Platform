@@ -4,7 +4,8 @@ import math
 import random
 import re
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
+from typing import Literal
 from fastapi import FastAPI, HTTPException, Depends, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -20,7 +21,7 @@ import uuid as _uuid
 from models.database import (
     init_db, migrate_legacy_data, get_db, SessionLocal,
     Workspace, get_default_workspace,
-    Portfolio, PortfolioItem, CashAccount, Watchlist,
+    Portfolio, PortfolioItem, CashAccount, CashAccountBaseline, CashAccountTransaction, Watchlist,
     AgentCache, AnalysisCache, AnalysisHistory, OptimizerHistory, SignalHistory,
     Settings, UserUsage, Transaction, PortfolioSnapshot, BenchmarkPrice,
     MarketDataCache,
@@ -59,6 +60,7 @@ from services.portfolio_transactions import (
     execute_dividend,
 )
 from services.transaction_canonicalizer import parse_position_conversion_payload
+from services.cash_account_ledger import ADJUSTMENT, EXPENSE, INCOME, resulting_balance, signed_amount
 from services.portfolio_snapshots import generate_daily_snapshot, SnapshotCoverageError
 from services.snapshot_scheduler import setup_scheduler, shutdown_scheduler
 from services.analytics.system_health import compute_system_health, compute_ai_reliability
@@ -554,6 +556,7 @@ def _enrich_holdings(
 
 
 def _cash_account_payload(account: CashAccount) -> dict:
+    baseline = account.baseline
     return {
         "id": account.id,
         "workspace_id": account.workspace_id,
@@ -564,6 +567,32 @@ def _cash_account_payload(account: CashAccount) -> dict:
         "is_archived": account.is_archived,
         "created_at": account.created_at.isoformat(),
         "updated_at": account.updated_at.isoformat(),
+        "baseline": _cash_account_baseline_payload(baseline) if baseline is not None else None,
+    }
+
+
+def _cash_account_baseline_payload(baseline: CashAccountBaseline) -> dict:
+    return {
+        "id": baseline.id,
+        "cash_account_id": baseline.cash_account_id,
+        "effective_on": baseline.effective_on,
+        "observed_balance": baseline.observed_balance,
+        "created_at": baseline.created_at.isoformat(),
+    }
+
+
+def _cash_account_transaction_payload(transaction: CashAccountTransaction) -> dict:
+    return {
+        "id": transaction.id,
+        "workspace_id": transaction.workspace_id,
+        "cash_account_id": transaction.cash_account_id,
+        "transaction_type": transaction.transaction_type,
+        "amount": transaction.amount,
+        "signed_amount": signed_amount(transaction.transaction_type, transaction.amount),
+        "occurred_on": transaction.occurred_on,
+        "category": transaction.category,
+        "note": transaction.note,
+        "created_at": transaction.created_at.isoformat(),
     }
 
 
@@ -614,6 +643,97 @@ class CashAccountUpdate(BaseModel):
         return self
 
 
+class CashAccountBaselineCreate(BaseModel):
+    effective_on: date
+    observed_balance: float
+
+    @model_validator(mode="after")
+    def validate_baseline(self):
+        if not math.isfinite(self.observed_balance) or self.observed_balance < 0:
+            raise ValueError("observed_balance must be finite and non-negative")
+        return self
+
+
+class CashAccountTransactionCreate(BaseModel):
+    transaction_type: Literal["INCOME", "EXPENSE"]
+    amount: float
+    occurred_on: date
+    category: str
+    note: str | None = None
+
+    @model_validator(mode="after")
+    def validate_cash_transaction(self):
+        if not math.isfinite(self.amount) or self.amount <= 0:
+            raise ValueError("amount must be finite and greater than zero")
+        if not self.category.strip():
+            raise ValueError("category must not be blank")
+        return self
+
+
+class CashAccountReconcile(BaseModel):
+    observed_balance: float
+    occurred_on: date
+    note: str | None = None
+
+    @model_validator(mode="after")
+    def validate_reconciliation(self):
+        if not math.isfinite(self.observed_balance) or self.observed_balance < 0:
+            raise ValueError("observed_balance must be finite and non-negative")
+        return self
+
+
+def _require_cash_tracking(account: CashAccount) -> CashAccountBaseline:
+    if account.baseline is None:
+        raise HTTPException(status_code=409, detail="Start cash flow tracking before adding activity")
+    return account.baseline
+
+
+def _require_active_cash_account(account: CashAccount) -> None:
+    if account.is_archived:
+        raise HTTPException(status_code=409, detail="Archived cash accounts cannot receive new activity")
+
+
+def _require_on_or_after_baseline(occurred_on: date, baseline: CashAccountBaseline) -> str:
+    date_value = occurred_on.isoformat()
+    if date_value < baseline.effective_on:
+        raise HTTPException(status_code=422, detail="Cash activity cannot predate the tracking baseline")
+    return date_value
+
+
+def _record_cash_account_transaction(
+    db: Session,
+    account: CashAccount,
+    transaction_type: str,
+    amount: float,
+    occurred_on: str,
+    category: str,
+    note: str | None,
+) -> CashAccountTransaction:
+    next_balance = resulting_balance(account.balance, transaction_type, amount)
+    if next_balance < 0:
+        raise HTTPException(status_code=422, detail="Cash activity cannot make the observed balance negative")
+    transaction = CashAccountTransaction(
+        workspace_id=account.workspace_id,
+        cash_account_id=account.id,
+        transaction_type=transaction_type,
+        amount=amount,
+        occurred_on=occurred_on,
+        category=category,
+        note=note.strip() or None if note is not None else None,
+    )
+    db.add(transaction)
+    account.balance = next_balance
+    return transaction
+
+
+def _commit_cash_mutation(db: Session) -> None:
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+
 @app.get("/cash-accounts")
 async def list_cash_accounts(include_archived: bool = False, db: Session = Depends(get_db)) -> list[dict]:
     ws = _ws_id(db)
@@ -648,12 +768,109 @@ async def update_cash_account(cash_account_id: int, body: CashAccountUpdate, db:
         institution = fields["institution"]
         account.institution = institution.strip() or None if institution is not None else None
     if "balance" in fields:
-        account.balance = fields["balance"]
+        # Once tracking exists, preserve the immutable ledger by making a
+        # requested observed-balance replacement an explicit reconciliation.
+        if account.baseline is None:
+            account.balance = fields["balance"]
+        else:
+            _require_active_cash_account(account)
+            difference = fields["balance"] - account.balance
+            if difference:
+                _record_cash_account_transaction(
+                    db, account, ADJUSTMENT, difference, datetime.utcnow().date().isoformat(), "Reconciliation",
+                    "Observed balance updated through Cash Accounts",
+                )
     if "is_archived" in fields:
         account.is_archived = fields["is_archived"]
-    db.commit()
+    _commit_cash_mutation(db)
     db.refresh(account)
     return _cash_account_payload(account)
+
+
+@app.post("/cash-accounts/{cash_account_id}/baseline", status_code=201)
+async def create_cash_account_baseline(
+    cash_account_id: int,
+    body: CashAccountBaselineCreate,
+    db: Session = Depends(get_db),
+) -> dict:
+    account = _cash_account_or_404(db, cash_account_id, _ws_id(db))
+    _require_active_cash_account(account)
+    if account.baseline is not None:
+        raise HTTPException(status_code=409, detail="Cash flow tracking has already started for this account")
+    baseline = CashAccountBaseline(
+        cash_account_id=account.id,
+        effective_on=body.effective_on.isoformat(),
+        observed_balance=body.observed_balance,
+    )
+    # The baseline is an explicit observation, so it becomes the account's
+    # current observed balance without inventing any earlier cash activity.
+    account.balance = body.observed_balance
+    db.add(baseline)
+    _commit_cash_mutation(db)
+    db.refresh(baseline)
+    return _cash_account_baseline_payload(baseline)
+
+
+@app.get("/cash-accounts/{cash_account_id}/transactions")
+async def list_cash_account_transactions(cash_account_id: int, db: Session = Depends(get_db)) -> list[dict]:
+    account = _cash_account_or_404(db, cash_account_id, _ws_id(db))
+    return [
+        _cash_account_transaction_payload(transaction)
+        for transaction in (
+            db.query(CashAccountTransaction)
+            .filter(
+                CashAccountTransaction.cash_account_id == account.id,
+                CashAccountTransaction.workspace_id == account.workspace_id,
+            )
+            .order_by(CashAccountTransaction.occurred_on.desc(), CashAccountTransaction.id.desc())
+            .all()
+        )
+    ]
+
+
+@app.post("/cash-accounts/{cash_account_id}/transactions", status_code=201)
+async def create_cash_account_transaction(
+    cash_account_id: int,
+    body: CashAccountTransactionCreate,
+    db: Session = Depends(get_db),
+) -> dict:
+    account = _cash_account_or_404(db, cash_account_id, _ws_id(db))
+    _require_active_cash_account(account)
+    baseline = _require_cash_tracking(account)
+    transaction = _record_cash_account_transaction(
+        db,
+        account,
+        body.transaction_type,
+        body.amount,
+        _require_on_or_after_baseline(body.occurred_on, baseline),
+        body.category.strip(),
+        body.note,
+    )
+    _commit_cash_mutation(db)
+    db.refresh(transaction)
+    return _cash_account_transaction_payload(transaction)
+
+
+@app.post("/cash-accounts/{cash_account_id}/reconcile", status_code=201)
+async def reconcile_cash_account(
+    cash_account_id: int,
+    body: CashAccountReconcile,
+    db: Session = Depends(get_db),
+) -> dict:
+    account = _cash_account_or_404(db, cash_account_id, _ws_id(db))
+    _require_active_cash_account(account)
+    baseline = _require_cash_tracking(account)
+    occurred_on = _require_on_or_after_baseline(body.occurred_on, baseline)
+    difference = body.observed_balance - account.balance
+    if difference == 0:
+        return {"account": _cash_account_payload(account), "adjustment": None}
+    transaction = _record_cash_account_transaction(
+        db, account, ADJUSTMENT, difference, occurred_on, "Reconciliation", body.note
+    )
+    _commit_cash_mutation(db)
+    db.refresh(account)
+    db.refresh(transaction)
+    return {"account": _cash_account_payload(account), "adjustment": _cash_account_transaction_payload(transaction)}
 
 
 # ─── Portfolios ───────────────────────────────────────────────────────────────

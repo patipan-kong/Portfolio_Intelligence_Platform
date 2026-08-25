@@ -2,222 +2,86 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import {
-  createCashAccount,
-  listCashAccounts,
-  updateCashAccount,
-  type CashAccount,
+  createCashAccount, createCashAccountBaseline, createCashAccountTransaction,
+  listCashAccountTransactions, listCashAccounts, reconcileCashAccount, updateCashAccount,
+  type CashAccount, type CashAccountTransaction,
 } from "@/lib/api";
 
-const formatThb = (value: number) =>
-  value.toLocaleString("th-TH", { style: "currency", currency: "THB", minimumFractionDigits: 2 });
-
-function messageFor(error: unknown, fallback: string) {
-  return error instanceof Error ? error.message : fallback;
-}
+const formatThb = (value: number) => value.toLocaleString("th-TH", { style: "currency", currency: "THB", minimumFractionDigits: 2 });
+const today = () => new Date().toISOString().slice(0, 10);
+const messageFor = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback;
+const inputClass = "mt-1 block w-full border rounded px-3 py-2";
 
 export default function CashAccountsPage() {
   const [accounts, setAccounts] = useState<CashAccount[]>([]);
+  const [activity, setActivity] = useState<Record<number, CashAccountTransaction[]>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [mutationError, setMutationError] = useState("");
   const [showArchived, setShowArchived] = useState(false);
-  const [name, setName] = useState("");
-  const [institution, setInstitution] = useState("");
-  const [balance, setBalance] = useState("0");
-  const [editing, setEditing] = useState<CashAccount | null>(null);
-  const [balanceTarget, setBalanceTarget] = useState<CashAccount | null>(null);
-  const [editName, setEditName] = useState("");
-  const [editInstitution, setEditInstitution] = useState("");
-  const [replacementBalance, setReplacementBalance] = useState("");
+  const [name, setName] = useState(""); const [institution, setInstitution] = useState(""); const [balance, setBalance] = useState("0");
+  const [editing, setEditing] = useState<CashAccount | null>(null); const [balanceTarget, setBalanceTarget] = useState<CashAccount | null>(null);
+  const [baselineTarget, setBaselineTarget] = useState<CashAccount | null>(null); const [eventTarget, setEventTarget] = useState<{ account: CashAccount; type: "INCOME" | "EXPENSE" } | null>(null); const [reconcileTarget, setReconcileTarget] = useState<CashAccount | null>(null);
+  const [editName, setEditName] = useState(""); const [editInstitution, setEditInstitution] = useState(""); const [replacementBalance, setReplacementBalance] = useState("");
+  const [baselineDate, setBaselineDate] = useState(today()); const [baselineBalance, setBaselineBalance] = useState("");
+  const [eventAmount, setEventAmount] = useState(""); const [eventDate, setEventDate] = useState(today()); const [eventCategory, setEventCategory] = useState(""); const [eventNote, setEventNote] = useState("");
+  const [observedBalance, setObservedBalance] = useState(""); const [reconcileDate, setReconcileDate] = useState(today()); const [reconcileNote, setReconcileNote] = useState("");
 
   async function load(includeArchived = showArchived) {
-    setLoading(true);
-    setError("");
+    setLoading(true); setError("");
     try {
-      setAccounts(await listCashAccounts(includeArchived));
-    } catch (err) {
-      setError(messageFor(err, "Unable to load cash accounts."));
-    } finally {
-      setLoading(false);
-    }
+      const loaded = await listCashAccounts(includeArchived);
+      setAccounts(loaded);
+      const results = await Promise.all(loaded.filter((account) => Boolean(account.baseline)).map(async (account) => [account.id, await listCashAccountTransactions(account.id)] as const));
+      setActivity(Object.fromEntries(results));
+    } catch (err) { setError(messageFor(err, "Unable to load cash accounts.")); }
+    finally { setLoading(false); }
   }
-
-  useEffect(() => {
-    void load(false);
-    // The initial request intentionally loads active accounts only.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { void load(false); /* active accounts only initially */ // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  function closeCashFlowForms() { setBaselineTarget(null); setEventTarget(null); setReconcileTarget(null); }
 
   async function handleCreate(event: FormEvent) {
-    event.preventDefault();
-    setMutationError("");
-    const parsedBalance = Number(balance);
-    if (!name.trim() || !Number.isFinite(parsedBalance) || parsedBalance < 0) {
-      setMutationError("Enter an account name and a non-negative current balance.");
-      return;
-    }
-    try {
-      await createCashAccount({ name: name.trim(), institution: institution.trim() || null, currency: "THB", balance: parsedBalance });
-      setName("");
-      setInstitution("");
-      setBalance("0");
-      await load();
-    } catch (err) {
-      setMutationError(messageFor(err, "Unable to create cash account."));
-    }
+    event.preventDefault(); setMutationError(""); const parsed = Number(balance);
+    if (!name.trim() || !Number.isFinite(parsed) || parsed < 0) { setMutationError("Enter an account name and a non-negative current balance."); return; }
+    try { await createCashAccount({ name: name.trim(), institution: institution.trim() || null, currency: "THB", balance: parsed }); setName(""); setInstitution(""); setBalance("0"); await load(); }
+    catch (err) { setMutationError(messageFor(err, "Unable to create cash account.")); }
   }
+  function openEdit(account: CashAccount) { setMutationError(""); closeCashFlowForms(); setBalanceTarget(null); setEditing(account); setEditName(account.name); setEditInstitution(account.institution ?? ""); }
+  async function handleEdit(event: FormEvent) { event.preventDefault(); if (!editing) return; setMutationError(""); if (!editName.trim()) { setMutationError("Account name cannot be blank."); return; } try { await updateCashAccount(editing.id, { name: editName.trim(), institution: editInstitution.trim() || null }); setEditing(null); await load(); } catch (err) { setMutationError(messageFor(err, "Unable to update cash account.")); } }
+  function openBalanceUpdate(account: CashAccount) { setMutationError(""); closeCashFlowForms(); setEditing(null); setBalanceTarget(account); setReplacementBalance(String(account.balance)); }
+  async function handleBalanceUpdate(event: FormEvent) { event.preventDefault(); if (!balanceTarget) return; setMutationError(""); const parsed = Number(replacementBalance); if (!Number.isFinite(parsed) || parsed < 0) { setMutationError("Enter a non-negative current balance."); return; } try { await updateCashAccount(balanceTarget.id, { balance: parsed }); setBalanceTarget(null); await load(); } catch (err) { setMutationError(messageFor(err, "Unable to update balance.")); } }
+  function openBaseline(account: CashAccount) { setMutationError(""); setEditing(null); setBalanceTarget(null); setEventTarget(null); setReconcileTarget(null); setBaselineTarget(account); setBaselineDate(today()); setBaselineBalance(String(account.balance)); }
+  async function handleBaseline(event: FormEvent) { event.preventDefault(); if (!baselineTarget) return; setMutationError(""); const parsed = Number(baselineBalance); if (!baselineDate || !Number.isFinite(parsed) || parsed < 0) { setMutationError("Enter a baseline date and non-negative observed balance."); return; } try { await createCashAccountBaseline(baselineTarget.id, { effective_on: baselineDate, observed_balance: parsed }); setBaselineTarget(null); await load(); } catch (err) { setMutationError(messageFor(err, "Unable to start cash flow tracking.")); } }
+  function openEvent(account: CashAccount, type: "INCOME" | "EXPENSE") { setMutationError(""); setEditing(null); setBalanceTarget(null); setBaselineTarget(null); setReconcileTarget(null); setEventTarget({ account, type }); setEventAmount(""); setEventDate(today()); setEventCategory(""); setEventNote(""); }
+  async function handleEvent(event: FormEvent) { event.preventDefault(); if (!eventTarget) return; setMutationError(""); const parsed = Number(eventAmount); if (!eventDate || !Number.isFinite(parsed) || parsed <= 0 || !eventCategory.trim()) { setMutationError("Enter a positive amount, date, and category."); return; } try { await createCashAccountTransaction(eventTarget.account.id, { transaction_type: eventTarget.type, amount: parsed, occurred_on: eventDate, category: eventCategory.trim(), note: eventNote.trim() || null }); setEventTarget(null); await load(); } catch (err) { setMutationError(messageFor(err, `Unable to add ${eventTarget.type.toLowerCase()}.`)); } }
+  function openReconcile(account: CashAccount) { setMutationError(""); setEditing(null); setBalanceTarget(null); setBaselineTarget(null); setEventTarget(null); setReconcileTarget(account); setObservedBalance(String(account.balance)); setReconcileDate(today()); setReconcileNote(""); }
+  async function handleReconcile(event: FormEvent) { event.preventDefault(); if (!reconcileTarget) return; setMutationError(""); const parsed = Number(observedBalance); if (!reconcileDate || !Number.isFinite(parsed) || parsed < 0) { setMutationError("Enter a date and non-negative observed balance."); return; } try { await reconcileCashAccount(reconcileTarget.id, { observed_balance: parsed, occurred_on: reconcileDate, note: reconcileNote.trim() || null }); setReconcileTarget(null); await load(); } catch (err) { setMutationError(messageFor(err, "Unable to reconcile balance.")); } }
+  async function setArchived(account: CashAccount, isArchived: boolean) { setMutationError(""); try { await updateCashAccount(account.id, { is_archived: isArchived }); await load(); } catch (err) { setMutationError(messageFor(err, isArchived ? "Unable to archive cash account." : "Unable to restore cash account.")); } }
+  async function toggleArchived() { const next = !showArchived; setShowArchived(next); await load(next); }
+  const active = accounts.filter((account) => !account.is_archived); const archived = accounts.filter((account) => account.is_archived);
 
-  function openEdit(account: CashAccount) {
-    setMutationError("");
-    setEditing(account);
-    setEditName(account.name);
-    setEditInstitution(account.institution ?? "");
-    setBalanceTarget(null);
-  }
-
-  async function handleEdit(event: FormEvent) {
-    event.preventDefault();
-    if (!editing) return;
-    setMutationError("");
-    if (!editName.trim()) {
-      setMutationError("Account name cannot be blank.");
-      return;
-    }
-    try {
-      await updateCashAccount(editing.id, { name: editName.trim(), institution: editInstitution.trim() || null });
-      setEditing(null);
-      await load();
-    } catch (err) {
-      setMutationError(messageFor(err, "Unable to update cash account."));
-    }
-  }
-
-  function openBalanceUpdate(account: CashAccount) {
-    setMutationError("");
-    setBalanceTarget(account);
-    setReplacementBalance(String(account.balance));
-    setEditing(null);
-  }
-
-  async function handleBalanceUpdate(event: FormEvent) {
-    event.preventDefault();
-    if (!balanceTarget) return;
-    setMutationError("");
-    const parsedBalance = Number(replacementBalance);
-    if (!Number.isFinite(parsedBalance) || parsedBalance < 0) {
-      setMutationError("Enter a non-negative current balance.");
-      return;
-    }
-    try {
-      await updateCashAccount(balanceTarget.id, { balance: parsedBalance });
-      setBalanceTarget(null);
-      await load();
-    } catch (err) {
-      setMutationError(messageFor(err, "Unable to update balance."));
-    }
-  }
-
-  async function setArchived(account: CashAccount, isArchived: boolean) {
-    setMutationError("");
-    try {
-      await updateCashAccount(account.id, { is_archived: isArchived });
-      await load();
-    } catch (err) {
-      setMutationError(messageFor(err, isArchived ? "Unable to archive cash account." : "Unable to restore cash account."));
-    }
-  }
-
-  async function toggleArchived() {
-    const next = !showArchived;
-    setShowArchived(next);
-    await load(next);
-  }
-
-  const active = accounts.filter((account) => !account.is_archived);
-  const archived = accounts.filter((account) => account.is_archived);
-
-  return (
-    <div className="space-y-6 max-w-3xl">
-      <div>
-        <h1 className="text-2xl font-bold">Cash Accounts</h1>
-        <p className="text-sm text-gray-500 mt-1">Track the current observed balance of external cash accounts.</p>
-      </div>
-
-      <form onSubmit={handleCreate} className="bg-white border rounded-xl p-4 space-y-3 shadow-sm">
-        <h2 className="font-semibold">Add cash account</h2>
-        <div className="grid gap-3 sm:grid-cols-3">
-          <label className="text-sm">Account name
-            <input aria-label="Account name" value={name} onChange={(event) => setName(event.target.value)} className="mt-1 block w-full border rounded px-3 py-2" />
-          </label>
-          <label className="text-sm">Institution (optional)
-            <input aria-label="Institution" value={institution} onChange={(event) => setInstitution(event.target.value)} className="mt-1 block w-full border rounded px-3 py-2" />
-          </label>
-          <label className="text-sm">Current balance
-            <input aria-label="Initial balance" type="number" step="0.01" value={balance} onChange={(event) => setBalance(event.target.value)} className="mt-1 block w-full border rounded px-3 py-2" />
-          </label>
-        </div>
-        <p className="text-xs text-gray-500">Currency: <strong>THB</strong> (fixed for Cash Accounts v1)</p>
-        <button type="submit" className="bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700">Add cash account</button>
-      </form>
-
-      {mutationError && <p role="alert" className="text-sm text-red-600">{mutationError}</p>}
-
-      {editing && (
-        <form onSubmit={handleEdit} className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-3">
-          <h2 className="font-semibold">Edit {editing.name}</h2>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="text-sm">Account name
-              <input aria-label="Edit account name" value={editName} onChange={(event) => setEditName(event.target.value)} className="mt-1 block w-full border rounded px-3 py-2" />
-            </label>
-            <label className="text-sm">Institution
-              <input aria-label="Edit institution" value={editInstitution} onChange={(event) => setEditInstitution(event.target.value)} className="mt-1 block w-full border rounded px-3 py-2" />
-            </label>
-          </div>
-          <div className="flex gap-2"><button type="submit" className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm">Save changes</button><button type="button" onClick={() => setEditing(null)} className="text-sm text-gray-600">Cancel</button></div>
-        </form>
-      )}
-
-      {balanceTarget && (
-        <form onSubmit={handleBalanceUpdate} className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-3">
-          <h2 className="font-semibold">Update balance — {balanceTarget.name}</h2>
-          <label className="text-sm">Current observed balance (THB)
-            <input aria-label="Replacement balance" type="number" step="0.01" value={replacementBalance} onChange={(event) => setReplacementBalance(event.target.value)} className="mt-1 block w-full max-w-xs border rounded px-3 py-2" />
-          </label>
-          <div className="flex gap-2"><button type="submit" className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm">Save balance</button><button type="button" onClick={() => setBalanceTarget(null)} className="text-sm text-gray-600">Cancel</button></div>
-        </form>
-      )}
-
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold">Active accounts</h2>
-        <button type="button" onClick={toggleArchived} className="text-sm text-blue-600 hover:underline">{showArchived ? "Hide archived" : "Show archived"}</button>
-      </div>
-
-      {loading ? <p className="text-sm text-gray-400">Loading cash accounts…</p> : error ? (
-        <div className="text-sm text-red-600 space-y-2"><p>{error}</p><button type="button" onClick={() => void load()} className="text-blue-600 hover:underline">Try again</button></div>
-      ) : active.length === 0 ? <p className="text-sm text-gray-500">No active cash accounts yet. Add your first account above.</p> : (
-        <div className="space-y-3">
-          {active.map((account) => <AccountCard key={account.id} account={account} onEdit={openEdit} onBalance={openBalanceUpdate} onArchive={() => void setArchived(account, true)} />)}
-        </div>
-      )}
-
-      {showArchived && !loading && !error && (
-        <section className="space-y-3 pt-2 border-t">
-          <h2 className="text-lg font-semibold text-gray-600">Archived accounts</h2>
-          {archived.length === 0 ? <p className="text-sm text-gray-500">No archived cash accounts.</p> : archived.map((account) => (
-            <div key={account.id} className="bg-gray-50 border rounded-xl p-4 flex items-center justify-between gap-4">
-              <div><p className="font-medium text-gray-600">{account.name}</p><p className="text-sm text-gray-500">{formatThb(account.balance)} · THB</p></div>
-              <button type="button" onClick={() => void setArchived(account, false)} className="text-sm text-blue-600 hover:underline">Restore</button>
-            </div>
-          ))}
-        </section>
-      )}
-    </div>
-  );
-}
-
-function AccountCard({ account, onEdit, onBalance, onArchive }: { account: CashAccount; onEdit: (account: CashAccount) => void; onBalance: (account: CashAccount) => void; onArchive: () => void }) {
-  return <div className="bg-white border rounded-xl p-4 shadow-sm flex items-center justify-between gap-4 flex-wrap">
-    <div><p className="font-semibold">{account.name}</p>{account.institution && <p className="text-sm text-gray-500">{account.institution}</p>}<p className="text-lg font-medium mt-1">{formatThb(account.balance)} <span className="text-xs text-gray-500">THB</span></p></div>
-    <div className="flex gap-3 text-sm"><button type="button" onClick={() => onEdit(account)} className="text-blue-600 hover:underline">Edit</button><button type="button" onClick={() => onBalance(account)} className="text-blue-600 hover:underline">Update balance</button><button type="button" onClick={onArchive} className="text-red-600 hover:underline">Archive</button></div>
+  return <div className="space-y-6 max-w-3xl">
+    <div><h1 className="text-2xl font-bold">Cash Accounts</h1><p className="text-sm text-gray-500 mt-1">Track the current observed balance of external cash accounts.</p></div>
+    <form onSubmit={handleCreate} className="bg-white border rounded-xl p-4 space-y-3 shadow-sm"><h2 className="font-semibold">Add cash account</h2><div className="grid gap-3 sm:grid-cols-3"><Field label="Account name"><input aria-label="Account name" value={name} onChange={(event) => setName(event.target.value)} className={inputClass} /></Field><Field label="Institution (optional)"><input aria-label="Institution" value={institution} onChange={(event) => setInstitution(event.target.value)} className={inputClass} /></Field><Field label="Current balance"><input aria-label="Initial balance" type="number" step="0.01" value={balance} onChange={(event) => setBalance(event.target.value)} className={inputClass} /></Field></div><p className="text-xs text-gray-500">Currency: <strong>THB</strong> (fixed for Cash Accounts v1)</p><PrimaryButton>Add cash account</PrimaryButton></form>
+    {mutationError && <p role="alert" className="text-sm text-red-600">{mutationError}</p>}
+    {editing && <form onSubmit={handleEdit} className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-3"><h2 className="font-semibold">Edit {editing.name}</h2><div className="grid gap-3 sm:grid-cols-2 mt-3"><Field label="Account name"><input aria-label="Edit account name" value={editName} onChange={(event) => setEditName(event.target.value)} className={inputClass} /></Field><Field label="Institution"><input aria-label="Edit institution" value={editInstitution} onChange={(event) => setEditInstitution(event.target.value)} className={inputClass} /></Field></div><Actions><PrimaryButton>Save changes</PrimaryButton><Cancel onClick={() => setEditing(null)} /></Actions></form>}
+    {balanceTarget && <form onSubmit={handleBalanceUpdate} className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-3"><h2 className="font-semibold">Update balance — {balanceTarget.name}</h2><Field label="Current observed balance (THB)"><input aria-label="Replacement balance" type="number" step="0.01" value={replacementBalance} onChange={(event) => setReplacementBalance(event.target.value)} className={`${inputClass} max-w-xs`} /></Field><Actions><PrimaryButton>Save balance</PrimaryButton><Cancel onClick={() => setBalanceTarget(null)} /></Actions></form>}
+    {baselineTarget && <form onSubmit={handleBaseline} className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-3"><h2 className="font-semibold">Start Cash Flow tracking — {baselineTarget.name}</h2><p className="text-sm text-gray-600">This records an observed starting balance. Earlier cash history is not reconstructed.</p><div className="grid gap-3 sm:grid-cols-2"><Field label="Effective date"><input aria-label="Baseline effective date" type="date" value={baselineDate} onChange={(event) => setBaselineDate(event.target.value)} className={inputClass} /></Field><Field label="Observed balance (THB)"><input aria-label="Baseline observed balance" type="number" step="0.01" value={baselineBalance} onChange={(event) => setBaselineBalance(event.target.value)} className={inputClass} /></Field></div><Actions><PrimaryButton>Start tracking</PrimaryButton><Cancel onClick={() => setBaselineTarget(null)} /></Actions></form>}
+    {eventTarget && <form onSubmit={handleEvent} className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-3"><h2 className="font-semibold">Add {eventTarget.type === "INCOME" ? "income" : "expense"} — {eventTarget.account.name}</h2><div className="grid gap-3 sm:grid-cols-2"><Field label="Amount (THB)"><input aria-label="Cash flow amount" type="number" min="0.01" step="0.01" value={eventAmount} onChange={(event) => setEventAmount(event.target.value)} className={inputClass} /></Field><Field label="Occurred date"><input aria-label="Cash flow date" type="date" value={eventDate} onChange={(event) => setEventDate(event.target.value)} className={inputClass} /></Field><Field label="Category"><input aria-label="Cash flow category" value={eventCategory} onChange={(event) => setEventCategory(event.target.value)} className={inputClass} /></Field><Field label="Note (optional)"><input aria-label="Cash flow note" value={eventNote} onChange={(event) => setEventNote(event.target.value)} className={inputClass} /></Field></div><Actions><PrimaryButton>Save {eventTarget.type === "INCOME" ? "income" : "expense"}</PrimaryButton><Cancel onClick={() => setEventTarget(null)} /></Actions></form>}
+    {reconcileTarget && <form onSubmit={handleReconcile} className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-3"><h2 className="font-semibold">Reconcile balance — {reconcileTarget.name}</h2><p className="text-sm text-gray-600">A difference creates an adjustment; it is not recorded as income or expense.</p><div className="grid gap-3 sm:grid-cols-2"><Field label="Observed balance (THB)"><input aria-label="Observed balance" type="number" min="0" step="0.01" value={observedBalance} onChange={(event) => setObservedBalance(event.target.value)} className={inputClass} /></Field><Field label="Reconciliation date"><input aria-label="Reconciliation date" type="date" value={reconcileDate} onChange={(event) => setReconcileDate(event.target.value)} className={inputClass} /></Field><Field label="Note (optional)"><input aria-label="Reconciliation note" value={reconcileNote} onChange={(event) => setReconcileNote(event.target.value)} className={inputClass} /></Field></div><Actions><PrimaryButton>Save reconciliation</PrimaryButton><Cancel onClick={() => setReconcileTarget(null)} /></Actions></form>}
+    <div className="flex items-center justify-between gap-3"><h2 className="text-lg font-semibold">Active accounts</h2><button type="button" onClick={toggleArchived} className="text-sm text-blue-600 hover:underline">{showArchived ? "Hide archived" : "Show archived"}</button></div>
+    {loading ? <p className="text-sm text-gray-400">Loading cash accounts…</p> : error ? <div className="text-sm text-red-600 space-y-2"><p>{error}</p><button type="button" onClick={() => void load()} className="text-blue-600 hover:underline">Try again</button></div> : active.length === 0 ? <p className="text-sm text-gray-500">No active cash accounts yet. Add your first account above.</p> : <div className="space-y-3">{active.map((account) => <AccountCard key={account.id} account={account} activity={activity[account.id] ?? []} onEdit={openEdit} onBalance={openBalanceUpdate} onBaseline={openBaseline} onEvent={openEvent} onReconcile={openReconcile} onArchive={() => void setArchived(account, true)} />)}</div>}
+    {showArchived && !loading && !error && <section className="space-y-3 pt-2 border-t"><h2 className="text-lg font-semibold text-gray-600">Archived accounts</h2>{archived.length === 0 ? <p className="text-sm text-gray-500">No archived cash accounts.</p> : archived.map((account) => <div key={account.id} className="bg-gray-50 border rounded-xl p-4 flex items-center justify-between gap-4"><div><p className="font-medium text-gray-600">{account.name}</p><p className="text-sm text-gray-500">{formatThb(account.balance)} · THB</p><p className="text-xs text-gray-500">{account.baseline ? "Cash Flow tracking preserved" : "Not tracking Cash Flow"}</p></div><button type="button" onClick={() => void setArchived(account, false)} className="text-sm text-blue-600 hover:underline">Restore</button></div>)}</section>}
   </div>;
 }
+
+function AccountCard({ account, activity, onEdit, onBalance, onBaseline, onEvent, onReconcile, onArchive }: { account: CashAccount; activity: CashAccountTransaction[]; onEdit: (account: CashAccount) => void; onBalance: (account: CashAccount) => void; onBaseline: (account: CashAccount) => void; onEvent: (account: CashAccount, type: "INCOME" | "EXPENSE") => void; onReconcile: (account: CashAccount) => void; onArchive: () => void }) {
+  const tracked = Boolean(account.baseline);
+  return <div className="bg-white border rounded-xl p-4 shadow-sm space-y-3"><div className="flex items-center justify-between gap-4 flex-wrap"><div><p className="font-semibold">{account.name}</p>{account.institution && <p className="text-sm text-gray-500">{account.institution}</p>}<p className="text-lg font-medium mt-1">{formatThb(account.balance)} <span className="text-xs text-gray-500">THB</span></p><p className="text-xs text-gray-500 mt-1">{tracked ? `Cash Flow tracking started ${account.baseline?.effective_on}` : "Cash Flow tracking has not started"}</p></div><div className="flex gap-3 text-sm flex-wrap"><button type="button" onClick={() => onEdit(account)} className="text-blue-600 hover:underline">Edit</button>{tracked ? <><button type="button" onClick={() => onEvent(account, "INCOME")} className="text-blue-600 hover:underline">Add income</button><button type="button" onClick={() => onEvent(account, "EXPENSE")} className="text-blue-600 hover:underline">Add expense</button><button type="button" onClick={() => onReconcile(account)} className="text-blue-600 hover:underline">Reconcile balance</button></> : <><button type="button" onClick={() => onBaseline(account)} className="text-blue-600 hover:underline">Start tracking</button><button type="button" onClick={() => onBalance(account)} className="text-blue-600 hover:underline">Update balance</button></>}<button type="button" onClick={onArchive} className="text-red-600 hover:underline">Archive</button></div></div>{tracked && <div className="border-t pt-3"><p className="text-sm font-medium">Recent activity</p>{activity.length === 0 ? <p className="text-xs text-gray-500 mt-1">No activity after this tracking baseline yet.</p> : <ul className="mt-1 space-y-1 text-sm">{activity.slice(0, 3).map((item) => <li key={item.id} className="flex justify-between gap-3"><span>{item.occurred_on} · {item.category}</span><span className={item.signed_amount >= 0 ? "text-green-700" : "text-red-700"}>{item.signed_amount >= 0 ? "+" : "−"}{formatThb(Math.abs(item.signed_amount))}</span></li>)}</ul>}</div>}</div>;
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) { return <label className="text-sm">{label}{children}</label>; }
+function PrimaryButton({ children }: { children: React.ReactNode }) { return <button type="submit" className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700">{children}</button>; }
+function Cancel({ onClick }: { onClick: () => void }) { return <button type="button" onClick={onClick} className="text-sm text-gray-600">Cancel</button>; }
+function Actions({ children }: { children: React.ReactNode }) { return <div className="flex gap-2 mt-3">{children}</div>; }

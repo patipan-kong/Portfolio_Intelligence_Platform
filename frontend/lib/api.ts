@@ -57,6 +57,28 @@ export interface CashAccount {
   is_archived: boolean;
   created_at: string;
   updated_at: string;
+  baseline?: CashAccountBaseline | null;
+}
+
+export interface CashAccountBaseline {
+  id: number;
+  cash_account_id: number;
+  effective_on: string;
+  observed_balance: number;
+  created_at: string;
+}
+
+export interface CashAccountTransaction {
+  id: number;
+  workspace_id: number;
+  cash_account_id: number;
+  transaction_type: "INCOME" | "EXPENSE" | "ADJUSTMENT";
+  amount: number;
+  signed_amount: number;
+  occurred_on: string;
+  category: string;
+  note: string | null;
+  created_at: string;
 }
 
 export const updatePortfolioGoal = (portfolioId: number, goal: number | null) =>
@@ -378,6 +400,37 @@ export const createCashAccount = (body: CashAccountCreate) =>
 
 export const updateCashAccount = (id: number, body: CashAccountUpdate) =>
   apiFetch<CashAccount>(`/cash-accounts/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+
+export type CashAccountBaselineCreate = {
+  effective_on: string;
+  observed_balance: number;
+};
+
+export type CashAccountTransactionCreate = {
+  transaction_type: "INCOME" | "EXPENSE";
+  amount: number;
+  occurred_on: string;
+  category: string;
+  note?: string | null;
+};
+
+export type CashAccountReconcile = {
+  observed_balance: number;
+  occurred_on: string;
+  note?: string | null;
+};
+
+export const createCashAccountBaseline = (id: number, body: CashAccountBaselineCreate) =>
+  apiFetch<CashAccountBaseline>(`/cash-accounts/${id}/baseline`, { method: "POST", body: JSON.stringify(body) });
+
+export const listCashAccountTransactions = (id: number) =>
+  apiFetch<CashAccountTransaction[]>(`/cash-accounts/${id}/transactions`);
+
+export const createCashAccountTransaction = (id: number, body: CashAccountTransactionCreate) =>
+  apiFetch<CashAccountTransaction>(`/cash-accounts/${id}/transactions`, { method: "POST", body: JSON.stringify(body) });
+
+export const reconcileCashAccount = (id: number, body: CashAccountReconcile) =>
+  apiFetch<{ account: CashAccount; adjustment: CashAccountTransaction | null }>(`/cash-accounts/${id}/reconcile`, { method: "POST", body: JSON.stringify(body) });
 
 // ─── Holdings ────────────────────────────────────────────────────────────────
 

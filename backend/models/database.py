@@ -67,6 +67,7 @@ class Workspace(Base):
 
     portfolios = relationship("Portfolio", back_populates="workspace", cascade="all, delete-orphan")
     cash_accounts = relationship("CashAccount", back_populates="workspace", cascade="all, delete-orphan")
+    cash_account_transactions = relationship("CashAccountTransaction", back_populates="workspace", cascade="all, delete-orphan")
     watchlist_items = relationship("Watchlist", back_populates="workspace", cascade="all, delete-orphan")
     settings = relationship("Settings", back_populates="workspace", cascade="all, delete-orphan")
     analysis_cache_items = relationship("AnalysisCache", back_populates="workspace", cascade="all, delete-orphan")
@@ -128,11 +129,57 @@ class CashAccount(Base):
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     workspace = relationship("Workspace", back_populates="cash_accounts")
+    baseline = relationship("CashAccountBaseline", back_populates="cash_account", uselist=False, cascade="all, delete-orphan")
+    transactions = relationship("CashAccountTransaction", back_populates="cash_account", cascade="all, delete-orphan")
 
     __table_args__ = (
         CheckConstraint("currency = 'THB'", name="ck_cash_accounts_currency_thb"),
         CheckConstraint("balance >= 0", name="ck_cash_accounts_balance_nonnegative"),
         Index("ix_cash_accounts_workspace_archived", "workspace_id", "is_archived"),
+    )
+
+
+class CashAccountBaseline(Base):
+    """The explicit observation from which a CashAccount's prospective ledger starts."""
+    __tablename__ = "cash_account_baselines"
+
+    id = Column(Integer, primary_key=True, index=True)
+    cash_account_id = Column(Integer, ForeignKey("cash_accounts.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    effective_on = Column(String(10), nullable=False)
+    observed_balance = Column(Float, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    cash_account = relationship("CashAccount", back_populates="baseline")
+
+    __table_args__ = (
+        CheckConstraint("observed_balance >= 0", name="ck_cash_account_baselines_balance_nonnegative"),
+    )
+
+
+class CashAccountTransaction(Base):
+    """An immutable prospective cash-flow fact, separate from investment transactions."""
+    __tablename__ = "cash_account_transactions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    cash_account_id = Column(Integer, ForeignKey("cash_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    transaction_type = Column(String(16), nullable=False)
+    amount = Column(Float, nullable=False)
+    occurred_on = Column(String(10), nullable=False)
+    category = Column(String, nullable=False)
+    note = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    workspace = relationship("Workspace", back_populates="cash_account_transactions")
+    cash_account = relationship("CashAccount", back_populates="transactions")
+
+    __table_args__ = (
+        CheckConstraint(
+            "(transaction_type IN ('INCOME', 'EXPENSE') AND amount > 0) "
+            "OR (transaction_type = 'ADJUSTMENT' AND amount <> 0)",
+            name="ck_cash_account_transactions_type_amount",
+        ),
+        Index("ix_cash_account_transactions_account_occurred", "cash_account_id", "occurred_on"),
     )
 
 
