@@ -1,15 +1,25 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import DashboardPage from "@/app/page";
-import type { CashAccount, Liability, Portfolio, PortfolioItem, PriceRefreshItem, TransactionRecord, PortfolioSnapshotRow } from "@/lib/api";
+import type { CashAccount, CashAccountBalanceAsOf, Liability, Portfolio, PortfolioItem, PriceRefreshItem, TransactionRecord, PortfolioSnapshotRow } from "@/lib/api";
 
-const { getHoldings, getPortfolioPrices, getTransactionHistory, getSnapshots, listCashAccounts, listLiabilities, portfolioState } = vi.hoisted(() => ({
+const {
+  getHoldings,
+  getPortfolioPrices,
+  getTransactionHistory,
+  getSnapshots,
+  listCashAccounts,
+  listLiabilities,
+  getCashAccountBalanceAsOf,
+  portfolioState,
+} = vi.hoisted(() => ({
   getHoldings: vi.fn(),
   getPortfolioPrices: vi.fn(),
   getTransactionHistory: vi.fn(),
   getSnapshots: vi.fn(),
   listCashAccounts: vi.fn(),
   listLiabilities: vi.fn(),
+  getCashAccountBalanceAsOf: vi.fn(),
   portfolioState: {
     portfolios: [] as Portfolio[],
     loading: false,
@@ -24,6 +34,7 @@ vi.mock("@/lib/api", () => ({
   getSnapshots,
   listCashAccounts,
   listLiabilities,
+  getCashAccountBalanceAsOf,
 }));
 
 vi.mock("@/lib/PortfolioContext", () => ({
@@ -179,6 +190,17 @@ function perfSnapshot(
   };
 }
 
+function cashAsOf(accountId: number, date: string, balance: number | null, available = balance !== null): CashAccountBalanceAsOf {
+  return {
+    cash_account_id: accountId,
+    date,
+    currency: "THB",
+    balance,
+    available,
+    baseline_effective_on: available ? date : null,
+  };
+}
+
 function dividend(portfolioId: number, id: number, amount: number, date = "2026-06-01T00:00:00Z"): TransactionRecord {
   return {
     id,
@@ -210,6 +232,11 @@ beforeEach(() => {
   listCashAccounts.mockResolvedValue([]);
   listLiabilities.mockReset();
   listLiabilities.mockResolvedValue([]);
+  getCashAccountBalanceAsOf.mockReset();
+  // Default: no evidence available. Only exercised when a test supplies
+  // CashAccounts AND Investment Wealth History dates at the same time —
+  // otherwise the bounded (account x date) fan-out never fires at all.
+  getCashAccountBalanceAsOf.mockResolvedValue(cashAsOf(0, "", null, false));
   portfolioState.portfolios = [];
   portfolioState.loading = false;
   portfolioState.error = null;
@@ -476,16 +503,23 @@ describe("Dashboard current assets and external cash", () => {
     portfolioState.portfolios = [first];
     getHoldings.mockResolvedValue([]);
     getPortfolioPrices.mockResolvedValue([]);
-    listCashAccounts
-      .mockImplementationOnce(() => firstCash.promise)
-      .mockImplementationOnce(() => secondCash.promise);
+    // Two call sites now share listCashAccounts: this test's own active-only
+    // phase (false) and Total Assets History's archived-inclusive phase
+    // (true) — the latter is not this test's concern, so it resolves
+    // immediately while the active-only calls are sequenced as before.
+    let activeOnlyCallCount = 0;
+    listCashAccounts.mockImplementation((includeArchived: boolean) => {
+      if (includeArchived) return Promise.resolve([]);
+      activeOnlyCallCount += 1;
+      return activeOnlyCallCount === 1 ? firstCash.promise : secondCash.promise;
+    });
 
     const view = render(<DashboardPage />);
     await waitFor(() => expect(listCashAccounts).toHaveBeenCalledWith(false));
 
     portfolioState.portfolios = [second];
     view.rerender(<DashboardPage />);
-    await waitFor(() => expect(listCashAccounts).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(activeOnlyCallCount).toBe(2));
 
     await act(async () => { secondCash.resolve([makeCashAccount(2, 200)]); });
     await waitFor(() => expect(screen.getAllByText("฿200.00").length).toBe(3));
@@ -671,8 +705,10 @@ describe("Dashboard current liabilities", () => {
 
     render(<DashboardPage />);
 
-    await waitFor(() => expect(screen.getByTestId("wealth-history-chart")).toBeInTheDocument());
-    expect(screen.getByTestId("wealth-history-chart")).toHaveTextContent("2026-06-01=1100");
+    await waitFor(() => {
+      const investmentSection = screen.getByText("Investment Wealth History").closest("section")!;
+      expect(within(investmentSection).getByTestId("wealth-history-chart")).toHaveTextContent("2026-06-01=1100");
+    });
     expect(screen.getByText("+10.00%")).toBeInTheDocument();
     expect(screen.getAllByText("THB 100.00").length).toBeGreaterThan(0);
     expect(screen.getByText("฿999.00")).toBeInTheDocument();
@@ -808,8 +844,11 @@ describe("Cross-portfolio wealth history", () => {
 
     render(<DashboardPage />);
 
-    await waitFor(() => expect(screen.getByText("฿800,000.00")).toBeInTheDocument());
-    expect(screen.queryByText(/Excludes/)).not.toBeInTheDocument();
+    await waitFor(() => {
+      const section = screen.getByText("Investment Wealth History").closest("section")!;
+      expect(within(section).getByText("฿800,000.00")).toBeInTheDocument();
+      expect(within(section).queryByText(/Excludes/)).not.toBeInTheDocument();
+    });
   });
 
   test("computes the headline delta between the two most recent complete-coverage points", async () => {
@@ -828,8 +867,11 @@ describe("Cross-portfolio wealth history", () => {
 
     render(<DashboardPage />);
 
-    await waitFor(() => expect(screen.getByText("฿820,000.00")).toBeInTheDocument());
-    expect(screen.getByText("+฿20,000.00")).toBeInTheDocument();
+    await waitFor(() => {
+      const section = screen.getByText("Investment Wealth History").closest("section")!;
+      expect(within(section).getByText("฿820,000.00")).toBeInTheDocument();
+      expect(within(section).getByText("+฿20,000.00")).toBeInTheDocument();
+    });
   });
 
   test("a partially covered date is excluded from the headline and does not fabricate a wealth loss", async () => {
@@ -852,12 +894,15 @@ describe("Cross-portfolio wealth history", () => {
 
     // Latest combined wealth falls back to the last COMPLETE point (06-01),
     // not the partial 06-02 point.
-    await waitFor(() => expect(screen.getByText("฿800,000.00")).toBeInTheDocument());
-    // Only one complete point exists, so no delta can be computed — never a
-    // manufactured -300,000 "loss".
-    expect(screen.getByText(/Not enough comparable history yet/)).toBeInTheDocument();
-    expect(screen.queryByText(/-฿300,000/)).not.toBeInTheDocument();
-    expect(screen.getByText(/1 historical date excluded from the chart/)).toBeInTheDocument();
+    await waitFor(() => {
+      const section = screen.getByText("Investment Wealth History").closest("section")!;
+      expect(within(section).getByText("฿800,000.00")).toBeInTheDocument();
+      // Only one complete point exists, so no delta can be computed — never a
+      // manufactured -300,000 "loss".
+      expect(within(section).getByText(/Not enough comparable history yet/)).toBeInTheDocument();
+      expect(within(section).queryByText(/-฿300,000/)).not.toBeInTheDocument();
+      expect(within(section).getByText(/1 historical date excluded from the chart/)).toBeInTheDocument();
+    });
   });
 
   test("no snapshots recorded yet shows a graceful empty state, not an error", async () => {
@@ -915,14 +960,201 @@ describe("Cross-portfolio wealth history", () => {
     await waitFor(() => expect(getSnapshots).toHaveBeenCalledWith(second.id, 365));
 
     await act(async () => { secondSnaps.resolve([snapshot(2, "2026-06-01", 200_000)]); });
-    await waitFor(() => expect(screen.getByText("฿200,000.00")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Investment Wealth History")).toBeInTheDocument());
+    const section = () => screen.getByText("Investment Wealth History").closest("section")!;
+    await waitFor(() => expect(within(section()).getByText("฿200,000.00")).toBeInTheDocument());
 
     // The abandoned first request resolves after the second portfolio set has
     // already rendered its own figures — it must not replace them.
     await act(async () => { firstSnaps.resolve([snapshot(1, "2026-06-01", 999_999)]); });
 
-    expect(screen.getByText("฿200,000.00")).toBeInTheDocument();
-    expect(screen.queryByText(/999,999/)).not.toBeInTheDocument();
+    expect(within(section()).getByText("฿200,000.00")).toBeInTheDocument();
+    expect(within(section()).queryByText(/999,999/)).not.toBeInTheDocument();
+  });
+});
+
+describe("Total Assets History (Phase 5, Milestone 1)", () => {
+  test("renders using only Investment Wealth History when no Cash Accounts exist", async () => {
+    const p1 = makePortfolio(1);
+    portfolioState.portfolios = [p1];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    listCashAccounts.mockResolvedValue([]);
+    getSnapshots.mockResolvedValue([
+      snapshot(1, "2026-06-01", 500_000),
+      snapshot(1, "2026-06-02", 520_000),
+    ]);
+
+    render(<DashboardPage />);
+
+    // Re-queried lazily inside one waitFor: the query and its assertions are
+    // checked atomically per poll, tolerant of transient re-renders while
+    // the (Cash Account list -> Cash As-Of fan-out) phases settle.
+    await waitFor(() => {
+      const section = screen.getByText("Total Assets History").closest("section")!;
+      expect(within(section).getByText("฿520,000.00")).toBeInTheDocument();
+      expect(within(section).getByText("+฿20,000.00")).toBeInTheDocument();
+    });
+  });
+
+  test("external Cash after baseline contributes to Total Assets History, distinct from Investment Wealth History alone", async () => {
+    const p1 = makePortfolio(1);
+    portfolioState.portfolios = [p1];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    listCashAccounts.mockResolvedValue([makeCashAccount(1, 0, { created_at: "2026-01-01T00:00:00Z" })]);
+    getSnapshots.mockResolvedValue([
+      snapshot(1, "2026-06-01", 500_000),
+      snapshot(1, "2026-06-02", 520_000),
+    ]);
+    getCashAccountBalanceAsOf.mockImplementation((_id: number, date: string) =>
+      Promise.resolve(cashAsOf(1, date, 30_000))
+    );
+
+    render(<DashboardPage />);
+
+    await waitFor(() => {
+      const section = screen.getByText("Total Assets History").closest("section")!;
+      expect(within(section).getByText("฿550,000.00")).toBeInTheDocument(); // 520,000 + 30,000
+    });
+
+    // Investment Wealth History's own headline stays investment-only —
+    // never inflated by the Cash Account this section now includes.
+    await waitFor(() => {
+      const investmentSection = screen.getByText("Investment Wealth History").closest("section")!;
+      expect(within(investmentSection).getByText("฿520,000.00")).toBeInTheDocument();
+      expect(within(investmentSection).queryByText("฿550,000.00")).not.toBeInTheDocument();
+    });
+  });
+
+  test("incomplete Cash Account coverage excludes the affected date and discloses it, without fabricating a partial sum", async () => {
+    const p1 = makePortfolio(1);
+    portfolioState.portfolios = [p1];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    listCashAccounts.mockResolvedValue([makeCashAccount(1, 0, { created_at: "2026-01-01T00:00:00Z" })]);
+    getSnapshots.mockResolvedValue([
+      snapshot(1, "2026-06-01", 500_000),
+      snapshot(1, "2026-06-02", 520_000),
+    ]);
+    // Cash evidence only available on 06-01 — 06-02 has no baseline yet.
+    getCashAccountBalanceAsOf.mockImplementation((_id: number, date: string) =>
+      Promise.resolve(cashAsOf(1, date, date === "2026-06-01" ? 30_000 : null, date === "2026-06-01"))
+    );
+
+    render(<DashboardPage />);
+
+    // Latest COMPLETE point falls back to 06-01 (500,000 + 30,000).
+    await waitFor(() => {
+      const section = screen.getByText("Total Assets History").closest("section")!;
+      expect(within(section).getByText("฿530,000.00")).toBeInTheDocument();
+      expect(within(section).queryByText("฿550,000.00")).not.toBeInTheDocument();
+      expect(within(section).getByText(/1 historical date excluded/)).toBeInTheDocument();
+    });
+  });
+
+  test("archived Cash Accounts still contribute to Total Assets History", async () => {
+    const p1 = makePortfolio(1);
+    portfolioState.portfolios = [p1];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    listCashAccounts.mockResolvedValue([
+      makeCashAccount(1, 0, { created_at: "2026-01-01T00:00:00Z", is_archived: true }),
+    ]);
+    getSnapshots.mockResolvedValue([snapshot(1, "2026-06-01", 500_000)]);
+    getCashAccountBalanceAsOf.mockResolvedValue(cashAsOf(1, "2026-06-01", 15_000));
+
+    render(<DashboardPage />);
+
+    await waitFor(() => {
+      const section = screen.getByText("Total Assets History").closest("section")!;
+      expect(within(section).getByText("฿515,000.00")).toBeInTheDocument();
+    });
+  });
+
+  test("a failed Cash As-Of request keeps the affected date incomplete rather than fabricating zero", async () => {
+    const p1 = makePortfolio(1);
+    portfolioState.portfolios = [p1];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    listCashAccounts.mockResolvedValue([makeCashAccount(1, 0, { created_at: "2026-01-01T00:00:00Z" })]);
+    getSnapshots.mockResolvedValue([
+      snapshot(1, "2026-06-01", 500_000),
+      snapshot(1, "2026-06-02", 520_000),
+    ]);
+    getCashAccountBalanceAsOf.mockImplementation((_id: number, date: string) =>
+      date === "2026-06-01"
+        ? Promise.resolve(cashAsOf(1, date, 10_000))
+        : Promise.reject(new Error("cash as-of backend unavailable"))
+    );
+
+    render(<DashboardPage />);
+
+    await waitFor(() => {
+      const section = screen.getByText("Total Assets History").closest("section")!;
+      expect(within(section).getByText("฿510,000.00")).toBeInTheDocument(); // only 06-01 is complete
+      expect(within(section).queryByText("฿520,000.00")).not.toBeInTheDocument();
+      expect(within(section).queryByText("฿530,000.00")).not.toBeInTheDocument();
+    });
+  });
+
+  test("a stale Cash As-Of response cannot overwrite a newer portfolio context", async () => {
+    const first = makePortfolio(1);
+    const second = makePortfolio(2);
+    const firstAsOf = deferred<CashAccountBalanceAsOf>();
+    const secondAsOf = deferred<CashAccountBalanceAsOf>();
+
+    portfolioState.portfolios = [first];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    listCashAccounts.mockResolvedValue([makeCashAccount(1, 0, { created_at: "2026-01-01T00:00:00Z" })]);
+    getSnapshots.mockImplementation((portfolioId: number) =>
+      Promise.resolve(portfolioId === 1 ? [snapshot(1, "2026-06-01", 500_000)] : [snapshot(2, "2026-07-01", 200_000)])
+    );
+    getCashAccountBalanceAsOf.mockImplementation((_id: number, date: string) =>
+      date === "2026-06-01" ? firstAsOf.promise : secondAsOf.promise
+    );
+
+    const view = render(<DashboardPage />);
+    await waitFor(() => expect(getCashAccountBalanceAsOf).toHaveBeenCalledWith(1, "2026-06-01"));
+
+    portfolioState.portfolios = [second];
+    view.rerender(<DashboardPage />);
+    await waitFor(() => expect(getCashAccountBalanceAsOf).toHaveBeenCalledWith(1, "2026-07-01"));
+
+    await act(async () => { secondAsOf.resolve(cashAsOf(1, "2026-07-01", 50_000)); });
+    await waitFor(() => {
+      const section = screen.getByText("Total Assets History").closest("section")!;
+      expect(within(section).getByText("฿250,000.00")).toBeInTheDocument(); // 200,000 + 50,000
+    });
+
+    // The abandoned first context's Cash As-Of resolves after the second
+    // context has already rendered its own figures — it must not replace them.
+    await act(async () => { firstAsOf.resolve(cashAsOf(1, "2026-06-01", 999_999)); });
+
+    await waitFor(() => {
+      const section = screen.getByText("Total Assets History").closest("section")!;
+      expect(within(section).getByText("฿250,000.00")).toBeInTheDocument();
+      expect(within(section).queryByText(/999,999/)).not.toBeInTheDocument();
+    });
+  });
+
+  test("Investment Wealth History remains investment-only despite Cash Accounts contributing to Total Assets History", async () => {
+    const p1 = makePortfolio(1);
+    portfolioState.portfolios = [p1];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    listCashAccounts.mockResolvedValue([makeCashAccount(1, 0, { created_at: "2026-01-01T00:00:00Z" })]);
+    getSnapshots.mockResolvedValue([snapshot(1, "2026-06-01", 500_000)]);
+    getCashAccountBalanceAsOf.mockResolvedValue(cashAsOf(1, "2026-06-01", 999_999));
+
+    render(<DashboardPage />);
+
+    await waitFor(() => {
+      const investmentSection = screen.getByText("Investment Wealth History").closest("section")!;
+      expect(within(investmentSection).getByText("฿500,000.00")).toBeInTheDocument();
+      expect(within(investmentSection).queryByText(/999,999|1,499,999/)).not.toBeInTheDocument();
+    });
   });
 });
 

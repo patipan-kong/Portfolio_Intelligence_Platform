@@ -38,8 +38,11 @@ function CustomTooltip({
 
 // Complete-coverage points only — the caller filters out partial-coverage
 // dates before passing them here, so this chart never has to reason about
-// coverage itself; it only draws what it's given.
-export default function WealthHistoryChart({ points }: { points: WealthHistoryPoint[] }) {
+// coverage itself; it only draws what it's given. Only `date`/`totalValue`
+// are read, so any caller with a compatible point shape (e.g. Total Assets
+// History) can reuse this chart without fabricating the other coverage
+// fields on WealthHistoryPoint.
+export default function WealthHistoryChart({ points }: { points: Pick<WealthHistoryPoint, "date" | "totalValue">[] }) {
   return (
     <div className="h-40">
       <ResponsiveContainer width="100%" height="100%">

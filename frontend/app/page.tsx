@@ -1,15 +1,35 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePortfolio } from "@/lib/PortfolioContext";
-import { getHoldings, getPortfolioPrices, getTransactionHistory, getSnapshots, listCashAccounts, listLiabilities } from "@/lib/api";
-import type { CashAccount, Liability, Portfolio, PortfolioItem, PriceRefreshItem, TransactionRecord, PortfolioSnapshotRow } from "@/lib/api";
+import {
+  getHoldings,
+  getPortfolioPrices,
+  getTransactionHistory,
+  getSnapshots,
+  listCashAccounts,
+  listLiabilities,
+  getCashAccountBalanceAsOf,
+} from "@/lib/api";
+import type {
+  CashAccount,
+  CashAccountBalanceAsOf,
+  Liability,
+  Portfolio,
+  PortfolioItem,
+  PriceRefreshItem,
+  TransactionRecord,
+  PortfolioSnapshotRow,
+} from "@/lib/api";
 import type { AssetLoadStatus } from "@/lib/totalAssets";
 import type { LiabilityLoadStatus } from "@/lib/totalLiabilities";
+import { computeWealthHistory } from "@/lib/wealthHistory";
+import { computeTotalAssetsHistory } from "@/lib/totalAssetsHistory";
 import WealthOverview from "@/components/WealthOverview";
 import CrossPortfolioIncome from "@/components/CrossPortfolioIncome";
 import CrossPortfolioWealthHistory from "@/components/CrossPortfolioWealthHistory";
+import TotalAssetsHistoryCard from "@/components/TotalAssetsHistoryCard";
 
 // Matches the per-portfolio Income page's cap (backend's hard limit is 500)
 // so cross-portfolio dividend aggregation isn't silently truncated either.
@@ -424,6 +444,116 @@ export default function DashboardPage() {
     return () => { active = false; };
   }, [portfolios, ctxLoading]);
 
+  // Total Assets History (Phase 5, Milestone 1) — composes the Investment
+  // Wealth History date spine above with the existing Cash As-Of contract.
+  // Two dependent phases: (a) ALL CashAccounts, active + archived, since
+  // archived accounts' historical evidence remains valid; (b) a bounded
+  // Cash As-Of fan-out over (account × investment-history-date) pairs only
+  // — never a daily calendar series, never every possible date.
+  const [cashAccountsAll, setCashAccountsAll] = useState<CashAccount[]>([]);
+  const [cashAccountsAllStatus, setCashAccountsAllStatus] = useState<AssetLoadStatus>("loading");
+  const cashAccountsAllRequestIdRef = useRef(0);
+
+  useEffect(() => {
+    const requestId = ++cashAccountsAllRequestIdRef.current;
+    let active = true;
+    setCashAccountsAllStatus("loading");
+    setCashAccountsAll([]);
+
+    listCashAccounts(true)
+      .then((accounts) => {
+        if (!active || cashAccountsAllRequestIdRef.current !== requestId) return;
+        setCashAccountsAll(accounts);
+        setCashAccountsAllStatus("success");
+      })
+      .catch((reason) => {
+        if (!active || cashAccountsAllRequestIdRef.current !== requestId) return;
+        console.error("Failed to load Cash Accounts (including archived) for Total Assets History:", reason);
+        setCashAccountsAll([]);
+        setCashAccountsAllStatus("error");
+      });
+
+    return () => { active = false; };
+  }, [portfolios, ctxLoading, portfolioError]);
+
+  // The canonical historical spine: reuses the same computeWealthHistory
+  // aggregation CrossPortfolioWealthHistory itself calls, over the same
+  // already-fetched snapshotsMap — no new snapshot fetch, no competing
+  // investment calculation.
+  const investmentHistoryPoints = useMemo(
+    () => computeWealthHistory(portfolios, snapshotsMap, snapshotsFailedMap).points,
+    [portfolios, snapshotsMap, snapshotsFailedMap]
+  );
+  const investmentHistoryDates = useMemo(
+    () => investmentHistoryPoints.map((p) => p.date),
+    [investmentHistoryPoints]
+  );
+
+  const [cashAsOfMap, setCashAsOfMap] = useState<Record<number, Record<string, CashAccountBalanceAsOf>>>({});
+  const [cashAsOfLoading, setCashAsOfLoading] = useState(false);
+  const cashAsOfRequestIdRef = useRef(0);
+
+  useEffect(() => {
+    const requestId = ++cashAsOfRequestIdRef.current;
+    let active = true;
+
+    // Wait for both dependent phases to settle before fanning out — firing
+    // against a stale/incomplete snapshotsMap or account list would just be
+    // discarded work and risks racing the settled state below.
+    if (ctxLoading || loadingSnapshots || cashAccountsAllStatus === "loading") {
+      return () => { active = false; };
+    }
+
+    if (cashAccountsAllStatus === "error" || cashAccountsAll.length === 0 || investmentHistoryDates.length === 0) {
+      setCashAsOfMap({});
+      setCashAsOfLoading(false);
+      return () => { active = false; };
+    }
+
+    setCashAsOfLoading(true);
+    const pairs = cashAccountsAll.flatMap((account) =>
+      investmentHistoryDates.map((date) => ({ accountId: account.id, date }))
+    );
+
+    Promise.allSettled(
+      pairs.map(({ accountId, date }) =>
+        getCashAccountBalanceAsOf(accountId, date).then((result) => ({ accountId, date, result }))
+      )
+    )
+      .then((results) => {
+        if (!active || cashAsOfRequestIdRef.current !== requestId) return;
+        const map: Record<number, Record<string, CashAccountBalanceAsOf>> = {};
+        results.forEach((result, i) => {
+          if (result.status === "fulfilled") {
+            const { accountId, date, result: asOf } = result.value;
+            if (!map[accountId]) map[accountId] = {};
+            map[accountId][date] = asOf;
+          } else {
+            // One failed pair must not fabricate a zero and must not discard
+            // every other pair's evidence — it simply stays absent from the
+            // map, which the pure helper treats as expected-but-unavailable.
+            const { accountId, date } = pairs[i];
+            console.error(`Failed to load Cash As-Of for account ${accountId} on ${date}:`, result.reason);
+          }
+        });
+        setCashAsOfMap(map);
+      })
+      .finally(() => {
+        if (active && cashAsOfRequestIdRef.current === requestId) setCashAsOfLoading(false);
+      });
+
+    return () => { active = false; };
+  }, [ctxLoading, loadingSnapshots, cashAccountsAllStatus, cashAccountsAll, investmentHistoryDates]);
+
+  const totalAssetsHistoryLoading =
+    ctxLoading || loadingSnapshots || cashAccountsAllStatus === "loading" || cashAsOfLoading;
+  const totalAssetsHistorySummary = computeTotalAssetsHistory(
+    investmentHistoryPoints,
+    cashAccountsAllStatus,
+    cashAccountsAll,
+    cashAsOfMap
+  );
+
   const isLoading = ctxLoading || loadingHoldings;
 
   return (
@@ -461,6 +591,8 @@ export default function DashboardPage() {
         failedMap={snapshotsFailedMap}
         loading={ctxLoading || loadingSnapshots}
       />
+
+      <TotalAssetsHistoryCard summary={totalAssetsHistorySummary} loading={totalAssetsHistoryLoading} />
 
       {isLoading ? (
         <p className="text-sm text-gray-400">Loading…</p>
