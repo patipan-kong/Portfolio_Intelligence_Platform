@@ -3,9 +3,14 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePortfolio } from "@/lib/PortfolioContext";
-import { getHoldings, getPortfolioPrices } from "@/lib/api";
-import type { Portfolio, PortfolioItem, PriceRefreshItem } from "@/lib/api";
+import { getHoldings, getPortfolioPrices, getTransactionHistory } from "@/lib/api";
+import type { Portfolio, PortfolioItem, PriceRefreshItem, TransactionRecord } from "@/lib/api";
 import WealthOverview from "@/components/WealthOverview";
+import CrossPortfolioIncome from "@/components/CrossPortfolioIncome";
+
+// Matches the per-portfolio Income page's cap (backend's hard limit is 500)
+// so cross-portfolio dividend aggregation isn't silently truncated either.
+const MAX_TRANSACTIONS = 500;
 
 function heatTileColor(cp: number | null, pricesLoaded: boolean): string {
   if (!pricesLoaded) return "#374151"; // dark gray — still loading
@@ -160,6 +165,13 @@ export default function DashboardPage() {
   const holdingsRequestIdRef = useRef(0);
   const priceRequestIdRef = useRef(0);
 
+  // Dividend income aggregation — independent of holdings/prices, so it runs
+  // as its own phase rather than gating on (or being gated by) Phase 1/2.
+  const [transactionsMap, setTransactionsMap] = useState<Record<number, TransactionRecord[]>>({});
+  const [transactionsFailedMap, setTransactionsFailedMap] = useState<Record<number, boolean>>({});
+  const [loadingTransactions, setLoadingTransactions] = useState(false);
+  const transactionsRequestIdRef = useRef(0);
+
   // Phase 1: load holdings from DB (fast, no yfinance)
   useEffect(() => {
     const requestId = ++holdingsRequestIdRef.current;
@@ -253,6 +265,48 @@ export default function DashboardPage() {
     return () => { active = false; };
   }, [holdingsSettled, holdingsMap, portfolios]);
 
+  // Dividend income phase — reads DB transaction history only, no yfinance,
+  // so it can run independently of the holdings/price phases above.
+  useEffect(() => {
+    const requestId = ++transactionsRequestIdRef.current;
+    let active = true;
+
+    if (ctxLoading || portfolios.length === 0) {
+      setTransactionsMap({});
+      setTransactionsFailedMap({});
+      setLoadingTransactions(false);
+      return () => { active = false; };
+    }
+
+    setLoadingTransactions(true);
+    Promise.allSettled(
+      portfolios.map((p) =>
+        getTransactionHistory(p.id, undefined, MAX_TRANSACTIONS).then((items) => ({ id: p.id, items }))
+      )
+    )
+      .then((results) => {
+        if (!active || transactionsRequestIdRef.current !== requestId) return;
+        const map: Record<number, TransactionRecord[]> = {};
+        const failed: Record<number, boolean> = {};
+        results.forEach((result, i) => {
+          const pid = portfolios[i].id;
+          if (result.status === "fulfilled") {
+            map[result.value.id] = result.value.items;
+          } else {
+            failed[pid] = true;
+            console.error(`Failed to load transactions for portfolio ${pid}:`, result.reason);
+          }
+        });
+        setTransactionsMap(map);
+        setTransactionsFailedMap(failed);
+      })
+      .finally(() => {
+        if (active && transactionsRequestIdRef.current === requestId) setLoadingTransactions(false);
+      });
+
+    return () => { active = false; };
+  }, [portfolios, ctxLoading]);
+
   const isLoading = ctxLoading || loadingHoldings;
 
   return (
@@ -269,6 +323,13 @@ export default function DashboardPage() {
         holdingsFailedMap={holdingsFailedMap}
         pricesLoaded={pricesLoaded}
         loading={isLoading}
+      />
+
+      <CrossPortfolioIncome
+        portfolios={portfolios}
+        transactionsByPortfolio={transactionsMap}
+        failedMap={transactionsFailedMap}
+        loading={ctxLoading || loadingTransactions}
       />
 
       {isLoading ? (

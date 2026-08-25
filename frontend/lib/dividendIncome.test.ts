@@ -8,6 +8,8 @@ import {
   computeMonthlyIncome,
   sortRecentDividends,
   computeDividendSummary,
+  computeCrossPortfolioIncome,
+  trailing12MonthStart,
 } from "./dividendIncome.ts";
 import type { TransactionRecord } from "@/lib/api";
 
@@ -202,4 +204,115 @@ test("no NaN or Infinity for an empty dividend set", () => {
   assert.deepEqual(summary.totalsByCurrency, []);
   assert.deepEqual(summary.byAsset, []);
   assert.deepEqual(summary.byMonth, []);
+});
+
+// ─── computeCrossPortfolioIncome ───────────────────────────────────────────
+
+const REF_DATE = new Date("2026-08-25T12:00:00Z");
+
+test("dividends from multiple portfolios aggregate into one combined total", () => {
+  const portfolios = [{ id: 1, name: "Growth" }, { id: 2, name: "Income" }];
+  const byPortfolio = {
+    1: [dividend({ id: 1, symbol: "AAA", total_amount: 100, transaction_date: "2026-06-01T00:00:00Z" })],
+    2: [dividend({ id: 2, symbol: "BBB", total_amount: 50, transaction_date: "2026-06-01T00:00:00Z" })],
+  };
+
+  const summary = computeCrossPortfolioIncome(portfolios, byPortfolio, {}, REF_DATE);
+  assert.deepEqual(summary.totalsByCurrency, [{ currency: "THB", amount: 150 }]);
+});
+
+test("a portfolio with no dividend transactions contributes zero, not an error", () => {
+  const portfolios = [{ id: 1, name: "Growth" }, { id: 2, name: "Empty" }];
+  const byPortfolio = {
+    1: [dividend({ id: 1, symbol: "AAA", total_amount: 100, transaction_date: "2026-06-01T00:00:00Z" })],
+    2: [],
+  };
+
+  const summary = computeCrossPortfolioIncome(portfolios, byPortfolio, {}, REF_DATE);
+  const empty = summary.byPortfolio.find((p) => p.portfolioId === 2);
+  assert.equal(empty?.failed, false);
+  assert.deepEqual(empty?.totalsByCurrency, []);
+  assert.deepEqual(summary.totalsByCurrency, [{ currency: "THB", amount: 100 }]);
+});
+
+test("current-calendar-year total includes only dividends from the reference date's year", () => {
+  const portfolios = [{ id: 1, name: "Growth" }];
+  const byPortfolio = {
+    1: [
+      dividend({ id: 1, total_amount: 100, transaction_date: "2026-01-15T00:00:00Z" }), // this year
+      dividend({ id: 2, total_amount: 999, transaction_date: "2025-12-31T00:00:00Z" }), // last year
+    ],
+  };
+
+  const summary = computeCrossPortfolioIncome(portfolios, byPortfolio, {}, REF_DATE);
+  assert.deepEqual(summary.currentYearTotalsByCurrency, [{ currency: "THB", amount: 100 }]);
+});
+
+test("trailing 12-month window excludes a dividend just before the boundary and includes one just after", () => {
+  // REF_DATE is 2026-08-25 → trailing12MonthStart is 2025-09-01 (UTC).
+  const start = trailing12MonthStart(REF_DATE);
+  assert.equal(start.toISOString(), "2025-09-01T00:00:00.000Z");
+
+  const portfolios = [{ id: 1, name: "Growth" }];
+  const byPortfolio = {
+    1: [
+      dividend({ id: 1, total_amount: 999, transaction_date: "2025-08-31T00:00:00Z" }), // just before — excluded
+      dividend({ id: 2, total_amount: 100, transaction_date: "2025-09-01T00:00:00Z" }), // exactly on boundary — included
+      dividend({ id: 3, total_amount: 50, transaction_date: "2026-08-25T00:00:00Z" }), // reference date itself — included
+    ],
+  };
+
+  const summary = computeCrossPortfolioIncome(portfolios, byPortfolio, {}, REF_DATE);
+  assert.deepEqual(summary.trailing12MonthTotalsByCurrency, [{ currency: "THB", amount: 150 }]);
+});
+
+test("per-portfolio contribution totals reconcile exactly to the overall total", () => {
+  const portfolios = [{ id: 1, name: "A" }, { id: 2, name: "B" }, { id: 3, name: "C" }];
+  const byPortfolio = {
+    1: [dividend({ id: 1, total_amount: 100, transaction_date: "2026-06-01T00:00:00Z" })],
+    2: [dividend({ id: 2, total_amount: 40, transaction_date: "2026-06-01T00:00:00Z" })],
+    3: [dividend({ id: 3, total_amount: 10, transaction_date: "2026-06-01T00:00:00Z" })],
+  };
+
+  const summary = computeCrossPortfolioIncome(portfolios, byPortfolio, {}, REF_DATE);
+  const reconciled = summary.byPortfolio.reduce((sum, p) => sum + (p.totalsByCurrency[0]?.amount ?? 0), 0);
+  assert.equal(reconciled, summary.totalsByCurrency[0].amount);
+  assert.equal(reconciled, 150);
+});
+
+test("an empty portfolio set produces a zero-safe, empty summary", () => {
+  const summary = computeCrossPortfolioIncome([], {}, {}, REF_DATE);
+  assert.deepEqual(summary.totalsByCurrency, []);
+  assert.deepEqual(summary.currentYearTotalsByCurrency, []);
+  assert.deepEqual(summary.trailing12MonthTotalsByCurrency, []);
+  assert.deepEqual(summary.byPortfolio, []);
+  assert.equal(summary.anyFailed, false);
+});
+
+test("a failed portfolio is excluded from every total, not fabricated as zero", () => {
+  const portfolios = [{ id: 1, name: "Good" }, { id: 2, name: "Broken" }];
+  const byPortfolio = {
+    1: [dividend({ id: 1, total_amount: 100, transaction_date: "2026-06-01T00:00:00Z" })],
+    // portfolio 2 has no entry — its request failed, data is unknown.
+  };
+
+  const summary = computeCrossPortfolioIncome(portfolios, byPortfolio, { 2: true }, REF_DATE);
+  assert.deepEqual(summary.totalsByCurrency, [{ currency: "THB", amount: 100 }]);
+  assert.equal(summary.anyFailed, true);
+
+  const broken = summary.byPortfolio.find((p) => p.portfolioId === 2);
+  assert.equal(broken?.failed, true);
+  assert.deepEqual(broken?.totalsByCurrency, []);
+});
+
+test("mixed currencies across portfolios are never summed together", () => {
+  const portfolios = [{ id: 1, name: "THB Portfolio" }, { id: 2, name: "USD Portfolio" }];
+  const byPortfolio = {
+    1: [dividend({ id: 1, total_amount: 100, currency: "THB", transaction_date: "2026-06-01T00:00:00Z" })],
+    2: [dividend({ id: 2, total_amount: 5, currency: "USD", transaction_date: "2026-06-01T00:00:00Z" })],
+  };
+
+  const summary = computeCrossPortfolioIncome(portfolios, byPortfolio, {}, REF_DATE);
+  assert.equal(summary.mixedCurrency, true);
+  assert.equal(summary.totalsByCurrency.length, 2);
 });

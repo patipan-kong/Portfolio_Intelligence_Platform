@@ -113,3 +113,80 @@ export function computeDividendSummary(transactions: TransactionRecord[], recent
     recent: sortRecentDividends(dividends, recentLimit),
   };
 }
+
+// ─── Cross-portfolio aggregation ───────────────────────────────────────────
+// Reuses filterDividends/computeTotalsByCurrency above rather than a second
+// definition of "dividend income" — same transaction type, date, and
+// per-currency (never FX-converted) treatment as the per-portfolio Income page.
+
+export interface PortfolioDividendContribution {
+  portfolioId: number;
+  name: string;
+  /** Empty (not zero-filled) when `failed` is true — this portfolio's income is unknown, not zero. */
+  totalsByCurrency: CurrencyTotal[];
+  failed: boolean;
+}
+
+export interface CrossPortfolioIncomeSummary {
+  totalsByCurrency: CurrencyTotal[];
+  currentYearTotalsByCurrency: CurrencyTotal[];
+  trailing12MonthTotalsByCurrency: CurrencyTotal[];
+  mixedCurrency: boolean;
+  byPortfolio: PortfolioDividendContribution[];
+  anyFailed: boolean;
+}
+
+const yearKeyFormatter = new Intl.DateTimeFormat("en-US", { timeZone: DISPLAY_TZ, year: "numeric" });
+
+function yearKey(isoDate: string): string {
+  return yearKeyFormatter.format(new Date(isoDate));
+}
+
+/** Start (inclusive, UTC midnight) of the 12-month window ending in referenceDate's calendar month. */
+export function trailing12MonthStart(referenceDate: Date): Date {
+  return new Date(Date.UTC(referenceDate.getUTCFullYear(), referenceDate.getUTCMonth() - 11, 1));
+}
+
+/**
+ * Aggregates dividend income across portfolios. `failed[portfolioId] === true`
+ * means that portfolio's transactions could not be loaded — it is represented
+ * honestly (excluded from every total, `failed: true` in byPortfolio) rather
+ * than contributing a fabricated zero.
+ */
+export function computeCrossPortfolioIncome(
+  portfolios: Array<{ id: number; name: string }>,
+  transactionsByPortfolio: Record<number, TransactionRecord[]>,
+  failed: Record<number, boolean> = {},
+  referenceDate: Date = new Date()
+): CrossPortfolioIncomeSummary {
+  const currentYear = yearKeyFormatter.format(referenceDate);
+  const trailingStart = trailing12MonthStart(referenceDate);
+
+  const byPortfolio: PortfolioDividendContribution[] = portfolios.map((p) => {
+    if (failed[p.id]) {
+      return { portfolioId: p.id, name: p.name, totalsByCurrency: [], failed: true };
+    }
+    const dividends = filterDividends(transactionsByPortfolio[p.id] ?? []);
+    return { portfolioId: p.id, name: p.name, totalsByCurrency: computeTotalsByCurrency(dividends), failed: false };
+  });
+
+  const allDividends = portfolios
+    .filter((p) => !failed[p.id])
+    .flatMap((p) => filterDividends(transactionsByPortfolio[p.id] ?? []));
+
+  const currentYearDividends = allDividends.filter((tx) => yearKey(tx.transaction_date) === currentYear);
+  const trailingDividends = allDividends.filter(
+    (tx) => new Date(tx.transaction_date).getTime() >= trailingStart.getTime()
+  );
+
+  const totalsByCurrency = computeTotalsByCurrency(allDividends);
+
+  return {
+    totalsByCurrency,
+    currentYearTotalsByCurrency: computeTotalsByCurrency(currentYearDividends),
+    trailing12MonthTotalsByCurrency: computeTotalsByCurrency(trailingDividends),
+    mixedCurrency: totalsByCurrency.length > 1,
+    byPortfolio,
+    anyFailed: byPortfolio.some((row) => row.failed),
+  };
+}

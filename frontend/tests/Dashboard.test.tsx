@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import DashboardPage from "@/app/page";
-import type { Portfolio, PortfolioItem, PriceRefreshItem } from "@/lib/api";
+import type { Portfolio, PortfolioItem, PriceRefreshItem, TransactionRecord } from "@/lib/api";
 
-const { getHoldings, getPortfolioPrices, portfolioState } = vi.hoisted(() => ({
+const { getHoldings, getPortfolioPrices, getTransactionHistory, portfolioState } = vi.hoisted(() => ({
   getHoldings: vi.fn(),
   getPortfolioPrices: vi.fn(),
+  getTransactionHistory: vi.fn(),
   portfolioState: {
     portfolios: [] as Portfolio[],
     loading: false,
@@ -15,6 +16,7 @@ const { getHoldings, getPortfolioPrices, portfolioState } = vi.hoisted(() => ({
 vi.mock("@/lib/api", () => ({
   getHoldings,
   getPortfolioPrices,
+  getTransactionHistory,
 }));
 
 vi.mock("@/lib/PortfolioContext", () => ({
@@ -71,9 +73,31 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+function dividend(portfolioId: number, id: number, amount: number, date = "2026-06-01T00:00:00Z"): TransactionRecord {
+  return {
+    id,
+    portfolio_id: portfolioId,
+    symbol: "AAA",
+    type: "DIVIDEND",
+    shares: null,
+    price_per_share: null,
+    total_amount: amount,
+    fees: 0,
+    taxes: 0,
+    currency: "THB",
+    exchange_rate: 1,
+    transaction_date: date,
+    notes: null,
+    sector: null,
+    created_at: null,
+  };
+}
+
 beforeEach(() => {
   getHoldings.mockReset();
   getPortfolioPrices.mockReset();
+  getTransactionHistory.mockReset();
+  getTransactionHistory.mockResolvedValue([]);
   portfolioState.portfolios = [];
   portfolioState.loading = false;
 });
@@ -193,5 +217,106 @@ describe("Dashboard pricing", () => {
 
     await waitFor(() => expect(screen.getByRole("link", { name: /AAA/ })).toHaveTextContent("+25.00%"));
     expect(screen.getByRole("link", { name: /AAA/ })).not.toHaveAttribute("title");
+  });
+});
+
+describe("Cross-portfolio dividend income", () => {
+  test("aggregates dividend income from multiple portfolios into one total with per-portfolio contribution", async () => {
+    const p1 = makePortfolio(1);
+    const p2 = makePortfolio(2);
+    portfolioState.portfolios = [p1, p2];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    getTransactionHistory.mockImplementation((portfolioId: number) =>
+      Promise.resolve(portfolioId === 1 ? [dividend(1, 1, 100)] : [dividend(2, 2, 50)])
+    );
+
+    render(<DashboardPage />);
+
+    // The combined total appears in more than one summary figure (all-time,
+    // this-year, trailing-12-months all agree for such recent dividends).
+    await waitFor(() => expect(screen.getAllByText("THB 150.00").length).toBeGreaterThan(0));
+    // Per-portfolio contribution breakdown — each figure is unique to its row.
+    expect(screen.getByText("THB 100.00")).toBeInTheDocument();
+    expect(screen.getByText("THB 50.00")).toBeInTheDocument();
+  });
+
+  test("a portfolio with no dividend transactions contributes zero without an error", async () => {
+    const p1 = makePortfolio(1);
+    const p2 = makePortfolio(2);
+    portfolioState.portfolios = [p1, p2];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    getTransactionHistory.mockImplementation((portfolioId: number) =>
+      Promise.resolve(portfolioId === 1 ? [dividend(1, 1, 100)] : [])
+    );
+
+    render(<DashboardPage />);
+
+    await waitFor(() => expect(screen.getAllByText("THB 100.00").length).toBeGreaterThan(0));
+    expect(screen.queryByText(/Excludes/)).not.toBeInTheDocument();
+  });
+
+  test("no portfolios have any dividends shows a graceful empty state, not an error", async () => {
+    const p1 = makePortfolio(1);
+    portfolioState.portfolios = [p1];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    getTransactionHistory.mockResolvedValue([]);
+
+    render(<DashboardPage />);
+
+    await waitFor(() =>
+      expect(screen.getByText(/No dividend income recorded across your portfolios yet/)).toBeInTheDocument()
+    );
+  });
+
+  test("one portfolio's transaction request failing does not fabricate a total and is reported honestly", async () => {
+    const good = makePortfolio(1);
+    const broken = makePortfolio(2);
+    portfolioState.portfolios = [good, broken];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    getTransactionHistory.mockImplementation((portfolioId: number) =>
+      portfolioId === good.id
+        ? Promise.resolve([dividend(good.id, 1, 100)])
+        : Promise.reject(new Error("backend unavailable"))
+    );
+
+    render(<DashboardPage />);
+
+    await waitFor(() => expect(screen.getAllByText("THB 100.00").length).toBeGreaterThan(0));
+    expect(screen.getByText(/Excludes 1 portfolio that failed to load/)).toBeInTheDocument();
+  });
+
+  test("a stale response from a previous portfolio set does not overwrite the current one's income figures", async () => {
+    const first = makePortfolio(1);
+    const second = makePortfolio(2);
+    const firstTx = deferred<TransactionRecord[]>();
+    const secondTx = deferred<TransactionRecord[]>();
+
+    portfolioState.portfolios = [first];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    getTransactionHistory.mockImplementation((portfolioId: number) => (
+      portfolioId === 1 ? firstTx.promise : secondTx.promise
+    ));
+
+    const view = render(<DashboardPage />);
+    await waitFor(() => expect(getTransactionHistory).toHaveBeenCalledWith(first.id, undefined, 500));
+
+    portfolioState.portfolios = [second];
+    view.rerender(<DashboardPage />);
+    await waitFor(() => expect(getTransactionHistory).toHaveBeenCalledWith(second.id, undefined, 500));
+
+    await act(async () => { secondTx.resolve([dividend(2, 2, 200)]); });
+    await waitFor(() => expect(screen.getAllByText("THB 200.00").length).toBeGreaterThan(0));
+
+    // The abandoned first request resolves after the second portfolio has
+    // already rendered its own figures — it must not replace them.
+    await act(async () => { firstTx.resolve([dividend(1, 1, 999999)]); });
+
+    expect(screen.getAllByText("THB 200.00").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/999,999/)).not.toBeInTheDocument();
   });
 });
