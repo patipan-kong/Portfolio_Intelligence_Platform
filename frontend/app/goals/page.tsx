@@ -2,9 +2,19 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import {
+  createGoalFundingAllocation,
   createWealthGoal,
+  deleteGoalFundingAllocation,
+  listCashAccounts,
+  listGoalFundingAllocations,
+  listPortfolios,
   listWealthGoals,
+  updateGoalFundingAllocation,
   updateWealthGoal,
+  type CashAccount,
+  type GoalFundingAllocation,
+  type GoalFundingSourceKind,
+  type Portfolio,
   type WealthGoal,
   type WealthGoalPriority,
   type WealthGoalType,
@@ -54,6 +64,18 @@ export default function GoalsPage() {
   const [error, setError] = useState("");
   const [mutationError, setMutationError] = useState("");
   const [showArchived, setShowArchived] = useState(false);
+
+  // Funding sources reuse the existing active Cash Account / Portfolio lists —
+  // no new source-discovery endpoint. Loaded once; archived Cash Accounts are
+  // excluded by listCashAccounts(false), matching "active sources only for
+  // new allocations."
+  const [cashAccounts, setCashAccounts] = useState<CashAccount[]>([]);
+  const [portfolios, setPortfolios] = useState<Portfolio[]>([]);
+
+  useEffect(() => {
+    void listCashAccounts(false).then(setCashAccounts).catch(() => {});
+    void listPortfolios().then(setPortfolios).catch(() => {});
+  }, []);
 
   const [name, setName] = useState("");
   const [goalType, setGoalType] = useState<WealthGoalType>("OTHER");
@@ -221,7 +243,7 @@ export default function GoalsPage() {
           <h2 className="text-lg font-semibold">Active goals</h2>
           <button type="button" onClick={() => void toggleArchived()} className="text-sm text-blue-600 hover:underline">{showArchived ? "Hide archived" : "Show archived"}</button>
         </div>
-        {loading ? <p className="text-sm text-gray-400">Loading goals…</p> : error ? <div className="text-sm text-red-600 space-y-2"><p role="alert">{error}</p><button type="button" onClick={() => void load()} className="text-blue-600 hover:underline">Try again</button></div> : active.length === 0 ? <p className="text-sm text-gray-500">No active goals yet. Add your first goal above.</p> : <div className="space-y-3">{active.map((item) => <GoalCard key={item.id} item={item} onEdit={openEdit} onArchive={() => void setArchived(item, true)} />)}</div>}
+        {loading ? <p className="text-sm text-gray-400">Loading goals…</p> : error ? <div className="text-sm text-red-600 space-y-2"><p role="alert">{error}</p><button type="button" onClick={() => void load()} className="text-blue-600 hover:underline">Try again</button></div> : active.length === 0 ? <p className="text-sm text-gray-500">No active goals yet. Add your first goal above.</p> : <div className="space-y-3">{active.map((item) => <GoalCard key={item.id} item={item} cashAccounts={cashAccounts} portfolios={portfolios} onEdit={openEdit} onArchive={() => void setArchived(item, true)} />)}</div>}
       </section>
 
       {showArchived && !loading && !error && (
@@ -234,7 +256,19 @@ export default function GoalsPage() {
   );
 }
 
-function GoalCard({ item, onEdit, onArchive }: { item: WealthGoal; onEdit: (item: WealthGoal) => void; onArchive: () => void }) {
+function GoalCard({
+  item,
+  cashAccounts,
+  portfolios,
+  onEdit,
+  onArchive,
+}: {
+  item: WealthGoal;
+  cashAccounts: CashAccount[];
+  portfolios: Portfolio[];
+  onEdit: (item: WealthGoal) => void;
+  onArchive: () => void;
+}) {
   return (
     <div className="bg-white border rounded-xl p-4 shadow-sm space-y-3">
       <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -250,6 +284,200 @@ function GoalCard({ item, onEdit, onArchive }: { item: WealthGoal; onEdit: (item
           <button type="button" onClick={onArchive} className="text-red-600 hover:underline">Archive</button>
         </div>
       </div>
+      <FundingSourcesSection goalId={item.id} cashAccounts={cashAccounts} portfolios={portfolios} />
+    </div>
+  );
+}
+
+function FundingSourcesSection({
+  goalId,
+  cashAccounts,
+  portfolios,
+}: {
+  goalId: number;
+  cashAccounts: CashAccount[];
+  portfolios: Portfolio[];
+}) {
+  const [allocations, setAllocations] = useState<GoalFundingAllocation[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [formError, setFormError] = useState("");
+
+  const [sourceKind, setSourceKind] = useState<GoalFundingSourceKind>("CASH_ACCOUNT");
+  const [sourceId, setSourceId] = useState("");
+  const [amount, setAmount] = useState("");
+
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editAmount, setEditAmount] = useState("");
+
+  async function load() {
+    setLoading(true);
+    setLoadError("");
+    try {
+      setAllocations(await listGoalFundingAllocations(goalId));
+    } catch (err) {
+      setLoadError(messageFor(err, "Unable to load funding sources."));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [goalId]);
+
+  async function handleAdd(event: FormEvent) {
+    event.preventDefault();
+    setFormError("");
+    const parsed = Number(amount);
+    if (!sourceId || !Number.isFinite(parsed) || parsed <= 0) {
+      setFormError("Choose a source and enter a positive designated amount.");
+      return;
+    }
+    try {
+      await createGoalFundingAllocation(goalId, {
+        cash_account_id: sourceKind === "CASH_ACCOUNT" ? Number(sourceId) : undefined,
+        portfolio_id: sourceKind === "PORTFOLIO" ? Number(sourceId) : undefined,
+        allocated_amount: parsed,
+        currency: "THB",
+      });
+      setSourceId("");
+      setAmount("");
+      await load();
+    } catch (err) {
+      setFormError(messageFor(err, "Unable to add funding source."));
+    }
+  }
+
+  async function handleSaveEdit(allocationId: number) {
+    setFormError("");
+    const parsed = Number(editAmount);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      setFormError("Enter a positive designated amount.");
+      return;
+    }
+    try {
+      await updateGoalFundingAllocation(goalId, allocationId, { allocated_amount: parsed });
+      setEditingId(null);
+      await load();
+    } catch (err) {
+      setFormError(messageFor(err, "Unable to update funding source."));
+    }
+  }
+
+  async function handleRemove(allocationId: number) {
+    setFormError("");
+    try {
+      await deleteGoalFundingAllocation(goalId, allocationId);
+      await load();
+    } catch (err) {
+      setFormError(messageFor(err, "Unable to remove funding source."));
+    }
+  }
+
+  const sourceOptions: { id: number; name: string }[] = sourceKind === "CASH_ACCOUNT" ? cashAccounts : portfolios;
+
+  return (
+    <div className="pt-3 border-t space-y-2">
+      <p className="text-sm font-medium text-gray-700">Funding sources</p>
+
+      {loading ? (
+        <p className="text-xs text-gray-400">Loading funding sources…</p>
+      ) : loadError ? (
+        <p role="alert" className="text-xs text-red-600">{loadError}</p>
+      ) : allocations.length === 0 ? (
+        <p className="text-xs text-gray-500">No funding sources designated yet.</p>
+      ) : (
+        <ul className="space-y-1.5">
+          {allocations.map((allocation) => (
+            <li key={allocation.id} className="flex items-center justify-between gap-2 text-sm">
+              <span className="text-gray-700">
+                {allocation.source_name ?? "Unknown source"}{" "}
+                <span className="text-xs text-gray-400 ml-1">
+                  ({allocation.source_kind === "CASH_ACCOUNT" ? "Cash Account" : "Portfolio"}
+                  {allocation.source_is_archived ? ", archived" : ""})
+                </span>
+              </span>
+              {editingId === allocation.id ? (
+                <span className="flex items-center gap-1.5">
+                  <input
+                    aria-label={`Edit designated amount for ${allocation.source_name ?? "source"}`}
+                    type="number"
+                    step="0.01"
+                    value={editAmount}
+                    onChange={(event) => setEditAmount(event.target.value)}
+                    className="w-28 border rounded px-2 py-1 text-sm"
+                  />
+                  <button type="button" onClick={() => void handleSaveEdit(allocation.id)} className="text-blue-600 hover:underline text-xs">Save</button>
+                  <button type="button" onClick={() => setEditingId(null)} className="text-gray-500 hover:underline text-xs">Cancel</button>
+                </span>
+              ) : (
+                <span className="flex items-center gap-2">
+                  <span className="font-medium">{formatThb(allocation.allocated_amount)} designated</span>
+                  <button
+                    type="button"
+                    aria-label={`Edit designated amount for ${allocation.source_name ?? "source"}`}
+                    onClick={() => { setEditingId(allocation.id); setEditAmount(String(allocation.allocated_amount)); }}
+                    className="text-blue-600 hover:underline text-xs"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Remove ${allocation.source_name ?? "source"} as a funding source`}
+                    onClick={() => void handleRemove(allocation.id)}
+                    className="text-red-600 hover:underline text-xs"
+                  >
+                    Remove
+                  </button>
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {formError && <p role="alert" className="text-xs text-red-600">{formError}</p>}
+
+      <form onSubmit={handleAdd} className="flex items-end gap-2 flex-wrap pt-1">
+        <label className="text-xs text-gray-500">
+          Source kind
+          <select
+            aria-label="Funding source kind"
+            value={sourceKind}
+            onChange={(event) => { setSourceKind(event.target.value as GoalFundingSourceKind); setSourceId(""); }}
+            className="block border rounded px-2 py-1 text-sm mt-0.5"
+          >
+            <option value="CASH_ACCOUNT">Cash Account</option>
+            <option value="PORTFOLIO">Portfolio</option>
+          </select>
+        </label>
+        <label className="text-xs text-gray-500">
+          Source
+          <select
+            aria-label="Funding source"
+            value={sourceId}
+            onChange={(event) => setSourceId(event.target.value)}
+            className="block border rounded px-2 py-1 text-sm mt-0.5 min-w-[10rem]"
+          >
+            <option value="">Select…</option>
+            {sourceOptions.map((source) => <option key={source.id} value={source.id}>{source.name}</option>)}
+          </select>
+        </label>
+        <label className="text-xs text-gray-500">
+          Designated amount
+          <input
+            aria-label="Designated amount"
+            type="number"
+            step="0.01"
+            value={amount}
+            onChange={(event) => setAmount(event.target.value)}
+            className="block border rounded px-2 py-1 text-sm mt-0.5 w-32"
+          />
+        </label>
+        <button type="submit" className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700">Add funding source</button>
+      </form>
     </div>
   );
 }

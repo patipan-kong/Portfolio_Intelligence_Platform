@@ -70,6 +70,7 @@ class Workspace(Base):
     liabilities = relationship("Liability", back_populates="workspace", cascade="all, delete-orphan")
     liability_balance_observations = relationship("LiabilityBalanceObservation", back_populates="workspace", cascade="all, delete-orphan")
     wealth_goals = relationship("WealthGoal", back_populates="workspace", cascade="all, delete-orphan")
+    goal_funding_allocations = relationship("GoalFundingAllocation", back_populates="workspace", cascade="all, delete-orphan")
     cash_account_transactions = relationship("CashAccountTransaction", back_populates="workspace", cascade="all, delete-orphan")
     cash_account_transfers = relationship("CashAccountTransfer", back_populates="workspace", cascade="all, delete-orphan")
     watchlist_items = relationship("Watchlist", back_populates="workspace", cascade="all, delete-orphan")
@@ -116,6 +117,11 @@ class Portfolio(Base):
     items = relationship("PortfolioItem", back_populates="portfolio", cascade="all, delete-orphan")
     transactions = relationship("Transaction", back_populates="portfolio", cascade="all, delete-orphan")
     snapshots = relationship("PortfolioSnapshot", back_populates="portfolio", cascade="all, delete-orphan")
+    # ORM-level cascade (not just the FK's ondelete=CASCADE) because SQLite —
+    # this app's default DATABASE_URL — does not enforce FK actions without an
+    # explicit PRAGMA this codebase does not set; matches how items/
+    # transactions/snapshots above already cascade at the ORM layer.
+    goal_funding_allocations = relationship("GoalFundingAllocation", cascade="all, delete-orphan")
 
 
 class CashAccount(Base):
@@ -250,6 +256,71 @@ class WealthGoal(Base):
         CheckConstraint("currency = 'THB'", name="ck_wealth_goals_currency_thb"),
         CheckConstraint("target_amount > 0", name="ck_wealth_goals_target_amount_positive"),
         Index("ix_wealth_goals_workspace_archived", "workspace_id", "is_archived"),
+    )
+
+
+class GoalFundingAllocation(Base):
+    """A workspace-owned designation: a fixed amount from one Cash Account or
+    Portfolio toward one WealthGoal.
+
+    Phase 6 Milestone 2 — Goal Funding Allocation Foundation. States only
+    "this amount from this source is designated toward this goal" — it does
+    NOT compute or imply goal progress, a funding percentage, or that the
+    source currently contains enough value forever. Exactly one of
+    cash_account_id / portfolio_id is set (never both, never neither); this
+    is intentionally an explicit FK pair, not a generic Account abstraction
+    or polymorphic source_type/source_id column, matching
+    CashAccountTransfer's existing source/destination FK convention.
+
+    A source MAY fund multiple goals, and a goal MAY have multiple sources —
+    at most one allocation row per (goal, source) pair; updating the amount
+    changes that row rather than creating a duplicate. Foundation validates
+    structural correctness only (workspace match, active goal/source,
+    exactly-one-source, positive finite THB amount, goal x source
+    uniqueness) — it does NOT validate that allocated amounts stay within a
+    source's current value. Cash Account balance is a stored column while
+    Portfolio value is derived live from holdings and prices, so enforcing
+    a capacity check for one source type and not the other would create an
+    inconsistent, misleading guarantee; that comparison is deferred to a
+    future read/composition milestone that can treat both source types the
+    same way. Removal is a hard delete: allocation history is not part of
+    v1, and archiving the referenced goal or source does not delete the
+    allocation — it remains readable, just no longer eligible for new
+    allocations.
+    """
+    __tablename__ = "goal_funding_allocations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    wealth_goal_id = Column(Integer, ForeignKey("wealth_goals.id", ondelete="CASCADE"), nullable=False, index=True)
+    cash_account_id = Column(Integer, ForeignKey("cash_accounts.id", ondelete="RESTRICT"), nullable=True, index=True)
+    # CASCADE (not RESTRICT): unlike CashAccount, Portfolio has no archive
+    # lifecycle — DELETE /portfolios/{id} is a real, reachable hard delete
+    # (main.py delete_portfolio) that already cascades Transactions/Snapshots/
+    # Items. RESTRICT here would turn that into an unhandled IntegrityError
+    # for any portfolio with a funding allocation; CASCADE keeps it consistent
+    # with Portfolio's existing delete behavior and with the "no allocation
+    # history" v1 scope — the allocation is planning metadata, not a ledger
+    # record, so it is honest for it to disappear when its source does.
+    portfolio_id = Column(Integer, ForeignKey("portfolios.id", ondelete="CASCADE"), nullable=True, index=True)
+    allocated_amount = Column(Float, nullable=False)
+    currency = Column(String(3), nullable=False, default="THB")
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    workspace = relationship("Workspace", back_populates="goal_funding_allocations")
+
+    __table_args__ = (
+        CheckConstraint(
+            "(cash_account_id IS NOT NULL AND portfolio_id IS NULL) "
+            "OR (cash_account_id IS NULL AND portfolio_id IS NOT NULL)",
+            name="ck_goal_funding_allocations_exactly_one_source",
+        ),
+        CheckConstraint("allocated_amount > 0", name="ck_goal_funding_allocations_amount_positive"),
+        CheckConstraint("currency = 'THB'", name="ck_goal_funding_allocations_currency_thb"),
+        UniqueConstraint("wealth_goal_id", "cash_account_id", name="uq_goal_funding_allocations_goal_cash"),
+        UniqueConstraint("wealth_goal_id", "portfolio_id", name="uq_goal_funding_allocations_goal_portfolio"),
+        Index("ix_goal_funding_allocations_workspace_goal", "workspace_id", "wealth_goal_id"),
     )
 
 

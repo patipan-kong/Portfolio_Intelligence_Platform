@@ -21,7 +21,7 @@ import uuid as _uuid
 from models.database import (
     init_db, migrate_legacy_data, get_db, SessionLocal,
     Workspace, get_default_workspace,
-    Portfolio, PortfolioItem, CashAccount, CashAccountBaseline, CashAccountTransfer, CashAccountTransaction, Liability, LiabilityBalanceObservation, WealthGoal, Watchlist,
+    Portfolio, PortfolioItem, CashAccount, CashAccountBaseline, CashAccountTransfer, CashAccountTransaction, Liability, LiabilityBalanceObservation, WealthGoal, GoalFundingAllocation, Watchlist,
     AgentCache, AnalysisCache, AnalysisHistory, OptimizerHistory, SignalHistory,
     Settings, UserUsage, Transaction, PortfolioSnapshot, BenchmarkPrice,
     MarketDataCache,
@@ -1581,6 +1581,166 @@ async def update_wealth_goal(goal_id: int, body: WealthGoalUpdate, db: Session =
     db.commit()
     db.refresh(goal)
     return _wealth_goal_payload(goal)
+
+
+# ── Goal Funding Allocations (Phase 6, Milestone 2) ──────────────────────────
+# "This amount from this source is designated toward this goal." Does NOT
+# compute goal progress or a funding percentage. Structural validation only —
+# see models.database.GoalFundingAllocation for why capacity/over-allocation
+# checking against the source's current value is deliberately deferred.
+
+def _goal_funding_allocation_payload(allocation: GoalFundingAllocation, db: Session) -> dict:
+    if allocation.cash_account_id is not None:
+        source_kind = "CASH_ACCOUNT"
+        source = db.query(CashAccount).filter(CashAccount.id == allocation.cash_account_id).first()
+    else:
+        source_kind = "PORTFOLIO"
+        source = db.query(Portfolio).filter(Portfolio.id == allocation.portfolio_id).first()
+    return {
+        "id": allocation.id,
+        "workspace_id": allocation.workspace_id,
+        "wealth_goal_id": allocation.wealth_goal_id,
+        "source_kind": source_kind,
+        "cash_account_id": allocation.cash_account_id,
+        "portfolio_id": allocation.portfolio_id,
+        "source_name": source.name if source is not None else None,
+        # Portfolio has no archive lifecycle, so this is always False for a
+        # PORTFOLIO source — never fabricated as True or omitted.
+        "source_is_archived": bool(source.is_archived) if source_kind == "CASH_ACCOUNT" and source is not None else False,
+        "allocated_amount": allocation.allocated_amount,
+        "currency": allocation.currency,
+        "created_at": allocation.created_at.isoformat(),
+        "updated_at": allocation.updated_at.isoformat(),
+    }
+
+
+def _goal_funding_allocation_or_404(db: Session, goal_id: int, allocation_id: int, workspace_id: int) -> GoalFundingAllocation:
+    allocation = (
+        db.query(GoalFundingAllocation)
+        .filter(
+            GoalFundingAllocation.id == allocation_id,
+            GoalFundingAllocation.wealth_goal_id == goal_id,
+            GoalFundingAllocation.workspace_id == workspace_id,
+        )
+        .first()
+    )
+    if allocation is None:
+        raise HTTPException(status_code=404, detail="Funding allocation not found")
+    return allocation
+
+
+class GoalFundingAllocationCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    cash_account_id: int | None = None
+    portfolio_id: int | None = None
+    allocated_amount: float
+    currency: str = "THB"
+
+    @model_validator(mode="after")
+    def validate_allocation(self):
+        if (self.cash_account_id is None) == (self.portfolio_id is None):
+            raise ValueError("exactly one of cash_account_id or portfolio_id is required")
+        if self.currency != "THB":
+            raise ValueError("currency must be THB")
+        if not math.isfinite(self.allocated_amount) or self.allocated_amount <= 0:
+            raise ValueError("allocated_amount must be finite and positive")
+        return self
+
+
+class GoalFundingAllocationUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    allocated_amount: float
+
+    @model_validator(mode="after")
+    def validate_allocation_update(self):
+        if not math.isfinite(self.allocated_amount) or self.allocated_amount <= 0:
+            raise ValueError("allocated_amount must be finite and positive")
+        return self
+
+
+@app.get("/wealth-goals/{goal_id}/funding-allocations")
+async def list_goal_funding_allocations(goal_id: int, db: Session = Depends(get_db)) -> list[dict]:
+    ws = _ws_id(db)
+    goal = _wealth_goal_or_404(db, goal_id, ws)
+    allocations = (
+        db.query(GoalFundingAllocation)
+        .filter(GoalFundingAllocation.workspace_id == ws, GoalFundingAllocation.wealth_goal_id == goal.id)
+        .order_by(GoalFundingAllocation.id)
+        .all()
+    )
+    return [_goal_funding_allocation_payload(item, db) for item in allocations]
+
+
+@app.post("/wealth-goals/{goal_id}/funding-allocations", status_code=201)
+async def create_goal_funding_allocation(goal_id: int, body: GoalFundingAllocationCreate, db: Session = Depends(get_db)) -> dict:
+    ws = _ws_id(db)
+    goal = _wealth_goal_or_404(db, goal_id, ws)
+    if goal.is_archived:
+        raise HTTPException(status_code=409, detail="Archived wealth goals cannot receive new funding allocations")
+
+    if body.cash_account_id is not None:
+        source = _cash_account_or_404(db, body.cash_account_id, ws)
+        if source.is_archived:
+            raise HTTPException(status_code=409, detail="Archived cash accounts cannot receive new funding allocations")
+        existing = (
+            db.query(GoalFundingAllocation)
+            .filter(GoalFundingAllocation.wealth_goal_id == goal.id, GoalFundingAllocation.cash_account_id == source.id)
+            .first()
+        )
+    else:
+        source = resolve_portfolio_or_404(db, body.portfolio_id, ws)
+        existing = (
+            db.query(GoalFundingAllocation)
+            .filter(GoalFundingAllocation.wealth_goal_id == goal.id, GoalFundingAllocation.portfolio_id == source.id)
+            .first()
+        )
+
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="An allocation for this goal and source already exists; update it instead")
+
+    allocation = GoalFundingAllocation(
+        workspace_id=ws,
+        wealth_goal_id=goal.id,
+        cash_account_id=body.cash_account_id,
+        portfolio_id=body.portfolio_id,
+        allocated_amount=body.allocated_amount,
+        currency=body.currency,
+    )
+    db.add(allocation)
+    db.commit()
+    db.refresh(allocation)
+    return _goal_funding_allocation_payload(allocation, db)
+
+
+@app.patch("/wealth-goals/{goal_id}/funding-allocations/{allocation_id}")
+async def update_goal_funding_allocation(goal_id: int, allocation_id: int, body: GoalFundingAllocationUpdate, db: Session = Depends(get_db)) -> dict:
+    ws = _ws_id(db)
+    goal = _wealth_goal_or_404(db, goal_id, ws)
+    allocation = _goal_funding_allocation_or_404(db, goal.id, allocation_id, ws)
+
+    if goal.is_archived:
+        raise HTTPException(status_code=409, detail="Archived wealth goals cannot receive new funding allocations")
+    if allocation.cash_account_id is not None:
+        source = _cash_account_or_404(db, allocation.cash_account_id, ws)
+        if source.is_archived:
+            raise HTTPException(status_code=409, detail="Archived cash accounts cannot receive new funding allocations")
+
+    allocation.allocated_amount = body.allocated_amount
+    db.commit()
+    db.refresh(allocation)
+    return _goal_funding_allocation_payload(allocation, db)
+
+
+@app.delete("/wealth-goals/{goal_id}/funding-allocations/{allocation_id}")
+async def delete_goal_funding_allocation(goal_id: int, allocation_id: int, db: Session = Depends(get_db)) -> dict:
+    ws = _ws_id(db)
+    goal = _wealth_goal_or_404(db, goal_id, ws)
+    allocation = _goal_funding_allocation_or_404(db, goal.id, allocation_id, ws)
+    db.delete(allocation)
+    db.commit()
+    return {"deleted": allocation_id}
 
 
 # ─── Portfolios ───────────────────────────────────────────────────────────────

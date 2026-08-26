@@ -571,6 +571,58 @@ export const createWealthGoal = (body: WealthGoalCreate) =>
 export const updateWealthGoal = (id: number, body: WealthGoalUpdate) =>
   apiFetch<WealthGoal>(`/wealth-goals/${id}`, { method: "PATCH", body: JSON.stringify(body) });
 
+// ─── Goal Funding Allocations (Phase 6, Milestone 2) ───────────────────────
+// "This amount from this source is designated toward this goal." No goal
+// progress, funding gap, or coverage percentage is computed here or by the
+// backend — designation only.
+
+export type GoalFundingSourceKind = "CASH_ACCOUNT" | "PORTFOLIO";
+
+export interface GoalFundingAllocation {
+  id: number;
+  workspace_id: number;
+  wealth_goal_id: number;
+  source_kind: GoalFundingSourceKind;
+  cash_account_id: number | null;
+  portfolio_id: number | null;
+  source_name: string | null;
+  // Always false for a PORTFOLIO source — Portfolio has no archive lifecycle.
+  source_is_archived: boolean;
+  allocated_amount: number;
+  currency: "THB";
+  created_at: string;
+  updated_at: string;
+}
+
+export type GoalFundingAllocationCreate = {
+  cash_account_id?: number;
+  portfolio_id?: number;
+  allocated_amount: number;
+  currency: "THB";
+};
+
+export type GoalFundingAllocationUpdate = {
+  allocated_amount: number;
+};
+
+export const listGoalFundingAllocations = (goalId: number) =>
+  apiFetch<GoalFundingAllocation[]>(`/wealth-goals/${goalId}/funding-allocations`);
+
+export const createGoalFundingAllocation = (goalId: number, body: GoalFundingAllocationCreate) =>
+  apiFetch<GoalFundingAllocation>(`/wealth-goals/${goalId}/funding-allocations`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+export const updateGoalFundingAllocation = (goalId: number, allocationId: number, body: GoalFundingAllocationUpdate) =>
+  apiFetch<GoalFundingAllocation>(`/wealth-goals/${goalId}/funding-allocations/${allocationId}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+
+export const deleteGoalFundingAllocation = (goalId: number, allocationId: number) =>
+  apiFetch<{ deleted: number }>(`/wealth-goals/${goalId}/funding-allocations/${allocationId}`, { method: "DELETE" });
+
 export type CashAccountBaselineCreate = {
   effective_on: string;
   observed_balance: number;

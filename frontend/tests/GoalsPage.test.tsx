@@ -1,12 +1,32 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import GoalsPage from "@/app/goals/page";
-import { createWealthGoal, listWealthGoals, updateWealthGoal, type WealthGoal } from "@/lib/api";
+import {
+  createGoalFundingAllocation,
+  createWealthGoal,
+  deleteGoalFundingAllocation,
+  listCashAccounts,
+  listGoalFundingAllocations,
+  listPortfolios,
+  listWealthGoals,
+  updateGoalFundingAllocation,
+  updateWealthGoal,
+  type CashAccount,
+  type GoalFundingAllocation,
+  type Portfolio,
+  type WealthGoal,
+} from "@/lib/api";
 
 vi.mock("@/lib/api", () => ({
   createWealthGoal: vi.fn(),
   listWealthGoals: vi.fn(),
   updateWealthGoal: vi.fn(),
+  listCashAccounts: vi.fn(),
+  listPortfolios: vi.fn(),
+  listGoalFundingAllocations: vi.fn(),
+  createGoalFundingAllocation: vi.fn(),
+  updateGoalFundingAllocation: vi.fn(),
+  deleteGoalFundingAllocation: vi.fn(),
 }));
 
 const goal: WealthGoal = {
@@ -24,9 +44,49 @@ const goal: WealthGoal = {
   updated_at: "2026-08-26T00:00:00",
 };
 
+const cashAccount: CashAccount = {
+  id: 5,
+  workspace_id: 1,
+  name: "Wedding Savings",
+  institution: null,
+  currency: "THB",
+  balance: 300000,
+  is_archived: false,
+  created_at: "2026-08-26T00:00:00",
+  updated_at: "2026-08-26T00:00:00",
+};
+
+const portfolio: Portfolio = {
+  id: 9,
+  name: "Long-term Portfolio",
+  cash_balance: 0,
+  created_at: "2026-08-26T00:00:00",
+};
+
+const cashAllocation: GoalFundingAllocation = {
+  id: 100,
+  workspace_id: 1,
+  wealth_goal_id: 1,
+  source_kind: "CASH_ACCOUNT",
+  cash_account_id: 5,
+  portfolio_id: null,
+  source_name: "Wedding Savings",
+  source_is_archived: false,
+  allocated_amount: 300000,
+  currency: "THB",
+  created_at: "2026-08-26T00:00:00",
+  updated_at: "2026-08-26T00:00:00",
+};
+
 const listMock = vi.mocked(listWealthGoals);
 const createMock = vi.mocked(createWealthGoal);
 const updateMock = vi.mocked(updateWealthGoal);
+const cashAccountsMock = vi.mocked(listCashAccounts);
+const portfoliosMock = vi.mocked(listPortfolios);
+const allocationsListMock = vi.mocked(listGoalFundingAllocations);
+const allocationsCreateMock = vi.mocked(createGoalFundingAllocation);
+const allocationsUpdateMock = vi.mocked(updateGoalFundingAllocation);
+const allocationsDeleteMock = vi.mocked(deleteGoalFundingAllocation);
 
 describe("GoalsPage", () => {
   beforeEach(() => {
@@ -34,6 +94,12 @@ describe("GoalsPage", () => {
     listMock.mockResolvedValue([]);
     createMock.mockResolvedValue(goal);
     updateMock.mockResolvedValue(goal);
+    cashAccountsMock.mockResolvedValue([cashAccount]);
+    portfoliosMock.mockResolvedValue([portfolio]);
+    allocationsListMock.mockResolvedValue([]);
+    allocationsCreateMock.mockResolvedValue(cashAllocation);
+    allocationsUpdateMock.mockResolvedValue(cashAllocation);
+    allocationsDeleteMock.mockResolvedValue({ deleted: 100 });
   });
 
   it("shows a loading state and fixed THB", () => {
@@ -152,13 +218,111 @@ describe("GoalsPage", () => {
     expect(createMock).not.toHaveBeenCalled();
   });
 
-  it("does not introduce a progress bar, funding linkage, or projection language in the v1 experience", async () => {
+  it("does not introduce a progress bar, coverage percentage, or projection language in the v1 experience", async () => {
     listMock.mockResolvedValue([goal]);
     render(<GoalsPage />);
     await screen.findByText("Retire by 55");
-    // The header explicitly disclaims progress/funding ("is not progress, and is
-    // not linked to..."), so this checks for an actual progress/funding feature
-    // (a computed percentage, a funding source, a projection), not the word.
-    expect(screen.queryByText(/%\s*(complete|funded|toward)|funding source|projected to reach|forecast/i)).not.toBeInTheDocument();
+    await screen.findByText("No funding sources designated yet.");
+    // Funding Allocation Foundation deliberately introduces "funding source"
+    // linkage — that term is now real. What must still never appear is a
+    // computed coverage claim: a percentage, a funding gap, or a projection.
+    expect(screen.queryByText(/%\s*(complete|funded|toward)|funding gap|goal coverage|projected to reach|forecast/i)).not.toBeInTheDocument();
+  });
+
+  describe("Funding sources", () => {
+    it("shows a no-allocation state and offers active-only sources", async () => {
+      listMock.mockResolvedValue([goal]);
+      render(<GoalsPage />);
+      await screen.findByText("Retire by 55");
+
+      expect(await screen.findByText("No funding sources designated yet.")).toBeInTheDocument();
+      expect(cashAccountsMock).toHaveBeenCalledWith(false);
+
+      const sourceSelect = screen.getByLabelText("Funding source") as HTMLSelectElement;
+      const optionLabels = Array.from(sourceSelect.options).map((option) => option.textContent);
+      expect(optionLabels).toContain("Wedding Savings");
+    });
+
+    it("adds a Cash Account funding source", async () => {
+      listMock.mockResolvedValue([goal]);
+      render(<GoalsPage />);
+      await screen.findByText("Retire by 55");
+      await screen.findByText("No funding sources designated yet.");
+
+      fireEvent.change(screen.getByLabelText("Funding source"), { target: { value: "5" } });
+      fireEvent.change(screen.getByLabelText("Designated amount"), { target: { value: "300000" } });
+      fireEvent.click(screen.getByRole("button", { name: "Add funding source" }));
+
+      await waitFor(() => expect(allocationsCreateMock).toHaveBeenCalledWith(1, {
+        cash_account_id: 5,
+        portfolio_id: undefined,
+        allocated_amount: 300000,
+        currency: "THB",
+      }));
+    });
+
+    it("adds a Portfolio funding source", async () => {
+      listMock.mockResolvedValue([goal]);
+      render(<GoalsPage />);
+      await screen.findByText("Retire by 55");
+      await screen.findByText("No funding sources designated yet.");
+
+      fireEvent.change(screen.getByLabelText("Funding source kind"), { target: { value: "PORTFOLIO" } });
+      fireEvent.change(screen.getByLabelText("Funding source"), { target: { value: "9" } });
+      fireEvent.change(screen.getByLabelText("Designated amount"), { target: { value: "700000" } });
+      fireEvent.click(screen.getByRole("button", { name: "Add funding source" }));
+
+      await waitFor(() => expect(allocationsCreateMock).toHaveBeenCalledWith(1, {
+        cash_account_id: undefined,
+        portfolio_id: 9,
+        allocated_amount: 700000,
+        currency: "THB",
+      }));
+    });
+
+    it("renders an existing allocation, including an archived source", async () => {
+      listMock.mockResolvedValue([goal]);
+      allocationsListMock.mockResolvedValue([{ ...cashAllocation, source_is_archived: true }]);
+      render(<GoalsPage />);
+      await screen.findByText("Retire by 55");
+
+      expect(await screen.findByText((_, el) => el?.textContent === "Wedding Savings (Cash Account, archived)")).toBeInTheDocument();
+      expect(screen.getByText((_, el) => el?.textContent === "฿300,000.00 designated")).toBeInTheDocument();
+    });
+
+    it("edits a funding source's designated amount", async () => {
+      listMock.mockResolvedValue([goal]);
+      allocationsListMock.mockResolvedValue([cashAllocation]);
+      render(<GoalsPage />);
+      await screen.findByText("Retire by 55");
+      await screen.findByText((_, el) => el?.textContent === "฿300,000.00 designated");
+
+      fireEvent.click(screen.getByRole("button", { name: "Edit designated amount for Wedding Savings" }));
+      fireEvent.change(screen.getByLabelText("Edit designated amount for Wedding Savings"), { target: { value: "250000" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => expect(allocationsUpdateMock).toHaveBeenCalledWith(1, 100, { allocated_amount: 250000 }));
+    });
+
+    it("removes a funding source", async () => {
+      listMock.mockResolvedValue([goal]);
+      allocationsListMock.mockResolvedValue([cashAllocation]);
+      render(<GoalsPage />);
+      await screen.findByText("Retire by 55");
+      await screen.findByText((_, el) => el?.textContent === "฿300,000.00 designated");
+
+      fireEvent.click(screen.getByRole("button", { name: "Remove Wedding Savings as a funding source" }));
+
+      await waitFor(() => expect(allocationsDeleteMock).toHaveBeenCalledWith(1, 100));
+    });
+
+    it("keeps funding-source load failures honest", async () => {
+      listMock.mockResolvedValue([goal]);
+      allocationsListMock.mockRejectedValue(new Error("allocations offline"));
+      render(<GoalsPage />);
+      await screen.findByText("Retire by 55");
+
+      expect(await screen.findByText("allocations offline")).toBeInTheDocument();
+    });
   });
 });
