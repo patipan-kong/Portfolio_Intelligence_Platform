@@ -1,9 +1,10 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import {
   computeGoalFunding,
   computeSourceFundingHealth,
+  sourceKey,
   type SourceFundingHealth,
 } from "@/lib/goalFunding";
 import {
@@ -11,6 +12,7 @@ import {
   computeRequiredMonthlyContribution,
   formatMonthLabel,
 } from "@/lib/goalWhatIf";
+import { computeScenarioComparison } from "@/lib/scenarioComparison";
 import {
   createGoalFundingAllocation,
   deleteGoalFundingAllocation,
@@ -40,6 +42,9 @@ export type ScenariosState = GoalScenario[] | ScenariosLoadError | undefined;
 
 export const SAVED_SCENARIO_DISCLOSURE =
   "Saved scenarios store assumptions only. Results use the goal's current target and designated funding.";
+
+export const SCENARIO_COMPARISON_DISCLOSURE =
+  "Scenarios are compared using the goal's current target and designated funding.";
 
 /** The transient forward What-If assumptions, lifted above GoalWhatIfSection
  * so loading a saved Scenario can populate them from outside. */
@@ -556,14 +561,159 @@ export function GoalWhatIfSection({
   );
 }
 
+/**
+ * Compares two saved scenarios' assumptions against ONE shared current
+ * context (this goal's current target, target date, and designated
+ * funding) — never each scenario's save-time context, which is not
+ * persisted. Presents facts only: no ranking, scoring, or recommendation.
+ */
+function ScenarioComparisonTable({
+  item,
+  allocations,
+  fundingHealthForSource,
+  scenarioA,
+  scenarioB,
+}: {
+  item: WealthGoal;
+  allocations: AllocationsState;
+  fundingHealthForSource: FundingHealthForSource;
+  scenarioA: GoalScenario;
+  scenarioB: GoalScenario;
+}) {
+  if (allocations === undefined) {
+    return <p className="text-sm text-gray-400">Comparison loading — funding data is still loading.</p>;
+  }
+  const funding = computeGoalFunding(item.target_amount, Array.isArray(allocations) ? allocations : null);
+  const comparison = computeScenarioComparison(
+    item.target_amount,
+    funding.designatedFunding,
+    item.target_date,
+    todayIso(),
+    { name: scenarioA.name, monthlyContribution: scenarioA.monthly_contribution, annualReturnPct: scenarioA.annual_return_pct },
+    { name: scenarioB.name, monthlyContribution: scenarioB.monthly_contribution, annualReturnPct: scenarioB.annual_return_pct },
+  );
+  if (!comparison.valid) {
+    return <p role="alert" className="text-sm text-red-600">{comparison.error}</p>;
+  }
+
+  const { context, a, b } = comparison;
+  const reachLabel = (side: typeof a) => {
+    if (!side.whatIf.valid) return side.whatIf.error;
+    if (side.whatIf.alreadyReached) return "Already reached";
+    if (side.whatIf.reachable) return formatMonthLabel(side.whatIf.reachDate as string);
+    return "Not reachable within 50 years";
+  };
+  // Funding Health belongs to the shared current funding context, not either
+  // scenario. A source can appear in more than one allocation, so surface an
+  // unhealthy source once rather than repeating the same evidence per row.
+  const sourceHealthByKey = new Map<string, SourceFundingHealth>();
+  if (Array.isArray(allocations)) {
+    for (const allocation of allocations) {
+      const sourceId = (allocation.cash_account_id ?? allocation.portfolio_id) as number;
+      const key = sourceKey(allocation.source_kind, sourceId);
+      if (!sourceHealthByKey.has(key)) {
+        sourceHealthByKey.set(key, fundingHealthForSource(allocation.source_kind, sourceId));
+      }
+    }
+  }
+  const sourceHealths = Array.from(sourceHealthByKey.values()).filter((health) => health.status !== "SUPPORTED");
+
+  return (
+    <div className="space-y-2">
+      <p className="text-xs text-gray-500">{SCENARIO_COMPARISON_DISCLOSURE}</p>
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-sm border-collapse">
+          <thead>
+            <tr className="text-left text-xs text-gray-500 border-b">
+              <th className="py-1 pr-3 font-medium">Assumption</th>
+              <th className="py-1 pr-3 font-medium">{a.name}</th>
+              <th className="py-1 font-medium">{b.name}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr className="border-b">
+              <td className="py-1 pr-3 text-gray-500">Monthly contribution</td>
+              <td className="py-1 pr-3">{formatThb(a.monthlyContribution)}</td>
+              <td className="py-1">{formatThb(b.monthlyContribution)}</td>
+            </tr>
+            <tr className="border-b">
+              <td className="py-1 pr-3 text-gray-500">Annual return assumption</td>
+              <td className="py-1 pr-3">{a.annualReturnPct}%</td>
+              <td className="py-1">{b.annualReturnPct}%</td>
+            </tr>
+            <tr className="border-b">
+              <td className="py-1 pr-3 text-gray-500">Reach date</td>
+              <td className="py-1 pr-3">{reachLabel(a)}</td>
+              <td className="py-1">{reachLabel(b)}</td>
+            </tr>
+            {context.targetDate && a.whatIf.valid && a.whatIf.targetDateInPast && (
+              <tr>
+                <td colSpan={3} className="py-1 text-xs text-gray-500">
+                  Saved target date ({context.targetDate}) has passed — target-date projection and required monthly contribution are unavailable.
+                </td>
+              </tr>
+            )}
+            {context.targetDate && a.whatIf.valid && !a.whatIf.targetDateInPast && (
+              <>
+                <tr className="border-b">
+                  <td className="py-1 pr-3 text-gray-500">Projected amount by {context.targetDate}</td>
+                  <td className="py-1 pr-3">{a.whatIf.projectedValueAtTargetDate !== null ? formatThb(a.whatIf.projectedValueAtTargetDate) : "—"}</td>
+                  <td className="py-1">{b.whatIf.valid && b.whatIf.projectedValueAtTargetDate !== null ? formatThb(b.whatIf.projectedValueAtTargetDate) : "—"}</td>
+                </tr>
+                <tr className="border-b">
+                  <td className="py-1 pr-3 text-gray-500">Shortfall / surplus at target date</td>
+                  <td className="py-1 pr-3">
+                    {a.whatIf.shortfallAtTargetDate != null && `${formatThb(a.whatIf.shortfallAtTargetDate)} below target`}
+                    {a.whatIf.surplusAtTargetDate != null && `${formatThb(a.whatIf.surplusAtTargetDate)} above target`}
+                    {a.whatIf.shortfallAtTargetDate == null && a.whatIf.surplusAtTargetDate == null && "At target"}
+                  </td>
+                  <td className="py-1">
+                    {b.whatIf.valid && b.whatIf.shortfallAtTargetDate != null && `${formatThb(b.whatIf.shortfallAtTargetDate)} below target`}
+                    {b.whatIf.valid && b.whatIf.surplusAtTargetDate != null && `${formatThb(b.whatIf.surplusAtTargetDate)} above target`}
+                    {b.whatIf.valid && b.whatIf.shortfallAtTargetDate == null && b.whatIf.surplusAtTargetDate == null && "At target"}
+                  </td>
+                </tr>
+                <tr>
+                  <td className="py-1 pr-3 text-gray-500">Required monthly contribution</td>
+                  <td className="py-1 pr-3">{a.requiredContribution.valid ? formatThb(a.requiredContribution.requiredMonthlyContribution) : a.requiredContribution.error}</td>
+                  <td className="py-1">{b.requiredContribution.valid ? formatThb(b.requiredContribution.requiredMonthlyContribution) : b.requiredContribution.error}</td>
+                </tr>
+              </>
+            )}
+            {!context.targetDate && (
+              <tr>
+                <td colSpan={3} className="py-1 text-xs text-gray-500">
+                  This goal has no target date — target-date projection and required monthly contribution are unavailable.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      {sourceHealths.length > 0 && (
+        <div className="pt-1 border-t">
+          <p className="text-xs text-gray-500">Funding health for this goal&apos;s sources:</p>
+          {sourceHealths.map((health, index) => <FundingHealthRow key={index} health={health} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function SavedScenariosSection({
   goalId,
+  item,
+  allocations,
+  fundingHealthForSource,
   readOnly = false,
   scenarios,
   onReload,
   onLoadScenario,
 }: {
   goalId: number;
+  item: WealthGoal;
+  allocations: AllocationsState;
+  fundingHealthForSource: FundingHealthForSource;
   /** True while the goal is archived — create/edit/archive/restore are disabled; loading is still allowed. */
   readOnly?: boolean;
   scenarios: ScenariosState;
@@ -576,6 +726,8 @@ export function SavedScenariosSection({
   const [editName, setEditName] = useState("");
   const [editContribution, setEditContribution] = useState("");
   const [editReturn, setEditReturn] = useState("");
+  const [comparisonAId, setComparisonAId] = useState("");
+  const [comparisonBId, setComparisonBId] = useState("");
 
   function startEdit(scenario: GoalScenario) {
     setFormError("");
@@ -627,6 +779,18 @@ export function SavedScenariosSection({
   const rows = Array.isArray(scenarios) ? scenarios : [];
   const activeRows = rows.filter((row) => !row.is_archived);
   const archivedRows = rows.filter((row) => row.is_archived);
+
+  // A scenario that is edited, archived, or no longer active must not leave
+  // Comparison holding a stale selection or result.
+  useEffect(() => {
+    const activeIds = new Set(activeRows.map((row) => String(row.id)));
+    setComparisonAId((prev) => (prev && !activeIds.has(prev) ? "" : prev));
+    setComparisonBId((prev) => (prev && !activeIds.has(prev) ? "" : prev));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scenarios]);
+
+  const scenarioA = activeRows.find((row) => String(row.id) === comparisonAId);
+  const scenarioB = activeRows.find((row) => String(row.id) === comparisonBId);
 
   return (
     <section className="space-y-2" aria-labelledby="saved-scenarios-heading">
@@ -702,6 +866,56 @@ export function SavedScenariosSection({
       )}
 
       {formError && <p role="alert" className="text-sm text-red-600">{formError}</p>}
+
+      {Array.isArray(scenarios) && (
+        <div className="pt-2 border-t space-y-2">
+          <h4 className="text-sm font-semibold text-gray-800">Compare scenarios</h4>
+          {activeRows.length < 2 ? (
+            <p className="text-sm text-gray-500">Save at least two active scenarios to compare them.</p>
+          ) : (
+            <>
+              <div className="flex items-end gap-2 flex-wrap">
+                <label className="text-xs text-gray-500">
+                  Scenario A
+                  <select
+                    aria-label={`Compare scenario A for ${item.name}`}
+                    value={comparisonAId}
+                    onChange={(event) => setComparisonAId(event.target.value)}
+                    className="block border rounded px-2 py-1 text-sm mt-0.5 min-w-[10rem]"
+                  >
+                    <option value="">Select…</option>
+                    {activeRows.map((scenario) => <option key={scenario.id} value={scenario.id}>{scenario.name}</option>)}
+                  </select>
+                </label>
+                <label className="text-xs text-gray-500">
+                  Scenario B
+                  <select
+                    aria-label={`Compare scenario B for ${item.name}`}
+                    value={comparisonBId}
+                    onChange={(event) => setComparisonBId(event.target.value)}
+                    className="block border rounded px-2 py-1 text-sm mt-0.5 min-w-[10rem]"
+                  >
+                    <option value="">Select…</option>
+                    {activeRows.map((scenario) => <option key={scenario.id} value={scenario.id}>{scenario.name}</option>)}
+                  </select>
+                </label>
+              </div>
+              {comparisonAId && comparisonBId && comparisonAId === comparisonBId && (
+                <p role="alert" className="text-xs text-red-600">Choose two different scenarios to compare.</p>
+              )}
+              {scenarioA && scenarioB && comparisonAId !== comparisonBId && (
+                <ScenarioComparisonTable
+                  item={item}
+                  allocations={allocations}
+                  fundingHealthForSource={fundingHealthForSource}
+                  scenarioA={scenarioA}
+                  scenarioB={scenarioB}
+                />
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       {Array.isArray(scenarios) && archivedRows.length > 0 && (
         <div className="pt-1">

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import GoalDetailPage from "@/app/goals/[id]/page";
 import {
@@ -119,6 +119,14 @@ const archivedScenario: GoalScenario = {
   id: 501,
   name: "Old plan",
   is_archived: true,
+};
+
+const secondScenario: GoalScenario = {
+  ...scenario,
+  id: 502,
+  name: "Conservative plan",
+  monthly_contribution: 5000,
+  annual_return_pct: 2,
 };
 
 const secondGoal: WealthGoal = {
@@ -626,6 +634,282 @@ describe("GoalDetailPage", () => {
       fireEvent.click(screen.getByRole("button", { name: "Show archived scenarios (1)" }));
       await screen.findByText(/Old plan/);
       expect(screen.queryByText(/forecast|expected return|probability|guaranteed|on track|likely to|recommended contribution|should contribute|advice|projected value|reach date/i)).not.toBeInTheDocument();
+    });
+  });
+
+  describe("Scenario Comparison", () => {
+    async function selectBothScenarios() {
+      await screen.findByText((_, element) => element?.textContent === "Aggressive contribution (฿20,000.00/month · 6% annual return assumption)");
+      fireEvent.change(screen.getByLabelText("Compare scenario A for Retire by 55"), { target: { value: String(scenario.id) } });
+      fireEvent.change(screen.getByLabelText("Compare scenario B for Retire by 55"), { target: { value: String(secondScenario.id) } });
+    }
+
+    // 1. fewer than two scenarios
+    it("shows an unavailable state with fewer than two active scenarios", async () => {
+      scenariosMock.mockResolvedValue([scenario]);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      await screen.findByText((_, element) => element?.textContent === "Aggressive contribution (฿20,000.00/month · 6% annual return assumption)");
+      expect(screen.getByText("Save at least two active scenarios to compare them.")).toBeInTheDocument();
+      expect(screen.queryByLabelText("Compare scenario A for Retire by 55")).not.toBeInTheDocument();
+    });
+
+    // 2. select two scenarios / 4. scenario assumptions display
+    it("compares two selected scenarios and displays each side's assumptions", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 1000000, target_date: "2030-01-01" }]);
+      allocationsMock.mockResolvedValue([{ ...cashAllocation, allocated_amount: 100000 }]);
+      scenariosMock.mockResolvedValue([scenario, secondScenario]);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      await selectBothScenarios();
+
+      expect(await screen.findByText("Compare scenarios")).toBeInTheDocument();
+      expect(screen.getByText("Monthly contribution")).toBeInTheDocument();
+      expect(screen.getByText("Annual return assumption")).toBeInTheDocument();
+      expect(screen.getByText("Reach date")).toBeInTheDocument();
+      // Column headers name each side.
+      expect(screen.getByRole("columnheader", { name: "Aggressive contribution" })).toBeInTheDocument();
+      expect(screen.getByRole("columnheader", { name: "Conservative plan" })).toBeInTheDocument();
+    });
+
+    // 3. same scenario cannot occupy both sides
+    it("rejects selecting the same scenario for both sides", async () => {
+      scenariosMock.mockResolvedValue([scenario, secondScenario]);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      await screen.findByText((_, element) => element?.textContent === "Aggressive contribution (฿20,000.00/month · 6% annual return assumption)");
+      fireEvent.change(screen.getByLabelText("Compare scenario A for Retire by 55"), { target: { value: String(scenario.id) } });
+      fireEvent.change(screen.getByLabelText("Compare scenario B for Retire by 55"), { target: { value: String(scenario.id) } });
+      expect(await screen.findByText("Choose two different scenarios to compare.")).toBeInTheDocument();
+      expect(screen.queryByText("Reach date")).not.toBeInTheDocument();
+    });
+
+    // 5. both sides use the same current designated funding / 8. reach-date comparison
+    it("computes both sides' reach dates from the same current designated funding", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 1000000, target_date: null }]);
+      allocationsMock.mockResolvedValue([{ ...cashAllocation, allocated_amount: 100000 }]);
+      scenariosMock.mockResolvedValue([scenario, secondScenario]);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      await selectBothScenarios();
+      const rows = await screen.findAllByRole("row");
+      const reachRow = rows.find((row) => row.textContent?.startsWith("Reach date"));
+      expect(reachRow).toBeDefined();
+      // Higher contribution + higher return assumption for Aggressive should reach sooner than Conservative.
+      expect(reachRow?.textContent).toMatch(/Reach date.+20\d\d.+20\d\d/);
+    });
+
+    // 6. current target change affects both
+    it("recomputes both sides when the goal's current target changes", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 100000, target_date: null }]);
+      allocationsMock.mockResolvedValue([{ ...cashAllocation, allocated_amount: 150000 }]);
+      scenariosMock.mockResolvedValue([scenario, secondScenario]);
+      const { unmount } = render(<GoalDetailPage params={{ id: "1" }} />);
+      await selectBothScenarios();
+      expect(await screen.findAllByText("Already reached")).toHaveLength(2);
+      unmount();
+
+      // A fresh load (e.g. the next page visit) picks up the goal's new current target.
+      listMock.mockResolvedValue([{ ...goal, target_amount: 50000000, target_date: null }]);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      await selectBothScenarios();
+      expect(await screen.findByText("Reach date")).toBeInTheDocument();
+      expect(screen.queryAllByText("Already reached")).toHaveLength(0);
+    });
+
+    // 7. funding change affects both
+    it("recomputes both sides when designated funding changes", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 100000, target_date: null }]);
+      allocationsMock.mockResolvedValue([]);
+      scenariosMock.mockResolvedValue([scenario, secondScenario]);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      await selectBothScenarios();
+      expect(screen.queryAllByText("Already reached")).toHaveLength(0);
+
+      allocationsMock.mockResolvedValue([{ ...cashAllocation, allocated_amount: 500000 }]);
+      fireEvent.change(screen.getByLabelText("Funding source kind"), { target: { value: "CASH_ACCOUNT" } });
+      fireEvent.change(screen.getByLabelText("Funding source"), { target: { value: "5" } });
+      fireEvent.change(screen.getByLabelText("Designated amount"), { target: { value: "500000" } });
+      fireEvent.click(screen.getByRole("button", { name: "Add funding source" }));
+      await waitFor(() => expect(screen.getAllByText("Already reached")).toHaveLength(2));
+    });
+
+    // 9. target-date projected-value comparison / 10. required-contribution comparison
+    it("shows target-date projected value and required contribution for a future target date", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 1000000, target_date: "2030-01-01" }]);
+      allocationsMock.mockResolvedValue([{ ...cashAllocation, allocated_amount: 100000 }]);
+      scenariosMock.mockResolvedValue([scenario, secondScenario]);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      await selectBothScenarios();
+      expect(await screen.findByText("Projected amount by 2030-01-01")).toBeInTheDocument();
+      expect(screen.getByText("Required monthly contribution")).toBeInTheDocument();
+    });
+
+    // 11. no target date
+    it("omits target-date projection and required contribution when the goal has no target date", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 1000000, target_date: null }]);
+      allocationsMock.mockResolvedValue([{ ...cashAllocation, allocated_amount: 100000 }]);
+      scenariosMock.mockResolvedValue([scenario, secondScenario]);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      await selectBothScenarios();
+      expect(await screen.findByText(/This goal has no target date/)).toBeInTheDocument();
+      expect(screen.queryByText("Required monthly contribution")).not.toBeInTheDocument();
+    });
+
+    // 12. past target date
+    it("states that the saved target date has passed and omits target-date figures", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 1000000, target_date: "2020-01-01" }]);
+      allocationsMock.mockResolvedValue([{ ...cashAllocation, allocated_amount: 100000 }]);
+      scenariosMock.mockResolvedValue([scenario, secondScenario]);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      await selectBothScenarios();
+      expect(await screen.findByText(/Saved target date \(2020-01-01\) has passed/)).toBeInTheDocument();
+      expect(screen.queryByText("Required monthly contribution")).not.toBeInTheDocument();
+    });
+
+    // 13. one unreachable
+    it("shows one scenario unreachable while the other reaches its target", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 100000000, target_date: null }]);
+      allocationsMock.mockResolvedValue([]);
+      const reachableScenario: GoalScenario = { ...scenario, id: 600, name: "Reachable", monthly_contribution: 500000, annual_return_pct: 8 };
+      const unreachableScenario: GoalScenario = { ...scenario, id: 601, name: "Unreachable", monthly_contribution: 1, annual_return_pct: 0 };
+      scenariosMock.mockResolvedValue([reachableScenario, unreachableScenario]);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      await screen.findByText((_, element) => element?.textContent === "Reachable (฿500,000.00/month · 8% annual return assumption)");
+      fireEvent.change(screen.getByLabelText("Compare scenario A for Retire by 55"), { target: { value: "600" } });
+      fireEvent.change(screen.getByLabelText("Compare scenario B for Retire by 55"), { target: { value: "601" } });
+      expect(await screen.findByText("Not reachable within 50 years")).toBeInTheDocument();
+    });
+
+    // 14. negative-return scenario
+    it("compares a negative-return scenario without editorializing", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 1000000, target_date: null }]);
+      allocationsMock.mockResolvedValue([{ ...cashAllocation, allocated_amount: 100000 }]);
+      const negativeScenario: GoalScenario = { ...secondScenario, annual_return_pct: -3 };
+      scenariosMock.mockResolvedValue([scenario, negativeScenario]);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      await selectBothScenarios();
+      expect(await screen.findByText("-3%")).toBeInTheDocument();
+      expect(screen.queryByText(/risk|warning|caution/i)).not.toBeInTheDocument();
+    });
+
+    // 15. already funded
+    it("shows both scenarios already reached when designated funding already meets the target", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 100000, target_date: "2030-01-01" }]);
+      allocationsMock.mockResolvedValue([{ ...cashAllocation, allocated_amount: 250000 }]);
+      scenariosMock.mockResolvedValue([scenario, secondScenario]);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      await selectBothScenarios();
+      expect(await screen.findAllByText("Already reached")).toHaveLength(2);
+    });
+
+    // 16. Funding Health warning shown once, shared (not once per scenario side or allocation)
+    it("shows shared Funding Health once per source near the comparison", async () => {
+      cashAccountsMock.mockResolvedValue([{ ...cashAccount, balance: 50000 }]);
+      allocationsMock.mockResolvedValue([
+        { ...cashAllocation, allocated_amount: 100000 },
+        { ...cashAllocation, id: 102, allocated_amount: 100000 },
+      ]);
+      scenariosMock.mockResolvedValue([scenario, secondScenario]);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      await selectBothScenarios();
+      await screen.findByText("Reach date");
+      const compareContainer = screen.getByText("Compare scenarios").closest("div") as HTMLElement;
+      const warnings = within(compareContainer).getAllByText(
+        (_, element) => element?.textContent === "Current value ฿50,000.00 · Attention: exceeds current value by ฿150,000.00",
+      );
+      expect(warnings).toHaveLength(1);
+    });
+
+    // 17. allocation failure => unavailable
+    it("marks the comparison unavailable when allocation evidence fails to load", async () => {
+      allocationsMock.mockRejectedValue(new Error("allocations offline"));
+      scenariosMock.mockResolvedValue([scenario, secondScenario]);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      await screen.findByText((_, element) => element?.textContent === "Aggressive contribution (฿20,000.00/month · 6% annual return assumption)");
+      fireEvent.change(screen.getByLabelText("Compare scenario A for Retire by 55"), { target: { value: String(scenario.id) } });
+      fireEvent.change(screen.getByLabelText("Compare scenario B for Retire by 55"), { target: { value: String(secondScenario.id) } });
+      expect(await screen.findByText("Comparison unavailable — designated funding could not be loaded.")).toBeInTheDocument();
+    });
+
+    // 18. source valuation failure does not block comparison
+    it("still computes the comparison when a source's current-value lookup fails", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 1000000, target_date: null }]);
+      allocationsMock.mockResolvedValue([portfolioAllocation]);
+      holdingsMock.mockRejectedValue(new Error("valuation offline"));
+      scenariosMock.mockResolvedValue([scenario, secondScenario]);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      await selectBothScenarios();
+      expect(await screen.findByText("Monthly contribution")).toBeInTheDocument();
+      expect(screen.getAllByText("Current value unavailable · Funding health unavailable").length).toBeGreaterThan(0);
+    });
+
+    // 19. scenario edit refresh
+    it("refreshes comparison results after editing a selected scenario", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 1000000, target_date: null }]);
+      allocationsMock.mockResolvedValue([{ ...cashAllocation, allocated_amount: 100000 }]);
+      scenariosMock.mockResolvedValue([scenario, secondScenario]);
+      scenariosUpdateMock.mockResolvedValue({ ...scenario, monthly_contribution: 99000 });
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      await selectBothScenarios();
+      expect(await screen.findByText("฿20,000.00")).toBeInTheDocument();
+
+      scenariosMock.mockResolvedValue([{ ...scenario, monthly_contribution: 99000 }, secondScenario]);
+      fireEvent.click(screen.getByRole("button", { name: "Edit Aggressive contribution scenario" }));
+      fireEvent.change(screen.getByLabelText("Edit monthly contribution for Aggressive contribution"), { target: { value: "99000" } });
+      fireEvent.click(screen.getAllByRole("button", { name: "Save" })[0]);
+      await waitFor(() => expect(scenariosUpdateMock).toHaveBeenCalled());
+      expect(await screen.findByText("฿99,000.00")).toBeInTheDocument();
+    });
+
+    // 20. scenario archive removes selection
+    it("drops a selection and its result when that scenario becomes archived", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 1000000, target_date: null }]);
+      allocationsMock.mockResolvedValue([{ ...cashAllocation, allocated_amount: 100000 }]);
+      scenariosMock.mockResolvedValue([scenario, secondScenario]);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      await selectBothScenarios();
+      expect(await screen.findByText("Reach date")).toBeInTheDocument();
+
+      scenariosMock.mockResolvedValue([{ ...secondScenario, is_archived: true }, scenario]);
+      fireEvent.click(screen.getByRole("button", { name: "Archive Conservative plan scenario" }));
+      await waitFor(() => expect(screen.queryByText("Reach date")).not.toBeInTheDocument());
+      // Only one active scenario remains — the comparison selectors are withdrawn entirely, not left stale.
+      expect(screen.getByText("Save at least two active scenarios to compare them.")).toBeInTheDocument();
+      expect(screen.queryByLabelText("Compare scenario B for Retire by 55")).not.toBeInTheDocument();
+    });
+
+    // 21. route transition reset
+    it("resets comparison selection after a route transition", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 1000000, target_date: null }]);
+      allocationsMock.mockResolvedValue([{ ...cashAllocation, allocated_amount: 100000 }]);
+      scenariosMock.mockImplementation(async (goalId) => (goalId === 1 ? [scenario, secondScenario] : []));
+      const { rerender } = render(<GoalDetailPage params={{ id: "1" }} />);
+      await selectBothScenarios();
+      expect(await screen.findByText("Reach date")).toBeInTheDocument();
+
+      listMock.mockResolvedValue([goal, secondGoal]);
+      rerender(<GoalDetailPage params={{ id: "2" }} />);
+      await screen.findByRole("heading", { name: "Buy a home" });
+      expect(screen.queryByText("Reach date")).not.toBeInTheDocument();
+      expect(screen.getByText("No saved scenarios yet.")).toBeInTheDocument();
+    });
+
+    // 22. no recommendation / ranking language
+    it("does not declare a winner, best, or recommended scenario", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 1000000, target_date: "2030-01-01" }]);
+      allocationsMock.mockResolvedValue([{ ...cashAllocation, allocated_amount: 100000 }]);
+      scenariosMock.mockResolvedValue([scenario, secondScenario]);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      await selectBothScenarios();
+      await screen.findByText("Reach date");
+      expect(screen.queryByText(/winner|best|recommended|optimal|safer|better|preferred|should choose|success chance/i)).not.toBeInTheDocument();
+    });
+
+    // 23. live-context disclosure
+    it("shows the live-context comparison disclosure", async () => {
+      scenariosMock.mockResolvedValue([scenario, secondScenario]);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      await selectBothScenarios();
+      expect(await screen.findByText(
+        "Scenarios are compared using the goal's current target and designated funding.",
+      )).toBeInTheDocument();
     });
   });
 });

@@ -328,6 +328,9 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
             <SavedScenariosSection
               key={currentGoal.id}
               goalId={currentGoal.id}
+              item={currentGoal}
+              allocations={allocations}
+              fundingHealthForSource={fundingHealthForSource}
               readOnly={currentGoal.is_archived}
               scenarios={scenarios}
               onReload={reloadScenarios}
