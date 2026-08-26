@@ -9,7 +9,11 @@ import {
   type SourceFundingHealth,
 } from "@/lib/goalFunding";
 import { computePortfolioCurrentValue } from "@/lib/wealthOverview";
-import { computeGoalWhatIf, formatMonthLabel } from "@/lib/goalWhatIf";
+import {
+  computeGoalWhatIf,
+  computeRequiredMonthlyContribution,
+  formatMonthLabel,
+} from "@/lib/goalWhatIf";
 import {
   createGoalFundingAllocation,
   createWealthGoal,
@@ -439,6 +443,7 @@ function GoalWhatIfSection({
   fundingHealthForSource: (kind: GoalFundingSourceKind, id: number) => SourceFundingHealth;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [mode, setMode] = useState<"forward" | "required">("forward");
   const [monthlyContribution, setMonthlyContribution] = useState("");
   const [annualReturnPct, setAnnualReturnPct] = useState("0");
 
@@ -464,6 +469,13 @@ function GoalWhatIfSection({
     asOfDate: todayIso(),
     targetDate: item.target_date,
   });
+  const requiredResult = startingValue === null ? null : computeRequiredMonthlyContribution({
+    targetAmount: item.target_amount,
+    startingValue,
+    annualReturnPct: parsedReturn,
+    asOfDate: todayIso(),
+    targetDate: item.target_date,
+  });
 
   const sourceHealths = Array.isArray(allocations)
     ? allocations
@@ -474,17 +486,38 @@ function GoalWhatIfSection({
   return (
     <div className="pt-3 border-t space-y-2">
       <button type="button" onClick={() => setExpanded(false)} className="text-sm text-blue-600 hover:underline">What-If</button>
+      <div role="group" aria-label={`What-If mode for ${item.name}`} className="flex gap-2 text-xs">
+        <button
+          type="button"
+          aria-pressed={mode === "forward"}
+          onClick={() => setMode("forward")}
+          className={mode === "forward" ? "font-semibold text-blue-700" : "text-gray-500 hover:underline"}
+        >
+          When will I reach it?
+        </button>
+        <button
+          type="button"
+          aria-pressed={mode === "required"}
+          onClick={() => setMode("required")}
+          className={mode === "required" ? "font-semibold text-blue-700" : "text-gray-500 hover:underline"}
+        >
+          How much per month do I need?
+        </button>
+      </div>
+
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Monthly contribution">
-          <input
-            aria-label={`What-If monthly contribution for ${item.name}`}
-            type="number"
-            step="0.01"
-            value={monthlyContribution}
-            onChange={(event) => setMonthlyContribution(event.target.value)}
-            className={inputClass}
-          />
-        </Field>
+        {mode === "forward" && (
+          <Field label="Monthly contribution">
+            <input
+              aria-label={`What-If monthly contribution for ${item.name}`}
+              type="number"
+              step="0.01"
+              value={monthlyContribution}
+              onChange={(event) => setMonthlyContribution(event.target.value)}
+              className={inputClass}
+            />
+          </Field>
+        )}
         <Field label="Annual return assumption (%)">
           <input
             aria-label={`What-If annual return assumption for ${item.name}`}
@@ -501,39 +534,58 @@ function GoalWhatIfSection({
         <p className="text-xs text-gray-400">What-If loading — funding data is still loading.</p>
       ) : startingValue === null ? (
         <p role="alert" className="text-xs text-red-600">What-If unavailable — funding data failed to load.</p>
-      ) : !result || !result.valid ? (
-        <p role="alert" className="text-xs text-red-600">{result && !result.valid ? result.error : "Invalid What-If inputs."}</p>
+      ) : mode === "forward" ? (
+        !result || !result.valid ? (
+          <p role="alert" className="text-xs text-red-600">{result && !result.valid ? result.error : "Invalid What-If inputs."}</p>
+        ) : (
+          <div className="text-sm bg-gray-50 rounded p-2 space-y-1.5">
+            <p className="text-xs text-gray-500">
+              Monthly contribution: {formatThb(result.assumptions.monthlyContribution)} · Annual return assumption: {result.assumptions.annualReturnPct}%
+            </p>
+            {result.alreadyReached ? (
+              <p>Designated funding already reaches {formatThb(result.targetAmount)} under these assumptions.</p>
+            ) : result.reachable ? (
+              <p>Under these assumptions, designated funding would reach {formatThb(result.targetAmount)} around {formatMonthLabel(result.reachDate as string)}.</p>
+            ) : (
+              <p>Under these assumptions, designated funding would not reach {formatThb(result.targetAmount)} within 50 years.</p>
+            )}
+
+            {result.targetDate && (
+              result.targetDateInPast ? (
+                <p className="text-xs text-gray-500">Saved target date ({result.targetDate}) has passed.</p>
+              ) : (
+                <p className="text-xs text-gray-500">
+                  Saved target date: {result.targetDate} · Projected amount by that date: {formatThb(result.projectedValueAtTargetDate as number)}
+                  {result.shortfallAtTargetDate != null && ` · ${formatThb(result.shortfallAtTargetDate)} below the current target`}
+                  {result.surplusAtTargetDate != null && ` · ${formatThb(result.surplusAtTargetDate)} above the current target`}
+                </p>
+              )
+            )}
+          </div>
+        )
+      ) : !requiredResult || !requiredResult.valid ? (
+        <p role="alert" className="text-xs text-red-600">{requiredResult && !requiredResult.valid ? requiredResult.error : "Invalid required-contribution inputs."}</p>
       ) : (
         <div className="text-sm bg-gray-50 rounded p-2 space-y-1.5">
           <p className="text-xs text-gray-500">
-            Monthly contribution: {formatThb(result.assumptions.monthlyContribution)} · Annual return assumption: {result.assumptions.annualReturnPct}%
+            Designated funding starting amount: {formatThb(requiredResult.startingValue)} · Current target: {formatThb(requiredResult.targetAmount)}
           </p>
-          {result.alreadyReached ? (
-            <p>Designated funding already reaches {formatThb(result.targetAmount)} under these assumptions.</p>
-          ) : result.reachable ? (
-            <p>Under these assumptions, designated funding would reach {formatThb(result.targetAmount)} around {formatMonthLabel(result.reachDate as string)}.</p>
+          <p className="text-xs text-gray-500">
+            Saved target date: {requiredResult.assumptions.targetDate} · Annual return assumption: {requiredResult.assumptions.annualReturnPct}%
+          </p>
+          {requiredResult.alreadyReached ? (
+            <p>No additional monthly contribution is required under the current designated funding.</p>
           ) : (
-            <p>Under these assumptions, designated funding would not reach {formatThb(result.targetAmount)} within 50 years.</p>
+            <p>Under this assumption, contributing {formatThb(requiredResult.requiredMonthlyContribution)} per month would reach the current target by {requiredResult.assumptions.targetDate}.</p>
           )}
+          <p className="text-xs text-gray-500">Projected amount by that date: {formatThb(requiredResult.projectedValueAtTargetDate)}</p>
+        </div>
+      )}
 
-          {result.targetDate && (
-            result.targetDateInPast ? (
-              <p className="text-xs text-gray-500">Saved target date ({result.targetDate}) has passed.</p>
-            ) : (
-              <p className="text-xs text-gray-500">
-                Saved target date: {result.targetDate} · Projected amount by that date: {formatThb(result.projectedValueAtTargetDate as number)}
-                {result.shortfallAtTargetDate != null && ` · ${formatThb(result.shortfallAtTargetDate)} below the current target`}
-                {result.surplusAtTargetDate != null && ` · ${formatThb(result.surplusAtTargetDate)} above the current target`}
-              </p>
-            )
-          )}
-
-          {sourceHealths.length > 0 && (
-            <div className="pt-1 border-t">
-              <p className="text-xs text-gray-500">Funding health for this goal&apos;s sources:</p>
-              {sourceHealths.map((health, index) => <FundingHealthRow key={index} health={health} />)}
-            </div>
-          )}
+      {sourceHealths.length > 0 && (
+        <div className="pt-1 border-t">
+          <p className="text-xs text-gray-500">Funding health for this goal&apos;s sources:</p>
+          {sourceHealths.map((health, index) => <FundingHealthRow key={index} health={health} />)}
         </div>
       )}
     </div>

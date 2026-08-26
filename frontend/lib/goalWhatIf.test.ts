@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { computeGoalWhatIf, formatMonthLabel, type GoalWhatIfInput, type GoalWhatIfValid } from "./goalWhatIf.ts";
+import {
+  computeGoalWhatIf,
+  computeRequiredMonthlyContribution,
+  formatMonthLabel,
+  type GoalWhatIfInput,
+  type GoalWhatIfValid,
+  type RequiredMonthlyContributionInput,
+  type RequiredMonthlyContributionValid,
+} from "./goalWhatIf.ts";
 
 function input(overrides: Partial<GoalWhatIfInput> = {}): GoalWhatIfInput {
   return {
@@ -17,6 +25,46 @@ function input(overrides: Partial<GoalWhatIfInput> = {}): GoalWhatIfInput {
 
 function assertValid(result: ReturnType<typeof computeGoalWhatIf>): asserts result is GoalWhatIfValid {
   assert.equal(result.valid, true, (result as { error?: string }).error);
+}
+
+function inverseInput(overrides: Partial<RequiredMonthlyContributionInput> = {}): RequiredMonthlyContributionInput {
+  return {
+    targetAmount: 1_000_000,
+    startingValue: 0,
+    annualReturnPct: 0,
+    asOfDate: "2026-01-15",
+    targetDate: "2027-01-15",
+    ...overrides,
+  };
+}
+
+function assertInverseValid(
+  result: ReturnType<typeof computeRequiredMonthlyContribution>,
+): asserts result is RequiredMonthlyContributionValid {
+  assert.equal(result.valid, true, (result as { error?: string }).error);
+}
+
+function assertInverseIsForwardMinimal(inverse: RequiredMonthlyContributionInput): RequiredMonthlyContributionValid {
+  const result = computeRequiredMonthlyContribution(inverse);
+  assertInverseValid(result);
+  const forward = computeGoalWhatIf({
+    ...inverse,
+    monthlyContribution: result.requiredMonthlyContribution,
+  });
+  assertValid(forward);
+  assert.equal(forward.projectedValueAtTargetDate, result.projectedValueAtTargetDate);
+  assert.ok(result.projectedValueAtTargetDate >= result.targetAmount);
+
+  if (result.requiredMonthlyContribution > 0) {
+    const previousSatang = Math.round(result.requiredMonthlyContribution * 100) - 1;
+    const previous = computeGoalWhatIf({
+      ...inverse,
+      monthlyContribution: previousSatang / 100,
+    });
+    assertValid(previous);
+    assert.ok((previous.projectedValueAtTargetDate as number) < result.targetAmount);
+  }
+  return result;
 }
 
 // ─── already reached / over-funded ──────────────────────────────────────────
@@ -338,4 +386,182 @@ test("formatMonthLabel renders a human month/year label", () => {
   assert.equal(formatMonthLabel("2028-03"), "March 2028");
   assert.equal(formatMonthLabel("2026-01"), "January 2026");
   assert.equal(formatMonthLabel("2026-12"), "December 2026");
+});
+
+// ─── required monthly contribution inverse ──────────────────────────────────
+
+test("required contribution at 0% return uses the simple linear inverse", () => {
+  const result = computeRequiredMonthlyContribution(inverseInput({ targetAmount: 1_200_000 }));
+  assertInverseValid(result);
+  assert.equal(result.monthsAvailable, 12);
+  assert.equal(result.requiredMonthlyContribution, 100_000);
+  assert.equal(result.projectedValueAtTargetDate, 1_200_000);
+});
+
+test("positive return lowers the required contribution and still reaches the target", () => {
+  const zeroReturn = computeRequiredMonthlyContribution(inverseInput({ targetAmount: 1_200_000, annualReturnPct: 0 }));
+  const positiveReturn = computeRequiredMonthlyContribution(inverseInput({ targetAmount: 1_200_000, annualReturnPct: 8 }));
+  assertInverseValid(zeroReturn);
+  assertInverseValid(positiveReturn);
+  assert.ok(positiveReturn.requiredMonthlyContribution > 0);
+  assert.ok(positiveReturn.requiredMonthlyContribution < zeroReturn.requiredMonthlyContribution);
+  assert.ok(positiveReturn.projectedValueAtTargetDate >= positiveReturn.targetAmount);
+});
+
+test("negative return is allowed and requires more contribution", () => {
+  const zeroReturn = computeRequiredMonthlyContribution(inverseInput({ targetAmount: 1_200_000, annualReturnPct: 0 }));
+  const negativeReturn = computeRequiredMonthlyContribution(inverseInput({ targetAmount: 1_200_000, annualReturnPct: -5 }));
+  assertInverseValid(zeroReturn);
+  assertInverseValid(negativeReturn);
+  assert.ok(negativeReturn.requiredMonthlyContribution > zeroReturn.requiredMonthlyContribution);
+  assert.ok(negativeReturn.projectedValueAtTargetDate >= negativeReturn.targetAmount);
+});
+
+test("already funded goals require zero additional monthly contribution", () => {
+  const result = computeRequiredMonthlyContribution(inverseInput({ startingValue: 1_200_000, targetAmount: 1_000_000 }));
+  assertInverseValid(result);
+  assert.equal(result.alreadyReached, true);
+  assert.equal(result.requiredMonthlyContribution, 0);
+});
+
+test("an exact N-month target produces a forward-verifiable contribution", () => {
+  const result = computeRequiredMonthlyContribution(inverseInput({ targetAmount: 600_000 }));
+  assertInverseValid(result);
+  assert.equal(result.monthsAvailable, 12);
+  assert.equal(result.requiredMonthlyContribution, 50_000);
+  assert.ok(result.projectedValueAtTargetDate >= result.targetAmount);
+});
+
+test("required contribution rounds up to satang and avoids underfunding", () => {
+  const result = computeRequiredMonthlyContribution(inverseInput({ targetAmount: 1_000 }));
+  assertInverseValid(result);
+  assert.equal(result.requiredMonthlyContribution, 83.34);
+  assert.ok(result.projectedValueAtTargetDate >= 1_000);
+  const roundedDown = computeGoalWhatIf({
+    targetAmount: 1_000,
+    startingValue: 0,
+    monthlyContribution: 83.33,
+    annualReturnPct: 0,
+    asOfDate: "2026-01-15",
+    targetDate: "2027-01-15",
+  });
+  assertValid(roundedDown);
+  assert.equal(roundedDown.projectedValueAtTargetDate, 999.96);
+});
+
+test("inverse result is the forward-minimal satang across returns, horizons, and month-end boundaries", () => {
+  for (const scenario of [
+    inverseInput({ targetAmount: 1_000 }),
+    inverseInput({ targetAmount: 1_200_000, annualReturnPct: 8 }),
+    inverseInput({ targetAmount: 1_200_000, annualReturnPct: -5 }),
+    inverseInput({ targetAmount: 100, annualReturnPct: 8, targetDate: "2026-02-15" }),
+    inverseInput({ targetAmount: 2_000_000, startingValue: 500_000, annualReturnPct: 4.5, targetDate: "2076-01-15" }),
+    inverseInput({ targetAmount: 100, annualReturnPct: -5, asOfDate: "2027-01-31", targetDate: "2027-02-28" }),
+  ]) {
+    assertInverseIsForwardMinimal(scenario);
+  }
+});
+
+test("very small nonzero annual returns retain stable inverse math", () => {
+  const result = assertInverseIsForwardMinimal(inverseInput({
+    startingValue: 1_000_000_000_000,
+    targetAmount: 1_000_000_000_600.04,
+    annualReturnPct: 1e-13,
+    targetDate: "2076-01-15",
+  }));
+  assert.equal(result.requiredMonthlyContribution, 1);
+});
+
+test("same-month underfunded target has zero available periods and is unavailable", () => {
+  const result = computeRequiredMonthlyContribution(inverseInput({ targetDate: "2026-01-31" }));
+  assert.equal(result.valid, false);
+  assert.match(result.error, /No completed monthly contribution periods/);
+});
+
+test("same-month target on the as-of date remains zero-period and honest", () => {
+  const result = computeRequiredMonthlyContribution(inverseInput({ targetDate: "2026-01-15" }));
+  assert.equal(result.valid, false);
+  assert.match(result.error, /No completed monthly contribution periods/);
+});
+
+test("exactly one completed month includes one month-end contribution period", () => {
+  const result = computeRequiredMonthlyContribution(inverseInput({ targetAmount: 100, targetDate: "2026-02-15" }));
+  assertInverseValid(result);
+  assert.equal(result.monthsAvailable, 1);
+  assert.equal(result.requiredMonthlyContribution, 100);
+});
+
+test("Jan 31 clamps to Feb 28 and later 31-day boundaries remain anchored", () => {
+  const febBoundary = computeRequiredMonthlyContribution(inverseInput({
+    targetAmount: 100, asOfDate: "2027-01-31", targetDate: "2027-02-28",
+  }));
+  const beforeMarchBoundary = computeRequiredMonthlyContribution(inverseInput({
+    targetAmount: 200, asOfDate: "2027-01-31", targetDate: "2027-03-30",
+  }));
+  const marchBoundary = computeRequiredMonthlyContribution(inverseInput({
+    targetAmount: 200, asOfDate: "2027-01-31", targetDate: "2027-03-31",
+  }));
+  assertInverseValid(febBoundary);
+  assert.equal(febBoundary.monthsAvailable, 1);
+  assert.equal(febBoundary.requiredMonthlyContribution, 100);
+  assertInverseValid(beforeMarchBoundary);
+  assert.equal(beforeMarchBoundary.monthsAvailable, 1);
+  assert.equal(beforeMarchBoundary.requiredMonthlyContribution, 200);
+  assertInverseValid(marchBoundary);
+  assert.equal(marchBoundary.monthsAvailable, 2);
+  assert.equal(marchBoundary.requiredMonthlyContribution, 100);
+});
+
+test("leap-year Jan 31 clamps to Feb 29", () => {
+  const result = computeRequiredMonthlyContribution(inverseInput({
+    targetAmount: 100, asOfDate: "2028-01-31", targetDate: "2028-02-29",
+  }));
+  assertInverseValid(result);
+  assert.equal(result.monthsAvailable, 1);
+  assert.equal(result.requiredMonthlyContribution, 100);
+});
+
+test("past target date is unavailable", () => {
+  const result = computeRequiredMonthlyContribution(inverseInput({ targetDate: "2020-01-15" }));
+  assert.equal(result.valid, false);
+  assert.equal(result.error, "The saved target date has passed.");
+});
+
+test("missing target date is unavailable", () => {
+  const result = computeRequiredMonthlyContribution(inverseInput({ targetDate: null }));
+  assert.equal(result.valid, false);
+  assert.equal(result.error, "A saved target date is required for this calculation.");
+});
+
+test("annual return at or below -100% is rejected", () => {
+  assert.equal(computeRequiredMonthlyContribution(inverseInput({ annualReturnPct: -100 })).valid, false);
+  assert.equal(computeRequiredMonthlyContribution(inverseInput({ annualReturnPct: -150 })).valid, false);
+});
+
+test("non-finite inverse inputs are rejected honestly", () => {
+  assert.equal(computeRequiredMonthlyContribution(inverseInput({ targetAmount: NaN })).valid, false);
+  assert.equal(computeRequiredMonthlyContribution(inverseInput({ startingValue: Infinity })).valid, false);
+  assert.equal(computeRequiredMonthlyContribution(inverseInput({ annualReturnPct: NaN })).valid, false);
+  assert.equal(computeRequiredMonthlyContribution(inverseInput({ asOfDate: "2026-02-30" })).valid, false);
+});
+
+test("zero starting value is legitimate for the inverse", () => {
+  const result = computeRequiredMonthlyContribution(inverseInput({ startingValue: 0, targetAmount: 1_200 }));
+  assertInverseValid(result);
+  assert.equal(result.startingValue, 0);
+  assert.equal(result.requiredMonthlyContribution, 100);
+});
+
+test("the 600-month boundary is supported", () => {
+  const result = computeRequiredMonthlyContribution(inverseInput({
+    targetAmount: 600, asOfDate: "2026-01-15", targetDate: "2076-01-15",
+  }));
+  assertInverseValid(result);
+  assert.equal(result.monthsAvailable, 600);
+  assert.equal(result.requiredMonthlyContribution, 1);
+});
+
+test("inverse output is deterministic for identical inputs", () => {
+  const same = inverseInput({ targetAmount: 900_000, annualReturnPct: 4.5, targetDate: "2029-06-15" });
+  assert.deepEqual(computeRequiredMonthlyContribution(same), computeRequiredMonthlyContribution(same));
 });

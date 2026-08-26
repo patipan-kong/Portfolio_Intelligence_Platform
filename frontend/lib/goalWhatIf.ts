@@ -14,6 +14,8 @@
 // Nothing here is persisted, fetched, or mutated: pure functions only.
 
 const HORIZON_MONTHS = 600; // 50 years
+/** Every supported contribution is represented as an exact integer number of satang. */
+const MAX_SAFE_SATANG = Number.MAX_SAFE_INTEGER;
 
 const DATE_PATTERN = /^(\d{4})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 
@@ -69,6 +71,45 @@ export interface GoalWhatIfInvalid {
 }
 
 export type GoalWhatIfResult = GoalWhatIfValid | GoalWhatIfInvalid;
+
+export interface RequiredMonthlyContributionInput {
+  targetAmount: number;
+  /** computeGoalFunding(...).designatedFunding — never a source's current capacity. */
+  startingValue: number;
+  annualReturnPct: number;
+  /** "YYYY-MM-DD" */
+  asOfDate: string;
+  /** WealthGoal.target_date — required for this inverse calculation. */
+  targetDate?: string | null;
+}
+
+export interface RequiredMonthlyContributionAssumptions {
+  annualReturnPct: number;
+  asOfDate: string;
+  targetDate: string;
+}
+
+export interface RequiredMonthlyContributionValid {
+  valid: true;
+  assumptions: RequiredMonthlyContributionAssumptions;
+  targetAmount: number;
+  startingValue: number;
+  alreadyReached: boolean;
+  monthsAvailable: number;
+  /** Rounded up to the smallest supported THB precision (satang). */
+  requiredMonthlyContribution: number;
+  /** Forward projection using the rounded-up contribution. */
+  projectedValueAtTargetDate: number;
+}
+
+export interface RequiredMonthlyContributionInvalid {
+  valid: false;
+  error: string;
+}
+
+export type RequiredMonthlyContributionResult =
+  | RequiredMonthlyContributionValid
+  | RequiredMonthlyContributionInvalid;
 
 interface CalendarDate {
   year: number;
@@ -141,11 +182,31 @@ export function formatMonthLabel(monthStr: string): string {
  * `balance = balance * (1 + monthlyRate) + monthlyContribution`, without
  * accumulating iterative floating-point drift over a long horizon.
  */
+function monthlyRateFromAnnualReturn(annualReturnPct: number): number {
+  // log1p/expm1 retain very small nonzero return assumptions that the
+  // equivalent pow(...)-1 expression can round down to zero.
+  return Math.expm1(Math.log1p(annualReturnPct / 100) / 12);
+}
+
+function growthAndAnnuityFactor(monthlyRate: number, months: number): { growth: number; annuityFactor: number } {
+  if (months <= 0) return { growth: 1, annuityFactor: 0 };
+  if (monthlyRate === 0) return { growth: 1, annuityFactor: months };
+  const logGrowth = months * Math.log1p(monthlyRate);
+  return {
+    growth: Math.exp(logGrowth),
+    annuityFactor: Math.expm1(logGrowth) / monthlyRate,
+  };
+}
+
 function valueAfterMonths(startingValue: number, monthlyContribution: number, monthlyRate: number, months: number): number {
   if (months <= 0) return startingValue;
-  if (monthlyRate === 0) return startingValue + monthlyContribution * months;
-  const growth = Math.pow(1 + monthlyRate, months);
-  return startingValue * growth + monthlyContribution * ((growth - 1) / monthlyRate);
+  const { growth, annuityFactor } = growthAndAnnuityFactor(monthlyRate, months);
+  return startingValue * growth + monthlyContribution * annuityFactor;
+}
+
+function ceilToSafeSatang(value: number): number | null {
+  const satang = Math.ceil(value * 100);
+  return Number.isSafeInteger(satang) && satang >= 0 ? satang : null;
 }
 
 interface ReachSearch {
@@ -203,7 +264,7 @@ export function computeGoalWhatIf(input: GoalWhatIfInput): GoalWhatIfResult {
     return { valid: false, error: "Target date is invalid." };
   }
 
-  const monthlyRate = Math.pow(1 + annualReturnPct / 100, 1 / 12) - 1;
+  const monthlyRate = monthlyRateFromAnnualReturn(annualReturnPct);
   const search = findReachDate(startingValue, monthlyContribution, monthlyRate, targetAmount, parsedAsOfDate);
 
   let targetDateInPast = false;
@@ -237,5 +298,137 @@ export function computeGoalWhatIf(input: GoalWhatIfInput): GoalWhatIfResult {
     projectedValueAtTargetDate,
     shortfallAtTargetDate,
     surplusAtTargetDate,
+  };
+}
+
+/**
+ * Solve the inverse month-end contribution question for a saved target date.
+ * This deliberately shares date and forward-projection helpers with the
+ * forward What-If path, and returns the rounded-up contribution's projection
+ * so the displayed amount is independently verified to reach the target.
+ */
+export function computeRequiredMonthlyContribution(
+  input: RequiredMonthlyContributionInput,
+): RequiredMonthlyContributionResult {
+  const { targetAmount, startingValue, annualReturnPct, asOfDate, targetDate } = input;
+
+  if (!Number.isFinite(targetAmount) || targetAmount <= 0) {
+    return { valid: false, error: "Target amount must be a positive number." };
+  }
+  if (!Number.isFinite(startingValue) || startingValue < 0) {
+    return { valid: false, error: "Starting value must be zero or a positive number." };
+  }
+  if (!Number.isFinite(annualReturnPct) || annualReturnPct <= -100) {
+    return { valid: false, error: "Annual return assumption must be greater than -100%." };
+  }
+
+  const parsedAsOfDate = parseDate(asOfDate);
+  if (parsedAsOfDate === null) {
+    return { valid: false, error: "As-of date is invalid." };
+  }
+  if (targetDate == null) {
+    return { valid: false, error: "A saved target date is required for this calculation." };
+  }
+  const parsedTargetDate = parseDate(targetDate);
+  if (parsedTargetDate === null) {
+    return { valid: false, error: "Target date is invalid." };
+  }
+  if (targetDate < asOfDate) {
+    return { valid: false, error: "The saved target date has passed." };
+  }
+
+  const monthsAvailable = completedProjectionMonths(parsedAsOfDate, parsedTargetDate);
+  const monthlyRate = monthlyRateFromAnnualReturn(annualReturnPct);
+  if (!Number.isFinite(monthlyRate)) {
+    return { valid: false, error: "Annual return assumption cannot produce a finite monthly rate." };
+  }
+  const verifyForward = (monthlyContribution: number): GoalWhatIfResult => computeGoalWhatIf({
+    targetAmount,
+    startingValue,
+    monthlyContribution,
+    annualReturnPct,
+    asOfDate,
+    targetDate,
+  });
+
+  if (startingValue >= targetAmount) {
+    const forward = verifyForward(0);
+    if (!forward.valid || forward.projectedValueAtTargetDate === null || !Number.isFinite(forward.projectedValueAtTargetDate)) {
+      return { valid: false, error: "Required contribution could not be verified to reach the target." };
+    }
+    return {
+      valid: true,
+      assumptions: { annualReturnPct, asOfDate, targetDate },
+      targetAmount,
+      startingValue,
+      alreadyReached: true,
+      monthsAvailable,
+      requiredMonthlyContribution: 0,
+      projectedValueAtTargetDate: forward.projectedValueAtTargetDate,
+    };
+  }
+  if (monthsAvailable <= 0) {
+    return { valid: false, error: "No completed monthly contribution periods are available before the saved target date." };
+  }
+
+  const { growth, annuityFactor } = growthAndAnnuityFactor(monthlyRate, monthsAvailable);
+  const numerator = targetAmount - startingValue * growth;
+  const rawContribution = numerator / annuityFactor;
+  if (!Number.isFinite(growth) || !Number.isFinite(annuityFactor) || !Number.isFinite(rawContribution)) {
+    return { valid: false, error: "Required contribution could not be calculated finitely." };
+  }
+
+  const initialSatang = ceilToSafeSatang(Math.max(rawContribution, 0));
+  if (initialSatang === null) {
+    return { valid: false, error: "Required contribution could not be calculated finitely." };
+  }
+  let upperSatang: number = initialSatang;
+
+  const forwardValueAtSatang = (satang: number): number | null => {
+    const forward = verifyForward(satang / 100);
+    return forward.valid && forward.projectedValueAtTargetDate !== null && Number.isFinite(forward.projectedValueAtTargetDate)
+      ? forward.projectedValueAtTargetDate
+      : null;
+  };
+  const reachesTarget = (satang: number): boolean => {
+    const projectedValue = forwardValueAtSatang(satang);
+    return projectedValue !== null && projectedValue >= targetAmount;
+  };
+
+  // The closed form gives an efficient upper bound. Verify it through the
+  // forward engine, then expand only if floating-point operation ordering
+  // leaves it short. The binary search establishes the smallest safe integer
+  // satang that satisfies the forward engine's own semantics.
+  if (!reachesTarget(upperSatang)) {
+    upperSatang = Math.max(upperSatang, 1);
+    while (!reachesTarget(upperSatang)) {
+      if (upperSatang === MAX_SAFE_SATANG) {
+        return { valid: false, error: "Required contribution could not be verified to reach the target." };
+      }
+      upperSatang = Math.min(upperSatang * 2, MAX_SAFE_SATANG);
+    }
+  }
+
+  let lowerSatang = 0;
+  while (lowerSatang < upperSatang) {
+    const middleSatang = lowerSatang + Math.floor((upperSatang - lowerSatang) / 2);
+    if (reachesTarget(middleSatang)) upperSatang = middleSatang;
+    else lowerSatang = middleSatang + 1;
+  }
+
+  const projectedValueAtTargetDate = forwardValueAtSatang(upperSatang);
+  if (projectedValueAtTargetDate === null || projectedValueAtTargetDate < targetAmount) {
+    return { valid: false, error: "Required contribution could not be verified to reach the target." };
+  }
+
+  return {
+    valid: true,
+    assumptions: { annualReturnPct, asOfDate, targetDate },
+    targetAmount,
+    startingValue,
+    alreadyReached: false,
+    monthsAvailable,
+    requiredMonthlyContribution: upperSatang / 100,
+    projectedValueAtTargetDate,
   };
 }

@@ -496,6 +496,18 @@ describe("GoalsPage", () => {
       expect(screen.getByLabelText(`What-If annual return assumption for ${goal.name}`)).toBeInTheDocument();
     });
 
+    it("offers the Required Monthly Contribution inverse mode", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 1200000, target_date: "2027-01-01" }]);
+      allocationsListMock.mockResolvedValue([]);
+      render(<GoalsPage />);
+      await screen.findByText("Retire by 55");
+
+      fireEvent.click(screen.getByRole("button", { name: "What-If" }));
+      fireEvent.click(screen.getByRole("button", { name: "How much per month do I need?" }));
+      expect(screen.getByLabelText(`What-If annual return assumption for ${goal.name}`)).toBeInTheDocument();
+      expect(screen.queryByLabelText(`What-If monthly contribution for ${goal.name}`)).not.toBeInTheDocument();
+    });
+
     it("shows What-If as unavailable (not a zero projection) when allocation evidence fails to load", async () => {
       listMock.mockResolvedValue([goal]);
       allocationsListMock.mockRejectedValue(new Error("allocations offline"));
@@ -503,6 +515,17 @@ describe("GoalsPage", () => {
       await screen.findByText("Retire by 55");
 
       fireEvent.click(screen.getByRole("button", { name: "What-If" }));
+      expect(await screen.findByText("What-If unavailable — funding data failed to load.")).toBeInTheDocument();
+    });
+
+    it("keeps Required Monthly Contribution unavailable when allocation evidence fails", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_date: "2027-01-01" }]);
+      allocationsListMock.mockRejectedValue(new Error("allocations offline"));
+      render(<GoalsPage />);
+      await screen.findByText("Retire by 55");
+
+      fireEvent.click(screen.getByRole("button", { name: "What-If" }));
+      fireEvent.click(screen.getByRole("button", { name: "How much per month do I need?" }));
       expect(await screen.findByText("What-If unavailable — funding data failed to load.")).toBeInTheDocument();
     });
 
@@ -525,6 +548,66 @@ describe("GoalsPage", () => {
 
       fireEvent.click(screen.getByRole("button", { name: "What-If" }));
       expect(await screen.findByText((_, el) => el?.textContent === "Under these assumptions, designated funding would not reach ฿1,000,000.00 within 50 years.")).toBeInTheDocument();
+    });
+
+    it("uses legitimate zero designated funding for the inverse calculation", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 1200000, target_date: "2027-01-01" }]);
+      allocationsListMock.mockResolvedValue([]);
+      render(<GoalsPage />);
+      await screen.findByText("Retire by 55");
+
+      fireEvent.click(screen.getByRole("button", { name: "What-If" }));
+      fireEvent.click(screen.getByRole("button", { name: "How much per month do I need?" }));
+      expect(await screen.findByText((_, el) => el?.textContent === "Under this assumption, contributing ฿100,000.00 per month would reach the current target by 2027-01-01.")).toBeInTheDocument();
+      expect(screen.getByText((_, el) => el?.textContent === "Designated funding starting amount: ฿0.00 · Current target: ฿1,200,000.00")).toBeInTheDocument();
+    });
+
+    it("shows the honest no-target-date inverse message", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_date: null }]);
+      allocationsListMock.mockResolvedValue([]);
+      render(<GoalsPage />);
+      await screen.findByText("Retire by 55");
+
+      fireEvent.click(screen.getByRole("button", { name: "What-If" }));
+      fireEvent.click(screen.getByRole("button", { name: "How much per month do I need?" }));
+      expect(await screen.findByText("A saved target date is required for this calculation.")).toBeInTheDocument();
+    });
+
+    it("shows the honest past-target-date inverse message", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_date: "2020-01-01" }]);
+      allocationsListMock.mockResolvedValue([]);
+      render(<GoalsPage />);
+      await screen.findByText("Retire by 55");
+
+      fireEvent.click(screen.getByRole("button", { name: "What-If" }));
+      fireEvent.click(screen.getByRole("button", { name: "How much per month do I need?" }));
+      expect(await screen.findByText("The saved target date has passed.")).toBeInTheDocument();
+    });
+
+    it("shows zero when designated funding already reaches the target", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 200000, target_date: "2027-01-01" }]);
+      allocationsListMock.mockResolvedValue([{ ...cashAllocation, allocated_amount: 300000 }]);
+      render(<GoalsPage />);
+      await screen.findByText("Retire by 55");
+
+      fireEvent.click(screen.getByRole("button", { name: "What-If" }));
+      fireEvent.click(screen.getByRole("button", { name: "How much per month do I need?" }));
+      expect(await screen.findByText("No additional monthly contribution is required under the current designated funding.")).toBeInTheDocument();
+      expect(screen.getByText((_, el) => el?.textContent === "Designated funding starting amount: ฿300,000.00 · Current target: ฿200,000.00")).toBeInTheDocument();
+    });
+
+    it("computes a positive required contribution and echoes the annual-return assumption", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 1200000, target_date: "2027-01-01" }]);
+      allocationsListMock.mockResolvedValue([]);
+      render(<GoalsPage />);
+      await screen.findByText("Retire by 55");
+
+      fireEvent.click(screen.getByRole("button", { name: "What-If" }));
+      fireEvent.click(screen.getByRole("button", { name: "How much per month do I need?" }));
+      fireEvent.change(screen.getByLabelText(`What-If annual return assumption for ${goal.name}`), { target: { value: "5" } });
+
+      expect(await screen.findByText(/Under this assumption, contributing ฿[\d,]+\.\d{2} per month would reach the current target by 2027-01-01\./)).toBeInTheDocument();
+      expect(screen.getByText((_, el) => el?.textContent === "Saved target date: 2027-01-01 · Annual return assumption: 5%")).toBeInTheDocument();
     });
 
     it("defaults the contribution scenario to 0% return and a 0 monthly contribution", async () => {
@@ -641,6 +724,20 @@ describe("GoalsPage", () => {
       expect(screen.getByText((_, el) => el?.textContent === "Designated funding already reaches ฿500,000.00 under these assumptions.")).toBeInTheDocument();
     });
 
+    it("keeps Funding Health separate from the inverse calculation", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 1000000, target_date: "2027-01-01" }]);
+      cashAccountsMock.mockResolvedValue([{ ...cashAccount, balance: 100000 }]);
+      allocationsListMock.mockResolvedValue([{ ...cashAllocation, allocated_amount: 300000 }]);
+      render(<GoalsPage />);
+      await screen.findByText("Retire by 55");
+
+      fireEvent.click(screen.getByRole("button", { name: "What-If" }));
+      fireEvent.click(screen.getByRole("button", { name: "How much per month do I need?" }));
+      expect(await screen.findByText(/Under this assumption, contributing ฿[\d,]+\.\d{2} per month/)).toBeInTheDocument();
+      expect(screen.getByText("Funding health for this goal's sources:")).toBeInTheDocument();
+      expect(screen.getAllByText((_, el) => el?.textContent === "Current value ฿100,000.00 · Attention: exceeds current value by ฿200,000.00").length).toBeGreaterThan(0);
+    });
+
     it("never introduces forecast, probability, guarantee, or advice language in the What-If output", async () => {
       listMock.mockResolvedValue([{ ...goal, target_amount: 1200000, target_date: "2027-01-01" }]);
       allocationsListMock.mockResolvedValue([]);
@@ -652,6 +749,18 @@ describe("GoalsPage", () => {
       await screen.findByText((_, el) => el?.textContent === "Saved target date: 2027-01-01 · Projected amount by that date: ฿600,000.00 · ฿600,000.00 below the current target");
 
       expect(screen.queryByText(/forecast|expected return|probability|guaranteed|on track|likely to|recommended contribution|should contribute/i)).not.toBeInTheDocument();
+    });
+
+    it("never introduces advisory or predictive language in inverse output", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 1200000, target_date: "2027-01-01" }]);
+      allocationsListMock.mockResolvedValue([]);
+      render(<GoalsPage />);
+      await screen.findByText("Retire by 55");
+
+      fireEvent.click(screen.getByRole("button", { name: "What-If" }));
+      fireEvent.click(screen.getByRole("button", { name: "How much per month do I need?" }));
+      await screen.findByText(/Under this assumption, contributing/);
+      expect(screen.queryByText(/recommended contribution|should contribute|guaranteed|on track|forecast|expected return|probability/i)).not.toBeInTheDocument();
     });
   });
 });
