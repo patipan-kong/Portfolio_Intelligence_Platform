@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import CashFlowPage from "@/app/cash-flow/page";
 import {
@@ -324,5 +324,306 @@ describe("CashFlowPage", () => {
     stale?.resolve({ month: "2026-07", events: [event({ amount: 999 })] });
     await waitFor(() => expect(screen.getByText("August 2026")).toBeInTheDocument());
     expect(screen.queryByText(/฿999\.00/)).not.toBeInTheDocument();
+  });
+
+  describe("Recorded expense coverage", () => {
+    const earlyBaseline = { id: 1, cash_account_id: 1, effective_on: "2026-01-01", observed_balance: 1000, created_at: "2026-01-01T00:00:00Z" };
+    // With currentMonthKey mocked to "2026-08", the recorded window is ["2026-05", "2026-06", "2026-07"].
+
+    function reportForMonths(byMonth: Record<string, CashFlowEvent[]>) {
+      reportMock.mockImplementation(async (selectedMonth) => ({ month: selectedMonth, events: byMonth[selectedMonth] ?? [] }));
+    }
+
+    it("renders the section above the month stepper with the not-affected-by-selection note", async () => {
+      accountsMock.mockResolvedValue([account({ balance: 42000, baseline: earlyBaseline })]);
+      reportForMonths({
+        "2026-05": [event({ id: 1, transaction_type: "EXPENSE", amount: 10000, signed_amount: -10000, occurred_on: "2026-05-01" })],
+        "2026-06": [event({ id: 2, transaction_type: "EXPENSE", amount: 10000, signed_amount: -10000, occurred_on: "2026-06-01" })],
+        "2026-07": [event({ id: 3, transaction_type: "EXPENSE", amount: 10000, signed_amount: -10000, occurred_on: "2026-07-01" })],
+      });
+      const { container } = render(<CashFlowPage />);
+      const coverageHeading = await screen.findByRole("heading", { name: "Recorded expense coverage" });
+      expect(screen.getByText("Not affected by the selected month.")).toBeInTheDocument();
+      const selectedMonthLabel = screen.getByText("Selected month");
+      expect(coverageHeading.compareDocumentPosition(selectedMonthLabel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(container).toBeInTheDocument();
+    });
+
+    it("computes an AVAILABLE result and does not change it when the selected month picker moves", async () => {
+      accountsMock.mockResolvedValue([account({ balance: 42000, baseline: earlyBaseline })]);
+      reportForMonths({
+        "2026-05": [event({ id: 1, transaction_type: "EXPENSE", amount: 10000, signed_amount: -10000, occurred_on: "2026-05-01" })],
+        "2026-06": [event({ id: 2, transaction_type: "EXPENSE", amount: 10000, signed_amount: -10000, occurred_on: "2026-06-01" })],
+        "2026-07": [event({ id: 3, transaction_type: "EXPENSE", amount: 10000, signed_amount: -10000, occurred_on: "2026-07-01" })],
+      });
+      render(<CashFlowPage />);
+      await screen.findByText(/Tracked cash covers 4\.2 months/);
+      // Snapshot exactly which months coverage asked for, then move the picker
+      // twice. A window derived from the selection would request 2026-04 (and
+      // 2026-03) for the new trailing windows; an independent window requests
+      // only the newly selected month for the report itself.
+      const callsFor = (target: string) => reportMock.mock.calls.filter((call) => call[0] === target).length;
+      expect(callsFor("2026-05")).toBe(1);
+      expect(callsFor("2026-06")).toBe(1);
+      expect(callsFor("2026-07")).toBe(1);
+
+      fireEvent.click(screen.getByRole("button", { name: "Previous month" }));
+      await screen.findByText("July 2026");
+      // A selection-derived window would have re-entered its loading state
+      // synchronously as the effect fired; an independent one never reloads.
+      expect(screen.queryByText("Loading recorded monthly expense evidence…")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Previous month" }));
+      await screen.findByText("June 2026");
+      expect(screen.queryByText("Loading recorded monthly expense evidence…")).not.toBeInTheDocument();
+
+      // Let every pending promise settle, then prove the window never moved:
+      // no month outside it was requested, and no month inside it was re-fetched.
+      await waitFor(() => expect(reportMock).toHaveBeenCalledWith("2026-06"));
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+      const requested = reportMock.mock.calls.map((call) => call[0]);
+      expect(requested).not.toContain("2026-04");
+      expect(requested).not.toContain("2026-03");
+      // 2026-05 is inside the fixed window but was never selected, so exactly
+      // one request for it proves the window was never recomputed. (2026-06 and
+      // 2026-07 are excluded from this check: selecting them fetches the report.)
+      expect(callsFor("2026-05")).toBe(1);
+      expect(screen.getByText(/Tracked cash covers 4\.2 months/)).toBeInTheDocument();
+    });
+
+    it("refreshes coverage after a mutation even when the account payload is referentially identical", async () => {
+      // Pins the real refresh signal: the accountsLoading true→false toggle,
+      // NOT the identity of a freshly-parsed accounts array. A back-dated
+      // expense can leave every account value unchanged and must still refresh.
+      const stableAccounts = [account({ balance: 1000, baseline: earlyBaseline })];
+      accountsMock.mockResolvedValue(stableAccounts);
+      reportForMonths({ "2026-05": [], "2026-06": [], "2026-07": [] });
+      createMock.mockResolvedValue(event({ id: 9 }));
+      render(<CashFlowPage />);
+      await screen.findByText(/No recorded expenses in the recorded months/);
+      const coverageCallsBefore = reportMock.mock.calls.filter((call) => call[0] === "2026-06").length;
+
+      fireEvent.click(screen.getByRole("button", { name: "Add expense" }));
+      fireEvent.change(screen.getByLabelText("Cash flow amount"), { target: { value: "50" } });
+      fireEvent.change(screen.getByLabelText("Cash flow category"), { target: { value: "Food" } });
+      fireEvent.change(screen.getByLabelText("Cash flow date"), { target: { value: "2026-06-10" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save expense" }));
+
+      await waitFor(() => expect(createMock).toHaveBeenCalled());
+      await waitFor(() =>
+        expect(reportMock.mock.calls.filter((call) => call[0] === "2026-06").length).toBeGreaterThan(coverageCallsBefore),
+      );
+    });
+
+    it("shows a tracked-cash-balance loading state before account evidence resolves", async () => {
+      let resolveAccounts: (value: CashAccount[]) => void = () => {};
+      accountsMock.mockImplementation(() => new Promise((resolve) => { resolveAccounts = resolve; }));
+      render(<CashFlowPage />);
+      expect(await screen.findByText("Loading tracked cash balance…")).toBeInTheDocument();
+      resolveAccounts([account({ balance: 1000, baseline: null })]);
+      await waitFor(() => expect(screen.queryByText("Loading tracked cash balance…")).not.toBeInTheDocument());
+    });
+
+    it("shows a monthly-evidence loading state while recorded-month reports are in flight", async () => {
+      accountsMock.mockResolvedValue([account({ balance: 1000, baseline: earlyBaseline })]);
+      const pending: Array<{ month: string; resolve: (value: { month: string; events: CashFlowEvent[] }) => void }> = [];
+      reportMock.mockImplementation(async (selectedMonth) => {
+        if (selectedMonth === "2026-08") return { month: selectedMonth, events: [] };
+        return await new Promise((resolve) => pending.push({ month: selectedMonth, resolve }));
+      });
+      render(<CashFlowPage />);
+      expect(await screen.findByText("Loading recorded monthly expense evidence…")).toBeInTheDocument();
+      pending.forEach((p) => p.resolve({ month: p.month, events: [] }));
+      await waitFor(() => expect(screen.queryByText("Loading recorded monthly expense evidence…")).not.toBeInTheDocument());
+    });
+
+    it("shows INSUFFICIENT_EVIDENCE when the only baseline falls inside the current month", async () => {
+      accountsMock.mockResolvedValue([account({ balance: 1000 })]); // default baseline effective_on "2026-08-01"
+      render(<CashFlowPage />);
+      expect(await screen.findByText("Not enough recorded history yet to calculate recorded expense coverage.")).toBeInTheDocument();
+      expect(screen.getByText("0 of 3 months recorded")).toBeInTheDocument();
+    });
+
+    it("shows NO_RECORDED_EXPENSE when every recorded month has zero recorded expenses", async () => {
+      accountsMock.mockResolvedValue([account({ balance: 9000, baseline: earlyBaseline })]);
+      reportForMonths({ "2026-05": [], "2026-06": [], "2026-07": [] });
+      render(<CashFlowPage />);
+      expect(await screen.findByText(/No recorded expenses in the recorded months/)).toBeInTheDocument();
+    });
+
+    it("shows UNAVAILABLE when the account evidence fails to load, with a retry", async () => {
+      accountsMock.mockRejectedValue(new Error("accounts offline"));
+      render(<CashFlowPage />);
+      expect(await screen.findByText("Recorded expense coverage is unavailable right now.")).toBeInTheDocument();
+      const retry = screen.getAllByRole("button", { name: "Try again" }).find((button) => button.closest("section")?.getAttribute("aria-label") === "Recorded expense coverage");
+      expect(retry).toBeTruthy();
+    });
+
+    it("shows UNAVAILABLE and fails closed when one recorded-month fetch fails, never averaging a partial subset", async () => {
+      accountsMock.mockResolvedValue([account({ balance: 9000, baseline: earlyBaseline })]);
+      reportMock.mockImplementation(async (selectedMonth) => {
+        if (selectedMonth === "2026-06") throw new Error("month offline");
+        return { month: selectedMonth, events: selectedMonth === "2026-07" ? [event({ transaction_type: "EXPENSE", amount: 30000, signed_amount: -30000, occurred_on: "2026-07-01" })] : [] };
+      });
+      render(<CashFlowPage />);
+      expect(await screen.findByText("Recorded expense coverage is unavailable right now.")).toBeInTheDocument();
+      expect(screen.queryByText(/Tracked cash covers/)).not.toBeInTheDocument();
+    });
+
+    it("retries a failed coverage load", async () => {
+      accountsMock.mockResolvedValue([account({ balance: 9000, baseline: earlyBaseline })]);
+      let fail = true;
+      reportMock.mockImplementation(async (selectedMonth) => {
+        if (selectedMonth === "2026-08") return { month: selectedMonth, events: [] };
+        if (fail) throw new Error("month offline");
+        return { month: selectedMonth, events: [] };
+      });
+      render(<CashFlowPage />);
+      const coverageSection = (await screen.findByText("Recorded expense coverage is unavailable right now.")).closest("section")!;
+      fail = false;
+      fireEvent.click(within(coverageSection).getByRole("button", { name: "Try again" }));
+      await waitFor(() => expect(within(coverageSection).getByText(/No recorded expenses in the recorded months/)).toBeInTheDocument());
+    });
+
+    it("discloses untracked active accounts", async () => {
+      accountsMock.mockResolvedValue([
+        account({ id: 1, balance: 9000, baseline: earlyBaseline }),
+        account({ id: 2, name: "Untracked", balance: 5000, baseline: null }),
+      ]);
+      reportForMonths({ "2026-05": [], "2026-06": [], "2026-07": [] });
+      render(<CashFlowPage />);
+      expect(await screen.findByText("1 active cash account is not tracked and is not included.")).toBeInTheDocument();
+    });
+
+    it("discloses recorded expenses from archived accounts", async () => {
+      accountsMock.mockResolvedValue([account({ balance: 9000, baseline: earlyBaseline })]);
+      reportForMonths({
+        "2026-05": [],
+        "2026-06": [],
+        "2026-07": [event({ transaction_type: "EXPENSE", amount: 500, signed_amount: -500, occurred_on: "2026-07-01", account_name: "Old Reserve", account_is_archived: true })],
+      });
+      render(<CashFlowPage />);
+      expect(await screen.findByText("Recorded expenses include archived account(s) whose balances are not counted.")).toBeInTheDocument();
+    });
+
+    it("always discloses that goal designations are not deducted whenever tracked cash is shown", async () => {
+      accountsMock.mockResolvedValue([account({ balance: 9000, baseline: earlyBaseline })]);
+      reportForMonths({ "2026-05": [], "2026-06": [], "2026-07": [] });
+      render(<CashFlowPage />);
+      expect(await screen.findByText("Amounts designated toward goals are not deducted here.")).toBeInTheDocument();
+    });
+
+    it("discloses when tracking for an account began during the recorded period", async () => {
+      accountsMock.mockResolvedValue([
+        account({ id: 1, balance: 5000, baseline: earlyBaseline }),
+        account({ id: 2, balance: 4000, baseline: { id: 2, cash_account_id: 2, effective_on: "2026-06-15", observed_balance: 4000, created_at: "2026-06-15T00:00:00Z" } }),
+      ]);
+      reportForMonths({ "2026-05": [], "2026-06": [], "2026-07": [] });
+      render(<CashFlowPage />);
+      expect(await screen.findByText("Cash tracking for 1 account began during this period.")).toBeInTheDocument();
+    });
+
+    it("updates coverage after a mutation refreshes account evidence", async () => {
+      let accountsCall = 0;
+      accountsMock.mockImplementation(async () => {
+        accountsCall += 1;
+        return [account({ balance: accountsCall === 1 ? 1000 : 1250, baseline: earlyBaseline })];
+      });
+      reportForMonths({ "2026-05": [], "2026-06": [], "2026-07": [] });
+      createMock.mockResolvedValue(event({ id: 9 }));
+      render(<CashFlowPage />);
+      expect(await screen.findByText(/฿1,000\.00/)).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Add income" }));
+      fireEvent.change(screen.getByLabelText("Cash flow amount"), { target: { value: "250" } });
+      fireEvent.change(screen.getByLabelText("Cash flow category"), { target: { value: "Salary" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save income" }));
+      await waitFor(() => expect(screen.getByText(/฿1,250\.00/)).toBeInTheDocument());
+    });
+
+    it("drops a stale coverage response once a newer account reload has started", async () => {
+      let accountsCall = 0;
+      accountsMock.mockImplementation(async () => {
+        accountsCall += 1;
+        return [account({ balance: accountsCall === 1 ? 1000 : 9000, baseline: earlyBaseline })];
+      });
+      const pending: Array<{ month: string; resolve: (value: { month: string; events: CashFlowEvent[] }) => void }> = [];
+      reportMock.mockImplementation(async (selectedMonth) => {
+        if (selectedMonth === "2026-08") return { month: selectedMonth, events: [] };
+        return await new Promise((resolve) => pending.push({ month: selectedMonth, resolve }));
+      });
+      createMock.mockResolvedValue(event({ id: 9 }));
+      render(<CashFlowPage />);
+      await screen.findByText("Loading recorded monthly expense evidence…");
+      await waitFor(() => expect(pending.length).toBe(3));
+      fireEvent.click(screen.getByRole("button", { name: "Add income" }));
+      fireEvent.change(screen.getByLabelText("Cash flow amount"), { target: { value: "1" } });
+      fireEvent.change(screen.getByLabelText("Cash flow category"), { target: { value: "Test" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save income" }));
+      await waitFor(() => expect(accountsCall).toBe(2));
+      await waitFor(() => expect(pending.length).toBe(6));
+      // Resolve the NEWER generation first, then let the stale one land last.
+      // Without a generation guard the stale response would win by arriving
+      // last, so this ordering is what actually discriminates.
+      const [staleGeneration, newGeneration] = [pending.slice(0, 3), pending.slice(3)];
+      newGeneration.forEach((p) => p.resolve({ month: p.month, events: [] }));
+      await waitFor(() => expect(screen.getByText(/฿9,000\.00/)).toBeInTheDocument());
+      staleGeneration.forEach((p) => p.resolve({ month: p.month, events: [] }));
+      await waitFor(() => expect(screen.getByText(/฿9,000\.00/)).toBeInTheDocument());
+      expect(screen.queryByText(/฿1,000\.00/)).not.toBeInTheDocument();
+    });
+
+    it("re-fetches account evidence when retrying after the account request failed", async () => {
+      // A retry that only re-ran loadCoverage would recompute the same stale
+      // failure without ever asking for the evidence that was missing.
+      let accountsCall = 0;
+      accountsMock.mockImplementation(async () => {
+        accountsCall += 1;
+        if (accountsCall === 1) throw new Error("accounts offline");
+        return [account({ balance: 9000, baseline: earlyBaseline })];
+      });
+      reportForMonths({ "2026-05": [], "2026-06": [], "2026-07": [] });
+      render(<CashFlowPage />);
+      const coverageSection = (await screen.findByText("Recorded expense coverage is unavailable right now.")).closest("section")!;
+      fireEvent.click(within(coverageSection).getByRole("button", { name: "Try again" }));
+      await waitFor(() => expect(accountsCall).toBe(2));
+      await waitFor(() =>
+        expect(within(coverageSection).getByText(/No recorded expenses in the recorded months/)).toBeInTheDocument(),
+      );
+    });
+
+    it("still discloses untracked accounts when there is not enough recorded history", async () => {
+      // A ฿0.00 tracked cash balance with no recorded months is precisely the
+      // figure that must not appear unexplained.
+      accountsMock.mockResolvedValue([
+        account({ id: 1, name: "Untracked A", balance: 4000, baseline: null }),
+        account({ id: 2, name: "Untracked B", balance: 5000, baseline: null }),
+      ]);
+      render(<CashFlowPage />);
+      expect(await screen.findByText("Not enough recorded history yet to calculate recorded expense coverage.")).toBeInTheDocument();
+      expect(screen.getByText("2 active cash accounts are not tracked and are not included.")).toBeInTheDocument();
+      expect(screen.getByText("Amounts designated toward goals are not deducted here.")).toBeInTheDocument();
+    });
+
+    it("does not introduce a duplicate cash-accounts fetch", async () => {
+      accountsMock.mockResolvedValue([account({ balance: 9000, baseline: earlyBaseline })]);
+      reportForMonths({ "2026-05": [], "2026-06": [], "2026-07": [] });
+      render(<CashFlowPage />);
+      await screen.findByText(/No recorded expenses in the recorded months/);
+      expect(accountsMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("never uses prohibited terminology", async () => {
+      accountsMock.mockResolvedValue([account({ balance: 42000, baseline: earlyBaseline })]);
+      reportForMonths({
+        "2026-05": [event({ id: 1, transaction_type: "EXPENSE", amount: 10000, signed_amount: -10000, occurred_on: "2026-05-01" })],
+        "2026-06": [event({ id: 2, transaction_type: "EXPENSE", amount: 10000, signed_amount: -10000, occurred_on: "2026-06-01" })],
+        "2026-07": [event({ id: 3, transaction_type: "EXPENSE", amount: 10000, signed_amount: -10000, occurred_on: "2026-07-01" })],
+      });
+      render(<CashFlowPage />);
+      await screen.findByText(/Tracked cash covers 4\.2 months/);
+      const bodyText = document.body.textContent ?? "";
+      for (const banned of ["observed", "eligible", "liquid fund", "safe", "should", "fully tracked", "complete evidence", "complete expense history"]) {
+        expect(bodyText.toLowerCase()).not.toContain(banned);
+      }
+    });
   });
 });

@@ -17,6 +17,12 @@ import {
   shiftMonth,
   signedPresentationAmount,
 } from "@/lib/cashFlow";
+import {
+  computeCoveragePopulation,
+  computeRecordedExpenseCoverage,
+  type MonthlyFetchResult,
+  type RecordedExpenseCoverageResult,
+} from "@/lib/emergencyFund";
 
 type EntryType = "INCOME" | "EXPENSE";
 
@@ -48,7 +54,10 @@ export default function CashFlowPage() {
   const [transferDate, setTransferDate] = useState(localDateKey());
   const [transferNote, setTransferNote] = useState("");
   const [mutationError, setMutationError] = useState("");
+  const [coverage, setCoverage] = useState<RecordedExpenseCoverageResult | null>(null);
+  const [coverageLoading, setCoverageLoading] = useState(true);
   const reportRequestId = useRef(0);
+  const coverageRequestId = useRef(0);
 
   const loadReport = useCallback(async (selectedMonth: string) => {
     const requestId = ++reportRequestId.current;
@@ -77,8 +86,39 @@ export default function CashFlowPage() {
     }
   }, []);
 
+  const loadCoverage = useCallback(async (accountsList: CashAccount[] | null, status: "success" | "error") => {
+    const requestId = ++coverageRequestId.current;
+    setCoverageLoading(true);
+    const population = computeCoveragePopulation(status, accountsList ?? [], new Date());
+    if (population.recordedMonths.length === 0) {
+      if (requestId === coverageRequestId.current) {
+        setCoverage(computeRecordedExpenseCoverage(population, []));
+        setCoverageLoading(false);
+      }
+      return;
+    }
+    const monthlyResults: MonthlyFetchResult[] = await Promise.all(
+      population.recordedMonths.map(async (coverageMonth): Promise<MonthlyFetchResult> => {
+        try {
+          const report = await getCashFlowReport(coverageMonth);
+          return { month: coverageMonth, status: "success", events: report.events };
+        } catch {
+          return { month: coverageMonth, status: "error", events: [] };
+        }
+      }),
+    );
+    if (requestId === coverageRequestId.current) {
+      setCoverage(computeRecordedExpenseCoverage(population, monthlyResults));
+      setCoverageLoading(false);
+    }
+  }, []);
+
   useEffect(() => { void loadReport(month); }, [loadReport, month]);
   useEffect(() => { void loadAccounts(); }, [loadAccounts]);
+  useEffect(() => {
+    if (accountsLoading) return;
+    void loadCoverage(accounts, accountsError ? "error" : "success");
+  }, [accountsLoading, accounts, accountsError, loadCoverage]);
 
   const summary = useMemo(
     () => report ? aggregateMonthlyCashFlow(report.events, month) : null,
@@ -185,6 +225,19 @@ export default function CashFlowPage() {
         <Link href="/cash" className="text-sm text-blue-600 hover:underline">Cash Accounts →</Link>
       </header>
 
+      <CoverageSection
+        coverage={coverage}
+        loading={coverageLoading}
+        accountsLoading={accountsLoading}
+        // Retry the evidence that actually failed: when the account request is
+        // what failed, re-running loadCoverage alone would recompute the same
+        // stale failure, so reload accounts and let the coverage effect cascade.
+        onRetry={() => {
+          if (accountsError) void loadAccounts();
+          else void loadCoverage(accounts, "success");
+        }}
+      />
+
       <section className="bg-white border rounded-xl p-4 shadow-sm flex items-center justify-between gap-3">
         <button type="button" aria-label="Previous month" onClick={() => setMonth((value) => shiftMonth(value, -1))} className="px-3 py-1.5 border rounded text-sm hover:bg-gray-50">←</button>
         <div className="text-center">
@@ -278,6 +331,89 @@ export default function CashFlowPage() {
 function SummaryCard({ label, value, tone }: { label: string; value: string; tone: "positive" | "negative" | "neutral" }) {
   const toneClass = tone === "positive" ? "text-green-700" : tone === "negative" ? "text-red-700" : "text-gray-800";
   return <article className="bg-white border rounded-xl p-4 shadow-sm"><p className="text-sm text-gray-500">{label}</p><p className={`text-xl font-semibold mt-1 ${toneClass}`}>{value}</p></article>;
+}
+
+function CoverageSection({
+  coverage, loading, accountsLoading, onRetry,
+}: {
+  coverage: RecordedExpenseCoverageResult | null;
+  loading: boolean;
+  accountsLoading: boolean;
+  onRetry: () => void;
+}) {
+  const recordedMonthLabels = coverage?.recordedMonths.map(formatMonthLabel) ?? [];
+  const monthRangeLabel = recordedMonthLabels.length === 0
+    ? ""
+    : recordedMonthLabels.length === 1
+      ? recordedMonthLabels[0]
+      : `${recordedMonthLabels[0]} – ${recordedMonthLabels[recordedMonthLabels.length - 1]}`;
+  // Disclosures accompany any state where account evidence resolved — including
+  // INSUFFICIENT_EVIDENCE, where an unexplained ฿0.00 tracked cash balance is
+  // exactly the figure that most needs the untracked-account caveat.
+  const showDisclosures = coverage != null && coverage.trackedCash !== null;
+
+  return (
+    <section aria-label="Recorded expense coverage" className="bg-white border rounded-xl p-4 shadow-sm space-y-4">
+      <div>
+        <h2 className="font-semibold">Recorded expense coverage</h2>
+        <p className="text-xs text-gray-500 mt-1">Not affected by the selected month.</p>
+      </div>
+
+      {accountsLoading && <p className="text-sm text-gray-400">Loading tracked cash balance…</p>}
+      {!accountsLoading && loading && <p className="text-sm text-gray-400">Loading recorded monthly expense evidence…</p>}
+
+      {!accountsLoading && !loading && coverage && (
+        <>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <p className="text-xs uppercase tracking-wide text-gray-400">Current resource evidence</p>
+              <p className="text-sm text-gray-600 mt-1">Tracked cash balance</p>
+              {coverage.trackedCash !== null
+                ? <p className="text-lg font-semibold mt-0.5">{formatThb(coverage.trackedCash)}</p>
+                : <p className="text-sm text-gray-500 mt-0.5">Unavailable</p>}
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-wide text-gray-400">Trailing historical evidence</p>
+              <p className="text-sm text-gray-600 mt-1">Average recorded monthly expenses</p>
+              {coverage.averageRecordedMonthlyExpense !== null
+                ? <p className="text-lg font-semibold mt-0.5">{formatThb(coverage.averageRecordedMonthlyExpense)}</p>
+                : <p className="text-sm text-gray-500 mt-0.5">{coverage.status === "INSUFFICIENT_EVIDENCE" ? "Not enough recorded history" : "Unavailable"}</p>}
+              <p className="text-xs text-gray-500 mt-1">{coverage.recordedMonths.length} of 3 months recorded{monthRangeLabel ? ` (${monthRangeLabel})` : ""}</p>
+            </div>
+          </div>
+
+          <p className="text-sm text-gray-800">
+            {coverage.status === "AVAILABLE" && coverage.coverageMonths !== null &&
+              `Tracked cash covers ${coverage.coverageMonths.toFixed(1)} months of average recorded monthly expenses (${monthRangeLabel}).`}
+            {coverage.status === "NO_RECORDED_EXPENSE" &&
+              `No recorded expenses in the recorded months (${monthRangeLabel}); recorded expense coverage cannot be expressed as a ratio.`}
+            {coverage.status === "INSUFFICIENT_EVIDENCE" &&
+              "Not enough recorded history yet to calculate recorded expense coverage."}
+            {coverage.status === "UNAVAILABLE" && "Recorded expense coverage is unavailable right now."}
+          </p>
+
+          {coverage.status === "UNAVAILABLE" && (
+            <button type="button" onClick={onRetry} className="text-sm text-blue-700 hover:underline">Try again</button>
+          )}
+
+          {showDisclosures && (
+            <ul className="text-xs text-gray-500 space-y-1 border-t pt-3">
+              {coverage.untrackedActiveAccountCount > 0 && (
+                <li>{coverage.untrackedActiveAccountCount} active cash account{coverage.untrackedActiveAccountCount === 1 ? "" : "s"} {coverage.untrackedActiveAccountCount === 1 ? "is" : "are"} not tracked and {coverage.untrackedActiveAccountCount === 1 ? "is" : "are"} not included.</li>
+              )}
+              {coverage.hasArchivedAccountExpenses && (
+                <li>Recorded expenses include archived account(s) whose balances are not counted.</li>
+              )}
+              {coverage.accountsBeganDuringRecordedPeriod > 0 && (
+                <li>Cash tracking for {coverage.accountsBeganDuringRecordedPeriod} account{coverage.accountsBeganDuringRecordedPeriod === 1 ? "" : "s"} began during this period.</li>
+              )}
+              <li>Amounts designated toward goals are not deducted here.</li>
+            </ul>
+          )}
+        </>
+      )}
+    </section>
+  );
 }
 
 function EntrySection({
