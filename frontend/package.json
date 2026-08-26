@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test:pure": "node --experimental-strip-types --test lib/portfolioReference.test.ts lib/workspaceScopeSwitcher.test.ts lib/discoveryExperience.test.ts lib/wealthOverview.test.ts lib/totalAssets.test.ts lib/totalLiabilities.test.ts lib/netWorth.test.ts lib/dividendIncome.test.ts lib/transactionFilters.test.ts lib/csvImport.test.ts lib/cashFlow.test.ts lib/totalAssetsHistory.test.ts lib/totalLiabilitiesHistory.test.ts lib/netWorthHistory.test.ts",
+    "test:pure": "node --experimental-strip-types --test lib/portfolioReference.test.ts lib/workspaceScopeSwitcher.test.ts lib/discoveryExperience.test.ts lib/wealthOverview.test.ts lib/totalAssets.test.ts lib/totalLiabilities.test.ts lib/netWorth.test.ts lib/dividendIncome.test.ts lib/transactionFilters.test.ts lib/csvImport.test.ts lib/cashFlow.test.ts lib/totalAssetsHistory.test.ts lib/totalLiabilitiesHistory.test.ts lib/netWorthHistory.test.ts lib/goalFunding.test.ts",
     "test:vitest": "vitest run"
   },
   "dependencies": {

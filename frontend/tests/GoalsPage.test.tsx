@@ -5,6 +5,8 @@ import {
   createGoalFundingAllocation,
   createWealthGoal,
   deleteGoalFundingAllocation,
+  getHoldings,
+  getPortfolioPrices,
   listCashAccounts,
   listGoalFundingAllocations,
   listPortfolios,
@@ -14,6 +16,8 @@ import {
   type CashAccount,
   type GoalFundingAllocation,
   type Portfolio,
+  type PortfolioItem,
+  type PriceRefreshItem,
   type WealthGoal,
 } from "@/lib/api";
 
@@ -27,6 +31,8 @@ vi.mock("@/lib/api", () => ({
   createGoalFundingAllocation: vi.fn(),
   updateGoalFundingAllocation: vi.fn(),
   deleteGoalFundingAllocation: vi.fn(),
+  getHoldings: vi.fn(),
+  getPortfolioPrices: vi.fn(),
 }));
 
 const goal: WealthGoal = {
@@ -78,6 +84,48 @@ const cashAllocation: GoalFundingAllocation = {
   updated_at: "2026-08-26T00:00:00",
 };
 
+const portfolioAllocation: GoalFundingAllocation = {
+  id: 101,
+  workspace_id: 1,
+  wealth_goal_id: 1,
+  source_kind: "PORTFOLIO",
+  cash_account_id: null,
+  portfolio_id: 9,
+  source_name: "Long-term Portfolio",
+  source_is_archived: false,
+  allocated_amount: 700000,
+  currency: "THB",
+  created_at: "2026-08-26T00:00:00",
+  updated_at: "2026-08-26T00:00:00",
+};
+
+function holding(overrides: Partial<PortfolioItem> & { symbol: string; shares: number; avg_cost: number }): PortfolioItem {
+  return {
+    id: 0,
+    portfolio_id: 9,
+    current_price: null,
+    previous_close: null,
+    change_percent: null,
+    last_updated: null,
+    latest_signal: null,
+    signal_confidence: null,
+    analyzed_at: null,
+    reasoning: null,
+    risks: null,
+    ta_score: null,
+    fa_score: null,
+    allow_swap: true,
+    target_price: null,
+    upside_pct: null,
+    risk_level: null,
+    ...overrides,
+  };
+}
+
+function quote(symbol: string, current: number): PriceRefreshItem {
+  return { symbol, current_price: current, previous_close: current, change_percent: 0, last_updated: null };
+}
+
 const listMock = vi.mocked(listWealthGoals);
 const createMock = vi.mocked(createWealthGoal);
 const updateMock = vi.mocked(updateWealthGoal);
@@ -87,6 +135,8 @@ const allocationsListMock = vi.mocked(listGoalFundingAllocations);
 const allocationsCreateMock = vi.mocked(createGoalFundingAllocation);
 const allocationsUpdateMock = vi.mocked(updateGoalFundingAllocation);
 const allocationsDeleteMock = vi.mocked(deleteGoalFundingAllocation);
+const holdingsMock = vi.mocked(getHoldings);
+const pricesMock = vi.mocked(getPortfolioPrices);
 
 describe("GoalsPage", () => {
   beforeEach(() => {
@@ -100,6 +150,8 @@ describe("GoalsPage", () => {
     allocationsCreateMock.mockResolvedValue(cashAllocation);
     allocationsUpdateMock.mockResolvedValue(cashAllocation);
     allocationsDeleteMock.mockResolvedValue({ deleted: 100 });
+    holdingsMock.mockResolvedValue([]);
+    pricesMock.mockResolvedValue([]);
   });
 
   it("shows a loading state and fixed THB", () => {
@@ -218,15 +270,101 @@ describe("GoalsPage", () => {
     expect(createMock).not.toHaveBeenCalled();
   });
 
-  it("does not introduce a progress bar, coverage percentage, or projection language in the v1 experience", async () => {
+  it("does not introduce guarantee, timeline, or advice language now that Progress/Gap/Health are real", async () => {
     listMock.mockResolvedValue([goal]);
     render(<GoalsPage />);
     await screen.findByText("Retire by 55");
-    await screen.findByText("No funding sources designated yet.");
-    // Funding Allocation Foundation deliberately introduces "funding source"
-    // linkage — that term is now real. What must still never appear is a
-    // computed coverage claim: a percentage, a funding gap, or a projection.
-    expect(screen.queryByText(/%\s*(complete|funded|toward)|funding gap|goal coverage|projected to reach|forecast/i)).not.toBeInTheDocument();
+    // Goal Progress & Funding Health milestone makes "Designated funding",
+    // "Goal progress", "Funding gap", and "Funding health" real, allowed
+    // vocabulary (see goalFunding.ts). What must still never appear is a
+    // guarantee, a timeline promise, or advice.
+    await screen.findByText("Goal progress");
+    expect(screen.queryByText(/guaranteed|on track|projected completion|expected return|probability of success|recommended contribution|forecast/i)).not.toBeInTheDocument();
+  });
+
+  describe("Goal Progress & Funding Health", () => {
+    it("shows Target, Designated funding, Goal progress, and Funding gap from allocation evidence", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 1000000 }]);
+      allocationsListMock.mockResolvedValue([{ ...cashAllocation, allocated_amount: 300000 }]);
+      render(<GoalsPage />);
+      await screen.findByText("Retire by 55");
+
+      expect(await screen.findByText("Goal progress")).toBeInTheDocument();
+      expect(screen.getByText((_, el) => el?.textContent === "฿300,000.00")).toBeInTheDocument();
+      expect(screen.getByText("30%")).toBeInTheDocument();
+      expect(screen.getByText((_, el) => el?.textContent === "฿700,000.00")).toBeInTheDocument();
+    });
+
+    it("does not clamp progress over 100% and floors the funding gap at zero", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 500000 }]);
+      allocationsListMock.mockResolvedValue([{ ...cashAllocation, allocated_amount: 600000 }]);
+      render(<GoalsPage />);
+      await screen.findByText("Retire by 55");
+
+      expect(await screen.findByText("120%")).toBeInTheDocument();
+      expect(screen.getByText((_, el) => el?.textContent === "฿0.00")).toBeInTheDocument();
+    });
+
+    it("keeps Goal Progress unavailable (not 0%) when allocation evidence fails to load", async () => {
+      listMock.mockResolvedValue([goal]);
+      allocationsListMock.mockRejectedValue(new Error("allocations offline"));
+      render(<GoalsPage />);
+      await screen.findByText("Retire by 55");
+
+      expect(await screen.findByText("Goal progress unavailable — funding data failed to load.")).toBeInTheDocument();
+      expect(screen.queryByText("0%")).not.toBeInTheDocument();
+      expect(screen.queryByText("Goal progress")).not.toBeInTheDocument();
+    });
+
+    it("reports Cash source funding health as Supported when balance covers designated amount", async () => {
+      listMock.mockResolvedValue([goal]);
+      cashAccountsMock.mockResolvedValue([{ ...cashAccount, balance: 450000 }]);
+      allocationsListMock.mockResolvedValue([{ ...cashAllocation, allocated_amount: 300000 }]);
+      render(<GoalsPage />);
+      await screen.findByText("Retire by 55");
+
+      expect(await screen.findByText((_, el) => el?.textContent === "Current value ฿450,000.00 · Funding health: Supported")).toBeInTheDocument();
+    });
+
+    it("warns when designated Cash funding exceeds the account's current balance", async () => {
+      listMock.mockResolvedValue([goal]);
+      cashAccountsMock.mockResolvedValue([{ ...cashAccount, balance: 280000 }]);
+      allocationsListMock.mockResolvedValue([{ ...cashAllocation, allocated_amount: 300000 }]);
+      render(<GoalsPage />);
+      await screen.findByText("Retire by 55");
+
+      expect(await screen.findByText((_, el) => el?.textContent === "Current value ฿280,000.00 · Attention: exceeds current value by ฿20,000.00")).toBeInTheDocument();
+    });
+
+    it("reports Portfolio source funding health from live holdings + prices, reusing the existing valuation formula", async () => {
+      listMock.mockResolvedValue([goal]);
+      allocationsListMock.mockResolvedValue([portfolioAllocation]);
+      holdingsMock.mockResolvedValue([holding({ symbol: "AAA", shares: 10000, avg_cost: 50 })]);
+      pricesMock.mockResolvedValue([quote("AAA", 90)]); // portfolio.cash_balance (0) + 10,000 * 90 = 900,000
+
+      render(<GoalsPage />);
+      await screen.findByText("Retire by 55");
+
+      expect(await screen.findByText((_, el) => el?.textContent === "Current value ฿900,000.00 · Funding health: Supported")).toBeInTheDocument();
+      expect(holdingsMock).toHaveBeenCalledWith(9);
+      expect(pricesMock).toHaveBeenCalledWith(9);
+    });
+
+    it("shows funding health as unavailable when Portfolio valuation fails, without erasing Goal Progress", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 1000000 }]);
+      allocationsListMock.mockResolvedValue([portfolioAllocation]);
+      holdingsMock.mockRejectedValue(new Error("holdings offline"));
+
+      render(<GoalsPage />);
+      await screen.findByText("Retire by 55");
+
+      expect(await screen.findByText("Current value unavailable · Funding health unavailable")).toBeInTheDocument();
+      // Goal Progress derives only from allocation evidence, which loaded fine —
+      // it must stay based on the ฿700,000 designated, unaffected by the source's
+      // valuation failure.
+      expect(screen.getByText("70%")).toBeInTheDocument();
+      expect(screen.getByText((_, el) => el?.textContent === "฿700,000.00")).toBeInTheDocument();
+    });
   });
 
   describe("Funding sources", () => {

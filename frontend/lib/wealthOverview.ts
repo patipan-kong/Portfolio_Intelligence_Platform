@@ -66,6 +66,21 @@ function resolveHoldingsValue(
 }
 
 /**
+ * A single portfolio's current total value (cash + holdings), using the exact
+ * same formula as computeWealthSummary below — for callers (e.g. Goal Funding
+ * Health) that need one portfolio's value without building the multi-portfolio
+ * maps computeWealthSummary expects. Not a second valuation definition.
+ */
+export function computePortfolioCurrentValue(
+  portfolio: Portfolio,
+  items: PortfolioItem[],
+  prices: PriceRefreshItem[]
+): { value: number; hasEstimatedPrice: boolean; hasStalePrice: boolean } {
+  const { value, hasEstimatedPrice, hasStalePrice } = resolveHoldingsValue(items, prices);
+  return { value: portfolio.cash_balance + value, hasEstimatedPrice, hasStalePrice };
+}
+
+/**
  * Aggregates per-portfolio cash + holdings value into a wealth summary.
  * `holdingsFailedMap[portfolioId] === true` means that portfolio's holdings
  * fetch failed — its value is unknown and it is excluded from `totalWealth`
