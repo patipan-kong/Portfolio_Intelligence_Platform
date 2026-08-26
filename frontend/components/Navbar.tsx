@@ -7,54 +7,17 @@ import { logout } from "@/lib/auth";
 import { usePortfolio } from "@/lib/PortfolioContext";
 import { getSystemStatus, type SystemStatus } from "@/lib/api";
 import WorkspaceScopeSwitcher from "@/components/WorkspaceScopeSwitcher";
-
-// Phase 4C.2A — Soft consolidation: 4 top-level destinations.
-// `match` lists every route prefix that belongs to this hub, so the nav item
-// stays highlighted while browsing sub-pages (e.g. /performance lives under
-// the Portfolio hub). All legacy routes (/, /optimizer, /portfolio-intelligence,
-// /performance, /analytics) remain fully functional — only nav exposure changed.
-const NAV_MAIN: { label: string; href: string; match: string[] }[] = [
-  {
-    label: "พอร์ตโฟลิโอ",
-    href: "/portfolio",
-    match: ["/portfolio", "/performance", "/analytics", "/stock"],
-  },
-  { label: "บัญชีเงินสด", href: "/cash", match: ["/cash"] },
-  { label: "Cash Flow", href: "/cash-flow", match: ["/cash-flow"] },
-  { label: "Liabilities", href: "/liabilities", match: ["/liabilities"] },
-  { label: "Goals", href: "/goals", match: ["/goals"] },
-  { label: "รายการเฝ้าดู", href: "/watchlist", match: ["/watchlist"] },
-  {
-    label: "ศูนย์บัญชาการ AI",
-    href: "/operations-center",
-    match: ["/operations-center", "/optimizer", "/portfolio-intelligence"],
-  },
-  // AI Evaluation Hub (Scorecard / Recommendations / Execution / Human vs AI /
-  // Opportunity Cost) — promoted from the ⚙ ระบบ dropdown to primary nav so
-  // it's discoverable, not tucked next to Settings. Prefix match also covers
-  // /ai-analytics/system (AI ops telemetry), still one click away per its own
-  // header link (docs/AI_EVALUATION_IMPLEMENTATION_PLAN.md Planning Decision P1).
-  { label: "ประเมินผล AI", href: "/ai-analytics", match: ["/ai-analytics"] },
-  { label: "📚 คู่มือ", href: "/system-guide", match: ["/system-guide"] },
-];
-
-const NAV_ADMIN = [
-  { label: "ตั้งค่า", href: "/settings" },
-];
-
-function isActive(match: string[], pathname: string) {
-  return match.some((prefix) =>
-    prefix === "/" ? pathname === "/" : pathname.startsWith(prefix)
-  );
-}
+import { NAV_GROUPS, isActive, isGroupActive } from "@/lib/navigationConfig";
 
 export default function Navbar() {
   const pathname = usePathname();
   const { portfolios } = usePortfolio();
-  const [adminOpen, setAdminOpen] = useState(false);
+  const [openGroup, setOpenGroup] = useState<string | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [mobileExpanded, setMobileExpanded] = useState<string | null>(null);
   const [sysStatus, setSysStatus] = useState<SystemStatus | null>(null);
-  const adminRef = useRef<HTMLDivElement>(null);
+  const groupRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const triggerRefs = useRef<Record<string, HTMLButtonElement | null>>({});
 
   useEffect(() => {
     getSystemStatus()
@@ -62,24 +25,43 @@ export default function Navbar() {
       .catch(() => {});
   }, []);
 
-  // Close dropdowns on outside click
+  // Close the open desktop dropdown on outside click.
   useEffect(() => {
     function onMouseDown(e: MouseEvent) {
-      if (adminRef.current && !adminRef.current.contains(e.target as Node)) {
-        setAdminOpen(false);
+      if (!openGroup) return;
+      const container = groupRefs.current[openGroup];
+      if (container && !container.contains(e.target as Node)) {
+        setOpenGroup(null);
       }
     }
     document.addEventListener("mousedown", onMouseDown);
     return () => document.removeEventListener("mousedown", onMouseDown);
-  }, []);
+  }, [openGroup]);
 
-  // Close everything on route change
+  // Escape closes the open dropdown and returns focus to its trigger.
   useEffect(() => {
-    setAdminOpen(false);
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== "Escape" || !openGroup) return;
+      const key = openGroup;
+      setOpenGroup(null);
+      triggerRefs.current[key]?.focus();
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [openGroup]);
+
+  // Close everything on route change.
+  useEffect(() => {
+    setOpenGroup(null);
     setMobileOpen(false);
   }, [pathname]);
 
-  const adminActive = NAV_ADMIN.some((n) => isActive([n.href], pathname));
+  // Mobile drawer: the group owning the current route starts expanded; the
+  // rest start collapsed. Recomputed whenever the route or drawer changes.
+  useEffect(() => {
+    const active = NAV_GROUPS.find((group) => isGroupActive(group, pathname));
+    setMobileExpanded(active ? active.key : null);
+  }, [pathname, mobileOpen]);
 
   return (
     <nav className="bg-white border-b px-4 py-2.5">
@@ -104,62 +86,67 @@ export default function Navbar() {
           </span>
         )}
 
-        {/* Main nav — flat links */}
+        {/* Main nav — grouped dropdowns */}
         <div className="hidden md:flex items-center gap-1">
-          {NAV_MAIN.map(({ label, href, match }) => (
-            <Link
-              key={href}
-              href={href}
-              className={`px-3.5 py-1.5 rounded-lg text-sm font-medium transition-colors whitespace-nowrap ${
-                isActive(match, pathname)
-                  ? "bg-blue-50 text-blue-700"
-                  : "text-gray-600 hover:bg-gray-100 hover:text-gray-800"
-              }`}
-            >
-              {label}
-            </Link>
-          ))}
+          {NAV_GROUPS.map((group) => {
+            const active = isGroupActive(group, pathname);
+            const open = openGroup === group.key;
+            return (
+              <div
+                key={group.key}
+                className="relative"
+                ref={(el) => {
+                  groupRefs.current[group.key] = el;
+                }}
+              >
+                <button
+                  ref={(el) => {
+                    triggerRefs.current[group.key] = el;
+                  }}
+                  onClick={() => setOpenGroup((k) => (k === group.key ? null : group.key))}
+                  aria-expanded={open}
+                  aria-haspopup="menu"
+                  className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-sm font-medium transition-colors whitespace-nowrap ${
+                    active
+                      ? "bg-blue-50 text-blue-700"
+                      : "text-gray-600 hover:bg-gray-100 hover:text-gray-800"
+                  }`}
+                >
+                  <span>{group.label}</span>
+                  <span className="text-xs text-gray-400">{open ? "▲" : "▼"}</span>
+                </button>
+
+                {open && (
+                  <div
+                    role="menu"
+                    className="absolute left-0 mt-1.5 w-52 bg-white border border-gray-200 rounded-xl shadow-lg py-1.5 z-50"
+                  >
+                    {group.items.map((item) => (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        role="menuitem"
+                        className={`flex items-center px-4 py-2 text-sm transition-colors ${
+                          isActive(item.match, pathname)
+                            ? "bg-blue-50 text-blue-700 font-medium"
+                            : "text-gray-700 hover:bg-gray-50"
+                        }`}
+                      >
+                        {item.label}
+                      </Link>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
 
-        {/* Push admin + logout to the right */}
+        {/* Push switcher + logout to the right */}
         <div className="hidden md:flex items-center gap-2 ml-auto">
 
           {/* Portfolio selector — M36.1 Phase 3 shared Workspace-Scope contract */}
           <WorkspaceScopeSwitcher variant="dropdown" label="เลือกพอร์ต" noneLabel="ไม่ได้เลือกพอร์ต" />
-
-          {/* Admin dropdown */}
-          <div className="relative" ref={adminRef}>
-            <button
-              onClick={() => setAdminOpen((o) => !o)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                adminActive
-                  ? "bg-gray-100 text-gray-800"
-                  : "text-gray-500 hover:bg-gray-100 hover:text-gray-700"
-              }`}
-            >
-              <span>⚙</span>
-              <span>ระบบ</span>
-              <span className="text-xs text-gray-400">{adminOpen ? "▲" : "▼"}</span>
-            </button>
-
-            {adminOpen && (
-              <div className="absolute right-0 mt-1.5 w-48 bg-white border border-gray-200 rounded-xl shadow-lg py-1.5 z-50">
-                {NAV_ADMIN.map(({ label, href }) => (
-                  <Link
-                    key={href}
-                    href={href}
-                    className={`flex items-center px-4 py-2 text-sm transition-colors ${
-                      isActive([href], pathname)
-                        ? "bg-blue-50 text-blue-700 font-medium"
-                        : "text-gray-700 hover:bg-gray-50"
-                    }`}
-                  >
-                    {label}
-                  </Link>
-                ))}
-              </div>
-            )}
-          </div>
 
           {/* Logout */}
           <button
@@ -175,28 +162,51 @@ export default function Navbar() {
           onClick={() => setMobileOpen((o) => !o)}
           className="md:hidden ml-auto p-1.5 rounded-md text-gray-500 hover:bg-gray-100 text-base leading-none"
           aria-label="Toggle menu"
+          aria-expanded={mobileOpen}
         >
           {mobileOpen ? "✕" : "☰"}
         </button>
       </div>
 
-      {/* ── Mobile panel ── */}
+      {/* ── Mobile panel — same grouped ownership as desktop ── */}
       {mobileOpen && (
-        <div className="md:hidden mt-2 border-t pt-3 pb-2 space-y-0.5">
-          <p className="px-3 pb-1 text-xs font-semibold text-gray-400 uppercase tracking-wider">เมนูหลัก</p>
-          {NAV_MAIN.map(({ label, href, match }) => (
-            <Link
-              key={href}
-              href={href}
-              className={`block px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-                isActive(match, pathname)
-                  ? "bg-blue-50 text-blue-700"
-                  : "text-gray-700 hover:bg-gray-100"
-              }`}
-            >
-              {label}
-            </Link>
-          ))}
+        <div className="md:hidden mt-2 border-t pt-2 pb-2 space-y-1">
+          {NAV_GROUPS.map((group) => {
+            const active = isGroupActive(group, pathname);
+            const expanded = mobileExpanded === group.key;
+            return (
+              <div key={group.key} className="border-b last:border-b-0">
+                <button
+                  onClick={() => setMobileExpanded((k) => (k === group.key ? null : group.key))}
+                  aria-expanded={expanded}
+                  className={`w-full flex items-center justify-between px-3 py-2 text-sm font-semibold transition-colors ${
+                    active ? "text-blue-700" : "text-gray-700"
+                  }`}
+                >
+                  <span>{group.label}</span>
+                  <span className="text-xs text-gray-400">{expanded ? "▲" : "▼"}</span>
+                </button>
+
+                {expanded && (
+                  <div className="pl-2 pb-2 space-y-0.5">
+                    {group.items.map((item) => (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        className={`block px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                          isActive(item.match, pathname)
+                            ? "bg-blue-50 text-blue-700"
+                            : "text-gray-600 hover:bg-gray-100"
+                        }`}
+                      >
+                        {item.label}
+                      </Link>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
 
           {portfolios.length > 0 && (
             <>
@@ -205,23 +215,6 @@ export default function Navbar() {
               <WorkspaceScopeSwitcher variant="list" noneLabel="ไม่ได้เลือกพอร์ต" className="space-y-0.5" />
             </>
           )}
-
-          <div className="my-2 border-t" />
-
-          <p className="px-3 pb-1 text-xs font-semibold text-gray-400 uppercase tracking-wider">ระบบ</p>
-          {NAV_ADMIN.map(({ label, href }) => (
-            <Link
-              key={href}
-              href={href}
-              className={`block px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-                isActive([href], pathname)
-                  ? "bg-blue-50 text-blue-700"
-                  : "text-gray-600 hover:bg-gray-100"
-              }`}
-            >
-              {label}
-            </Link>
-          ))}
 
           <div className="my-2 border-t" />
 
