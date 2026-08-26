@@ -76,7 +76,31 @@ jobs:
 
           echo "flags=$FLAGS" >> "$GITHUB_OUTPUT"
           echo "Resolved flags: $FLAGS"
-
+          
+      - name: Validate DATABASE_URL shape
+        run: |
+            python - <<'PY'
+            import os
+            from sqlalchemy.engine import make_url
+        
+            raw = os.environ.get("DATABASE_URL", "")
+            print("DATABASE_URL present:", bool(raw))
+            print("length:", len(raw))
+            print("starts with postgresql:", raw.startswith(("postgresql://", "postgresql+psycopg://", "postgresql+psycopg2://")))
+            print("has surrounding whitespace:", raw != raw.strip())
+        
+            try:
+                url = make_url(raw)
+                print("SQLAlchemy URL parse: OK")
+                print("driver:", url.drivername)
+                print("host present:", bool(url.host))
+                print("database present:", bool(url.database))
+            except Exception as e:
+                print("SQLAlchemy URL parse: FAILED")
+                print(type(e).__name__, str(e))
+                raise
+            PY
+    
       - name: Sync market data
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
