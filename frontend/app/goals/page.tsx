@@ -1,35 +1,21 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
+import Link from "next/link";
 import {
-  aggregateDesignatedBySource,
-  computeGoalFunding,
-  computeSourceFundingHealth,
-  sourceKey,
-  type SourceFundingHealth,
-} from "@/lib/goalFunding";
-import { computePortfolioCurrentValue } from "@/lib/wealthOverview";
+  GoalFundingSummary,
+  formatThb,
+  inputClass,
+  messageFor,
+  priorityLabel,
+  typeLabel,
+  type AllocationsState,
+} from "@/components/goals/GoalPlanningSections";
 import {
-  computeGoalWhatIf,
-  computeRequiredMonthlyContribution,
-  formatMonthLabel,
-} from "@/lib/goalWhatIf";
-import {
-  createGoalFundingAllocation,
   createWealthGoal,
-  deleteGoalFundingAllocation,
-  getHoldings,
-  getPortfolioPrices,
-  listCashAccounts,
   listGoalFundingAllocations,
-  listPortfolios,
   listWealthGoals,
-  updateGoalFundingAllocation,
   updateWealthGoal,
-  type CashAccount,
-  type GoalFundingAllocation,
-  type GoalFundingSourceKind,
-  type Portfolio,
   type WealthGoal,
   type WealthGoalPriority,
   type WealthGoalType,
@@ -48,75 +34,13 @@ const GOAL_TYPES: WealthGoalType[] = [
 
 const PRIORITIES: WealthGoalPriority[] = ["HIGH", "MEDIUM", "LOW"];
 
-const typeLabel = (value: WealthGoalType) => ({
-  RETIREMENT: "Retirement",
-  HOUSE: "House",
-  WEDDING: "Wedding",
-  EDUCATION: "Education",
-  VACATION: "Vacation",
-  EMERGENCY_FUND: "Emergency fund",
-  FIRE: "FIRE",
-  OTHER: "Other",
-}[value]);
-
-const priorityLabel = (value: WealthGoalPriority) => ({
-  HIGH: "High",
-  MEDIUM: "Medium",
-  LOW: "Low",
-}[value]);
-
-const formatThb = (value: number) => value.toLocaleString("th-TH", {
-  style: "currency",
-  currency: "THB",
-  minimumFractionDigits: 2,
-});
-const messageFor = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback;
-const inputClass = "mt-1 block w-full border rounded px-3 py-2";
-
-interface AllocationsLoadError {
-  error: string;
-}
-type AllocationsState = GoalFundingAllocation[] | AllocationsLoadError | undefined;
-
 export default function GoalsPage() {
   const [goals, setGoals] = useState<WealthGoal[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [mutationError, setMutationError] = useState("");
   const [showArchived, setShowArchived] = useState(false);
-
-  // Funding sources reuse the existing Cash Account / Portfolio lists — no new
-  // source-discovery endpoint. `cashAccounts` (active only) feeds the "add
-  // source" dropdown per "active sources only for new allocations". `allCashAccounts`
-  // (active + archived) is separately loaded so Funding Health can still look
-  // up the current balance of a source an allocation references even after
-  // that Cash Account is archived — archiving does not erase allocation evidence.
-  const [cashAccounts, setCashAccounts] = useState<CashAccount[]>([]);
-  const [allCashAccounts, setAllCashAccounts] = useState<CashAccount[]>([]);
-  const [portfolios, setPortfolios] = useState<Portfolio[]>([]);
-
-  useEffect(() => {
-    void listCashAccounts(false).then(setCashAccounts).catch(() => {});
-    void listCashAccounts(true).then(setAllCashAccounts).catch(() => {});
-    void listPortfolios().then(setPortfolios).catch(() => {});
-  }, []);
-
-  // Goal Progress & Funding Health (Phase 6, Milestone 3) need every active
-  // goal's allocations at once — a source's Funding Health is a total across
-  // ALL goals that reference it, not just one. Lifted here (rather than each
-  // goal card loading its own in isolation) so that cross-goal total can be
-  // computed. `undefined` = not yet loaded, `"error"` = load failed (Goal
-  // Progress must show "unavailable", never a fabricated 0%).
   const [allocationsByGoal, setAllocationsByGoal] = useState<Record<number, AllocationsState>>({});
-
-  async function loadAllocations(goalId: number) {
-    try {
-      const result = await listGoalFundingAllocations(goalId);
-      setAllocationsByGoal((prev) => ({ ...prev, [goalId]: result }));
-    } catch (err) {
-      setAllocationsByGoal((prev) => ({ ...prev, [goalId]: { error: messageFor(err, "Unable to load funding sources.") } }));
-    }
-  }
 
   const [name, setName] = useState("");
   const [goalType, setGoalType] = useState<WealthGoalType>("OTHER");
@@ -132,6 +56,15 @@ export default function GoalsPage() {
   const [editTargetDate, setEditTargetDate] = useState("");
   const [editPriority, setEditPriority] = useState<WealthGoalPriority>("MEDIUM");
   const [editNote, setEditNote] = useState("");
+
+  async function loadAllocations(goalId: number) {
+    try {
+      const result = await listGoalFundingAllocations(goalId);
+      setAllocationsByGoal((prev) => ({ ...prev, [goalId]: result }));
+    } catch (err) {
+      setAllocationsByGoal((prev) => ({ ...prev, [goalId]: { error: messageFor(err, "Unable to load funding progress.") } }));
+    }
+  }
 
   async function load(includeArchived = showArchived) {
     setLoading(true);
@@ -163,61 +96,6 @@ export default function GoalsPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeIdsKey]);
-
-  // Portfolio current value has no stored column — it must be derived live,
-  // the same way the rest of the app already derives it (cash_balance +
-  // holdings * price). Fetched only for portfolios actually referenced by a
-  // loaded allocation, not every portfolio in the workspace.
-  const [portfolioValueById, setPortfolioValueById] = useState<Record<number, number | "error" | undefined>>({});
-
-  const referencedPortfolioIds = useMemo(() => {
-    const ids = new Set<number>();
-    for (const result of Object.values(allocationsByGoal)) {
-      if (!Array.isArray(result)) continue;
-      for (const allocation of result) {
-        if (allocation.portfolio_id != null) ids.add(allocation.portfolio_id);
-      }
-    }
-    return ids;
-  }, [allocationsByGoal]);
-
-  useEffect(() => {
-    let cancelled = false;
-    for (const portfolioId of referencedPortfolioIds) {
-      if (portfolioValueById[portfolioId] !== undefined) continue;
-      const portfolio = portfolios.find((item) => item.id === portfolioId);
-      if (!portfolio) continue; // portfolios list not loaded yet; effect re-runs once it is
-      void (async () => {
-        try {
-          const [items, prices] = await Promise.all([getHoldings(portfolioId), getPortfolioPrices(portfolioId)]);
-          if (cancelled) return;
-          const { value } = computePortfolioCurrentValue(portfolio, items, prices);
-          setPortfolioValueById((prev) => ({ ...prev, [portfolioId]: value }));
-        } catch {
-          if (cancelled) return;
-          setPortfolioValueById((prev) => ({ ...prev, [portfolioId]: "error" }));
-        }
-      })();
-    }
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [referencedPortfolioIds, portfolios]);
-
-  const designatedBySource = useMemo(() => {
-    const loaded: GoalFundingAllocation[] = [];
-    for (const result of Object.values(allocationsByGoal)) {
-      if (Array.isArray(result)) loaded.push(...result);
-    }
-    return aggregateDesignatedBySource(loaded);
-  }, [allocationsByGoal]);
-
-  function fundingHealthForSource(kind: GoalFundingSourceKind, id: number): SourceFundingHealth {
-    const totalDesignated = designatedBySource.get(sourceKey(kind, id)) ?? 0;
-    const currentValue = kind === "CASH_ACCOUNT"
-      ? allCashAccounts.find((account) => account.id === id)?.balance ?? null
-      : (typeof portfolioValueById[id] === "number" ? (portfolioValueById[id] as number) : null);
-    return computeSourceFundingHealth(totalDesignated, currentValue);
-  }
 
   async function handleCreate(event: FormEvent) {
     event.preventDefault();
@@ -306,8 +184,7 @@ export default function GoalsPage() {
       <div>
         <h1 className="text-2xl font-bold">Goals</h1>
         <p className="text-sm text-gray-500 mt-1">
-          Track whole-life financial goals — retirement, a house, a wedding, and more. Goal progress reflects only the
-          funding you explicitly designate below; it is not linked to your current Net Worth.
+          Manage whole-life financial goals — retirement, a house, a wedding, and more. Open a goal to review its funding and deterministic planning tools.
         </p>
       </div>
 
@@ -347,25 +224,32 @@ export default function GoalsPage() {
           <h2 className="text-lg font-semibold">Active goals</h2>
           <button type="button" onClick={() => void toggleArchived()} className="text-sm text-blue-600 hover:underline">{showArchived ? "Hide archived" : "Show archived"}</button>
         </div>
-        {loading ? <p className="text-sm text-gray-400">Loading goals…</p> : error ? <div className="text-sm text-red-600 space-y-2"><p role="alert">{error}</p><button type="button" onClick={() => void load()} className="text-blue-600 hover:underline">Try again</button></div> : active.length === 0 ? <p className="text-sm text-gray-500">No active goals yet. Add your first goal above.</p> : <div className="space-y-3">{active.map((item) => (
-          <GoalCard
-            key={item.id}
-            item={item}
-            cashAccounts={cashAccounts}
-            portfolios={portfolios}
-            allocations={allocationsByGoal[item.id]}
-            onReloadAllocations={() => loadAllocations(item.id)}
-            fundingHealthForSource={fundingHealthForSource}
-            onEdit={openEdit}
-            onArchive={() => void setArchived(item, true)}
-          />
-        ))}</div>}
+        {loading ? (
+          <p className="text-sm text-gray-400">Loading goals…</p>
+        ) : error ? (
+          <div className="text-sm text-red-600 space-y-2"><p role="alert">{error}</p><button type="button" onClick={() => void load()} className="text-blue-600 hover:underline">Try again</button></div>
+        ) : active.length === 0 ? (
+          <p className="text-sm text-gray-500">No active goals yet. Add your first goal above.</p>
+        ) : (
+          <div className="space-y-3">{active.map((item) => (
+            <GoalCard key={item.id} item={item} allocations={allocationsByGoal[item.id]} onEdit={openEdit} onArchive={() => void setArchived(item, true)} />
+          ))}</div>
+        )}
       </section>
 
       {showArchived && !loading && !error && (
         <section className="space-y-3 pt-2 border-t">
           <h2 className="text-lg font-semibold text-gray-600">Archived goals</h2>
-          {archived.length === 0 ? <p className="text-sm text-gray-500">No archived goals.</p> : archived.map((item) => <div key={item.id} className="bg-gray-50 border rounded-xl p-4 flex items-center justify-between gap-4"><div><p className="font-medium text-gray-600">{item.name}</p><p className="text-sm text-gray-500">{typeLabel(item.goal_type)} · {priorityLabel(item.priority)} priority</p><p className="text-sm text-gray-600">{formatThb(item.target_amount)} target{item.target_date ? ` · by ${item.target_date}` : ""}</p></div><button type="button" onClick={() => void setArchived(item, false)} className="text-sm text-blue-600 hover:underline">Restore</button></div>)}
+          {archived.length === 0 ? <p className="text-sm text-gray-500">No archived goals.</p> : archived.map((item) => (
+            <div key={item.id} className="bg-gray-50 border rounded-xl p-4 flex items-center justify-between gap-4">
+              <div>
+                <p className="font-medium text-gray-600">{item.name}</p>
+                <p className="text-sm text-gray-500">{typeLabel(item.goal_type)} · {priorityLabel(item.priority)} priority</p>
+                <p className="text-sm text-gray-600">{formatThb(item.target_amount)} target{item.target_date ? ` · by ${item.target_date}` : ""}</p>
+              </div>
+              <button type="button" onClick={() => void setArchived(item, false)} className="text-sm text-blue-600 hover:underline">Restore</button>
+            </div>
+          ))}
         </section>
       )}
     </div>
@@ -374,439 +258,31 @@ export default function GoalsPage() {
 
 function GoalCard({
   item,
-  cashAccounts,
-  portfolios,
   allocations,
-  onReloadAllocations,
-  fundingHealthForSource,
   onEdit,
   onArchive,
 }: {
   item: WealthGoal;
-  cashAccounts: CashAccount[];
-  portfolios: Portfolio[];
   allocations: AllocationsState;
-  onReloadAllocations: () => Promise<void>;
-  fundingHealthForSource: (kind: GoalFundingSourceKind, id: number) => SourceFundingHealth;
   onEdit: (item: WealthGoal) => void;
   onArchive: () => void;
 }) {
   return (
-    <div className="bg-white border rounded-xl p-4 shadow-sm space-y-3">
+    <article className="bg-white border rounded-xl p-4 shadow-sm space-y-3">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <p className="font-semibold">{item.name}</p>
           <p className="text-sm text-gray-500">{typeLabel(item.goal_type)} · {priorityLabel(item.priority)} priority</p>
-          <p className="text-lg font-medium mt-1">{formatThb(item.target_amount)} <span className="text-xs text-gray-500">target</span></p>
-          <p className="text-xs text-gray-400 mt-1">{item.target_date ? `Target date: ${item.target_date}` : "No target date set"}</p>
-          {item.note && <p className="text-sm text-gray-500 mt-1">{item.note}</p>}
+          <p className="text-sm text-gray-600 mt-1">{formatThb(item.target_amount)} target · {item.target_date ? `by ${item.target_date}` : "no target date"}</p>
         </div>
         <div className="flex gap-3 text-sm flex-wrap">
+          <Link href={`/goals/${item.id}`} className="text-blue-600 hover:underline">View plan →</Link>
           <button type="button" onClick={() => onEdit(item)} className="text-blue-600 hover:underline">Edit</button>
           <button type="button" onClick={onArchive} className="text-red-600 hover:underline">Archive</button>
         </div>
       </div>
-      <GoalFundingSummary allocations={allocations} targetAmount={item.target_amount} />
-      <FundingSourcesSection
-        goalId={item.id}
-        cashAccounts={cashAccounts}
-        portfolios={portfolios}
-        allocations={allocations}
-        onReload={onReloadAllocations}
-        fundingHealthForSource={fundingHealthForSource}
-      />
-      <GoalWhatIfSection item={item} allocations={allocations} fundingHealthForSource={fundingHealthForSource} />
-    </div>
-  );
-}
-
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
-/**
- * A transient, deterministic What-If projection — collapsed by default.
- * Starting value is ALWAYS designated funding (computeGoalFunding's
- * designatedFunding), never a source's current capacity: over-allocation is
- * surfaced as an existing Funding Health fact alongside the result, never
- * used to silently substitute a smaller starting value. Inputs are local,
- * transient component state — nothing here is persisted or mutates real
- * Cash Account / Portfolio / allocation data.
- */
-function GoalWhatIfSection({
-  item,
-  allocations,
-  fundingHealthForSource,
-}: {
-  item: WealthGoal;
-  allocations: AllocationsState;
-  fundingHealthForSource: (kind: GoalFundingSourceKind, id: number) => SourceFundingHealth;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const [mode, setMode] = useState<"forward" | "required">("forward");
-  const [monthlyContribution, setMonthlyContribution] = useState("");
-  const [annualReturnPct, setAnnualReturnPct] = useState("0");
-
-  if (!expanded) {
-    return (
-      <div className="pt-2 border-t">
-        <button type="button" onClick={() => setExpanded(true)} className="text-sm text-blue-600 hover:underline">What-If</button>
-      </div>
-    );
-  }
-
-  const funding = computeGoalFunding(item.target_amount, Array.isArray(allocations) ? allocations : null);
-  const startingValue = funding.designatedFunding;
-
-  const parsedContribution = monthlyContribution.trim() === "" ? 0 : Number(monthlyContribution);
-  const parsedReturn = annualReturnPct.trim() === "" ? 0 : Number(annualReturnPct);
-
-  const result = startingValue === null ? null : computeGoalWhatIf({
-    targetAmount: item.target_amount,
-    startingValue,
-    monthlyContribution: parsedContribution,
-    annualReturnPct: parsedReturn,
-    asOfDate: todayIso(),
-    targetDate: item.target_date,
-  });
-  const requiredResult = startingValue === null ? null : computeRequiredMonthlyContribution({
-    targetAmount: item.target_amount,
-    startingValue,
-    annualReturnPct: parsedReturn,
-    asOfDate: todayIso(),
-    targetDate: item.target_date,
-  });
-
-  const sourceHealths = Array.isArray(allocations)
-    ? allocations
-        .map((allocation) => fundingHealthForSource(allocation.source_kind, (allocation.cash_account_id ?? allocation.portfolio_id) as number))
-        .filter((health) => health.status !== "SUPPORTED")
-    : [];
-
-  return (
-    <div className="pt-3 border-t space-y-2">
-      <button type="button" onClick={() => setExpanded(false)} className="text-sm text-blue-600 hover:underline">What-If</button>
-      <div role="group" aria-label={`What-If mode for ${item.name}`} className="flex gap-2 text-xs">
-        <button
-          type="button"
-          aria-pressed={mode === "forward"}
-          onClick={() => setMode("forward")}
-          className={mode === "forward" ? "font-semibold text-blue-700" : "text-gray-500 hover:underline"}
-        >
-          When will I reach it?
-        </button>
-        <button
-          type="button"
-          aria-pressed={mode === "required"}
-          onClick={() => setMode("required")}
-          className={mode === "required" ? "font-semibold text-blue-700" : "text-gray-500 hover:underline"}
-        >
-          How much per month do I need?
-        </button>
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-2">
-        {mode === "forward" && (
-          <Field label="Monthly contribution">
-            <input
-              aria-label={`What-If monthly contribution for ${item.name}`}
-              type="number"
-              step="0.01"
-              value={monthlyContribution}
-              onChange={(event) => setMonthlyContribution(event.target.value)}
-              className={inputClass}
-            />
-          </Field>
-        )}
-        <Field label="Annual return assumption (%)">
-          <input
-            aria-label={`What-If annual return assumption for ${item.name}`}
-            type="number"
-            step="0.01"
-            value={annualReturnPct}
-            onChange={(event) => setAnnualReturnPct(event.target.value)}
-            className={inputClass}
-          />
-        </Field>
-      </div>
-
-      {allocations === undefined ? (
-        <p className="text-xs text-gray-400">What-If loading — funding data is still loading.</p>
-      ) : startingValue === null ? (
-        <p role="alert" className="text-xs text-red-600">What-If unavailable — funding data failed to load.</p>
-      ) : mode === "forward" ? (
-        !result || !result.valid ? (
-          <p role="alert" className="text-xs text-red-600">{result && !result.valid ? result.error : "Invalid What-If inputs."}</p>
-        ) : (
-          <div className="text-sm bg-gray-50 rounded p-2 space-y-1.5">
-            <p className="text-xs text-gray-500">
-              Monthly contribution: {formatThb(result.assumptions.monthlyContribution)} · Annual return assumption: {result.assumptions.annualReturnPct}%
-            </p>
-            {result.alreadyReached ? (
-              <p>Designated funding already reaches {formatThb(result.targetAmount)} under these assumptions.</p>
-            ) : result.reachable ? (
-              <p>Under these assumptions, designated funding would reach {formatThb(result.targetAmount)} around {formatMonthLabel(result.reachDate as string)}.</p>
-            ) : (
-              <p>Under these assumptions, designated funding would not reach {formatThb(result.targetAmount)} within 50 years.</p>
-            )}
-
-            {result.targetDate && (
-              result.targetDateInPast ? (
-                <p className="text-xs text-gray-500">Saved target date ({result.targetDate}) has passed.</p>
-              ) : (
-                <p className="text-xs text-gray-500">
-                  Saved target date: {result.targetDate} · Projected amount by that date: {formatThb(result.projectedValueAtTargetDate as number)}
-                  {result.shortfallAtTargetDate != null && ` · ${formatThb(result.shortfallAtTargetDate)} below the current target`}
-                  {result.surplusAtTargetDate != null && ` · ${formatThb(result.surplusAtTargetDate)} above the current target`}
-                </p>
-              )
-            )}
-          </div>
-        )
-      ) : !requiredResult || !requiredResult.valid ? (
-        <p role="alert" className="text-xs text-red-600">{requiredResult && !requiredResult.valid ? requiredResult.error : "Invalid required-contribution inputs."}</p>
-      ) : (
-        <div className="text-sm bg-gray-50 rounded p-2 space-y-1.5">
-          <p className="text-xs text-gray-500">
-            Designated funding starting amount: {formatThb(requiredResult.startingValue)} · Current target: {formatThb(requiredResult.targetAmount)}
-          </p>
-          <p className="text-xs text-gray-500">
-            Saved target date: {requiredResult.assumptions.targetDate} · Annual return assumption: {requiredResult.assumptions.annualReturnPct}%
-          </p>
-          {requiredResult.alreadyReached ? (
-            <p>No additional monthly contribution is required under the current designated funding.</p>
-          ) : (
-            <p>Under this assumption, contributing {formatThb(requiredResult.requiredMonthlyContribution)} per month would reach the current target by {requiredResult.assumptions.targetDate}.</p>
-          )}
-          <p className="text-xs text-gray-500">Projected amount by that date: {formatThb(requiredResult.projectedValueAtTargetDate)}</p>
-        </div>
-      )}
-
-      {sourceHealths.length > 0 && (
-        <div className="pt-1 border-t">
-          <p className="text-xs text-gray-500">Funding health for this goal&apos;s sources:</p>
-          {sourceHealths.map((health, index) => <FundingHealthRow key={index} health={health} />)}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function GoalFundingSummary({ allocations, targetAmount }: { allocations: AllocationsState; targetAmount: number }) {
-  if (allocations === undefined) {
-    return <p className="text-xs text-gray-400 mt-2">Loading funding progress…</p>;
-  }
-  const funding = computeGoalFunding(targetAmount, Array.isArray(allocations) ? allocations : null);
-  if (funding.designatedFunding === null) {
-    return <p role="alert" className="text-xs text-red-600 mt-2">Goal progress unavailable — funding data failed to load.</p>;
-  }
-  return (
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm bg-gray-50 rounded p-2 mt-2">
-      <div><p className="text-xs text-gray-500">Target</p><p className="font-medium">{formatThb(funding.targetAmount)}</p></div>
-      <div><p className="text-xs text-gray-500">Designated funding</p><p className="font-medium">{formatThb(funding.designatedFunding)}</p></div>
-      <div><p className="text-xs text-gray-500">Goal progress</p><p className="font-medium">{Math.round(funding.progressPercent as number)}%</p></div>
-      <div><p className="text-xs text-gray-500">Funding gap</p><p className="font-medium">{formatThb(funding.fundingGap as number)}</p></div>
-    </div>
-  );
-}
-
-function FundingHealthRow({ health }: { health: SourceFundingHealth }) {
-  if (health.status === "UNAVAILABLE") {
-    return <p className="text-xs text-gray-400 mt-0.5">Current value unavailable · Funding health unavailable</p>;
-  }
-  if (health.status === "OVER_ALLOCATED") {
-    return (
-      <p className="text-xs text-amber-600 mt-0.5">
-        Current value {formatThb(health.currentValue as number)} · Attention: exceeds current value by {formatThb(health.shortfall as number)}
-      </p>
-    );
-  }
-  return <p className="text-xs text-gray-500 mt-0.5">Current value {formatThb(health.currentValue as number)} · Funding health: Supported</p>;
-}
-
-function FundingSourcesSection({
-  goalId,
-  cashAccounts,
-  portfolios,
-  allocations,
-  onReload,
-  fundingHealthForSource,
-}: {
-  goalId: number;
-  cashAccounts: CashAccount[];
-  portfolios: Portfolio[];
-  allocations: AllocationsState;
-  onReload: () => Promise<void>;
-  fundingHealthForSource: (kind: GoalFundingSourceKind, id: number) => SourceFundingHealth;
-}) {
-  const [formError, setFormError] = useState("");
-
-  const [sourceKind, setSourceKind] = useState<GoalFundingSourceKind>("CASH_ACCOUNT");
-  const [sourceId, setSourceId] = useState("");
-  const [amount, setAmount] = useState("");
-
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [editAmount, setEditAmount] = useState("");
-
-  async function handleAdd(event: FormEvent) {
-    event.preventDefault();
-    setFormError("");
-    const parsed = Number(amount);
-    if (!sourceId || !Number.isFinite(parsed) || parsed <= 0) {
-      setFormError("Choose a source and enter a positive designated amount.");
-      return;
-    }
-    try {
-      await createGoalFundingAllocation(goalId, {
-        cash_account_id: sourceKind === "CASH_ACCOUNT" ? Number(sourceId) : undefined,
-        portfolio_id: sourceKind === "PORTFOLIO" ? Number(sourceId) : undefined,
-        allocated_amount: parsed,
-        currency: "THB",
-      });
-      setSourceId("");
-      setAmount("");
-      await onReload();
-    } catch (err) {
-      setFormError(messageFor(err, "Unable to add funding source."));
-    }
-  }
-
-  async function handleSaveEdit(allocationId: number) {
-    setFormError("");
-    const parsed = Number(editAmount);
-    if (!Number.isFinite(parsed) || parsed <= 0) {
-      setFormError("Enter a positive designated amount.");
-      return;
-    }
-    try {
-      await updateGoalFundingAllocation(goalId, allocationId, { allocated_amount: parsed });
-      setEditingId(null);
-      await onReload();
-    } catch (err) {
-      setFormError(messageFor(err, "Unable to update funding source."));
-    }
-  }
-
-  async function handleRemove(allocationId: number) {
-    setFormError("");
-    try {
-      await deleteGoalFundingAllocation(goalId, allocationId);
-      await onReload();
-    } catch (err) {
-      setFormError(messageFor(err, "Unable to remove funding source."));
-    }
-  }
-
-  const sourceOptions: { id: number; name: string }[] = sourceKind === "CASH_ACCOUNT" ? cashAccounts : portfolios;
-
-  return (
-    <div className="pt-3 border-t space-y-2">
-      <p className="text-sm font-medium text-gray-700">Funding sources</p>
-
-      {allocations === undefined ? (
-        <p className="text-xs text-gray-400">Loading funding sources…</p>
-      ) : !Array.isArray(allocations) ? (
-        <p role="alert" className="text-xs text-red-600">{allocations.error}</p>
-      ) : allocations.length === 0 ? (
-        <p className="text-xs text-gray-500">No funding sources designated yet.</p>
-      ) : (
-        <ul className="space-y-1.5">
-          {allocations.map((allocation) => {
-            const allocationSourceId = (allocation.cash_account_id ?? allocation.portfolio_id) as number;
-            const health = fundingHealthForSource(allocation.source_kind, allocationSourceId);
-            return (
-              <li key={allocation.id} className="text-sm border-b last:border-0 pb-1.5">
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <span className="text-gray-700">
-                    {allocation.source_name ?? "Unknown source"}{" "}
-                    <span className="text-xs text-gray-400 ml-1">
-                      ({allocation.source_kind === "CASH_ACCOUNT" ? "Cash Account" : "Portfolio"}
-                      {allocation.source_is_archived ? ", archived" : ""})
-                    </span>
-                  </span>
-                  {editingId === allocation.id ? (
-                    <span className="flex items-center gap-1.5">
-                      <input
-                        aria-label={`Edit designated amount for ${allocation.source_name ?? "source"}`}
-                        type="number"
-                        step="0.01"
-                        value={editAmount}
-                        onChange={(event) => setEditAmount(event.target.value)}
-                        className="w-28 border rounded px-2 py-1 text-sm"
-                      />
-                      <button type="button" onClick={() => void handleSaveEdit(allocation.id)} className="text-blue-600 hover:underline text-xs">Save</button>
-                      <button type="button" onClick={() => setEditingId(null)} className="text-gray-500 hover:underline text-xs">Cancel</button>
-                    </span>
-                  ) : (
-                    <span className="flex items-center gap-2">
-                      <span className="font-medium">{formatThb(allocation.allocated_amount)} designated</span>
-                      <button
-                        type="button"
-                        aria-label={`Edit designated amount for ${allocation.source_name ?? "source"}`}
-                        onClick={() => { setEditingId(allocation.id); setEditAmount(String(allocation.allocated_amount)); }}
-                        className="text-blue-600 hover:underline text-xs"
-                      >
-                        Edit
-                      </button>
-                      <button
-                        type="button"
-                        aria-label={`Remove ${allocation.source_name ?? "source"} as a funding source`}
-                        onClick={() => void handleRemove(allocation.id)}
-                        className="text-red-600 hover:underline text-xs"
-                      >
-                        Remove
-                      </button>
-                    </span>
-                  )}
-                </div>
-                <FundingHealthRow health={health} />
-              </li>
-            );
-          })}
-        </ul>
-      )}
-
-      {formError && <p role="alert" className="text-xs text-red-600">{formError}</p>}
-
-      <form onSubmit={handleAdd} className="flex items-end gap-2 flex-wrap pt-1">
-        <label className="text-xs text-gray-500">
-          Source kind
-          <select
-            aria-label="Funding source kind"
-            value={sourceKind}
-            onChange={(event) => { setSourceKind(event.target.value as GoalFundingSourceKind); setSourceId(""); }}
-            className="block border rounded px-2 py-1 text-sm mt-0.5"
-          >
-            <option value="CASH_ACCOUNT">Cash Account</option>
-            <option value="PORTFOLIO">Portfolio</option>
-          </select>
-        </label>
-        <label className="text-xs text-gray-500">
-          Source
-          <select
-            aria-label="Funding source"
-            value={sourceId}
-            onChange={(event) => setSourceId(event.target.value)}
-            className="block border rounded px-2 py-1 text-sm mt-0.5 min-w-[10rem]"
-          >
-            <option value="">Select…</option>
-            {sourceOptions.map((source) => <option key={source.id} value={source.id}>{source.name}</option>)}
-          </select>
-        </label>
-        <label className="text-xs text-gray-500">
-          Designated amount
-          <input
-            aria-label="Designated amount"
-            type="number"
-            step="0.01"
-            value={amount}
-            onChange={(event) => setAmount(event.target.value)}
-            className="block border rounded px-2 py-1 text-sm mt-0.5 w-32"
-          />
-        </label>
-        <button type="submit" className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700">Add funding source</button>
-      </form>
-    </div>
+      <GoalFundingSummary allocations={allocations} targetAmount={item.target_amount} compact />
+    </article>
   );
 }
 
