@@ -78,6 +78,9 @@ jobs:
           echo "Resolved flags: $FLAGS"
           
       - name: Validate DATABASE_URL shape
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SYNC_DATA_SOURCE: yfinance_github_actions
         run: |
             python - <<'PY'
             import os
