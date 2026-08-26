@@ -21,7 +21,7 @@ import uuid as _uuid
 from models.database import (
     init_db, migrate_legacy_data, get_db, SessionLocal,
     Workspace, get_default_workspace,
-    Portfolio, PortfolioItem, CashAccount, CashAccountBaseline, CashAccountTransfer, CashAccountTransaction, Liability, LiabilityBalanceObservation, WealthGoal, GoalFundingAllocation, Watchlist,
+    Portfolio, PortfolioItem, CashAccount, CashAccountBaseline, CashAccountTransfer, CashAccountTransaction, Liability, LiabilityBalanceObservation, WealthGoal, GoalFundingAllocation, GoalScenario, Watchlist,
     AgentCache, AnalysisCache, AnalysisHistory, OptimizerHistory, SignalHistory,
     Settings, UserUsage, Transaction, PortfolioSnapshot, BenchmarkPrice,
     MarketDataCache,
@@ -1741,6 +1741,155 @@ async def delete_goal_funding_allocation(goal_id: int, allocation_id: int, db: S
     db.delete(allocation)
     db.commit()
     return {"deleted": allocation_id}
+
+
+# ── Goal Scenarios (Phase 6, Milestone 3 — Named Scenario Foundation) ───────
+# A user-named, persisted set of hypothetical forward What-If assumptions
+# (monthly_contribution, annual_return_pct) for exactly one WealthGoal. NOT a
+# forecast, probability, recommendation, optimizer input, or a saved snapshot
+# of the goal/funding state — every other planning input (target amount,
+# target date, designated funding) is read live from the current goal state
+# whenever a scenario is loaded, never persisted or restored here. No DELETE:
+# archive/restore only, matching WealthGoal/CashAccount/Liability precedent.
+
+def _goal_scenario_payload(scenario: GoalScenario) -> dict:
+    return {
+        "id": scenario.id,
+        "workspace_id": scenario.workspace_id,
+        "wealth_goal_id": scenario.wealth_goal_id,
+        "name": scenario.name,
+        "monthly_contribution": scenario.monthly_contribution,
+        "annual_return_pct": scenario.annual_return_pct,
+        "is_archived": scenario.is_archived,
+        "created_at": scenario.created_at.isoformat(),
+        "updated_at": scenario.updated_at.isoformat(),
+    }
+
+
+def _goal_scenario_or_404(db: Session, goal_id: int, scenario_id: int, workspace_id: int) -> GoalScenario:
+    scenario = (
+        db.query(GoalScenario)
+        .filter(
+            GoalScenario.id == scenario_id,
+            GoalScenario.wealth_goal_id == goal_id,
+            GoalScenario.workspace_id == workspace_id,
+        )
+        .first()
+    )
+    if scenario is None:
+        raise HTTPException(status_code=404, detail="Goal scenario not found")
+    return scenario
+
+
+class GoalScenarioCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    monthly_contribution: float
+    annual_return_pct: float
+
+    @model_validator(mode="after")
+    def validate_goal_scenario(self):
+        if not self.name.strip():
+            raise ValueError("name must not be blank")
+        if not math.isfinite(self.monthly_contribution) or self.monthly_contribution < 0:
+            raise ValueError("monthly_contribution must be finite and non-negative")
+        if not math.isfinite(self.annual_return_pct) or self.annual_return_pct <= -100:
+            raise ValueError("annual_return_pct must be finite and greater than -100")
+        return self
+
+
+class GoalScenarioUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = None
+    monthly_contribution: float | None = None
+    annual_return_pct: float | None = None
+    is_archived: bool | None = None
+
+    @model_validator(mode="after")
+    def validate_goal_scenario_update(self):
+        if not self.model_fields_set:
+            raise ValueError("at least one field is required")
+        if "name" in self.model_fields_set and (self.name is None or not self.name.strip()):
+            raise ValueError("name must not be blank")
+        if "monthly_contribution" in self.model_fields_set:
+            if (
+                self.monthly_contribution is None
+                or not math.isfinite(self.monthly_contribution)
+                or self.monthly_contribution < 0
+            ):
+                raise ValueError("monthly_contribution must be finite and non-negative")
+        if "annual_return_pct" in self.model_fields_set:
+            if (
+                self.annual_return_pct is None
+                or not math.isfinite(self.annual_return_pct)
+                or self.annual_return_pct <= -100
+            ):
+                raise ValueError("annual_return_pct must be finite and greater than -100")
+        if "is_archived" in self.model_fields_set and self.is_archived is None:
+            raise ValueError("is_archived must be supplied when updating it")
+        return self
+
+
+@app.get("/wealth-goals/{goal_id}/scenarios")
+async def list_goal_scenarios(goal_id: int, include_archived: bool = False, db: Session = Depends(get_db)) -> list[dict]:
+    ws = _ws_id(db)
+    goal = _wealth_goal_or_404(db, goal_id, ws)
+    query = db.query(GoalScenario).filter(GoalScenario.workspace_id == ws, GoalScenario.wealth_goal_id == goal.id)
+    if not include_archived:
+        query = query.filter(GoalScenario.is_archived.is_(False))
+    return [_goal_scenario_payload(item) for item in query.order_by(GoalScenario.id).all()]
+
+
+@app.post("/wealth-goals/{goal_id}/scenarios", status_code=201)
+async def create_goal_scenario(goal_id: int, body: GoalScenarioCreate, db: Session = Depends(get_db)) -> dict:
+    ws = _ws_id(db)
+    goal = _wealth_goal_or_404(db, goal_id, ws)
+    if goal.is_archived:
+        raise HTTPException(status_code=409, detail="Archived wealth goals cannot receive new scenarios")
+
+    scenario = GoalScenario(
+        workspace_id=ws,
+        wealth_goal_id=goal.id,
+        name=body.name.strip(),
+        monthly_contribution=body.monthly_contribution,
+        annual_return_pct=body.annual_return_pct,
+    )
+    db.add(scenario)
+    db.commit()
+    db.refresh(scenario)
+    return _goal_scenario_payload(scenario)
+
+
+@app.patch("/wealth-goals/{goal_id}/scenarios/{scenario_id}")
+async def update_goal_scenario(goal_id: int, scenario_id: int, body: GoalScenarioUpdate, db: Session = Depends(get_db)) -> dict:
+    ws = _ws_id(db)
+    goal = _wealth_goal_or_404(db, goal_id, ws)
+    scenario = _goal_scenario_or_404(db, goal.id, scenario_id, ws)
+
+    if goal.is_archived:
+        raise HTTPException(status_code=409, detail="Scenarios cannot be modified while their wealth goal is archived")
+
+    fields = body.model_dump(exclude_unset=True)
+    if scenario.is_archived:
+        # Archived scenarios are readable and loadable but otherwise immutable
+        # — the only permitted mutation is restoring them.
+        mutating_other_fields = bool(set(fields) - {"is_archived"})
+        if mutating_other_fields or fields.get("is_archived") is not False:
+            raise HTTPException(status_code=409, detail="Archived scenarios are read-only; restore before editing")
+
+    if "name" in fields:
+        scenario.name = fields["name"].strip()
+    if "monthly_contribution" in fields:
+        scenario.monthly_contribution = fields["monthly_contribution"]
+    if "annual_return_pct" in fields:
+        scenario.annual_return_pct = fields["annual_return_pct"]
+    if "is_archived" in fields:
+        scenario.is_archived = fields["is_archived"]
+    db.commit()
+    db.refresh(scenario)
+    return _goal_scenario_payload(scenario)
 
 
 # ─── Portfolios ───────────────────────────────────────────────────────────────

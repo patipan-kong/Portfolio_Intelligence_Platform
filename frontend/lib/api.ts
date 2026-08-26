@@ -623,6 +623,47 @@ export const updateGoalFundingAllocation = (goalId: number, allocationId: number
 export const deleteGoalFundingAllocation = (goalId: number, allocationId: number) =>
   apiFetch<{ deleted: number }>(`/wealth-goals/${goalId}/funding-allocations/${allocationId}`, { method: "DELETE" });
 
+// ─── Goal Scenarios (Phase 6, Milestone 3 — Named Scenario Foundation) ─────
+// A user-named, persisted set of forward What-If assumptions
+// (monthly_contribution, annual_return_pct) for one WealthGoal. Not a
+// forecast, probability, or saved snapshot — every other planning input
+// (target, target date, designated funding) is read live from the current
+// goal state whenever a scenario is loaded. No DELETE — archive/restore only.
+
+export interface GoalScenario {
+  id: number;
+  workspace_id: number;
+  wealth_goal_id: number;
+  name: string;
+  monthly_contribution: number;
+  annual_return_pct: number;
+  is_archived: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export type GoalScenarioCreate = {
+  name: string;
+  monthly_contribution: number;
+  annual_return_pct: number;
+};
+
+export type GoalScenarioUpdate = {
+  name?: string;
+  monthly_contribution?: number;
+  annual_return_pct?: number;
+  is_archived?: boolean;
+};
+
+export const listGoalScenarios = (goalId: number, includeArchived = false) =>
+  apiFetch<GoalScenario[]>(`/wealth-goals/${goalId}/scenarios${includeArchived ? "?include_archived=true" : ""}`);
+
+export const createGoalScenario = (goalId: number, body: GoalScenarioCreate) =>
+  apiFetch<GoalScenario>(`/wealth-goals/${goalId}/scenarios`, { method: "POST", body: JSON.stringify(body) });
+
+export const updateGoalScenario = (goalId: number, scenarioId: number, body: GoalScenarioUpdate) =>
+  apiFetch<GoalScenario>(`/wealth-goals/${goalId}/scenarios/${scenarioId}`, { method: "PATCH", body: JSON.stringify(body) });
+
 export type CashAccountBaselineCreate = {
   effective_on: string;
   observed_balance: number;

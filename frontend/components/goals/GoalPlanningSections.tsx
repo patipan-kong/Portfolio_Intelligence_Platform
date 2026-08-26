@@ -15,9 +15,11 @@ import {
   createGoalFundingAllocation,
   deleteGoalFundingAllocation,
   updateGoalFundingAllocation,
+  updateGoalScenario,
   type CashAccount,
   type GoalFundingAllocation,
   type GoalFundingSourceKind,
+  type GoalScenario,
   type Portfolio,
   type WealthGoal,
   type WealthGoalPriority,
@@ -29,6 +31,28 @@ export interface AllocationsLoadError {
 }
 
 export type AllocationsState = GoalFundingAllocation[] | AllocationsLoadError | undefined;
+
+export interface ScenariosLoadError {
+  error: string;
+}
+
+export type ScenariosState = GoalScenario[] | ScenariosLoadError | undefined;
+
+export const SAVED_SCENARIO_DISCLOSURE =
+  "Saved scenarios store assumptions only. Results use the goal's current target and designated funding.";
+
+/** The transient forward What-If assumptions, lifted above GoalWhatIfSection
+ * so loading a saved Scenario can populate them from outside. */
+export interface WhatIfAssumptionsState {
+  expanded: boolean;
+  setExpanded: (value: boolean) => void;
+  mode: "forward" | "required";
+  setMode: (value: "forward" | "required") => void;
+  monthlyContribution: string;
+  setMonthlyContribution: (value: string) => void;
+  annualReturnPct: string;
+  setAnnualReturnPct: (value: string) => void;
+}
 
 export const inputClass = "mt-1 block w-full border rounded px-3 py-2";
 
@@ -324,15 +348,23 @@ export function GoalWhatIfSection({
   item,
   allocations,
   fundingHealthForSource,
+  whatIf,
+  readOnly = false,
+  onSaveScenario,
 }: {
   item: WealthGoal;
   allocations: AllocationsState;
   fundingHealthForSource: FundingHealthForSource;
+  whatIf: WhatIfAssumptionsState;
+  /** True while the goal is archived — a saved What-If projection can still be viewed, but not saved as a new Scenario. */
+  readOnly?: boolean;
+  onSaveScenario: (monthlyContribution: number, annualReturnPct: number, name: string) => Promise<void>;
 }) {
-  const [expanded, setExpanded] = useState(false);
-  const [mode, setMode] = useState<"forward" | "required">("forward");
-  const [monthlyContribution, setMonthlyContribution] = useState("");
-  const [annualReturnPct, setAnnualReturnPct] = useState("0");
+  const { expanded, setExpanded, mode, setMode, monthlyContribution, setMonthlyContribution, annualReturnPct, setAnnualReturnPct } = whatIf;
+  const [savingName, setSavingName] = useState("");
+  const [showSaveForm, setShowSaveForm] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [saveConfirmation, setSaveConfirmation] = useState("");
 
   if (!expanded) {
     return (
@@ -465,10 +497,239 @@ export function GoalWhatIfSection({
         </div>
       )}
 
+      {!readOnly && mode === "forward" && result && result.valid && (
+        <div className="pt-1 border-t">
+          {!showSaveForm ? (
+            <button
+              type="button"
+              onClick={() => { setShowSaveForm(true); setSaveError(""); setSaveConfirmation(""); }}
+              className="text-xs text-blue-600 hover:underline"
+            >
+              Save scenario
+            </button>
+          ) : (
+            <form
+              className="flex items-end gap-2 flex-wrap pt-1"
+              onSubmit={async (event) => {
+                event.preventDefault();
+                setSaveError("");
+                if (!savingName.trim()) {
+                  setSaveError("Enter a name for this scenario.");
+                  return;
+                }
+                try {
+                  await onSaveScenario(parsedContribution, parsedReturn, savingName.trim());
+                  setShowSaveForm(false);
+                  setSavingName("");
+                  setSaveConfirmation("Scenario saved.");
+                } catch (err) {
+                  setSaveError(messageFor(err, "Unable to save scenario."));
+                }
+              }}
+            >
+              <label className="text-xs text-gray-500">
+                Scenario name
+                <input
+                  aria-label={`Scenario name for ${item.name}`}
+                  type="text"
+                  value={savingName}
+                  onChange={(event) => setSavingName(event.target.value)}
+                  className="block border rounded px-2 py-1 text-sm mt-0.5"
+                />
+              </label>
+              <button type="submit" className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700">Save</button>
+              <button type="button" onClick={() => { setShowSaveForm(false); setSaveError(""); }} className="text-gray-500 hover:underline text-xs">Cancel</button>
+            </form>
+          )}
+          {saveError && <p role="alert" className="text-xs text-red-600 mt-1">{saveError}</p>}
+          {saveConfirmation && <p className="text-xs text-gray-500 mt-1">{saveConfirmation}</p>}
+        </div>
+      )}
+
       {sourceHealths.length > 0 && (
         <div className="pt-1 border-t">
           <p className="text-xs text-gray-500">Funding health for this goal&apos;s sources:</p>
           {sourceHealths.map((health, index) => <FundingHealthRow key={index} health={health} />)}
+        </div>
+      )}
+    </section>
+  );
+}
+
+export function SavedScenariosSection({
+  goalId,
+  readOnly = false,
+  scenarios,
+  onReload,
+  onLoadScenario,
+}: {
+  goalId: number;
+  /** True while the goal is archived — create/edit/archive/restore are disabled; loading is still allowed. */
+  readOnly?: boolean;
+  scenarios: ScenariosState;
+  onReload: () => Promise<void>;
+  onLoadScenario: (scenario: GoalScenario) => void;
+}) {
+  const [formError, setFormError] = useState("");
+  const [showArchived, setShowArchived] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editContribution, setEditContribution] = useState("");
+  const [editReturn, setEditReturn] = useState("");
+
+  function startEdit(scenario: GoalScenario) {
+    setFormError("");
+    setEditingId(scenario.id);
+    setEditName(scenario.name);
+    setEditContribution(String(scenario.monthly_contribution));
+    setEditReturn(String(scenario.annual_return_pct));
+  }
+
+  async function handleSaveEdit(scenarioId: number) {
+    setFormError("");
+    const parsedContribution = Number(editContribution);
+    const parsedReturn = Number(editReturn);
+    if (!editName.trim()) {
+      setFormError("Enter a name for this scenario.");
+      return;
+    }
+    if (!Number.isFinite(parsedContribution) || parsedContribution < 0) {
+      setFormError("Enter a monthly contribution of zero or more.");
+      return;
+    }
+    if (!Number.isFinite(parsedReturn) || parsedReturn <= -100) {
+      setFormError("Enter an annual return assumption greater than -100%.");
+      return;
+    }
+    try {
+      await updateGoalScenario(goalId, scenarioId, {
+        name: editName.trim(),
+        monthly_contribution: parsedContribution,
+        annual_return_pct: parsedReturn,
+      });
+      setEditingId(null);
+      await onReload();
+    } catch (err) {
+      setFormError(messageFor(err, "Unable to update scenario."));
+    }
+  }
+
+  async function handleArchiveToggle(scenario: GoalScenario) {
+    setFormError("");
+    try {
+      await updateGoalScenario(goalId, scenario.id, { is_archived: !scenario.is_archived });
+      await onReload();
+    } catch (err) {
+      setFormError(messageFor(err, "Unable to update scenario."));
+    }
+  }
+
+  const rows = Array.isArray(scenarios) ? scenarios : [];
+  const activeRows = rows.filter((row) => !row.is_archived);
+  const archivedRows = rows.filter((row) => row.is_archived);
+
+  return (
+    <section className="space-y-2" aria-labelledby="saved-scenarios-heading">
+      <p className="text-xs text-gray-500">{SAVED_SCENARIO_DISCLOSURE}</p>
+
+      {scenarios === undefined ? (
+        <p className="text-sm text-gray-400">Loading saved scenarios…</p>
+      ) : !Array.isArray(scenarios) ? (
+        <p role="alert" className="text-sm text-red-600">{scenarios.error}</p>
+      ) : activeRows.length === 0 ? (
+        <p className="text-sm text-gray-500">No saved scenarios yet.</p>
+      ) : (
+        <ul className="space-y-1.5">
+          {activeRows.map((scenario) => (
+            <li key={scenario.id} className="text-sm border-b last:border-0 pb-1.5">
+              {editingId === scenario.id ? (
+                <div className="flex items-end gap-2 flex-wrap">
+                  <label className="text-xs text-gray-500">
+                    Name
+                    <input
+                      aria-label={`Edit name for ${scenario.name}`}
+                      type="text"
+                      value={editName}
+                      onChange={(event) => setEditName(event.target.value)}
+                      className="block border rounded px-2 py-1 text-sm mt-0.5"
+                    />
+                  </label>
+                  <label className="text-xs text-gray-500">
+                    Monthly contribution
+                    <input
+                      aria-label={`Edit monthly contribution for ${scenario.name}`}
+                      type="number"
+                      step="0.01"
+                      value={editContribution}
+                      onChange={(event) => setEditContribution(event.target.value)}
+                      className="w-28 border rounded px-2 py-1 text-sm mt-0.5"
+                    />
+                  </label>
+                  <label className="text-xs text-gray-500">
+                    Annual return (%)
+                    <input
+                      aria-label={`Edit annual return assumption for ${scenario.name}`}
+                      type="number"
+                      step="0.01"
+                      value={editReturn}
+                      onChange={(event) => setEditReturn(event.target.value)}
+                      className="w-20 border rounded px-2 py-1 text-sm mt-0.5"
+                    />
+                  </label>
+                  <button type="button" onClick={() => void handleSaveEdit(scenario.id)} className="text-blue-600 hover:underline text-xs">Save</button>
+                  <button type="button" onClick={() => setEditingId(null)} className="text-gray-500 hover:underline text-xs">Cancel</button>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <span className="text-gray-700">
+                    <span className="font-medium">{scenario.name}</span>{" "}
+                    <span className="text-xs text-gray-400">
+                      ({formatThb(scenario.monthly_contribution)}/month · {scenario.annual_return_pct}% annual return assumption)
+                    </span>
+                  </span>
+                  <span className="flex items-center gap-2">
+                    <button type="button" aria-label={`Load ${scenario.name} scenario`} onClick={() => onLoadScenario(scenario)} className="text-blue-600 hover:underline text-xs">Load</button>
+                    {!readOnly && <>
+                      <button type="button" aria-label={`Edit ${scenario.name} scenario`} onClick={() => startEdit(scenario)} className="text-blue-600 hover:underline text-xs">Edit</button>
+                      <button type="button" aria-label={`Archive ${scenario.name} scenario`} onClick={() => void handleArchiveToggle(scenario)} className="text-red-600 hover:underline text-xs">Archive</button>
+                    </>}
+                  </span>
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {formError && <p role="alert" className="text-sm text-red-600">{formError}</p>}
+
+      {Array.isArray(scenarios) && archivedRows.length > 0 && (
+        <div className="pt-1">
+          <button type="button" onClick={() => setShowArchived((value) => !value)} className="text-xs text-blue-600 hover:underline">
+            {showArchived ? "Hide archived scenarios" : `Show archived scenarios (${archivedRows.length})`}
+          </button>
+          {showArchived && (
+            <ul className="space-y-1.5 pt-1.5">
+              {archivedRows.map((scenario) => (
+                <li key={scenario.id} className="text-sm border-b last:border-0 pb-1.5">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <span className="text-gray-700">
+                      <span className="font-medium">{scenario.name}</span>{" "}
+                      <span className="text-xs text-gray-400">
+                        ({formatThb(scenario.monthly_contribution)}/month · {scenario.annual_return_pct}% annual return assumption, archived)
+                      </span>
+                    </span>
+                    <span className="flex items-center gap-2">
+                      <button type="button" aria-label={`Load ${scenario.name} scenario`} onClick={() => onLoadScenario(scenario)} className="text-blue-600 hover:underline text-xs">Load</button>
+                      {!readOnly && (
+                        <button type="button" aria-label={`Restore ${scenario.name} scenario`} onClick={() => void handleArchiveToggle(scenario)} className="text-blue-600 hover:underline text-xs">Restore</button>
+                      )}
+                    </span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
     </section>

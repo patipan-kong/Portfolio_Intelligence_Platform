@@ -6,7 +6,9 @@ import {
   FundingSourcesSection,
   GoalSummary,
   GoalWhatIfSection,
+  SavedScenariosSection,
   type AllocationsState,
+  type ScenariosState,
   messageFor,
 } from "@/components/goals/GoalPlanningSections";
 import {
@@ -17,15 +19,18 @@ import {
 } from "@/lib/goalFunding";
 import { computePortfolioCurrentValue } from "@/lib/wealthOverview";
 import {
+  createGoalScenario,
   getHoldings,
   getPortfolioPrices,
   listCashAccounts,
   listGoalFundingAllocations,
+  listGoalScenarios,
   listPortfolios,
   listWealthGoals,
   type CashAccount,
   type GoalFundingAllocation,
   type GoalFundingSourceKind,
+  type GoalScenario,
   type Portfolio,
   type WealthGoal,
 } from "@/lib/api";
@@ -40,6 +45,13 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
   const [allGoals, setAllGoals] = useState<WealthGoal[]>([]);
   const [allocations, setAllocations] = useState<AllocationsState>(undefined);
   const [allocationsByGoal, setAllocationsByGoal] = useState<Record<number, AllocationsState>>({});
+  const [scenarios, setScenarios] = useState<ScenariosState>(undefined);
+  // Lifted above GoalWhatIfSection so "Load scenario" can populate its
+  // transient assumptions from the Saved Scenarios section.
+  const [whatIfExpanded, setWhatIfExpanded] = useState(false);
+  const [whatIfMode, setWhatIfMode] = useState<"forward" | "required">("forward");
+  const [whatIfMonthlyContribution, setWhatIfMonthlyContribution] = useState("");
+  const [whatIfAnnualReturnPct, setWhatIfAnnualReturnPct] = useState("0");
   const [cashAccounts, setCashAccounts] = useState<CashAccount[]>([]);
   const [allCashAccounts, setAllCashAccounts] = useState<CashAccount[]>([]);
   const [portfolios, setPortfolios] = useState<Portfolio[]>([]);
@@ -60,6 +72,11 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
     setAllocationsByGoal({});
     setPortfolioValueById({});
     setSourceLoadError("");
+    setScenarios(undefined);
+    setWhatIfExpanded(false);
+    setWhatIfMode("forward");
+    setWhatIfMonthlyContribution("");
+    setWhatIfAnnualReturnPct("0");
 
     if (!Number.isInteger(goalId) || goalId <= 0) {
       setError("Goal not found.");
@@ -114,10 +131,11 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
         });
       });
 
-      const [cashResult, allCashResult, portfolioResult] = await Promise.allSettled([
+      const [cashResult, allCashResult, portfolioResult, scenariosResult] = await Promise.allSettled([
         listCashAccounts(false),
         listCashAccounts(true),
         listPortfolios(),
+        listGoalScenarios(goalId, true),
       ]);
       if (!isCurrentLoad()) return;
       if (cashResult.status === "fulfilled") setCashAccounts(cashResult.value);
@@ -126,6 +144,9 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
       if (cashResult.status === "rejected" || allCashResult.status === "rejected" || portfolioResult.status === "rejected") {
         setSourceLoadError("Some funding source data could not be loaded; affected Funding Health is unavailable.");
       }
+      setScenarios(scenariosResult.status === "fulfilled"
+        ? scenariosResult.value
+        : { error: messageFor(scenariosResult.reason, "Unable to load saved scenarios.") });
     } catch (err) {
       if (!isCurrentLoad()) return;
       setError(messageFor(err, "Unable to load goal."));
@@ -210,6 +231,30 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
     }
   }, [goalId]);
 
+  const reloadScenarios = useCallback(async () => {
+    if (!Number.isInteger(goalId) || goalId <= 0) return;
+    try {
+      const result = await listGoalScenarios(goalId, true);
+      if (activeGoalIdRef.current !== goalId) return;
+      setScenarios(result);
+    } catch (err) {
+      if (activeGoalIdRef.current !== goalId) return;
+      setScenarios({ error: messageFor(err, "Unable to load saved scenarios.") });
+    }
+  }, [goalId]);
+
+  const handleLoadScenario = useCallback((scenario: GoalScenario) => {
+    setWhatIfExpanded(true);
+    setWhatIfMode("forward");
+    setWhatIfMonthlyContribution(String(scenario.monthly_contribution));
+    setWhatIfAnnualReturnPct(String(scenario.annual_return_pct));
+  }, []);
+
+  const handleSaveScenario = useCallback(async (monthlyContribution: number, annualReturnPct: number, name: string) => {
+    await createGoalScenario(goalId, { name, monthly_contribution: monthlyContribution, annual_return_pct: annualReturnPct });
+    await reloadScenarios();
+  }, [goalId, reloadScenarios]);
+
   // Next can reuse this client component while the dynamic URL changes. Do
   // not briefly render the previous goal under the new URL while its effect
   // starts, and never let its asynchronous reads replace the new route.
@@ -259,7 +304,35 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
 
           <section className="bg-white border rounded-xl p-4 shadow-sm space-y-3" aria-labelledby="planning-heading">
             <h2 id="planning-heading" className="text-lg font-semibold">Planning / What-If</h2>
-            <GoalWhatIfSection key={currentGoal.id} item={currentGoal} allocations={allocations} fundingHealthForSource={fundingHealthForSource} />
+            <GoalWhatIfSection
+              item={currentGoal}
+              allocations={allocations}
+              fundingHealthForSource={fundingHealthForSource}
+              readOnly={currentGoal.is_archived}
+              onSaveScenario={handleSaveScenario}
+              whatIf={{
+                expanded: whatIfExpanded,
+                setExpanded: setWhatIfExpanded,
+                mode: whatIfMode,
+                setMode: setWhatIfMode,
+                monthlyContribution: whatIfMonthlyContribution,
+                setMonthlyContribution: setWhatIfMonthlyContribution,
+                annualReturnPct: whatIfAnnualReturnPct,
+                setAnnualReturnPct: setWhatIfAnnualReturnPct,
+              }}
+            />
+          </section>
+
+          <section className="bg-white border rounded-xl p-4 shadow-sm space-y-3" aria-labelledby="saved-scenarios-heading">
+            <h2 id="saved-scenarios-heading" className="text-lg font-semibold">Saved Scenarios</h2>
+            <SavedScenariosSection
+              key={currentGoal.id}
+              goalId={currentGoal.id}
+              readOnly={currentGoal.is_archived}
+              scenarios={scenarios}
+              onReload={reloadScenarios}
+              onLoadScenario={handleLoadScenario}
+            />
           </section>
         </article>
       )}

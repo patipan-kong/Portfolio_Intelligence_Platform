@@ -3,16 +3,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import GoalDetailPage from "@/app/goals/[id]/page";
 import {
   createGoalFundingAllocation,
+  createGoalScenario,
   deleteGoalFundingAllocation,
   getHoldings,
   getPortfolioPrices,
   listCashAccounts,
   listGoalFundingAllocations,
+  listGoalScenarios,
   listPortfolios,
   listWealthGoals,
   updateGoalFundingAllocation,
+  updateGoalScenario,
   type CashAccount,
   type GoalFundingAllocation,
+  type GoalScenario,
   type Portfolio,
   type PortfolioItem,
   type PriceRefreshItem,
@@ -21,14 +25,17 @@ import {
 
 vi.mock("@/lib/api", () => ({
   createGoalFundingAllocation: vi.fn(),
+  createGoalScenario: vi.fn(),
   deleteGoalFundingAllocation: vi.fn(),
   getHoldings: vi.fn(),
   getPortfolioPrices: vi.fn(),
   listCashAccounts: vi.fn(),
   listGoalFundingAllocations: vi.fn(),
+  listGoalScenarios: vi.fn(),
   listPortfolios: vi.fn(),
   listWealthGoals: vi.fn(),
   updateGoalFundingAllocation: vi.fn(),
+  updateGoalScenario: vi.fn(),
 }));
 
 const goal: WealthGoal = {
@@ -95,6 +102,25 @@ const portfolioAllocation: GoalFundingAllocation = {
   updated_at: "2026-08-26T00:00:00",
 };
 
+const scenario: GoalScenario = {
+  id: 500,
+  workspace_id: 1,
+  wealth_goal_id: 1,
+  name: "Aggressive contribution",
+  monthly_contribution: 20000,
+  annual_return_pct: 6,
+  is_archived: false,
+  created_at: "2026-08-26T00:00:00",
+  updated_at: "2026-08-26T00:00:00",
+};
+
+const archivedScenario: GoalScenario = {
+  ...scenario,
+  id: 501,
+  name: "Old plan",
+  is_archived: true,
+};
+
 const secondGoal: WealthGoal = {
   ...goal,
   id: 2,
@@ -146,6 +172,9 @@ const pricesMock = vi.mocked(getPortfolioPrices);
 const allocationsCreateMock = vi.mocked(createGoalFundingAllocation);
 const allocationsUpdateMock = vi.mocked(updateGoalFundingAllocation);
 const allocationsDeleteMock = vi.mocked(deleteGoalFundingAllocation);
+const scenariosMock = vi.mocked(listGoalScenarios);
+const scenariosCreateMock = vi.mocked(createGoalScenario);
+const scenariosUpdateMock = vi.mocked(updateGoalScenario);
 
 describe("GoalDetailPage", () => {
   beforeEach(() => {
@@ -159,6 +188,9 @@ describe("GoalDetailPage", () => {
     allocationsCreateMock.mockResolvedValue(cashAllocation);
     allocationsUpdateMock.mockResolvedValue(cashAllocation);
     allocationsDeleteMock.mockResolvedValue({ deleted: 100 });
+    scenariosMock.mockResolvedValue([]);
+    scenariosCreateMock.mockResolvedValue(scenario);
+    scenariosUpdateMock.mockResolvedValue(scenario);
   });
 
   it("loads a valid URL-anchored goal and keeps a back link", async () => {
@@ -344,6 +376,7 @@ describe("GoalDetailPage", () => {
     expect(screen.getByRole("heading", { name: "Goal Summary" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Funding" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Planning / What-If" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Saved Scenarios" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "What-If" }));
     expect(screen.getByLabelText("What-If monthly contribution for Retire by 55")).toHaveClass("mt-1", "block", "w-full");
   });
@@ -357,5 +390,242 @@ describe("GoalDetailPage", () => {
     fireEvent.change(screen.getByLabelText("What-If monthly contribution for Retire by 55"), { target: { value: "50000" } });
     await screen.findByText(/Saved target date: 2027-01-01/);
     expect(screen.queryByText(/forecast|expected return|probability|guaranteed|on track|likely to|recommended contribution|should contribute|advice/i)).not.toBeInTheDocument();
+  });
+
+  describe("Saved Scenarios", () => {
+    // 1. empty state
+    it("shows an empty state when no scenarios are saved", async () => {
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      await screen.findByRole("heading", { name: "Retire by 55" });
+      expect(await screen.findByText("No saved scenarios yet.")).toBeInTheDocument();
+    });
+
+    // 17. assumptions-only disclosure
+    it("shows the assumptions-only disclosure", async () => {
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      await screen.findByRole("heading", { name: "Retire by 55" });
+      expect(await screen.findByText(
+        "Saved scenarios store assumptions only. Results use the goal's current target and designated funding.",
+      )).toBeInTheDocument();
+    });
+
+    // 2. save current What-If assumptions
+    it("saves the current forward What-If assumptions as a named scenario", async () => {
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      await screen.findByRole("heading", { name: "Retire by 55" });
+      fireEvent.click(screen.getByRole("button", { name: "What-If" }));
+      fireEvent.change(screen.getByLabelText("What-If monthly contribution for Retire by 55"), { target: { value: "20000" } });
+      fireEvent.change(screen.getByLabelText("What-If annual return assumption for Retire by 55"), { target: { value: "6" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save scenario" }));
+      fireEvent.change(screen.getByLabelText("Scenario name for Retire by 55"), { target: { value: "Aggressive contribution" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(scenariosCreateMock).toHaveBeenCalledWith(1, {
+        name: "Aggressive contribution",
+        monthly_contribution: 20000,
+        annual_return_pct: 6,
+      }));
+      expect(await screen.findByText("Scenario saved.")).toBeInTheDocument();
+    });
+
+    // 3. scenario list
+    it("lists saved scenarios with their assumptions", async () => {
+      scenariosMock.mockResolvedValue([scenario]);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      expect(await screen.findByText((_, element) => element?.textContent === "Aggressive contribution (฿20,000.00/month · 6% annual return assumption)")).toBeInTheDocument();
+    });
+
+    // 4, 5. load scenario populates What-If fields and recomputes live
+    it("loads a scenario into the What-If assumptions and recomputes against current goal state", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 1000000 }]);
+      allocationsMock.mockResolvedValue([{ ...cashAllocation, allocated_amount: 100000 }]);
+      scenariosMock.mockResolvedValue([scenario]);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      await screen.findByRole("heading", { name: "Retire by 55" });
+
+      fireEvent.click(await screen.findByRole("button", { name: "Load Aggressive contribution scenario" }));
+
+      expect(await screen.findByLabelText("What-If monthly contribution for Retire by 55")).toHaveValue(20000);
+      expect(screen.getByLabelText("What-If annual return assumption for Retire by 55")).toHaveValue(6);
+      // Recomputed live against the current designated funding (100,000), not any value stored on the scenario.
+      expect(await screen.findByText(/Monthly contribution: ฿20,000\.00 · Annual return assumption: 6%/)).toBeInTheDocument();
+    });
+
+    // 6, 7. goal/funding changes are never stored on the scenario
+    it("does not persist the goal's target or designated funding when saving a scenario", async () => {
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      await screen.findByRole("heading", { name: "Retire by 55" });
+      fireEvent.click(screen.getByRole("button", { name: "What-If" }));
+      fireEvent.change(screen.getByLabelText("What-If monthly contribution for Retire by 55"), { target: { value: "20000" } });
+      fireEvent.change(screen.getByLabelText("What-If annual return assumption for Retire by 55"), { target: { value: "6" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save scenario" }));
+      fireEvent.change(screen.getByLabelText("Scenario name for Retire by 55"), { target: { value: "Aggressive contribution" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(scenariosCreateMock).toHaveBeenCalled());
+      const [, body] = scenariosCreateMock.mock.calls[0];
+      expect(Object.keys(body)).toEqual(["name", "monthly_contribution", "annual_return_pct"]);
+    });
+
+    // 8. edit scenario
+    it("edits a scenario's name and assumptions", async () => {
+      scenariosMock.mockResolvedValue([scenario]);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      await screen.findByRole("button", { name: "Edit Aggressive contribution scenario" });
+
+      fireEvent.click(screen.getByRole("button", { name: "Edit Aggressive contribution scenario" }));
+      fireEvent.change(screen.getByLabelText("Edit name for Aggressive contribution"), { target: { value: "Renamed plan" } });
+      fireEvent.change(screen.getByLabelText("Edit monthly contribution for Aggressive contribution"), { target: { value: "25000" } });
+      fireEvent.change(screen.getByLabelText("Edit annual return assumption for Aggressive contribution"), { target: { value: "7" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => expect(scenariosUpdateMock).toHaveBeenCalledWith(1, 500, {
+        name: "Renamed plan",
+        monthly_contribution: 25000,
+        annual_return_pct: 7,
+      }));
+    });
+
+    // 9. archive
+    it("archives an active scenario", async () => {
+      scenariosMock.mockResolvedValue([scenario]);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      fireEvent.click(await screen.findByRole("button", { name: "Archive Aggressive contribution scenario" }));
+      await waitFor(() => expect(scenariosUpdateMock).toHaveBeenCalledWith(1, 500, { is_archived: true }));
+    });
+
+    // 10. archived section
+    it("reveals archived scenarios behind a toggle", async () => {
+      scenariosMock.mockResolvedValue([scenario, archivedScenario]);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      await screen.findByText((_, element) => element?.textContent === "Aggressive contribution (฿20,000.00/month · 6% annual return assumption)");
+      expect(screen.queryByText(/Old plan/)).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "Show archived scenarios (1)" }));
+      expect(await screen.findByText(/Old plan/)).toBeInTheDocument();
+    });
+
+    // 11. restore
+    it("restores an archived scenario", async () => {
+      scenariosMock.mockResolvedValue([archivedScenario]);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      fireEvent.click(await screen.findByRole("button", { name: "Show archived scenarios (1)" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Restore Old plan scenario" }));
+      await waitFor(() => expect(scenariosUpdateMock).toHaveBeenCalledWith(1, 501, { is_archived: false }));
+    });
+
+    // 12. archived scenario cannot edit
+    it("does not offer an edit control for an archived scenario", async () => {
+      scenariosMock.mockResolvedValue([archivedScenario]);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      fireEvent.click(await screen.findByRole("button", { name: "Show archived scenarios (1)" }));
+      await screen.findByRole("button", { name: "Restore Old plan scenario" });
+      expect(screen.queryByRole("button", { name: "Edit Old plan scenario" })).not.toBeInTheDocument();
+    });
+
+    // 13. archived parent read-only
+    it("hides create, edit, archive, and restore controls while the parent goal is archived, but keeps Load available", async () => {
+      listMock.mockResolvedValue([{ ...goal, is_archived: true }]);
+      scenariosMock.mockResolvedValue([scenario, archivedScenario]);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      await screen.findByText((_, element) => element?.textContent === "Aggressive contribution (฿20,000.00/month · 6% annual return assumption)");
+
+      fireEvent.click(screen.getByRole("button", { name: "What-If" }));
+      expect(screen.queryByRole("button", { name: "Save scenario" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Edit Aggressive contribution scenario" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Archive Aggressive contribution scenario" })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Load Aggressive contribution scenario" })).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "Show archived scenarios (1)" }));
+      expect(screen.queryByRole("button", { name: "Restore Old plan scenario" })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Load Old plan scenario" })).toBeInTheDocument();
+    });
+
+    // 14. scenario API failure honesty
+    it("reports a scenario list failure honestly", async () => {
+      scenariosMock.mockRejectedValue(new Error("scenarios offline"));
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      expect(await screen.findByText("scenarios offline")).toBeInTheDocument();
+    });
+
+    // 15. route transition isolation
+    it("does not show the previous goal's scenarios after a route transition", async () => {
+      scenariosMock.mockImplementation(async (goalId) => (goalId === 1 ? [scenario] : []));
+      const { rerender } = render(<GoalDetailPage params={{ id: "1" }} />);
+      await screen.findByText((_, element) => element?.textContent === "Aggressive contribution (฿20,000.00/month · 6% annual return assumption)");
+
+      listMock.mockResolvedValue([goal, secondGoal]);
+      rerender(<GoalDetailPage params={{ id: "2" }} />);
+      await screen.findByRole("heading", { name: "Buy a home" });
+      expect(screen.getByText("No saved scenarios yet.")).toBeInTheDocument();
+      expect(screen.queryByText(/Aggressive contribution/)).not.toBeInTheDocument();
+    });
+
+    it("does not let a stale scenario-list response overwrite the next goal", async () => {
+      const firstScenarios = deferred<GoalScenario[]>();
+      scenariosMock.mockImplementation((goalId) => goalId === 1 ? firstScenarios.promise : Promise.resolve([]));
+      const { rerender } = render(<GoalDetailPage params={{ id: "1" }} />);
+      await waitFor(() => expect(scenariosMock).toHaveBeenCalledWith(1, true));
+
+      listMock.mockResolvedValue([goal, secondGoal]);
+      rerender(<GoalDetailPage params={{ id: "2" }} />);
+      await screen.findByRole("heading", { name: "Buy a home" });
+
+      firstScenarios.resolve([scenario]);
+      await waitFor(() => expect(screen.getByText("No saved scenarios yet.")).toBeInTheDocument());
+      expect(screen.queryByText(/Aggressive contribution/)).not.toBeInTheDocument();
+    });
+
+    it("resets the loaded What-If assumptions after a route transition", async () => {
+      scenariosMock.mockResolvedValue([scenario]);
+      const { rerender } = render(<GoalDetailPage params={{ id: "1" }} />);
+      fireEvent.click(await screen.findByRole("button", { name: "Load Aggressive contribution scenario" }));
+      expect(await screen.findByLabelText("What-If monthly contribution for Retire by 55")).toHaveValue(20000);
+
+      listMock.mockResolvedValue([goal, secondGoal]);
+      scenariosMock.mockResolvedValue([]);
+      rerender(<GoalDetailPage params={{ id: "2" }} />);
+      await screen.findByRole("heading", { name: "Buy a home" });
+      expect(screen.queryByRole("button", { name: "What-If" })).toBeInTheDocument();
+      expect(screen.queryByLabelText("What-If monthly contribution for Buy a home")).not.toBeInTheDocument();
+    });
+
+    it("does not refresh the next goal when a previous-route scenario save completes", async () => {
+      const saveResult = deferred<GoalScenario>();
+      let firstGoalOneScenarioRead = true;
+      scenariosMock.mockImplementation((goalId) => {
+        if (goalId !== 1) return Promise.resolve([]);
+        if (firstGoalOneScenarioRead) {
+          firstGoalOneScenarioRead = false;
+          return Promise.resolve([]);
+        }
+        return Promise.resolve([scenario]);
+      });
+      scenariosCreateMock.mockReturnValueOnce(saveResult.promise);
+      const { rerender } = render(<GoalDetailPage params={{ id: "1" }} />);
+      await screen.findByRole("heading", { name: "Retire by 55" });
+      fireEvent.click(screen.getByRole("button", { name: "What-If" }));
+      fireEvent.click(screen.getByRole("button", { name: "Save scenario" }));
+      fireEvent.change(screen.getByLabelText("Scenario name for Retire by 55"), { target: { value: "Aggressive contribution" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(scenariosCreateMock).toHaveBeenCalled());
+
+      listMock.mockResolvedValue([goal, secondGoal]);
+      rerender(<GoalDetailPage params={{ id: "2" }} />);
+      await screen.findByRole("heading", { name: "Buy a home" });
+
+      saveResult.resolve(scenario);
+      await waitFor(() => expect(scenariosMock).toHaveBeenCalledWith(1, true));
+      expect(screen.getByText("No saved scenarios yet.")).toBeInTheDocument();
+      expect(screen.queryByText(/Aggressive contribution/)).not.toBeInTheDocument();
+    });
+
+    // 16, 18. no persisted-output / forecast / advisory wording anywhere in the Saved Scenarios surface
+    it("does not introduce persisted-output, forecast, or advisory wording", async () => {
+      scenariosMock.mockResolvedValue([scenario, archivedScenario]);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      await screen.findByText((_, element) => element?.textContent === "Aggressive contribution (฿20,000.00/month · 6% annual return assumption)");
+      fireEvent.click(screen.getByRole("button", { name: "Show archived scenarios (1)" }));
+      await screen.findByText(/Old plan/);
+      expect(screen.queryByText(/forecast|expected return|probability|guaranteed|on track|likely to|recommended contribution|should contribute|advice|projected value|reach date/i)).not.toBeInTheDocument();
+    });
   });
 });

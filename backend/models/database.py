@@ -71,6 +71,7 @@ class Workspace(Base):
     liability_balance_observations = relationship("LiabilityBalanceObservation", back_populates="workspace", cascade="all, delete-orphan")
     wealth_goals = relationship("WealthGoal", back_populates="workspace", cascade="all, delete-orphan")
     goal_funding_allocations = relationship("GoalFundingAllocation", back_populates="workspace", cascade="all, delete-orphan")
+    goal_scenarios = relationship("GoalScenario", back_populates="workspace", cascade="all, delete-orphan")
     cash_account_transactions = relationship("CashAccountTransaction", back_populates="workspace", cascade="all, delete-orphan")
     cash_account_transfers = relationship("CashAccountTransfer", back_populates="workspace", cascade="all, delete-orphan")
     watchlist_items = relationship("Watchlist", back_populates="workspace", cascade="all, delete-orphan")
@@ -321,6 +322,44 @@ class GoalFundingAllocation(Base):
         UniqueConstraint("wealth_goal_id", "cash_account_id", name="uq_goal_funding_allocations_goal_cash"),
         UniqueConstraint("wealth_goal_id", "portfolio_id", name="uq_goal_funding_allocations_goal_portfolio"),
         Index("ix_goal_funding_allocations_workspace_goal", "workspace_id", "wealth_goal_id"),
+    )
+
+
+class GoalScenario(Base):
+    """A workspace-owned, user-named set of hypothetical planning assumptions
+    for exactly one WealthGoal.
+
+    Phase 6 Milestone 3 — Named Scenario Foundation. A GoalScenario is NOT a
+    forecast, a probability, a recommendation, an optimizer input, or a saved
+    snapshot of the goal/funding state it was created from — it persists only
+    the two forward What-If assumptions (monthly_contribution,
+    annual_return_pct) plus a name. Every other input to the deterministic
+    planning math (target amount, target date, designated funding) is read
+    live from the current WealthGoal/GoalFundingAllocation state whenever a
+    scenario is loaded — "apply these saved assumptions to this goal now,"
+    never "recreate the goal as it was." Archiving hides a scenario from the
+    default list without erasing it; there is no hard-delete, matching
+    WealthGoal/CashAccount/Liability precedent. Duplicate names or duplicate
+    assumption sets are allowed — a scenario's only uniqueness is its id.
+    """
+    __tablename__ = "goal_scenarios"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    wealth_goal_id = Column(Integer, ForeignKey("wealth_goals.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    monthly_contribution = Column(Float, nullable=False)
+    annual_return_pct = Column(Float, nullable=False)
+    is_archived = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    workspace = relationship("Workspace", back_populates="goal_scenarios")
+
+    __table_args__ = (
+        CheckConstraint("monthly_contribution >= 0", name="ck_goal_scenarios_contribution_nonnegative"),
+        CheckConstraint("annual_return_pct > -100", name="ck_goal_scenarios_return_above_negative_100"),
+        Index("ix_goal_scenarios_workspace_goal_archived", "workspace_id", "wealth_goal_id", "is_archived"),
     )
 
 
