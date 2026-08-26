@@ -9,6 +9,7 @@ import {
   type SourceFundingHealth,
 } from "@/lib/goalFunding";
 import { computePortfolioCurrentValue } from "@/lib/wealthOverview";
+import { computeGoalWhatIf, formatMonthLabel } from "@/lib/goalWhatIf";
 import {
   createGoalFundingAllocation,
   createWealthGoal,
@@ -410,6 +411,131 @@ function GoalCard({
         onReload={onReloadAllocations}
         fundingHealthForSource={fundingHealthForSource}
       />
+      <GoalWhatIfSection item={item} allocations={allocations} fundingHealthForSource={fundingHealthForSource} />
+    </div>
+  );
+}
+
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/**
+ * A transient, deterministic What-If projection — collapsed by default.
+ * Starting value is ALWAYS designated funding (computeGoalFunding's
+ * designatedFunding), never a source's current capacity: over-allocation is
+ * surfaced as an existing Funding Health fact alongside the result, never
+ * used to silently substitute a smaller starting value. Inputs are local,
+ * transient component state — nothing here is persisted or mutates real
+ * Cash Account / Portfolio / allocation data.
+ */
+function GoalWhatIfSection({
+  item,
+  allocations,
+  fundingHealthForSource,
+}: {
+  item: WealthGoal;
+  allocations: AllocationsState;
+  fundingHealthForSource: (kind: GoalFundingSourceKind, id: number) => SourceFundingHealth;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [monthlyContribution, setMonthlyContribution] = useState("");
+  const [annualReturnPct, setAnnualReturnPct] = useState("0");
+
+  if (!expanded) {
+    return (
+      <div className="pt-2 border-t">
+        <button type="button" onClick={() => setExpanded(true)} className="text-sm text-blue-600 hover:underline">What-If</button>
+      </div>
+    );
+  }
+
+  const funding = computeGoalFunding(item.target_amount, Array.isArray(allocations) ? allocations : null);
+  const startingValue = funding.designatedFunding;
+
+  const parsedContribution = monthlyContribution.trim() === "" ? 0 : Number(monthlyContribution);
+  const parsedReturn = annualReturnPct.trim() === "" ? 0 : Number(annualReturnPct);
+
+  const result = startingValue === null ? null : computeGoalWhatIf({
+    targetAmount: item.target_amount,
+    startingValue,
+    monthlyContribution: parsedContribution,
+    annualReturnPct: parsedReturn,
+    asOfDate: todayIso(),
+    targetDate: item.target_date,
+  });
+
+  const sourceHealths = Array.isArray(allocations)
+    ? allocations
+        .map((allocation) => fundingHealthForSource(allocation.source_kind, (allocation.cash_account_id ?? allocation.portfolio_id) as number))
+        .filter((health) => health.status !== "SUPPORTED")
+    : [];
+
+  return (
+    <div className="pt-3 border-t space-y-2">
+      <button type="button" onClick={() => setExpanded(false)} className="text-sm text-blue-600 hover:underline">What-If</button>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="Monthly contribution">
+          <input
+            aria-label={`What-If monthly contribution for ${item.name}`}
+            type="number"
+            step="0.01"
+            value={monthlyContribution}
+            onChange={(event) => setMonthlyContribution(event.target.value)}
+            className={inputClass}
+          />
+        </Field>
+        <Field label="Annual return assumption (%)">
+          <input
+            aria-label={`What-If annual return assumption for ${item.name}`}
+            type="number"
+            step="0.01"
+            value={annualReturnPct}
+            onChange={(event) => setAnnualReturnPct(event.target.value)}
+            className={inputClass}
+          />
+        </Field>
+      </div>
+
+      {allocations === undefined ? (
+        <p className="text-xs text-gray-400">What-If loading — funding data is still loading.</p>
+      ) : startingValue === null ? (
+        <p role="alert" className="text-xs text-red-600">What-If unavailable — funding data failed to load.</p>
+      ) : !result || !result.valid ? (
+        <p role="alert" className="text-xs text-red-600">{result && !result.valid ? result.error : "Invalid What-If inputs."}</p>
+      ) : (
+        <div className="text-sm bg-gray-50 rounded p-2 space-y-1.5">
+          <p className="text-xs text-gray-500">
+            Monthly contribution: {formatThb(result.assumptions.monthlyContribution)} · Annual return assumption: {result.assumptions.annualReturnPct}%
+          </p>
+          {result.alreadyReached ? (
+            <p>Designated funding already reaches {formatThb(result.targetAmount)} under these assumptions.</p>
+          ) : result.reachable ? (
+            <p>Under these assumptions, designated funding would reach {formatThb(result.targetAmount)} around {formatMonthLabel(result.reachDate as string)}.</p>
+          ) : (
+            <p>Under these assumptions, designated funding would not reach {formatThb(result.targetAmount)} within 50 years.</p>
+          )}
+
+          {result.targetDate && (
+            result.targetDateInPast ? (
+              <p className="text-xs text-gray-500">Saved target date ({result.targetDate}) has passed.</p>
+            ) : (
+              <p className="text-xs text-gray-500">
+                Saved target date: {result.targetDate} · Projected amount by that date: {formatThb(result.projectedValueAtTargetDate as number)}
+                {result.shortfallAtTargetDate != null && ` · ${formatThb(result.shortfallAtTargetDate)} below the current target`}
+                {result.surplusAtTargetDate != null && ` · ${formatThb(result.surplusAtTargetDate)} above the current target`}
+              </p>
+            )
+          )}
+
+          {sourceHealths.length > 0 && (
+            <div className="pt-1 border-t">
+              <p className="text-xs text-gray-500">Funding health for this goal&apos;s sources:</p>
+              {sourceHealths.map((health, index) => <FundingHealthRow key={index} health={health} />)}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

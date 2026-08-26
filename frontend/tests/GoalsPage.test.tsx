@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import GoalsPage from "@/app/goals/page";
 import {
   createGoalFundingAllocation,
@@ -461,6 +461,197 @@ describe("GoalsPage", () => {
       await screen.findByText("Retire by 55");
 
       expect(await screen.findByText("allocations offline")).toBeInTheDocument();
+    });
+  });
+
+  describe("Goal What-If", () => {
+    beforeEach(() => {
+      // Fix "today" so reach-date/target-date output is deterministic. Only
+      // Date is faked — timers stay real so Testing Library's async
+      // find/waitFor polling keeps working.
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("is collapsed by default", async () => {
+      listMock.mockResolvedValue([goal]);
+      render(<GoalsPage />);
+      await screen.findByText("Retire by 55");
+
+      expect(screen.getByRole("button", { name: "What-If" })).toBeInTheDocument();
+      expect(screen.queryByLabelText(`What-If monthly contribution for ${goal.name}`)).not.toBeInTheDocument();
+    });
+
+    it("expands on user action", async () => {
+      listMock.mockResolvedValue([goal]);
+      render(<GoalsPage />);
+      await screen.findByText("Retire by 55");
+
+      fireEvent.click(screen.getByRole("button", { name: "What-If" }));
+      expect(screen.getByLabelText(`What-If monthly contribution for ${goal.name}`)).toBeInTheDocument();
+      expect(screen.getByLabelText(`What-If annual return assumption for ${goal.name}`)).toBeInTheDocument();
+    });
+
+    it("shows What-If as unavailable (not a zero projection) when allocation evidence fails to load", async () => {
+      listMock.mockResolvedValue([goal]);
+      allocationsListMock.mockRejectedValue(new Error("allocations offline"));
+      render(<GoalsPage />);
+      await screen.findByText("Retire by 55");
+
+      fireEvent.click(screen.getByRole("button", { name: "What-If" }));
+      expect(await screen.findByText("What-If unavailable — funding data failed to load.")).toBeInTheDocument();
+    });
+
+    it("keeps What-If loading distinct from allocation failure or zero funding", async () => {
+      listMock.mockResolvedValue([goal]);
+      allocationsListMock.mockReturnValue(new Promise(() => {}));
+      render(<GoalsPage />);
+      await screen.findByText("Retire by 55");
+
+      fireEvent.click(screen.getByRole("button", { name: "What-If" }));
+      expect(screen.getByText("What-If loading — funding data is still loading.")).toBeInTheDocument();
+      expect(screen.queryByText("What-If unavailable — funding data failed to load.")).not.toBeInTheDocument();
+    });
+
+    it("treats a legitimately empty allocation list as a real zero starting value, not an error", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 1000000, target_date: null }]);
+      allocationsListMock.mockResolvedValue([]);
+      render(<GoalsPage />);
+      await screen.findByText("Retire by 55");
+
+      fireEvent.click(screen.getByRole("button", { name: "What-If" }));
+      expect(await screen.findByText((_, el) => el?.textContent === "Under these assumptions, designated funding would not reach ฿1,000,000.00 within 50 years.")).toBeInTheDocument();
+    });
+
+    it("defaults the contribution scenario to 0% return and a 0 monthly contribution", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 1000000, target_date: null }]);
+      allocationsListMock.mockResolvedValue([]);
+      render(<GoalsPage />);
+      await screen.findByText("Retire by 55");
+
+      fireEvent.click(screen.getByRole("button", { name: "What-If" }));
+      expect(await screen.findByText((_, el) => el?.textContent === "Monthly contribution: ฿0.00 · Annual return assumption: 0%")).toBeInTheDocument();
+    });
+
+    it("shows a deterministic reach-date under a positive monthly contribution", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 1200000, target_date: null }]);
+      allocationsListMock.mockResolvedValue([]);
+      render(<GoalsPage />);
+      await screen.findByText("Retire by 55");
+
+      fireEvent.click(screen.getByRole("button", { name: "What-If" }));
+      fireEvent.change(screen.getByLabelText(`What-If monthly contribution for ${goal.name}`), { target: { value: "100000" } });
+
+      // 0% return, ฿100,000/month from a ฿0 start reaches ฿1,200,000 in exactly
+      // 12 months from the fixed "today" of 2026-01-01 -> January 2027.
+      expect(await screen.findByText((_, el) => el?.textContent === "Under these assumptions, designated funding would reach ฿1,200,000.00 around January 2027.")).toBeInTheDocument();
+    });
+
+    it("echoes the user-supplied annual return assumption explicitly", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 1000000, target_date: null }]);
+      allocationsListMock.mockResolvedValue([]);
+      render(<GoalsPage />);
+      await screen.findByText("Retire by 55");
+
+      fireEvent.click(screen.getByRole("button", { name: "What-If" }));
+      fireEvent.change(screen.getByLabelText(`What-If annual return assumption for ${goal.name}`), { target: { value: "5" } });
+
+      expect(await screen.findByText((_, el) => el?.textContent === "Monthly contribution: ฿0.00 · Annual return assumption: 5%")).toBeInTheDocument();
+    });
+
+    it("shows the target-date projection when the goal has a saved target date", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 1200000, target_date: "2027-01-01" }]);
+      allocationsListMock.mockResolvedValue([]);
+      render(<GoalsPage />);
+      await screen.findByText("Retire by 55");
+
+      fireEvent.click(screen.getByRole("button", { name: "What-If" }));
+      fireEvent.change(screen.getByLabelText(`What-If monthly contribution for ${goal.name}`), { target: { value: "50000" } });
+
+      // asOfDate 2026-01-01 -> target 2027-01-01 is 12 months; 50,000 * 12 = 600,000, a 600,000 shortfall against 1,200,000.
+      expect(await screen.findByText((_, el) => el?.textContent === "Saved target date: 2027-01-01 · Projected amount by that date: ฿600,000.00 · ฿600,000.00 below the current target")).toBeInTheDocument();
+    });
+
+    it("handles a saved target date that has already passed honestly, without blocking the reach-date result", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 600000, target_date: "2020-01-01" }]);
+      allocationsListMock.mockResolvedValue([]);
+      render(<GoalsPage />);
+      await screen.findByText("Retire by 55");
+
+      fireEvent.click(screen.getByRole("button", { name: "What-If" }));
+      fireEvent.change(screen.getByLabelText(`What-If monthly contribution for ${goal.name}`), { target: { value: "50000" } });
+
+      expect(await screen.findByText("Saved target date (2020-01-01) has passed.")).toBeInTheDocument();
+      // The reach-date scenario is still computed even though the saved target date is historical.
+      expect(screen.getByText((_, el) => el?.textContent === "Under these assumptions, designated funding would reach ฿600,000.00 around January 2027.")).toBeInTheDocument();
+    });
+
+    it("keeps an OVER_ALLOCATED Funding Health warning visible alongside the What-If projection", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 1000000, target_date: null }]);
+      cashAccountsMock.mockResolvedValue([{ ...cashAccount, balance: 100000 }]);
+      allocationsListMock.mockResolvedValue([{ ...cashAllocation, allocated_amount: 300000 }]);
+      render(<GoalsPage />);
+      await screen.findByText("Retire by 55");
+
+      fireEvent.click(screen.getByRole("button", { name: "What-If" }));
+      expect(await screen.findByText("Funding health for this goal's sources:")).toBeInTheDocument();
+      expect(screen.getAllByText((_, el) => el?.textContent === "Current value ฿100,000.00 · Attention: exceeds current value by ฿200,000.00").length).toBeGreaterThan(0);
+    });
+
+    it("uses the full designated amount even when its source is OVER_ALLOCATED", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 200000, target_date: null }]);
+      cashAccountsMock.mockResolvedValue([{ ...cashAccount, balance: 100000 }]);
+      allocationsListMock.mockResolvedValue([{ ...cashAllocation, allocated_amount: 300000 }]);
+      render(<GoalsPage />);
+      await screen.findByText("Retire by 55");
+
+      fireEvent.click(screen.getByRole("button", { name: "What-If" }));
+      expect(await screen.findByText((_, el) => el?.textContent === "Designated funding already reaches ฿200,000.00 under these assumptions.")).toBeInTheDocument();
+    });
+
+    it("sums multiple designated funding sources without using their current values", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 900000, target_date: null }]);
+      allocationsListMock.mockResolvedValue([cashAllocation, portfolioAllocation]);
+      render(<GoalsPage />);
+      await screen.findByText("Retire by 55");
+
+      fireEvent.click(screen.getByRole("button", { name: "What-If" }));
+      expect(await screen.findByText((_, el) => el?.textContent === "Designated funding already reaches ฿900,000.00 under these assumptions.")).toBeInTheDocument();
+    });
+
+    it("does not let an UNAVAILABLE source Funding Health change the What-If starting value", async () => {
+      // Designated funding is 700,000 (from the Portfolio allocation); its
+      // valuation fails (holdingsMock rejects), so Funding Health is
+      // UNAVAILABLE for that source — but the What-If starting value must
+      // still be the full 700,000 designated, proven here by setting the
+      // target below it and asserting "already reached".
+      listMock.mockResolvedValue([{ ...goal, target_amount: 500000, target_date: null }]);
+      allocationsListMock.mockResolvedValue([portfolioAllocation]);
+      holdingsMock.mockRejectedValue(new Error("holdings offline"));
+      render(<GoalsPage />);
+      await screen.findByText("Retire by 55");
+
+      fireEvent.click(screen.getByRole("button", { name: "What-If" }));
+      expect(await screen.findByText("Funding health for this goal's sources:")).toBeInTheDocument();
+      expect(screen.getAllByText("Current value unavailable · Funding health unavailable").length).toBeGreaterThan(0);
+      expect(screen.getByText((_, el) => el?.textContent === "Designated funding already reaches ฿500,000.00 under these assumptions.")).toBeInTheDocument();
+    });
+
+    it("never introduces forecast, probability, guarantee, or advice language in the What-If output", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 1200000, target_date: "2027-01-01" }]);
+      allocationsListMock.mockResolvedValue([]);
+      render(<GoalsPage />);
+      await screen.findByText("Retire by 55");
+
+      fireEvent.click(screen.getByRole("button", { name: "What-If" }));
+      fireEvent.change(screen.getByLabelText(`What-If monthly contribution for ${goal.name}`), { target: { value: "50000" } });
+      await screen.findByText((_, el) => el?.textContent === "Saved target date: 2027-01-01 · Projected amount by that date: ฿600,000.00 · ฿600,000.00 below the current target");
+
+      expect(screen.queryByText(/forecast|expected return|probability|guaranteed|on track|likely to|recommended contribution|should contribute/i)).not.toBeInTheDocument();
     });
   });
 });
