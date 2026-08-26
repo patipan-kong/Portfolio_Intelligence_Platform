@@ -1395,6 +1395,218 @@ describe("Total Liabilities History (Phase 5, Milestone 2)", () => {
   });
 });
 
+describe("Net Worth History (Phase 5, Milestone 3)", () => {
+  test("renders complete Net Worth History as Total Assets minus Total Liabilities", async () => {
+    const p1 = makePortfolio(1);
+    portfolioState.portfolios = [p1];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    listCashAccounts.mockResolvedValue([]);
+    listLiabilities.mockResolvedValue([makeLiability(1, 50_000, { created_at: "2026-01-01T00:00:00Z" })]);
+    getSnapshots.mockResolvedValue([snapshot(1, "2026-06-01", 500_000)]);
+    getLiabilityBalanceAsOf.mockResolvedValue(liabilityAsOf(1, "2026-06-01", 50_000));
+
+    render(<DashboardPage />);
+
+    await waitFor(() => {
+      const section = screen.getByText("Net Worth History").closest("section")!;
+      expect(within(section).getByText("฿450,000.00")).toBeInTheDocument(); // 500,000 - 50,000
+    });
+  });
+
+  test("historical Net Worth formula composes independently per date, and change is computed between complete points", async () => {
+    const p1 = makePortfolio(1);
+    portfolioState.portfolios = [p1];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    listCashAccounts.mockResolvedValue([]);
+    listLiabilities.mockResolvedValue([makeLiability(1, 0, { created_at: "2026-01-01T00:00:00Z" })]);
+    getSnapshots.mockResolvedValue([
+      snapshot(1, "2026-06-01", 500_000),
+      snapshot(1, "2026-06-02", 520_000),
+    ]);
+    getLiabilityBalanceAsOf.mockImplementation((_id: number, date: string) =>
+      Promise.resolve(liabilityAsOf(1, date, date === "2026-06-01" ? 50_000 : 40_000))
+    );
+
+    render(<DashboardPage />);
+
+    await waitFor(() => {
+      const section = screen.getByText("Net Worth History").closest("section")!;
+      // Latest: 520,000 - 40,000 = 480,000. Change vs 06-01 (450,000): +30,000.
+      expect(within(section).getByText("฿480,000.00")).toBeInTheDocument();
+      expect(within(section).getByText("+฿30,000.00")).toBeInTheDocument();
+    });
+  });
+
+  test("negative historical Net Worth renders naturally, without clamping or warning language", async () => {
+    const p1 = makePortfolio(1);
+    portfolioState.portfolios = [p1];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    listCashAccounts.mockResolvedValue([]);
+    listLiabilities.mockResolvedValue([makeLiability(1, 150_000, { created_at: "2026-01-01T00:00:00Z" })]);
+    getSnapshots.mockResolvedValue([snapshot(1, "2026-06-01", 100_000)]);
+    getLiabilityBalanceAsOf.mockResolvedValue(liabilityAsOf(1, "2026-06-01", 150_000));
+
+    render(<DashboardPage />);
+
+    await waitFor(() => {
+      const section = screen.getByText("Net Worth History").closest("section")!;
+      expect(within(section).getByText("-฿50,000.00")).toBeInTheDocument(); // 100,000 - 150,000
+    });
+  });
+
+  test("incomplete Assets history prevents fabricated Net Worth on the affected date", async () => {
+    const p1 = makePortfolio(1);
+    portfolioState.portfolios = [p1];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    listCashAccounts.mockResolvedValue([makeCashAccount(1, 0, { created_at: "2026-01-01T00:00:00Z" })]);
+    listLiabilities.mockResolvedValue([makeLiability(1, 20_000, { created_at: "2026-01-01T00:00:00Z" })]);
+    getSnapshots.mockResolvedValue([
+      snapshot(1, "2026-06-01", 500_000),
+      snapshot(1, "2026-06-02", 520_000),
+    ]);
+    // Cash evidence (Total Assets side) only available on 06-01 — 06-02 has no baseline yet.
+    getCashAccountBalanceAsOf.mockImplementation((_id: number, date: string) =>
+      Promise.resolve(cashAsOf(1, date, date === "2026-06-01" ? 10_000 : null, date === "2026-06-01"))
+    );
+    // Liability evidence (Total Liabilities side) is complete on both dates.
+    getLiabilityBalanceAsOf.mockResolvedValue(liabilityAsOf(1, "2026-06-01", 20_000));
+    getLiabilityBalanceAsOf.mockImplementation((_id: number, date: string) =>
+      Promise.resolve(liabilityAsOf(1, date, 20_000))
+    );
+
+    render(<DashboardPage />);
+
+    await waitFor(() => {
+      const section = screen.getByText("Net Worth History").closest("section")!;
+      // Latest complete falls back to 06-01: 500,000 + 10,000 - 20,000 = 490,000.
+      expect(within(section).getByText("฿490,000.00")).toBeInTheDocument();
+      expect(within(section).queryByText(/510,000/)).not.toBeInTheDocument();
+      expect(within(section).getByText(/1 historical date excluded/)).toBeInTheDocument();
+    });
+  });
+
+  test("incomplete Liabilities history prevents fabricated Net Worth on the affected date", async () => {
+    const p1 = makePortfolio(1);
+    portfolioState.portfolios = [p1];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    listCashAccounts.mockResolvedValue([]);
+    listLiabilities.mockResolvedValue([makeLiability(1, 30_000, { created_at: "2026-01-01T00:00:00Z" })]);
+    getSnapshots.mockResolvedValue([
+      snapshot(1, "2026-06-01", 500_000),
+      snapshot(1, "2026-06-02", 520_000),
+    ]);
+    // Liability evidence only available on 06-01 — no observation on or before 06-02.
+    getLiabilityBalanceAsOf.mockImplementation((_id: number, date: string) =>
+      Promise.resolve(liabilityAsOf(1, date, date === "2026-06-01" ? 30_000 : null, date === "2026-06-01"))
+    );
+
+    render(<DashboardPage />);
+
+    await waitFor(() => {
+      const section = screen.getByText("Net Worth History").closest("section")!;
+      // Latest complete falls back to 06-01: 500,000 - 30,000 = 470,000. Never
+      // interpreted as 520,000 - 0 (zero debt) on 06-02.
+      expect(within(section).getByText("฿470,000.00")).toBeInTheDocument();
+      expect(within(section).queryByText(/520,000/)).not.toBeInTheDocument();
+      expect(within(section).getByText(/1 historical date excluded/)).toBeInTheDocument();
+    });
+  });
+
+  test("Investment Wealth History remains unaffected by Net Worth History's composition", async () => {
+    const p1 = makePortfolio(1);
+    portfolioState.portfolios = [p1];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    listCashAccounts.mockResolvedValue([]);
+    listLiabilities.mockResolvedValue([makeLiability(1, 999_999, { created_at: "2026-01-01T00:00:00Z" })]);
+    getSnapshots.mockResolvedValue([snapshot(1, "2026-06-01", 500_000)]);
+    getLiabilityBalanceAsOf.mockResolvedValue(liabilityAsOf(1, "2026-06-01", 999_999));
+
+    render(<DashboardPage />);
+
+    await waitFor(() => {
+      const investmentSection = screen.getByText("Investment Wealth History").closest("section")!;
+      expect(within(investmentSection).getByText("฿500,000.00")).toBeInTheDocument();
+      expect(within(investmentSection).queryByText(/999,999/)).not.toBeInTheDocument();
+    });
+  });
+
+  test("Total Assets History and Total Liabilities History remain unaffected by Net Worth History's composition", async () => {
+    const p1 = makePortfolio(1);
+    portfolioState.portfolios = [p1];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    listCashAccounts.mockResolvedValue([]);
+    listLiabilities.mockResolvedValue([makeLiability(1, 50_000, { created_at: "2026-01-01T00:00:00Z" })]);
+    getSnapshots.mockResolvedValue([snapshot(1, "2026-06-01", 500_000)]);
+    getLiabilityBalanceAsOf.mockResolvedValue(liabilityAsOf(1, "2026-06-01", 50_000));
+
+    render(<DashboardPage />);
+
+    await waitFor(() => {
+      const assetsSection = screen.getByText("Total Assets History").closest("section")!;
+      expect(within(assetsSection).getByText("฿500,000.00")).toBeInTheDocument();
+      const liabilitiesSection = screen.getByText("Total Liabilities History").closest("section")!;
+      expect(within(liabilitiesSection).getByText("฿50,000.00")).toBeInTheDocument();
+      const netWorthSection = screen.getByText("Net Worth History").closest("section")!;
+      expect(within(netWorthSection).getByText("฿450,000.00")).toBeInTheDocument();
+    });
+  });
+
+  test("current Net Worth remains unchanged, independent of historical Net Worth composition", async () => {
+    const p1 = makePortfolio(1, 0);
+    portfolioState.portfolios = [p1];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    listCashAccounts.mockResolvedValue([]);
+    listLiabilities.mockResolvedValue([makeLiability(1, 12_000, { created_at: "2026-01-01T00:00:00Z" })]);
+    getSnapshots.mockResolvedValue([snapshot(1, "2026-06-01", 500_000)]);
+    getLiabilityBalanceAsOf.mockResolvedValue(liabilityAsOf(1, "2026-06-01", 999_999));
+
+    render(<DashboardPage />);
+
+    // Current Net Worth (WealthOverview) uses current Liability.balance
+    // (12,000) against current Total Assets (0, no holdings/cash), not the
+    // differing historical As-Of evidence (999,999).
+    await waitFor(() => expect(screen.getByText("Net Worth").parentElement).toHaveTextContent("฿-12,000.00"));
+    await waitFor(() => {
+      const netWorthHistorySection = screen.getByText("Net Worth History").closest("section")!;
+      expect(within(netWorthHistorySection).getByText("-฿499,999.00")).toBeInTheDocument();
+    });
+  });
+
+  test("introduces no additional network requests — Net Worth History is a pure composition of already-fetched data", async () => {
+    const p1 = makePortfolio(1);
+    portfolioState.portfolios = [p1];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    listCashAccounts.mockResolvedValue([]);
+    listLiabilities.mockResolvedValue([makeLiability(1, 50_000, { created_at: "2026-01-01T00:00:00Z" })]);
+    getSnapshots.mockResolvedValue([
+      snapshot(1, "2026-06-01", 500_000),
+      snapshot(1, "2026-06-02", 520_000),
+    ]);
+    getLiabilityBalanceAsOf.mockResolvedValue(liabilityAsOf(1, "2026-06-01", 50_000));
+
+    render(<DashboardPage />);
+
+    await waitFor(() => {
+      const section = screen.getByText("Net Worth History").closest("section")!;
+      expect(within(section).getByText("฿470,000.00")).toBeInTheDocument();
+    });
+
+    // Exactly 1 liability x 2 shared-spine dates = 2 As-Of calls; no cash
+    // accounts means zero Cash As-Of calls. Net Worth History added neither.
+    expect(getLiabilityBalanceAsOf).toHaveBeenCalledTimes(2);
+    expect(getCashAccountBalanceAsOf).not.toHaveBeenCalled();
+  });
+});
+
 describe("Cross-portfolio investment performance", () => {
   test("renders a beginning-NAV-weighted combined return, distinct from equal-weighting", async () => {
     const p1 = makePortfolio(1);

@@ -29,11 +29,13 @@ import type { LiabilityLoadStatus } from "@/lib/totalLiabilities";
 import { computeWealthHistory } from "@/lib/wealthHistory";
 import { computeTotalAssetsHistory } from "@/lib/totalAssetsHistory";
 import { computeTotalLiabilitiesHistory } from "@/lib/totalLiabilitiesHistory";
+import { computeNetWorthHistory } from "@/lib/netWorthHistory";
 import WealthOverview from "@/components/WealthOverview";
 import CrossPortfolioIncome from "@/components/CrossPortfolioIncome";
 import CrossPortfolioWealthHistory from "@/components/CrossPortfolioWealthHistory";
 import TotalAssetsHistoryCard from "@/components/TotalAssetsHistoryCard";
 import TotalLiabilitiesHistoryCard from "@/components/TotalLiabilitiesHistoryCard";
+import NetWorthHistoryCard from "@/components/NetWorthHistoryCard";
 
 // Matches the per-portfolio Income page's cap (backend's hard limit is 500)
 // so cross-portfolio dividend aggregation isn't silently truncated either.
@@ -655,6 +657,16 @@ export default function DashboardPage() {
     liabilityAsOfMap
   );
 
+  // Net Worth History (Phase 5, Milestone 3) — a pure derived composition of
+  // the two summaries above, on the same shared date spine. No new fetch, no
+  // new phase: it owns no evidence of its own.
+  const netWorthHistoryLoading = totalAssetsHistoryLoading || totalLiabilitiesHistoryLoading;
+  const netWorthHistorySummary = computeNetWorthHistory(
+    investmentHistoryDates,
+    totalAssetsHistorySummary,
+    totalLiabilitiesHistorySummary
+  );
+
   const isLoading = ctxLoading || loadingHoldings;
 
   return (
@@ -696,6 +708,8 @@ export default function DashboardPage() {
       <TotalAssetsHistoryCard summary={totalAssetsHistorySummary} loading={totalAssetsHistoryLoading} />
 
       <TotalLiabilitiesHistoryCard summary={totalLiabilitiesHistorySummary} loading={totalLiabilitiesHistoryLoading} />
+
+      <NetWorthHistoryCard summary={netWorthHistorySummary} loading={netWorthHistoryLoading} />
 
       {isLoading ? (
         <p className="text-sm text-gray-400">Loading…</p>
