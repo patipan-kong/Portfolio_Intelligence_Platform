@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   GoalFundingSummary,
@@ -12,14 +12,30 @@ import {
   type AllocationsState,
 } from "@/components/goals/GoalPlanningSections";
 import {
+  buildSourceFundingOverview,
+  sourceKey,
+  type FundingSourceKey,
+  type SourceFundingOverviewRow,
+} from "@/lib/goalFunding";
+import { computePortfolioCurrentValue } from "@/lib/wealthOverview";
+import { usePortfolio } from "@/lib/PortfolioContext";
+import {
   createWealthGoal,
+  getHoldings,
+  getPortfolioPrices,
+  listCashAccounts,
   listGoalFundingAllocations,
   listWealthGoals,
   updateWealthGoal,
+  type CashAccount,
+  type GoalFundingAllocation,
+  type GoalFundingSourceKind,
   type WealthGoal,
   type WealthGoalPriority,
   type WealthGoalType,
 } from "@/lib/api";
+
+type CashAccountsState = CashAccount[] | { error: string } | undefined;
 
 const GOAL_TYPES: WealthGoalType[] = [
   "RETIREMENT",
@@ -41,6 +57,24 @@ export default function GoalsPage() {
   const [mutationError, setMutationError] = useState("");
   const [showArchived, setShowArchived] = useState(false);
   const [allocationsByGoal, setAllocationsByGoal] = useState<Record<number, AllocationsState>>({});
+  const [cashAccountsState, setCashAccountsState] = useState<CashAccountsState>(undefined);
+  const [portfolioValueById, setPortfolioValueById] = useState<Record<number, number | "error">>({});
+
+  const { portfolios: portfolioCatalog, loading: portfoliosLoading, error: portfoliosError } = usePortfolio();
+
+  const refreshGenerationRef = useRef(0);
+  // Portfolio ids whose holdings+prices have already been requested for the
+  // CURRENT refresh generation. Kept in a ref, not state, so that a settling
+  // valuation cannot re-run the fan-out effect and re-issue requests that are
+  // still in flight — getPortfolioPrices can trigger live provider work.
+  const requestedPortfolioIdsRef = useRef<Set<number>>(new Set());
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const [name, setName] = useState("");
   const [goalType, setGoalType] = useState<WealthGoalType>("OTHER");
@@ -57,45 +91,145 @@ export default function GoalsPage() {
   const [editPriority, setEditPriority] = useState<WealthGoalPriority>("MEDIUM");
   const [editNote, setEditNote] = useState("");
 
-  async function loadAllocations(goalId: number) {
-    try {
-      const result = await listGoalFundingAllocations(goalId);
-      setAllocationsByGoal((prev) => ({ ...prev, [goalId]: result }));
-    } catch (err) {
-      setAllocationsByGoal((prev) => ({ ...prev, [goalId]: { error: messageFor(err, "Unable to load funding progress.") } }));
-    }
-  }
+  // One coherent, generation-guarded refresh: fetches the full goal list
+  // (active + archived — the "Show archived" toggle is presentation-only and
+  // never triggers a fetch), then each goal's allocations exactly once,
+  // reused for both per-goal funding cards and the workspace-wide Funding
+  // source health rollup below. Stale responses (superseded refresh, or a
+  // response arriving after unmount) are dropped rather than applied.
+  const refresh = useCallback(async () => {
+    const generation = ++refreshGenerationRef.current;
+    const isCurrent = () => mountedRef.current && refreshGenerationRef.current === generation;
+    requestedPortfolioIdsRef.current = new Set();
 
-  async function load(includeArchived = showArchived) {
     setLoading(true);
     setError("");
+    setAllocationsByGoal({});
+    setCashAccountsState(undefined);
+    setPortfolioValueById({});
+
+    let loadedGoals: WealthGoal[];
     try {
-      setGoals(await listWealthGoals(includeArchived));
+      loadedGoals = await listWealthGoals(true);
     } catch (err) {
+      if (!isCurrent()) return;
       setGoals([]);
       setError(messageFor(err, "Unable to load goals."));
-    } finally {
       setLoading(false);
+      return;
     }
-  }
+    if (!isCurrent()) return;
+    setGoals(loadedGoals);
+    setLoading(false);
+
+    void listCashAccounts(true)
+      .then((accounts) => {
+        if (isCurrent()) setCashAccountsState(accounts);
+      })
+      .catch((err) => {
+        if (isCurrent()) setCashAccountsState({ error: messageFor(err, "Unable to load cash accounts.") });
+      });
+
+    const entries = await Promise.all(
+      loadedGoals.map(async (item) => {
+        try {
+          return [item.id, await listGoalFundingAllocations(item.id)] as const;
+        } catch (err) {
+          return [item.id, { error: messageFor(err, "Unable to load funding progress.") }] as const;
+        }
+      })
+    );
+    if (!isCurrent()) return;
+    const nextAllocationsByGoal: Record<number, AllocationsState> = {};
+    for (const [id, result] of entries) nextAllocationsByGoal[id] = result;
+    setAllocationsByGoal(nextAllocationsByGoal);
+  }, []);
 
   useEffect(() => {
-    void load(false);
-    // The initial request is intentionally active-only; the toggle controls the
-    // include_archived query for subsequent requests.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    void refresh();
+  }, [refresh]);
 
   const active = goals.filter((item) => !item.is_archived);
   const archived = goals.filter((item) => item.is_archived);
-  const activeIdsKey = active.map((item) => item.id).join(",");
 
-  useEffect(() => {
-    for (const item of active) {
-      if (allocationsByGoal[item.id] === undefined) void loadAllocations(item.id);
+  // Complete only when every goal's allocation fetch succeeded — a partial
+  // set would under-report a shared source's true total designation, so an
+  // incomplete set is never used to build the workspace rollup below.
+  const allocationEvidenceComplete = !error && goals.every((item) => Array.isArray(allocationsByGoal[item.id]));
+  const allocationFetchesPending = !error && goals.some((item) => allocationsByGoal[item.id] === undefined);
+
+  const allWorkspaceAllocations = useMemo<GoalFundingAllocation[]>(() => {
+    if (!allocationEvidenceComplete) return [];
+    const combined: GoalFundingAllocation[] = [];
+    for (const item of goals) {
+      const result = allocationsByGoal[item.id];
+      if (Array.isArray(result)) combined.push(...result);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeIdsKey]);
+    return combined;
+  }, [allocationEvidenceComplete, goals, allocationsByGoal]);
+
+  const referencedPortfolioIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const allocation of allWorkspaceAllocations) {
+      if (allocation.portfolio_id != null) ids.add(allocation.portfolio_id);
+    }
+    return ids;
+  }, [allWorkspaceAllocations]);
+
+  // Only after allocation evidence is complete, and only once per referenced
+  // portfolio, fetch that portfolio's holdings + prices and reduce them
+  // through the canonical computePortfolioCurrentValue (frontend/lib/wealthOverview.ts)
+  // — not a second valuation formula. A portfolio catalog failure or an id
+  // absent from PortfolioContext's list leaves that source unresolved, which
+  // renders as UNAVAILABLE rather than a fabricated value.
+  useEffect(() => {
+    if (!allocationEvidenceComplete || portfoliosLoading || portfoliosError) return;
+    const generation = refreshGenerationRef.current;
+    for (const portfolioId of referencedPortfolioIds) {
+      if (requestedPortfolioIdsRef.current.has(portfolioId)) continue;
+      const portfolio = portfolioCatalog.find((item) => item.id === portfolioId);
+      // Not in the catalog yet: leave it unrequested so a later catalog update
+      // can still resolve it; until then it renders as UNAVAILABLE.
+      if (!portfolio) continue;
+      requestedPortfolioIdsRef.current.add(portfolioId);
+      void (async () => {
+        try {
+          const [items, prices] = await Promise.all([getHoldings(portfolioId), getPortfolioPrices(portfolioId)]);
+          if (!mountedRef.current || refreshGenerationRef.current !== generation) return;
+          const { value } = computePortfolioCurrentValue(portfolio, items, prices);
+          setPortfolioValueById((prev) => ({ ...prev, [portfolioId]: value }));
+        } catch {
+          if (!mountedRef.current || refreshGenerationRef.current !== generation) return;
+          setPortfolioValueById((prev) => ({ ...prev, [portfolioId]: "error" }));
+        }
+      })();
+    }
+  }, [allocationEvidenceComplete, referencedPortfolioIds, portfolioCatalog, portfoliosLoading, portfoliosError]);
+
+  const currentValueBySource = useMemo(() => {
+    const map = new Map<FundingSourceKey, number | null>();
+    for (const allocation of allWorkspaceAllocations) {
+      const kind: GoalFundingSourceKind = allocation.cash_account_id != null ? "CASH_ACCOUNT" : "PORTFOLIO";
+      const id = (allocation.cash_account_id ?? allocation.portfolio_id) as number;
+      const key = sourceKey(kind, id);
+      if (map.has(key)) continue;
+      if (kind === "CASH_ACCOUNT") {
+        const value = Array.isArray(cashAccountsState)
+          ? cashAccountsState.find((account) => account.id === id)?.balance ?? null
+          : null;
+        map.set(key, value);
+      } else {
+        const value = portfolioValueById[id];
+        map.set(key, typeof value === "number" ? value : null);
+      }
+    }
+    return map;
+  }, [allWorkspaceAllocations, cashAccountsState, portfolioValueById]);
+
+  const overviewRows: SourceFundingOverviewRow[] = useMemo(
+    () => buildSourceFundingOverview(allWorkspaceAllocations, currentValueBySource),
+    [allWorkspaceAllocations, currentValueBySource]
+  );
 
   async function handleCreate(event: FormEvent) {
     event.preventDefault();
@@ -121,7 +255,7 @@ export default function GoalsPage() {
       setTargetDate("");
       setPriority("MEDIUM");
       setNote("");
-      await load();
+      await refresh();
     } catch (err) {
       setMutationError(messageFor(err, "Unable to create goal."));
     }
@@ -157,7 +291,7 @@ export default function GoalsPage() {
         note: editNote.trim() || null,
       });
       setEditing(null);
-      await load();
+      await refresh();
     } catch (err) {
       setMutationError(messageFor(err, "Unable to update goal."));
     }
@@ -167,16 +301,16 @@ export default function GoalsPage() {
     setMutationError("");
     try {
       await updateWealthGoal(item.id, { is_archived: isArchived });
-      await load();
+      await refresh();
     } catch (err) {
       setMutationError(messageFor(err, isArchived ? "Unable to archive goal." : "Unable to restore goal."));
     }
   }
 
-  async function toggleArchived() {
-    const next = !showArchived;
-    setShowArchived(next);
-    await load(next);
+  // Presentation-only: the full goal list (active + archived) is already
+  // loaded by refresh(); toggling never causes a network request.
+  function toggleArchived() {
+    setShowArchived((prev) => !prev);
   }
 
   return (
@@ -227,13 +361,34 @@ export default function GoalsPage() {
         {loading ? (
           <p className="text-sm text-gray-400">Loading goals…</p>
         ) : error ? (
-          <div className="text-sm text-red-600 space-y-2"><p role="alert">{error}</p><button type="button" onClick={() => void load()} className="text-blue-600 hover:underline">Try again</button></div>
+          <div className="text-sm text-red-600 space-y-2"><p role="alert">{error}</p><button type="button" onClick={() => void refresh()} className="text-blue-600 hover:underline">Try again</button></div>
         ) : active.length === 0 ? (
           <p className="text-sm text-gray-500">No active goals yet. Add your first goal above.</p>
         ) : (
           <div className="space-y-3">{active.map((item) => (
             <GoalCard key={item.id} item={item} allocations={allocationsByGoal[item.id]} onEdit={openEdit} onArchive={() => void setArchived(item, true)} />
           ))}</div>
+        )}
+      </section>
+
+      <section className="space-y-3 pt-2 border-t" aria-labelledby="funding-source-health-heading">
+        <h2 id="funding-source-health-heading" className="text-lg font-semibold">Funding source health</h2>
+        {loading || allocationFetchesPending ? (
+          <p className="text-sm text-gray-400">Loading funding source health…</p>
+        ) : error || !allocationEvidenceComplete ? (
+          <p role="alert" className="text-sm text-red-600">
+            Funding source health is unavailable — allocation evidence is incomplete.
+          </p>
+        ) : goals.length === 0 ? (
+          <p className="text-sm text-gray-500">No funding sources to show yet.</p>
+        ) : overviewRows.length === 0 ? (
+          <p className="text-sm text-gray-500">No funding sources designated yet.</p>
+        ) : (
+          <ul className="space-y-1.5 bg-white border rounded-xl p-4 shadow-sm">
+            {overviewRows.map((row) => (
+              <SourceHealthRow key={row.key} row={row} />
+            ))}
+          </ul>
         )}
       </section>
 
@@ -283,6 +438,32 @@ function GoalCard({
       </div>
       <GoalFundingSummary allocations={allocations} targetAmount={item.target_amount} compact />
     </article>
+  );
+}
+
+function SourceHealthRow({ row }: { row: SourceFundingOverviewRow }) {
+  return (
+    <li className="text-sm border-b last:border-0 pb-1.5">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <span className="text-gray-700">
+          {row.sourceName}{" "}
+          <span className="text-xs text-gray-400 ml-1">
+            ({row.sourceKind === "CASH_ACCOUNT" ? "Cash Account" : "Portfolio"}
+            {row.sourceIsArchived ? ", archived" : ""})
+          </span>
+        </span>
+        <span className="font-medium">{formatThb(row.health.totalDesignated)} designated</span>
+      </div>
+      {row.health.status === "UNAVAILABLE" ? (
+        <p className="text-xs text-gray-400 mt-0.5">Current value unavailable · Funding health unavailable</p>
+      ) : row.health.status === "OVER_ALLOCATED" ? (
+        <p className="text-xs text-amber-600 mt-0.5">
+          Current value {formatThb(row.health.currentValue as number)} · Over-allocated by {formatThb(row.health.shortfall as number)}
+        </p>
+      ) : (
+        <p className="text-xs text-gray-500 mt-0.5">Current value {formatThb(row.health.currentValue as number)} · Funding health: Supported</p>
+      )}
+    </li>
   );
 }
 

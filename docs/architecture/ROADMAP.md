@@ -10,8 +10,12 @@
 > **Phase 5 — True Net Worth & Wealth Intelligence** core is complete: current
 > and historical Net Worth (Assets − Liabilities) are both in place.
 >
-> **Phase 6 — Planning, Goals & Scenarios** is active. Its current milestone
-> is **Wealth Goals Foundation**.
+> **Phase 6 — Planning, Goals & Scenarios**: the single-goal planning chain
+> (Foundation, Funding, Funding Health, What-If, Required Contribution, Named
+> Scenarios, Scenario Comparison) is delivered. Its current milestone is a
+> workspace-level factual rollup, **Wealth Goals Overview / Goal Funding
+> Health Rollup** — a goal-level funding summary and a cross-goal Funding
+> source health view on `/goals`, with no new planning semantics.
 >
 > This roadmap states the product capability sequence, active delivery
 > direction, and parallel future tracks. Platform domains, boundaries, laws,

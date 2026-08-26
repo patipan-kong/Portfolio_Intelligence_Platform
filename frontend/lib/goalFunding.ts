@@ -111,3 +111,83 @@ export function computeSourceFundingHealth(totalDesignated: number, currentValue
   }
   return { totalDesignated, currentValue, status: "SUPPORTED", shortfall: null };
 }
+
+export interface SourceFundingOverviewRow {
+  key: FundingSourceKey;
+  sourceKind: GoalFundingSourceKind;
+  sourceId: number;
+  sourceName: string;
+  sourceIsArchived: boolean;
+  health: SourceFundingHealth;
+}
+
+/**
+ * Workspace-level, goal-independent view of every distinct funding source:
+ * one row per source, aggregated across ALL goals that reference it
+ * (active + archived — see aggregateDesignatedBySource). The caller must
+ * supply a COMPLETE workspace allocation set; a partial set (e.g. one goal's
+ * allocations failed to load) would under-report a source's true total
+ * designation, so completeness is the caller's responsibility, not
+ * something this function can detect from the array alone.
+ *
+ * `currentValueBySource` uses `null` (or a missing key) for "unavailable" —
+ * never a stand-in for zero — and flows straight into
+ * computeSourceFundingHealth unchanged.
+ */
+export function buildSourceFundingOverview(
+  allocations: GoalFundingAllocation[],
+  currentValueBySource: ReadonlyMap<FundingSourceKey, number | null>
+): SourceFundingOverviewRow[] {
+  const totals = aggregateDesignatedBySource(allocations);
+
+  interface SourceMeta {
+    sourceKind: GoalFundingSourceKind;
+    sourceId: number;
+    sourceName: string | null;
+    sourceIsArchived: boolean;
+  }
+  const metaByKey = new Map<FundingSourceKey, SourceMeta>();
+
+  // Sorted by allocation id so "first non-null name" is deterministic
+  // regardless of the order the caller happened to assemble the array in.
+  const byAllocationId = [...allocations].sort((a, b) => a.id - b.id);
+  for (const allocation of byAllocationId) {
+    const sourceKind: GoalFundingSourceKind = allocation.cash_account_id != null ? "CASH_ACCOUNT" : "PORTFOLIO";
+    const sourceId = (allocation.cash_account_id ?? allocation.portfolio_id) as number;
+    const key = sourceKey(sourceKind, sourceId);
+    const existing = metaByKey.get(key);
+    if (!existing) {
+      metaByKey.set(key, {
+        sourceKind,
+        sourceId,
+        sourceName: allocation.source_name,
+        sourceIsArchived: allocation.source_is_archived,
+      });
+    } else {
+      if (existing.sourceName === null && allocation.source_name !== null) existing.sourceName = allocation.source_name;
+      if (allocation.source_is_archived) existing.sourceIsArchived = true;
+    }
+  }
+
+  const rows: SourceFundingOverviewRow[] = [];
+  for (const [key, meta] of metaByKey) {
+    const totalDesignated = totals.get(key) ?? 0;
+    const currentValue = currentValueBySource.get(key) ?? null;
+    rows.push({
+      key,
+      sourceKind: meta.sourceKind,
+      sourceId: meta.sourceId,
+      sourceName: meta.sourceName ?? "Unknown source",
+      sourceIsArchived: meta.sourceIsArchived,
+      health: computeSourceFundingHealth(totalDesignated, currentValue),
+    });
+  }
+
+  rows.sort((a, b) => {
+    if (a.sourceName !== b.sourceName) return a.sourceName < b.sourceName ? -1 : 1;
+    if (a.sourceKind !== b.sourceKind) return a.sourceKind < b.sourceKind ? -1 : 1;
+    return a.sourceId - b.sourceId;
+  });
+
+  return rows;
+}

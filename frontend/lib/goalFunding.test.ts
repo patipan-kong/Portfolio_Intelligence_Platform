@@ -3,9 +3,11 @@ import { test } from "node:test";
 
 import {
   aggregateDesignatedBySource,
+  buildSourceFundingOverview,
   computeGoalFunding,
   computeSourceFundingHealth,
   sourceKey,
+  type FundingSourceKey,
 } from "./goalFunding.ts";
 import type { GoalFundingAllocation } from "@/lib/api";
 
@@ -179,4 +181,170 @@ test("invalid/non-finite current value fails honestly as unavailable", () => {
 test("negative current value fails honestly as unavailable", () => {
   const health = computeSourceFundingHealth(300_000, -100);
   assert.equal(health.status, "UNAVAILABLE");
+});
+
+// ─── buildSourceFundingOverview ─────────────────────────────────────────────
+
+function valueMap(entries: [FundingSourceKey, number | null][]): ReadonlyMap<FundingSourceKey, number | null> {
+  return new Map(entries);
+}
+
+test("no allocations => no rows", () => {
+  assert.deepEqual(buildSourceFundingOverview([], valueMap([])), []);
+});
+
+test("one source, one goal", () => {
+  const rows = buildSourceFundingOverview(
+    [allocation({ id: 1, wealth_goal_id: 1, allocated_amount: 100_000, cash_account_id: 5, source_name: "Wedding Savings" })],
+    valueMap([[sourceKey("CASH_ACCOUNT", 5), 150_000]])
+  );
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].sourceName, "Wedding Savings");
+  assert.equal(rows[0].health.totalDesignated, 100_000);
+  assert.equal(rows[0].health.status, "SUPPORTED");
+});
+
+test("two active goals sharing one Cash Account collapse into a single aggregated row", () => {
+  const rows = buildSourceFundingOverview(
+    [
+      allocation({ id: 1, wealth_goal_id: 1, allocated_amount: 100_000, cash_account_id: 5 }),
+      allocation({ id: 2, wealth_goal_id: 2, allocated_amount: 50_000, cash_account_id: 5 }),
+    ],
+    valueMap([[sourceKey("CASH_ACCOUNT", 5), 200_000]])
+  );
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].health.totalDesignated, 150_000);
+});
+
+test("an active and an archived goal sharing one Portfolio aggregate into one row", () => {
+  const rows = buildSourceFundingOverview(
+    [
+      allocation({ id: 1, wealth_goal_id: 1, allocated_amount: 200_000, source_kind: "PORTFOLIO", cash_account_id: null, portfolio_id: 9 }),
+      allocation({ id: 2, wealth_goal_id: 2, allocated_amount: 10_000, source_kind: "PORTFOLIO", cash_account_id: null, portfolio_id: 9 }),
+    ],
+    valueMap([[sourceKey("PORTFOLIO", 9), 52_000]])
+  );
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].health.totalDesignated, 210_000);
+  assert.equal(rows[0].health.status, "OVER_ALLOCATED");
+  assert.equal(rows[0].health.shortfall, 158_000);
+});
+
+test("a source referenced only by an archived goal still appears", () => {
+  const rows = buildSourceFundingOverview(
+    [allocation({ id: 1, wealth_goal_id: 3, allocated_amount: 5_000, cash_account_id: 7, source_name: "Old Fund", source_is_archived: false })],
+    valueMap([[sourceKey("CASH_ACCOUNT", 7), 1_000]])
+  );
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].health.status, "OVER_ALLOCATED");
+  assert.equal(rows[0].health.shortfall, 4_000);
+});
+
+test("Cash Account and Portfolio sharing the same numeric ID remain distinct rows", () => {
+  const rows = buildSourceFundingOverview(
+    [
+      allocation({ id: 1, wealth_goal_id: 1, allocated_amount: 20_000, source_kind: "CASH_ACCOUNT", cash_account_id: 9, portfolio_id: null }),
+      allocation({ id: 2, wealth_goal_id: 1, allocated_amount: 30_000, source_kind: "PORTFOLIO", cash_account_id: null, portfolio_id: 9 }),
+    ],
+    valueMap([
+      [sourceKey("CASH_ACCOUNT", 9), 20_000],
+      [sourceKey("PORTFOLIO", 9), 30_000],
+    ])
+  );
+  assert.equal(rows.length, 2);
+  assert.equal(rows.find((row) => row.sourceKind === "CASH_ACCOUNT")?.sourceId, 9);
+  assert.equal(rows.find((row) => row.sourceKind === "PORTFOLIO")?.sourceId, 9);
+});
+
+test("a missing current-value map entry is UNAVAILABLE, never zero", () => {
+  const rows = buildSourceFundingOverview(
+    [allocation({ id: 1, wealth_goal_id: 1, allocated_amount: 100_000, cash_account_id: 5 })],
+    valueMap([])
+  );
+  assert.equal(rows[0].health.status, "UNAVAILABLE");
+  assert.equal(rows[0].health.currentValue, null);
+});
+
+test("an explicit null current-value entry is also UNAVAILABLE", () => {
+  const rows = buildSourceFundingOverview(
+    [allocation({ id: 1, wealth_goal_id: 1, allocated_amount: 100_000, cash_account_id: 5 })],
+    valueMap([[sourceKey("CASH_ACCOUNT", 5), null]])
+  );
+  assert.equal(rows[0].health.status, "UNAVAILABLE");
+});
+
+test("a real zero designation against a real zero balance is SUPPORTED, not unavailable", () => {
+  const rows = buildSourceFundingOverview(
+    [allocation({ id: 1, wealth_goal_id: 1, allocated_amount: 0, cash_account_id: 5 })],
+    valueMap([[sourceKey("CASH_ACCOUNT", 5), 0]])
+  );
+  assert.equal(rows[0].health.status, "SUPPORTED");
+  assert.equal(rows[0].health.currentValue, 0);
+});
+
+test("chooses the first non-null source name in allocation-ID order, not the last", () => {
+  const rows = buildSourceFundingOverview(
+    [
+      allocation({ id: 1, wealth_goal_id: 1, allocated_amount: 10_000, cash_account_id: 5, source_name: null }),
+      allocation({ id: 2, wealth_goal_id: 2, allocated_amount: 20_000, cash_account_id: 5, source_name: "First Real Name" }),
+      allocation({ id: 3, wealth_goal_id: 3, allocated_amount: 5_000, cash_account_id: 5, source_name: "Second Real Name" }),
+    ],
+    valueMap([[sourceKey("CASH_ACCOUNT", 5), 100_000]])
+  );
+  assert.equal(rows[0].sourceName, "First Real Name");
+});
+
+test("name choice follows allocation ID, not array position, and never mutates the caller's array", () => {
+  // Deliberately supplied out of ID order: the caller assembles this array by
+  // concatenating per-goal responses, whose arrival order is not meaningful.
+  const allocations = [
+    allocation({ id: 3, wealth_goal_id: 3, allocated_amount: 5_000, cash_account_id: 5, source_name: "Third By ID" }),
+    allocation({ id: 1, wealth_goal_id: 1, allocated_amount: 10_000, cash_account_id: 5, source_name: null }),
+    allocation({ id: 2, wealth_goal_id: 2, allocated_amount: 20_000, cash_account_id: 5, source_name: "Second By ID" }),
+  ];
+  const originalOrder = allocations.map((item) => item.id);
+
+  const rows = buildSourceFundingOverview(allocations, valueMap([[sourceKey("CASH_ACCOUNT", 5), 100_000]]));
+
+  assert.equal(rows[0].sourceName, "Second By ID");
+  assert.equal(rows[0].health.totalDesignated, 35_000);
+  assert.deepEqual(allocations.map((item) => item.id), originalOrder);
+});
+
+test("falls back to 'Unknown source' when every matching allocation has a null name", () => {
+  const rows = buildSourceFundingOverview(
+    [allocation({ id: 1, wealth_goal_id: 1, allocated_amount: 10_000, cash_account_id: 5, source_name: null })],
+    valueMap([[sourceKey("CASH_ACCOUNT", 5), 100_000]])
+  );
+  assert.equal(rows[0].sourceName, "Unknown source");
+});
+
+test("a source is archived if any matching allocation payload says archived", () => {
+  const rows = buildSourceFundingOverview(
+    [
+      allocation({ id: 1, wealth_goal_id: 1, allocated_amount: 10_000, cash_account_id: 5, source_is_archived: false }),
+      allocation({ id: 2, wealth_goal_id: 2, allocated_amount: 5_000, cash_account_id: 5, source_is_archived: true }),
+    ],
+    valueMap([[sourceKey("CASH_ACCOUNT", 5), 100_000]])
+  );
+  assert.equal(rows[0].sourceIsArchived, true);
+});
+
+test("rows sort deterministically by name, then kind, then ID", () => {
+  const rows = buildSourceFundingOverview(
+    [
+      allocation({ id: 1, wealth_goal_id: 1, allocated_amount: 1_000, cash_account_id: 20, source_name: "Zebra Fund" }),
+      allocation({ id: 2, wealth_goal_id: 1, allocated_amount: 1_000, cash_account_id: 10, source_name: "Apple Fund" }),
+      allocation({ id: 3, wealth_goal_id: 1, allocated_amount: 1_000, source_kind: "PORTFOLIO", cash_account_id: null, portfolio_id: 30, source_name: "Apple Fund" }),
+    ],
+    valueMap([
+      [sourceKey("CASH_ACCOUNT", 20), 1_000],
+      [sourceKey("CASH_ACCOUNT", 10), 1_000],
+      [sourceKey("PORTFOLIO", 30), 1_000],
+    ])
+  );
+  assert.deepEqual(
+    rows.map((row) => row.key),
+    [sourceKey("CASH_ACCOUNT", 10), sourceKey("PORTFOLIO", 30), sourceKey("CASH_ACCOUNT", 20)]
+  );
 });
