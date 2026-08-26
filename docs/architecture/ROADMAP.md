@@ -4,10 +4,14 @@
 >
 > Current Status:
 >
-> **Phase 1 — Investment Core is complete.**
+> **Phases 1–4 (Investment Core, Wealth Accounts, Personal Cash Flow,
+> Liabilities) are complete.**
 >
-> **Phase 2 — Wealth Accounts** is active. Its current milestone is
-> **Cash Accounts v1**.
+> **Phase 5 — True Net Worth & Wealth Intelligence** core is complete: current
+> and historical Net Worth (Assets − Liabilities) are both in place.
+>
+> **Phase 6 — Planning, Goals & Scenarios** is active. Its current milestone
+> is **Wealth Goals Foundation**.
 >
 > This roadmap states the product capability sequence, active delivery
 > direction, and parallel future tracks. Platform domains, boundaries, laws,

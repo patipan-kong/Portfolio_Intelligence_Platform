@@ -21,7 +21,7 @@ import uuid as _uuid
 from models.database import (
     init_db, migrate_legacy_data, get_db, SessionLocal,
     Workspace, get_default_workspace,
-    Portfolio, PortfolioItem, CashAccount, CashAccountBaseline, CashAccountTransfer, CashAccountTransaction, Liability, LiabilityBalanceObservation, Watchlist,
+    Portfolio, PortfolioItem, CashAccount, CashAccountBaseline, CashAccountTransfer, CashAccountTransaction, Liability, LiabilityBalanceObservation, WealthGoal, Watchlist,
     AgentCache, AnalysisCache, AnalysisHistory, OptimizerHistory, SignalHistory,
     Settings, UserUsage, Transaction, PortfolioSnapshot, BenchmarkPrice,
     MarketDataCache,
@@ -1425,6 +1425,162 @@ async def get_liability_balance_as_of(
         "balance": balance,
         "available": balance is not None,
     }
+
+
+# ─── Wealth Goals (Phase 6, Milestone 1 — Wealth Goals Foundation) ────────────
+#
+# A workspace-owned whole-life financial goal, independent of any Portfolio.
+# Deliberately boring: persistence and management only. No funding linkage,
+# no progress calculation, no projection — those are later Phase 6 milestones.
+# Distinct from, and never synchronized with, Portfolio.goal_* (the Phase
+# 4C.3 Goal Discovery Wizard's portfolio-scoped recommendation-input fields).
+
+WealthGoalType = Literal[
+    "RETIREMENT",
+    "HOUSE",
+    "WEDDING",
+    "EDUCATION",
+    "VACATION",
+    "EMERGENCY_FUND",
+    "FIRE",
+    "OTHER",
+]
+
+WealthGoalPriority = Literal["HIGH", "MEDIUM", "LOW"]
+
+
+def _wealth_goal_payload(goal: WealthGoal) -> dict:
+    return {
+        "id": goal.id,
+        "workspace_id": goal.workspace_id,
+        "name": goal.name,
+        "goal_type": goal.goal_type,
+        "target_amount": goal.target_amount,
+        "currency": goal.currency,
+        "target_date": goal.target_date,
+        "priority": goal.priority,
+        "note": goal.note,
+        "is_archived": goal.is_archived,
+        "created_at": goal.created_at.isoformat(),
+        "updated_at": goal.updated_at.isoformat(),
+    }
+
+
+def _wealth_goal_or_404(db: Session, goal_id: int, workspace_id: int) -> WealthGoal:
+    goal = (
+        db.query(WealthGoal)
+        .filter(WealthGoal.id == goal_id, WealthGoal.workspace_id == workspace_id)
+        .first()
+    )
+    if goal is None:
+        raise HTTPException(status_code=404, detail="Wealth goal not found")
+    return goal
+
+
+class WealthGoalCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    goal_type: WealthGoalType
+    target_amount: float
+    currency: str = "THB"
+    target_date: date | None = None
+    priority: WealthGoalPriority
+    note: str | None = None
+
+    @model_validator(mode="after")
+    def validate_wealth_goal(self):
+        if not self.name.strip():
+            raise ValueError("name must not be blank")
+        if self.currency != "THB":
+            raise ValueError("currency must be THB")
+        if not math.isfinite(self.target_amount) or self.target_amount <= 0:
+            raise ValueError("target_amount must be finite and positive")
+        return self
+
+
+class WealthGoalUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = None
+    goal_type: WealthGoalType | None = None
+    target_amount: float | None = None
+    target_date: date | None = None  # explicit null clears it; omitted leaves it unchanged
+    priority: WealthGoalPriority | None = None
+    note: str | None = None
+    is_archived: bool | None = None
+
+    @model_validator(mode="after")
+    def validate_wealth_goal_update(self):
+        if not self.model_fields_set:
+            raise ValueError("at least one field is required")
+        if "name" in self.model_fields_set and (self.name is None or not self.name.strip()):
+            raise ValueError("name must not be blank")
+        if "goal_type" in self.model_fields_set and self.goal_type is None:
+            raise ValueError("goal_type must be supplied when updating it")
+        if "target_amount" in self.model_fields_set:
+            if (
+                self.target_amount is None
+                or not math.isfinite(self.target_amount)
+                or self.target_amount <= 0
+            ):
+                raise ValueError("target_amount must be finite and positive")
+        if "priority" in self.model_fields_set and self.priority is None:
+            raise ValueError("priority must be supplied when updating it")
+        if "is_archived" in self.model_fields_set and self.is_archived is None:
+            raise ValueError("is_archived must be supplied when updating it")
+        return self
+
+
+@app.get("/wealth-goals")
+async def list_wealth_goals(include_archived: bool = False, db: Session = Depends(get_db)) -> list[dict]:
+    ws = _ws_id(db)
+    query = db.query(WealthGoal).filter(WealthGoal.workspace_id == ws)
+    if not include_archived:
+        query = query.filter(WealthGoal.is_archived.is_(False))
+    return [_wealth_goal_payload(item) for item in query.order_by(WealthGoal.name, WealthGoal.id).all()]
+
+
+@app.post("/wealth-goals", status_code=201)
+async def create_wealth_goal(body: WealthGoalCreate, db: Session = Depends(get_db)) -> dict:
+    goal = WealthGoal(
+        workspace_id=_ws_id(db),
+        name=body.name.strip(),
+        goal_type=body.goal_type,
+        target_amount=body.target_amount,
+        currency=body.currency,
+        target_date=body.target_date.isoformat() if body.target_date else None,
+        priority=body.priority,
+        note=body.note.strip() or None if body.note is not None else None,
+    )
+    db.add(goal)
+    db.commit()
+    db.refresh(goal)
+    return _wealth_goal_payload(goal)
+
+
+@app.patch("/wealth-goals/{goal_id}")
+async def update_wealth_goal(goal_id: int, body: WealthGoalUpdate, db: Session = Depends(get_db)) -> dict:
+    goal = _wealth_goal_or_404(db, goal_id, _ws_id(db))
+    fields = body.model_dump(exclude_unset=True)
+    if "name" in fields:
+        goal.name = fields["name"].strip()
+    if "goal_type" in fields:
+        goal.goal_type = fields["goal_type"]
+    if "target_amount" in fields:
+        goal.target_amount = fields["target_amount"]
+    if "target_date" in fields:
+        goal.target_date = body.target_date.isoformat() if body.target_date else None
+    if "priority" in fields:
+        goal.priority = fields["priority"]
+    if "note" in fields:
+        note = fields["note"]
+        goal.note = note.strip() or None if note is not None else None
+    if "is_archived" in fields:
+        goal.is_archived = fields["is_archived"]
+    db.commit()
+    db.refresh(goal)
+    return _wealth_goal_payload(goal)
 
 
 # ─── Portfolios ───────────────────────────────────────────────────────────────

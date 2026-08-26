@@ -86,6 +86,33 @@ export interface Liability {
   first_observation_on?: string | null;
 }
 
+export type WealthGoalType =
+  | "RETIREMENT"
+  | "HOUSE"
+  | "WEDDING"
+  | "EDUCATION"
+  | "VACATION"
+  | "EMERGENCY_FUND"
+  | "FIRE"
+  | "OTHER";
+
+export type WealthGoalPriority = "HIGH" | "MEDIUM" | "LOW";
+
+export interface WealthGoal {
+  id: number;
+  workspace_id: number;
+  name: string;
+  goal_type: WealthGoalType;
+  target_amount: number;
+  currency: "THB";
+  target_date: string | null;
+  priority: WealthGoalPriority;
+  note: string | null;
+  is_archived: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface CashAccountBaseline {
   id: number;
   cash_account_id: number;
@@ -510,6 +537,39 @@ export const listLiabilityBalanceObservations = (id: number) =>
 
 export const getLiabilityBalanceAsOf = (id: number, date: string) =>
   apiFetch<LiabilityBalanceAsOf>(`/liabilities/${id}/as-of?date=${encodeURIComponent(date)}`);
+
+// ─── Wealth Goals (Phase 6, Milestone 1) ───────────────────────────────────
+// A workspace-owned whole-life financial goal, independent of any Portfolio.
+// Persistence and management only — no progress, funding, or projection yet.
+
+export type WealthGoalCreate = {
+  name: string;
+  goal_type: WealthGoalType;
+  target_amount: number;
+  currency: "THB";
+  target_date?: string | null;
+  priority: WealthGoalPriority;
+  note?: string | null;
+};
+
+export type WealthGoalUpdate = {
+  name?: string;
+  goal_type?: WealthGoalType;
+  target_amount?: number;
+  target_date?: string | null;
+  priority?: WealthGoalPriority;
+  note?: string | null;
+  is_archived?: boolean;
+};
+
+export const listWealthGoals = (includeArchived = false) =>
+  apiFetch<WealthGoal[]>(`/wealth-goals${includeArchived ? "?include_archived=true" : ""}`);
+
+export const createWealthGoal = (body: WealthGoalCreate) =>
+  apiFetch<WealthGoal>("/wealth-goals", { method: "POST", body: JSON.stringify(body) });
+
+export const updateWealthGoal = (id: number, body: WealthGoalUpdate) =>
+  apiFetch<WealthGoal>(`/wealth-goals/${id}`, { method: "PATCH", body: JSON.stringify(body) });
 
 export type CashAccountBaselineCreate = {
   effective_on: string;

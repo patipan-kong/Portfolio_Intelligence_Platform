@@ -1,0 +1,268 @@
+"use client";
+
+import { FormEvent, useEffect, useState } from "react";
+import {
+  createWealthGoal,
+  listWealthGoals,
+  updateWealthGoal,
+  type WealthGoal,
+  type WealthGoalPriority,
+  type WealthGoalType,
+} from "@/lib/api";
+
+const GOAL_TYPES: WealthGoalType[] = [
+  "RETIREMENT",
+  "HOUSE",
+  "WEDDING",
+  "EDUCATION",
+  "VACATION",
+  "EMERGENCY_FUND",
+  "FIRE",
+  "OTHER",
+];
+
+const PRIORITIES: WealthGoalPriority[] = ["HIGH", "MEDIUM", "LOW"];
+
+const typeLabel = (value: WealthGoalType) => ({
+  RETIREMENT: "Retirement",
+  HOUSE: "House",
+  WEDDING: "Wedding",
+  EDUCATION: "Education",
+  VACATION: "Vacation",
+  EMERGENCY_FUND: "Emergency fund",
+  FIRE: "FIRE",
+  OTHER: "Other",
+}[value]);
+
+const priorityLabel = (value: WealthGoalPriority) => ({
+  HIGH: "High",
+  MEDIUM: "Medium",
+  LOW: "Low",
+}[value]);
+
+const formatThb = (value: number) => value.toLocaleString("th-TH", {
+  style: "currency",
+  currency: "THB",
+  minimumFractionDigits: 2,
+});
+const messageFor = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback;
+const inputClass = "mt-1 block w-full border rounded px-3 py-2";
+
+export default function GoalsPage() {
+  const [goals, setGoals] = useState<WealthGoal[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [mutationError, setMutationError] = useState("");
+  const [showArchived, setShowArchived] = useState(false);
+
+  const [name, setName] = useState("");
+  const [goalType, setGoalType] = useState<WealthGoalType>("OTHER");
+  const [targetAmount, setTargetAmount] = useState("");
+  const [targetDate, setTargetDate] = useState("");
+  const [priority, setPriority] = useState<WealthGoalPriority>("MEDIUM");
+  const [note, setNote] = useState("");
+
+  const [editing, setEditing] = useState<WealthGoal | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editType, setEditType] = useState<WealthGoalType>("OTHER");
+  const [editTargetAmount, setEditTargetAmount] = useState("");
+  const [editTargetDate, setEditTargetDate] = useState("");
+  const [editPriority, setEditPriority] = useState<WealthGoalPriority>("MEDIUM");
+  const [editNote, setEditNote] = useState("");
+
+  async function load(includeArchived = showArchived) {
+    setLoading(true);
+    setError("");
+    try {
+      setGoals(await listWealthGoals(includeArchived));
+    } catch (err) {
+      setGoals([]);
+      setError(messageFor(err, "Unable to load goals."));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void load(false);
+    // The initial request is intentionally active-only; the toggle controls the
+    // include_archived query for subsequent requests.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function handleCreate(event: FormEvent) {
+    event.preventDefault();
+    setMutationError("");
+    const parsed = Number(targetAmount);
+    if (!name.trim() || !targetAmount.trim() || !Number.isFinite(parsed) || parsed <= 0) {
+      setMutationError("Enter a goal name and a positive target amount.");
+      return;
+    }
+    try {
+      await createWealthGoal({
+        name: name.trim(),
+        goal_type: goalType,
+        target_amount: parsed,
+        currency: "THB",
+        target_date: targetDate || null,
+        priority,
+        note: note.trim() || null,
+      });
+      setName("");
+      setGoalType("OTHER");
+      setTargetAmount("");
+      setTargetDate("");
+      setPriority("MEDIUM");
+      setNote("");
+      await load();
+    } catch (err) {
+      setMutationError(messageFor(err, "Unable to create goal."));
+    }
+  }
+
+  function openEdit(item: WealthGoal) {
+    setMutationError("");
+    setEditing(item);
+    setEditName(item.name);
+    setEditType(item.goal_type);
+    setEditTargetAmount(String(item.target_amount));
+    setEditTargetDate(item.target_date ?? "");
+    setEditPriority(item.priority);
+    setEditNote(item.note ?? "");
+  }
+
+  async function handleEdit(event: FormEvent) {
+    event.preventDefault();
+    if (!editing) return;
+    setMutationError("");
+    const parsed = Number(editTargetAmount);
+    if (!editName.trim() || !editTargetAmount.trim() || !Number.isFinite(parsed) || parsed <= 0) {
+      setMutationError("Enter a goal name and a positive target amount.");
+      return;
+    }
+    try {
+      await updateWealthGoal(editing.id, {
+        name: editName.trim(),
+        goal_type: editType,
+        target_amount: parsed,
+        target_date: editTargetDate || null,
+        priority: editPriority,
+        note: editNote.trim() || null,
+      });
+      setEditing(null);
+      await load();
+    } catch (err) {
+      setMutationError(messageFor(err, "Unable to update goal."));
+    }
+  }
+
+  async function setArchived(item: WealthGoal, isArchived: boolean) {
+    setMutationError("");
+    try {
+      await updateWealthGoal(item.id, { is_archived: isArchived });
+      await load();
+    } catch (err) {
+      setMutationError(messageFor(err, isArchived ? "Unable to archive goal." : "Unable to restore goal."));
+    }
+  }
+
+  async function toggleArchived() {
+    const next = !showArchived;
+    setShowArchived(next);
+    await load(next);
+  }
+
+  const active = goals.filter((item) => !item.is_archived);
+  const archived = goals.filter((item) => item.is_archived);
+
+  return (
+    <div className="space-y-6 max-w-3xl">
+      <div>
+        <h1 className="text-2xl font-bold">Goals</h1>
+        <p className="text-sm text-gray-500 mt-1">
+          Track whole-life financial goals — retirement, a house, a wedding, and more. A target amount here is not
+          progress, and is not linked to any Cash Account, Portfolio, or your current Net Worth yet.
+        </p>
+      </div>
+
+      <form onSubmit={handleCreate} className="bg-white border rounded-xl p-4 space-y-3 shadow-sm">
+        <h2 className="font-semibold">Add goal</h2>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Name"><input aria-label="Goal name" value={name} onChange={(event) => setName(event.target.value)} className={inputClass} /></Field>
+          <Field label="Type"><TypeSelect ariaLabel="Goal type" value={goalType} onChange={setGoalType} /></Field>
+          <Field label="Target amount"><input aria-label="Target amount" type="number" step="0.01" value={targetAmount} onChange={(event) => setTargetAmount(event.target.value)} className={inputClass} /></Field>
+          <Field label="Target date (optional)"><input aria-label="Target date" type="date" value={targetDate} onChange={(event) => setTargetDate(event.target.value)} className={inputClass} /></Field>
+          <Field label="Priority"><PrioritySelect ariaLabel="Goal priority" value={priority} onChange={setPriority} /></Field>
+          <Field label="Note (optional)"><input aria-label="Note" value={note} onChange={(event) => setNote(event.target.value)} className={inputClass} /></Field>
+        </div>
+        <p className="text-xs text-gray-500">Currency: <strong>THB</strong> (fixed for Wealth Goals Foundation v1)</p>
+        <PrimaryButton>Add goal</PrimaryButton>
+      </form>
+
+      {mutationError && <p role="alert" className="text-sm text-red-600">{mutationError}</p>}
+
+      {editing && (
+        <form onSubmit={handleEdit} className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-3">
+          <h2 className="font-semibold">Edit {editing.name}</h2>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Name"><input aria-label="Edit goal name" value={editName} onChange={(event) => setEditName(event.target.value)} className={inputClass} /></Field>
+            <Field label="Type"><TypeSelect ariaLabel="Edit goal type" value={editType} onChange={setEditType} /></Field>
+            <Field label="Target amount"><input aria-label="Edit target amount" type="number" step="0.01" value={editTargetAmount} onChange={(event) => setEditTargetAmount(event.target.value)} className={inputClass} /></Field>
+            <Field label="Target date"><input aria-label="Edit target date" type="date" value={editTargetDate} onChange={(event) => setEditTargetDate(event.target.value)} className={inputClass} /></Field>
+            <Field label="Priority"><PrioritySelect ariaLabel="Edit goal priority" value={editPriority} onChange={setEditPriority} /></Field>
+            <Field label="Note"><input aria-label="Edit note" value={editNote} onChange={(event) => setEditNote(event.target.value)} className={inputClass} /></Field>
+          </div>
+          <Actions><PrimaryButton>Save changes</PrimaryButton><Cancel onClick={() => setEditing(null)} /></Actions>
+        </form>
+      )}
+
+      <section className="space-y-3">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <h2 className="text-lg font-semibold">Active goals</h2>
+          <button type="button" onClick={() => void toggleArchived()} className="text-sm text-blue-600 hover:underline">{showArchived ? "Hide archived" : "Show archived"}</button>
+        </div>
+        {loading ? <p className="text-sm text-gray-400">Loading goals…</p> : error ? <div className="text-sm text-red-600 space-y-2"><p role="alert">{error}</p><button type="button" onClick={() => void load()} className="text-blue-600 hover:underline">Try again</button></div> : active.length === 0 ? <p className="text-sm text-gray-500">No active goals yet. Add your first goal above.</p> : <div className="space-y-3">{active.map((item) => <GoalCard key={item.id} item={item} onEdit={openEdit} onArchive={() => void setArchived(item, true)} />)}</div>}
+      </section>
+
+      {showArchived && !loading && !error && (
+        <section className="space-y-3 pt-2 border-t">
+          <h2 className="text-lg font-semibold text-gray-600">Archived goals</h2>
+          {archived.length === 0 ? <p className="text-sm text-gray-500">No archived goals.</p> : archived.map((item) => <div key={item.id} className="bg-gray-50 border rounded-xl p-4 flex items-center justify-between gap-4"><div><p className="font-medium text-gray-600">{item.name}</p><p className="text-sm text-gray-500">{typeLabel(item.goal_type)} · {priorityLabel(item.priority)} priority</p><p className="text-sm text-gray-600">{formatThb(item.target_amount)} target{item.target_date ? ` · by ${item.target_date}` : ""}</p></div><button type="button" onClick={() => void setArchived(item, false)} className="text-sm text-blue-600 hover:underline">Restore</button></div>)}
+        </section>
+      )}
+    </div>
+  );
+}
+
+function GoalCard({ item, onEdit, onArchive }: { item: WealthGoal; onEdit: (item: WealthGoal) => void; onArchive: () => void }) {
+  return (
+    <div className="bg-white border rounded-xl p-4 shadow-sm space-y-3">
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <p className="font-semibold">{item.name}</p>
+          <p className="text-sm text-gray-500">{typeLabel(item.goal_type)} · {priorityLabel(item.priority)} priority</p>
+          <p className="text-lg font-medium mt-1">{formatThb(item.target_amount)} <span className="text-xs text-gray-500">target</span></p>
+          <p className="text-xs text-gray-400 mt-1">{item.target_date ? `Target date: ${item.target_date}` : "No target date set"}</p>
+          {item.note && <p className="text-sm text-gray-500 mt-1">{item.note}</p>}
+        </div>
+        <div className="flex gap-3 text-sm flex-wrap">
+          <button type="button" onClick={() => onEdit(item)} className="text-blue-600 hover:underline">Edit</button>
+          <button type="button" onClick={onArchive} className="text-red-600 hover:underline">Archive</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TypeSelect({ ariaLabel, value, onChange }: { ariaLabel: string; value: WealthGoalType; onChange: (value: WealthGoalType) => void }) {
+  return <select aria-label={ariaLabel} value={value} onChange={(event) => onChange(event.target.value as WealthGoalType)} className={inputClass}>{GOAL_TYPES.map((item) => <option key={item} value={item}>{typeLabel(item)}</option>)}</select>;
+}
+
+function PrioritySelect({ ariaLabel, value, onChange }: { ariaLabel: string; value: WealthGoalPriority; onChange: (value: WealthGoalPriority) => void }) {
+  return <select aria-label={ariaLabel} value={value} onChange={(event) => onChange(event.target.value as WealthGoalPriority)} className={inputClass}>{PRIORITIES.map((item) => <option key={item} value={item}>{priorityLabel(item)}</option>)}</select>;
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) { return <label className="text-sm">{label}{children}</label>; }
+function PrimaryButton({ children }: { children: React.ReactNode }) { return <button type="submit" className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700">{children}</button>; }
+function Cancel({ onClick }: { onClick: () => void }) { return <button type="button" onClick={onClick} className="text-sm text-gray-600">Cancel</button>; }
+function Actions({ children }: { children: React.ReactNode }) { return <div className="flex gap-2 mt-3">{children}</div>; }

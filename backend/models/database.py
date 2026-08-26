@@ -69,6 +69,7 @@ class Workspace(Base):
     cash_accounts = relationship("CashAccount", back_populates="workspace", cascade="all, delete-orphan")
     liabilities = relationship("Liability", back_populates="workspace", cascade="all, delete-orphan")
     liability_balance_observations = relationship("LiabilityBalanceObservation", back_populates="workspace", cascade="all, delete-orphan")
+    wealth_goals = relationship("WealthGoal", back_populates="workspace", cascade="all, delete-orphan")
     cash_account_transactions = relationship("CashAccountTransaction", back_populates="workspace", cascade="all, delete-orphan")
     cash_account_transfers = relationship("CashAccountTransfer", back_populates="workspace", cascade="all, delete-orphan")
     watchlist_items = relationship("Watchlist", back_populates="workspace", cascade="all, delete-orphan")
@@ -206,6 +207,49 @@ class LiabilityBalanceObservation(Base):
     __table_args__ = (
         UniqueConstraint("liability_id", "observed_on", name="uq_liability_balance_observations_liability_date"),
         CheckConstraint("balance >= 0", name="ck_liability_balance_observations_balance_nonnegative"),
+    )
+
+
+class WealthGoal(Base):
+    """A workspace-owned whole-life financial goal, independent of any Portfolio.
+
+    Phase 6 Milestone 1 — Wealth Goals Foundation. Distinct from
+    Portfolio.goal_* (the Phase 4C.3 Goal Discovery Wizard's portfolio-scoped
+    recommendation-input fields): a WealthGoal requires no Portfolio and is
+    not read by the optimizer or any recommendation logic. This milestone is
+    persistence and management only — no funding linkage, progress
+    calculation, or projection exists yet. Archiving preserves goal identity
+    for future planning work; there is no hard-delete.
+    """
+    __tablename__ = "wealth_goals"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    goal_type = Column(String(32), nullable=False)
+    target_amount = Column(Float, nullable=False)
+    currency = Column(String(3), nullable=False, default="THB")
+    # Nullable: not every whole-life goal has a fixed deadline yet (e.g. an
+    # undated FIRE or house goal) — forcing a date would push users to invent
+    # one, which this codebase's history/evidence handling never does.
+    target_date = Column(String, nullable=True)  # YYYY-MM-DD
+    priority = Column(String(16), nullable=False)
+    note = Column(Text, nullable=True)
+    is_archived = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    workspace = relationship("Workspace", back_populates="wealth_goals")
+
+    __table_args__ = (
+        CheckConstraint(
+            "goal_type IN ('RETIREMENT', 'HOUSE', 'WEDDING', 'EDUCATION', 'VACATION', 'EMERGENCY_FUND', 'FIRE', 'OTHER')",
+            name="ck_wealth_goals_type",
+        ),
+        CheckConstraint("priority IN ('HIGH', 'MEDIUM', 'LOW')", name="ck_wealth_goals_priority"),
+        CheckConstraint("currency = 'THB'", name="ck_wealth_goals_currency_thb"),
+        CheckConstraint("target_amount > 0", name="ck_wealth_goals_target_amount_positive"),
+        Index("ix_wealth_goals_workspace_archived", "workspace_id", "is_archived"),
     )
 
 
