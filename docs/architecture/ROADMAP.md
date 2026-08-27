@@ -8,14 +8,14 @@
 > Liabilities) are complete.**
 >
 > **Phase 5 — True Net Worth & Wealth Intelligence** core is complete: current
-> and historical Net Worth (Assets − Liabilities) are both in place.
+> and historical Net Worth (Assets − Liabilities) are in place, together with
+> Recorded Expense Coverage — a factual tracked-cash to average-recorded-
+> monthly-expense ratio on Cash Flow. Emergency-fund target semantics are not
+> defined.
 >
-> **Phase 6 — Planning, Goals & Scenarios**: the single-goal planning chain
-> (Foundation, Funding, Funding Health, What-If, Required Contribution, Named
-> Scenarios, Scenario Comparison) is delivered. Its current milestone is a
-> workspace-level factual rollup, **Wealth Goals Overview / Goal Funding
-> Health Rollup** — a goal-level funding summary and a cross-goal Funding
-> source health view on `/goals`, with no new planning semantics.
+> **Phase 6 — Planning, Goals & Scenarios is complete** as a deterministic,
+> factual planning foundation. See the Phase 6 section for the delivered chain
+> and for the capabilities that remain future.
 >
 > This roadmap states the product capability sequence, active delivery
 > direction, and parallel future tracks. Platform domains, boundaries, laws,
@@ -113,9 +113,36 @@ wealth insight.
 
 # Phase 6 — Planning, Goals & Scenarios
 
-Future direction includes goals, retirement, house or major purchases, FIRE /
-financial-independence planning, what-if scenarios, scenario comparison, and
-future probabilistic or Monte Carlo simulation.
+**Complete** as a deterministic, factual planning foundation. Delivered:
+
+- Wealth Goals Foundation — workspace-owned goals with type, THB target,
+  optional target date, priority, and archive lifecycle
+- Goal Funding Allocations — explicit designations from a Cash Account or a
+  Portfolio toward a goal
+- Goal Progress & Funding Health — per-goal designated funding and gap, plus a
+  source-centric comparison against a source's current value
+- Deterministic What-If — projection under explicit user contribution and
+  return assumptions
+- Required Monthly Contribution — the inverse calculation against a saved
+  target date
+- Goal Detail / Planning UX — summary, funding sources, planning, and scenarios
+- Named Scenarios — persisted, archivable per-goal assumption sets
+- Scenario Comparison — two scenarios evaluated against one shared live goal
+  context, with no ranking and no winner
+- Workspace Goals view — per-goal funding summaries plus a cross-goal Funding
+  source health view on `/goals`
+
+Every result above is deterministic and factual. Planning math is
+goal-type-agnostic: `RETIREMENT`, `FIRE`, `EMERGENCY_FUND` and the other types
+are classification labels, not dedicated planning engines. A saved scenario
+persists assumptions only; it is not a commitment and no contribution is
+tracked against it.
+
+Future direction, not delivered: goal-type-specific planning depth (retirement,
+FIRE / financial independence, major purchases); recurring or committed
+contributions and contribution tracking; probabilistic or Monte Carlo
+simulation; cross-goal prioritization and conflict resolution; allocation
+optimization; and advisory behavior. Goal-aware advice belongs to Phase 7.
 
 ---
 
