@@ -12,6 +12,12 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_ as sa_or
+from services.goal_context import (
+    GoalContextIntegrityError,
+    build_goal_context,
+    build_workspace_goal_context,
+    integrity_error_detail,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -1539,6 +1545,27 @@ async def list_wealth_goals(include_archived: bool = False, db: Session = Depend
     if not include_archived:
         query = query.filter(WealthGoal.is_archived.is_(False))
     return [_wealth_goal_payload(item) for item in query.order_by(WealthGoal.name, WealthGoal.id).all()]
+
+
+@app.get("/wealth-goals/context")
+async def get_workspace_goal_context(include_archived: bool = False, db: Session = Depends(get_db)) -> dict:
+    """Return the complete, valuation-free factual context for this workspace."""
+    try:
+        return build_workspace_goal_context(db, _ws_id(db), include_archived=include_archived)
+    except GoalContextIntegrityError:
+        raise HTTPException(status_code=409, detail=integrity_error_detail())
+
+
+@app.get("/wealth-goals/{goal_id}/context")
+async def get_goal_context(goal_id: int, db: Session = Depends(get_db)) -> dict:
+    """Return the complete, valuation-free factual context for one owned goal."""
+    try:
+        context = build_goal_context(db, _ws_id(db), goal_id)
+    except GoalContextIntegrityError:
+        raise HTTPException(status_code=409, detail=integrity_error_detail())
+    if context is None:
+        raise HTTPException(status_code=404, detail="Wealth goal not found")
+    return context
 
 
 @app.post("/wealth-goals", status_code=201)

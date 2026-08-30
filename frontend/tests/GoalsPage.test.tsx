@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import GoalsPage from "@/app/goals/page";
 import type {
   CashAccount,
+  GoalContextResponse,
   GoalFundingAllocation,
   Portfolio,
   PortfolioItem,
@@ -12,6 +13,7 @@ import type {
 
 const {
   createWealthGoal,
+  getWealthGoalsContext,
   listGoalFundingAllocations,
   listWealthGoals,
   updateWealthGoal,
@@ -21,6 +23,7 @@ const {
   portfolioState,
 } = vi.hoisted(() => ({
   createWealthGoal: vi.fn(),
+  getWealthGoalsContext: vi.fn(),
   listGoalFundingAllocations: vi.fn(),
   listWealthGoals: vi.fn(),
   updateWealthGoal: vi.fn(),
@@ -36,6 +39,7 @@ const {
 
 vi.mock("@/lib/api", () => ({
   createWealthGoal,
+  getWealthGoalsContext,
   listGoalFundingAllocations,
   listWealthGoals,
   updateWealthGoal,
@@ -150,9 +154,85 @@ const listMock = vi.mocked(listWealthGoals);
 const createMock = vi.mocked(createWealthGoal);
 const updateMock = vi.mocked(updateWealthGoal);
 const allocationsMock = vi.mocked(listGoalFundingAllocations);
+const contextMock = vi.mocked(getWealthGoalsContext);
 const cashAccountsMock = vi.mocked(listCashAccounts);
 const holdingsMock = vi.mocked(getHoldings);
 const pricesMock = vi.mocked(getPortfolioPrices);
+
+async function configuredGoalContext(): Promise<GoalContextResponse> {
+  const latestListResult = listMock.mock.results[listMock.mock.results.length - 1];
+  const loadedGoals: WealthGoal[] = latestListResult
+    ? await Promise.resolve(latestListResult.value).catch(() => [])
+    : [];
+  const sourceTotals = new Map<string, {
+    source_kind: "CASH_ACCOUNT" | "PORTFOLIO";
+    source_id: number;
+    source_name: string;
+    source_is_archived: boolean;
+    currency: "THB";
+    designated_total_in_context_scope: number;
+  }>();
+  const allocationImplementation = allocationsMock.getMockImplementation() as
+    ((goalId: number) => Promise<GoalFundingAllocation[]> | GoalFundingAllocation[]) | undefined;
+  const goals = await Promise.all(loadedGoals.map(async (record) => {
+    // Read the configured test fixture implementation directly so the
+    // production path can prove it made zero legacy allocation requests.
+    const historicalAllocations = allocationImplementation ? await allocationImplementation(record.id) : [];
+    const allocations = historicalAllocations.map((allocation) => {
+      const sourceId = (allocation.cash_account_id ?? allocation.portfolio_id) as number;
+      const contextAllocation = {
+        id: allocation.id,
+        wealth_goal_id: allocation.wealth_goal_id,
+        source_kind: allocation.source_kind,
+        source_id: sourceId,
+        source_name: allocation.source_name ?? "Unknown source",
+        source_is_archived: allocation.source_is_archived,
+        designated_amount: allocation.allocated_amount,
+        currency: allocation.currency,
+        updated_at: allocation.updated_at,
+      };
+      const key = `${allocation.source_kind}:${sourceId}`;
+      const existing = sourceTotals.get(key);
+      if (existing) existing.designated_total_in_context_scope += allocation.allocated_amount;
+      else sourceTotals.set(key, {
+        source_kind: allocation.source_kind,
+        source_id: sourceId,
+        source_name: contextAllocation.source_name,
+        source_is_archived: contextAllocation.source_is_archived,
+        currency: "THB",
+        designated_total_in_context_scope: allocation.allocated_amount,
+      });
+      return contextAllocation;
+    });
+    const designatedTotal = allocations.reduce((sum, allocation) => sum + allocation.designated_amount, 0);
+    const progressRatio = designatedTotal / record.target_amount;
+    return {
+      id: record.id,
+      name: record.name,
+      goal_type: record.goal_type,
+      target_amount: record.target_amount,
+      currency: record.currency,
+      target_date: record.target_date,
+      priority: record.priority,
+      is_archived: record.is_archived,
+      updated_at: record.updated_at,
+      allocations,
+      designated_total: designatedTotal,
+      progress_ratio: progressRatio,
+      progress_percent: progressRatio * 100,
+      funding_gap: Math.max(record.target_amount - designatedTotal, 0),
+      fully_designated: designatedTotal >= record.target_amount,
+    };
+  }));
+  return {
+    contract_version: "wealth.goal-context.v1",
+    context_generated_at: "2026-08-26T00:00:00Z",
+    completeness: "COMPLETE",
+    scope: { kind: "WORKSPACE", include_archived: true },
+    goals,
+    designation_by_source: [...sourceTotals.values()],
+  };
+}
 
 describe("GoalsPage", () => {
   beforeEach(() => {
@@ -161,6 +241,7 @@ describe("GoalsPage", () => {
     createMock.mockResolvedValue(goal);
     updateMock.mockResolvedValue(goal);
     allocationsMock.mockResolvedValue([]);
+    contextMock.mockImplementation(configuredGoalContext);
     cashAccountsMock.mockResolvedValue([]);
     holdingsMock.mockResolvedValue([]);
     pricesMock.mockResolvedValue([]);
@@ -182,6 +263,9 @@ describe("GoalsPage", () => {
     expect(await screen.findByText("No funding sources to show yet.")).toBeInTheDocument();
     expect(listMock).toHaveBeenCalledWith(true);
     expect(listMock).toHaveBeenCalledTimes(1);
+    expect(contextMock).toHaveBeenCalledWith(true);
+    expect(contextMock).toHaveBeenCalledTimes(1);
+    expect(allocationsMock).not.toHaveBeenCalled();
   });
 
   it("renders a compact card with metadata, funding facts, and a detail link", async () => {
@@ -204,6 +288,40 @@ describe("GoalsPage", () => {
     expect(screen.queryByRole("button", { name: "Add funding source" })).not.toBeInTheDocument();
   });
 
+  it("renders server-supplied arithmetic without recomputing it from allocations", async () => {
+    listMock.mockResolvedValue([{ ...goal, target_amount: 1000000 }]);
+    allocationsMock.mockResolvedValue([]);
+    contextMock.mockImplementation(async () => {
+      const response = await configuredGoalContext();
+      Object.assign(response.goals[0], {
+        designated_total: 123456,
+        progress_ratio: 0.123456,
+        progress_percent: 47.6,
+        funding_gap: 876544,
+        fully_designated: false,
+      });
+      return response;
+    });
+    render(<GoalsPage />);
+
+    expect(await screen.findByText("฿123,456.00")).toBeInTheDocument();
+    expect(screen.getByText("48%")).toBeInTheDocument();
+    expect(screen.getByText("฿876,544.00")).toBeInTheDocument();
+  });
+
+  it("marks a record/context generation mismatch unavailable instead of showing mixed facts", async () => {
+    listMock.mockResolvedValue([goal]);
+    contextMock.mockImplementation(async () => {
+      const response = await configuredGoalContext();
+      response.goals[0].updated_at = "2026-08-26T00:00:01";
+      return response;
+    });
+    render(<GoalsPage />);
+
+    expect(await screen.findByText("Goal progress unavailable — funding data failed to load.")).toBeInTheDocument();
+    expect(screen.getByText("Funding source health is unavailable — Goal Context evidence is incomplete.")).toBeInTheDocument();
+  });
+
   it("renders an honest no-target-date summary", async () => {
     listMock.mockResolvedValue([{ ...goal, target_date: null }]);
     render(<GoalsPage />);
@@ -219,6 +337,8 @@ describe("GoalsPage", () => {
     expect(await screen.findByText("Goal progress unavailable — funding data failed to load.")).toBeInTheDocument();
     expect(screen.queryByText("0%")).not.toBeInTheDocument();
     expect(screen.queryByText("Funding Sources")).not.toBeInTheDocument();
+    expect(contextMock).toHaveBeenCalledTimes(1);
+    expect(allocationsMock).not.toHaveBeenCalled();
   });
 
   it("creates a goal with the explicit THB contract", async () => {
@@ -241,6 +361,7 @@ describe("GoalsPage", () => {
       priority: "MEDIUM",
       note: "Bangkok condo",
     }));
+    await waitFor(() => expect(contextMock).toHaveBeenCalledTimes(2));
   });
 
   it("creates a goal with no target date as null", async () => {
@@ -269,6 +390,7 @@ describe("GoalsPage", () => {
       priority: "MEDIUM",
       note: "Discussed with spouse",
     }));
+    await waitFor(() => expect(contextMock).toHaveBeenCalledTimes(2));
   });
 
   it("archives and restores a goal via a coherent refresh, without ever requesting an active-only list", async () => {
@@ -287,6 +409,7 @@ describe("GoalsPage", () => {
     expect(await screen.findByText("Retire by 55")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Restore" }));
     await waitFor(() => expect(updateMock).toHaveBeenCalledWith(1, { is_archived: false }));
+    await waitFor(() => expect(contextMock).toHaveBeenCalledTimes(3));
     expect(listMock).toHaveBeenCalledWith(true);
     expect(listMock).not.toHaveBeenCalledWith(false);
   });
@@ -296,6 +419,7 @@ describe("GoalsPage", () => {
     render(<GoalsPage />);
     await screen.findByText("Retire by 55");
     const callsBefore = listMock.mock.calls.length;
+    const contextCallsBefore = contextMock.mock.calls.length;
     const allocationCallsBefore = allocationsMock.mock.calls.length;
 
     fireEvent.click(screen.getByRole("button", { name: "Show archived" }));
@@ -305,6 +429,7 @@ describe("GoalsPage", () => {
     expect(screen.queryByText("Archived Goal")).not.toBeInTheDocument();
 
     expect(listMock.mock.calls.length).toBe(callsBefore);
+    expect(contextMock.mock.calls.length).toBe(contextCallsBefore);
     expect(allocationsMock.mock.calls.length).toBe(allocationCallsBefore);
   });
 
@@ -321,7 +446,7 @@ describe("GoalsPage", () => {
   });
 
   describe("Funding source health", () => {
-    it("fetches each goal's allocations exactly once and aggregates a Cash Account shared by two active goals", async () => {
+    it("uses one workspace Goal Context request and aggregates a Cash Account shared by two active goals", async () => {
       const goalB = makeGoal({ id: 2, name: "House Down Payment", target_amount: 500000 });
       listMock.mockResolvedValue([goal, goalB]);
       allocationsMock.mockImplementation(async (goalId: number) => {
@@ -333,9 +458,9 @@ describe("GoalsPage", () => {
       render(<GoalsPage />);
       await screen.findByText("Retire by 55");
 
-      expect(allocationsMock).toHaveBeenCalledTimes(2);
-      expect(allocationsMock).toHaveBeenCalledWith(1);
-      expect(allocationsMock).toHaveBeenCalledWith(2);
+      expect(contextMock).toHaveBeenCalledTimes(1);
+      expect(contextMock).toHaveBeenCalledWith(true);
+      expect(allocationsMock).not.toHaveBeenCalled();
 
       expect(await screen.findByText("฿150,000.00 designated")).toBeInTheDocument();
       expect(screen.getByText((_, el) => el?.textContent === "Current value ฿200,000.00 · Funding health: Supported")).toBeInTheDocument();
@@ -377,7 +502,7 @@ describe("GoalsPage", () => {
       render(<GoalsPage />);
       await screen.findByText("Retire by 55");
 
-      expect(await screen.findByText("Funding source health is unavailable — allocation evidence is incomplete.")).toBeInTheDocument();
+      expect(await screen.findByText("Funding source health is unavailable — Goal Context evidence is incomplete.")).toBeInTheDocument();
       expect(screen.queryByText("฿100,000.00 designated")).not.toBeInTheDocument();
       expect(screen.queryByText("Shared Cash")).not.toBeInTheDocument();
     });
@@ -389,7 +514,7 @@ describe("GoalsPage", () => {
       await screen.findByText("Retire by 55");
       expect(await screen.findByText("No funding sources designated yet.")).toBeInTheDocument();
       expect(screen.queryByText("No funding sources to show yet.")).not.toBeInTheDocument();
-      expect(screen.queryByText("Funding source health is unavailable — allocation evidence is incomplete.")).not.toBeInTheDocument();
+      expect(screen.queryByText("Funding source health is unavailable — Goal Context evidence is incomplete.")).not.toBeInTheDocument();
     });
 
     it("treats an ARCHIVED goal's failed allocation request as incomplete evidence and suppresses every row", async () => {
@@ -407,7 +532,7 @@ describe("GoalsPage", () => {
       render(<GoalsPage />);
       await screen.findByText("Retire by 55");
 
-      expect(await screen.findByText("Funding source health is unavailable — allocation evidence is incomplete.")).toBeInTheDocument();
+      expect(await screen.findByText("Funding source health is unavailable — Goal Context evidence is incomplete.")).toBeInTheDocument();
       expect(screen.queryByText("Shared Cash")).not.toBeInTheDocument();
       expect(screen.queryByText("฿100,000.00 designated")).not.toBeInTheDocument();
       expect(screen.queryByText(/Funding health: Supported/)).not.toBeInTheDocument();

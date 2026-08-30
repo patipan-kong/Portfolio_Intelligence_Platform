@@ -2,7 +2,6 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import {
-  computeGoalFunding,
   computeSourceFundingHealth,
   sourceKey,
   type SourceFundingHealth,
@@ -19,7 +18,8 @@ import {
   updateGoalFundingAllocation,
   updateGoalScenario,
   type CashAccount,
-  type GoalFundingAllocation,
+  type GoalContextAllocation,
+  type GoalContextGoal,
   type GoalFundingSourceKind,
   type GoalScenario,
   type Portfolio,
@@ -32,7 +32,8 @@ export interface AllocationsLoadError {
   error: string;
 }
 
-export type AllocationsState = GoalFundingAllocation[] | AllocationsLoadError | undefined;
+export type AllocationsState = GoalContextAllocation[] | AllocationsLoadError | undefined;
+export type GoalContextState = GoalContextGoal | AllocationsLoadError | undefined;
 
 export interface ScenariosLoadError {
   error: string;
@@ -90,11 +91,11 @@ export type FundingHealthForSource = (kind: GoalFundingSourceKind, id: number) =
 
 export function GoalSummary({
   item,
-  allocations,
+  goalContext,
   compact = false,
 }: {
   item: WealthGoal;
-  allocations: AllocationsState;
+  goalContext: GoalContextState;
   compact?: boolean;
 }) {
   return (
@@ -112,33 +113,30 @@ export function GoalSummary({
           {!compact && item.note && <p className="text-sm text-gray-500 mt-1">{item.note}</p>}
         </div>
       </div>
-      <GoalFundingSummary allocations={allocations} targetAmount={item.target_amount} compact={compact} />
+      <GoalFundingSummary goalContext={goalContext} compact={compact} />
     </section>
   );
 }
 
 export function GoalFundingSummary({
-  allocations,
-  targetAmount,
+  goalContext,
   compact = false,
 }: {
-  allocations: AllocationsState;
-  targetAmount: number;
+  goalContext: GoalContextState;
   compact?: boolean;
 }) {
-  if (allocations === undefined) {
+  if (goalContext === undefined) {
     return <p className="text-xs text-gray-400">Loading funding progress…</p>;
   }
-  const funding = computeGoalFunding(targetAmount, Array.isArray(allocations) ? allocations : null);
-  if (funding.designatedFunding === null) {
+  if (!("allocations" in goalContext) || !Array.isArray(goalContext.allocations)) {
     return <p role="alert" className="text-xs text-red-600">Goal progress unavailable — funding data failed to load.</p>;
   }
   return (
     <div className={`${compact ? "grid grid-cols-2 sm:grid-cols-3 text-xs" : "grid grid-cols-2 sm:grid-cols-4 text-sm"} gap-2 bg-gray-50 rounded p-2`}>
-      {!compact && <div><p className="text-xs text-gray-500">Target</p><p className="font-medium">{formatThb(funding.targetAmount)}</p></div>}
-      <div><p className="text-xs text-gray-500">Designated funding</p><p className="font-medium">{formatThb(funding.designatedFunding)}</p></div>
-      <div><p className="text-xs text-gray-500">Goal progress</p><p className="font-medium">{Math.round(funding.progressPercent as number)}%</p></div>
-      <div><p className="text-xs text-gray-500">Funding gap</p><p className="font-medium">{formatThb(funding.fundingGap as number)}</p></div>
+      {!compact && <div><p className="text-xs text-gray-500">Target</p><p className="font-medium">{formatThb(goalContext.target_amount)}</p></div>}
+      <div><p className="text-xs text-gray-500">Designated funding</p><p className="font-medium">{formatThb(goalContext.designated_total)}</p></div>
+      <div><p className="text-xs text-gray-500">Goal progress</p><p className="font-medium">{Math.round(goalContext.progress_percent)}%</p></div>
+      <div><p className="text-xs text-gray-500">Funding gap</p><p className="font-medium">{formatThb(goalContext.funding_gap)}</p></div>
     </div>
   );
 }
@@ -162,7 +160,7 @@ export function FundingSourcesSection({
   readOnly = false,
   cashAccounts,
   portfolios,
-  allocations,
+  goalContext,
   onReload,
   fundingHealthForSource,
 }: {
@@ -170,7 +168,7 @@ export function FundingSourcesSection({
   readOnly?: boolean;
   cashAccounts: CashAccount[];
   portfolios: Portfolio[];
-  allocations: AllocationsState;
+  goalContext: GoalContextState;
   onReload: () => Promise<void>;
   fundingHealthForSource: FundingHealthForSource;
 }) {
@@ -236,17 +234,16 @@ export function FundingSourcesSection({
     <section className="pt-3 border-t space-y-2" aria-labelledby="funding-sources-heading">
       <h3 id="funding-sources-heading" className="text-base font-semibold text-gray-800">Funding Sources</h3>
 
-      {allocations === undefined ? (
+      {goalContext === undefined ? (
         <p className="text-sm text-gray-400">Loading funding sources…</p>
-      ) : !Array.isArray(allocations) ? (
-        <p role="alert" className="text-sm text-red-600">{allocations.error}</p>
-      ) : allocations.length === 0 ? (
+      ) : !("allocations" in goalContext) ? (
+        <p role="alert" className="text-sm text-red-600">{goalContext.error}</p>
+      ) : goalContext.allocations.length === 0 ? (
         <p className="text-sm text-gray-500">No funding sources designated yet.</p>
       ) : (
         <ul className="space-y-1.5">
-          {allocations.map((allocation) => {
-            const allocationSourceId = (allocation.cash_account_id ?? allocation.portfolio_id) as number;
-            const health = fundingHealthForSource(allocation.source_kind, allocationSourceId);
+          {goalContext.allocations.map((allocation) => {
+            const health = fundingHealthForSource(allocation.source_kind, allocation.source_id);
             return (
               <li key={allocation.id} className="text-sm border-b last:border-0 pb-1.5">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -272,12 +269,12 @@ export function FundingSourcesSection({
                     </span>
                   ) : (
                     <span className="flex items-center gap-2">
-                      <span className="font-medium">{formatThb(allocation.allocated_amount)} designated</span>
+                      <span className="font-medium">{formatThb(allocation.designated_amount)} designated</span>
                       {!readOnly && <>
                         <button
                           type="button"
                           aria-label={`Edit designated amount for ${allocation.source_name ?? "source"}`}
-                          onClick={() => { setEditingId(allocation.id); setEditAmount(String(allocation.allocated_amount)); }}
+                          onClick={() => { setEditingId(allocation.id); setEditAmount(String(allocation.designated_amount)); }}
                           className="text-blue-600 hover:underline text-xs"
                         >
                           Edit
@@ -351,14 +348,14 @@ function todayIso(): string {
 
 export function GoalWhatIfSection({
   item,
-  allocations,
+  goalContext,
   fundingHealthForSource,
   whatIf,
   readOnly = false,
   onSaveScenario,
 }: {
   item: WealthGoal;
-  allocations: AllocationsState;
+  goalContext: GoalContextState;
   fundingHealthForSource: FundingHealthForSource;
   whatIf: WhatIfAssumptionsState;
   /** True while the goal is archived — a saved What-If projection can still be viewed, but not saved as a new Scenario. */
@@ -379,8 +376,8 @@ export function GoalWhatIfSection({
     );
   }
 
-  const funding = computeGoalFunding(item.target_amount, Array.isArray(allocations) ? allocations : null);
-  const startingValue = funding.designatedFunding;
+  const contextGoal = goalContext && "allocations" in goalContext ? goalContext : null;
+  const startingValue = contextGoal?.designated_total ?? null;
   const parsedContribution = monthlyContribution.trim() === "" ? 0 : Number(monthlyContribution);
   const parsedReturn = annualReturnPct.trim() === "" ? 0 : Number(annualReturnPct);
   const result = startingValue === null ? null : computeGoalWhatIf({
@@ -398,9 +395,9 @@ export function GoalWhatIfSection({
     asOfDate: todayIso(),
     targetDate: item.target_date,
   });
-  const sourceHealths = Array.isArray(allocations)
-    ? allocations
-        .map((allocation) => fundingHealthForSource(allocation.source_kind, (allocation.cash_account_id ?? allocation.portfolio_id) as number))
+  const sourceHealths = contextGoal
+    ? contextGoal.allocations
+        .map((allocation) => fundingHealthForSource(allocation.source_kind, allocation.source_id))
         .filter((health) => health.status !== "SUPPORTED")
     : [];
 
@@ -451,7 +448,7 @@ export function GoalWhatIfSection({
         </Field>
       </div>
 
-      {allocations === undefined ? (
+      {goalContext === undefined ? (
         <p className="text-sm text-gray-400">What-If loading — funding data is still loading.</p>
       ) : startingValue === null ? (
         <p role="alert" className="text-sm text-red-600">What-If unavailable — funding data failed to load.</p>
@@ -569,24 +566,24 @@ export function GoalWhatIfSection({
  */
 function ScenarioComparisonTable({
   item,
-  allocations,
+  goalContext,
   fundingHealthForSource,
   scenarioA,
   scenarioB,
 }: {
   item: WealthGoal;
-  allocations: AllocationsState;
+  goalContext: GoalContextState;
   fundingHealthForSource: FundingHealthForSource;
   scenarioA: GoalScenario;
   scenarioB: GoalScenario;
 }) {
-  if (allocations === undefined) {
+  if (goalContext === undefined) {
     return <p className="text-sm text-gray-400">Comparison loading — funding data is still loading.</p>;
   }
-  const funding = computeGoalFunding(item.target_amount, Array.isArray(allocations) ? allocations : null);
+  const contextGoal = "allocations" in goalContext ? goalContext : null;
   const comparison = computeScenarioComparison(
     item.target_amount,
-    funding.designatedFunding,
+    contextGoal?.designated_total ?? null,
     item.target_date,
     todayIso(),
     { name: scenarioA.name, monthlyContribution: scenarioA.monthly_contribution, annualReturnPct: scenarioA.annual_return_pct },
@@ -607,12 +604,11 @@ function ScenarioComparisonTable({
   // scenario. A source can appear in more than one allocation, so surface an
   // unhealthy source once rather than repeating the same evidence per row.
   const sourceHealthByKey = new Map<string, SourceFundingHealth>();
-  if (Array.isArray(allocations)) {
-    for (const allocation of allocations) {
-      const sourceId = (allocation.cash_account_id ?? allocation.portfolio_id) as number;
-      const key = sourceKey(allocation.source_kind, sourceId);
+  if (contextGoal) {
+    for (const allocation of contextGoal.allocations) {
+      const key = sourceKey(allocation.source_kind, allocation.source_id);
       if (!sourceHealthByKey.has(key)) {
-        sourceHealthByKey.set(key, fundingHealthForSource(allocation.source_kind, sourceId));
+        sourceHealthByKey.set(key, fundingHealthForSource(allocation.source_kind, allocation.source_id));
       }
     }
   }
@@ -703,7 +699,7 @@ function ScenarioComparisonTable({
 export function SavedScenariosSection({
   goalId,
   item,
-  allocations,
+  goalContext,
   fundingHealthForSource,
   readOnly = false,
   scenarios,
@@ -712,7 +708,7 @@ export function SavedScenariosSection({
 }: {
   goalId: number;
   item: WealthGoal;
-  allocations: AllocationsState;
+  goalContext: GoalContextState;
   fundingHealthForSource: FundingHealthForSource;
   /** True while the goal is archived — create/edit/archive/restore are disabled; loading is still allowed. */
   readOnly?: boolean;
@@ -906,7 +902,7 @@ export function SavedScenariosSection({
               {scenarioA && scenarioB && comparisonAId !== comparisonBId && (
                 <ScenarioComparisonTable
                   item={item}
-                  allocations={allocations}
+                  goalContext={goalContext}
                   fundingHealthForSource={fundingHealthForSource}
                   scenarioA={scenarioA}
                   scenarioB={scenarioB}

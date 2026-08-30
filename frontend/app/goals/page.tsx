@@ -9,7 +9,7 @@ import {
   messageFor,
   priorityLabel,
   typeLabel,
-  type AllocationsState,
+  type GoalContextState as GoalContextViewState,
 } from "@/components/goals/GoalPlanningSections";
 import {
   buildSourceFundingOverview,
@@ -21,14 +21,15 @@ import { computePortfolioCurrentValue } from "@/lib/wealthOverview";
 import { usePortfolio } from "@/lib/PortfolioContext";
 import {
   createWealthGoal,
+  getWealthGoalsContext,
   getHoldings,
   getPortfolioPrices,
   listCashAccounts,
-  listGoalFundingAllocations,
   listWealthGoals,
   updateWealthGoal,
   type CashAccount,
-  type GoalFundingAllocation,
+  type GoalContextGoal,
+  type GoalContextResponse,
   type GoalFundingSourceKind,
   type WealthGoal,
   type WealthGoalPriority,
@@ -36,6 +37,8 @@ import {
 } from "@/lib/api";
 
 type CashAccountsState = CashAccount[] | { error: string } | undefined;
+type GoalContextLoadError = { error: string };
+type WorkspaceContextState = GoalContextResponse | GoalContextLoadError | undefined;
 
 const GOAL_TYPES: WealthGoalType[] = [
   "RETIREMENT",
@@ -50,13 +53,25 @@ const GOAL_TYPES: WealthGoalType[] = [
 
 const PRIORITIES: WealthGoalPriority[] = ["HIGH", "MEDIUM", "LOW"];
 
+function goalRecordMatchesContext(record: WealthGoal, contextGoal: GoalContextGoal): boolean {
+  return record.id === contextGoal.id
+    && record.name === contextGoal.name
+    && record.goal_type === contextGoal.goal_type
+    && record.target_amount === contextGoal.target_amount
+    && record.currency === contextGoal.currency
+    && record.target_date === contextGoal.target_date
+    && record.priority === contextGoal.priority
+    && record.is_archived === contextGoal.is_archived
+    && record.updated_at === contextGoal.updated_at;
+}
+
 export default function GoalsPage() {
   const [goals, setGoals] = useState<WealthGoal[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [mutationError, setMutationError] = useState("");
   const [showArchived, setShowArchived] = useState(false);
-  const [allocationsByGoal, setAllocationsByGoal] = useState<Record<number, AllocationsState>>({});
+  const [goalContext, setGoalContext] = useState<WorkspaceContextState>(undefined);
   const [cashAccountsState, setCashAccountsState] = useState<CashAccountsState>(undefined);
   const [portfolioValueById, setPortfolioValueById] = useState<Record<number, number | "error">>({});
 
@@ -91,12 +106,10 @@ export default function GoalsPage() {
   const [editPriority, setEditPriority] = useState<WealthGoalPriority>("MEDIUM");
   const [editNote, setEditNote] = useState("");
 
-  // One coherent, generation-guarded refresh: fetches the full goal list
-  // (active + archived — the "Show archived" toggle is presentation-only and
-  // never triggers a fetch), then each goal's allocations exactly once,
-  // reused for both per-goal funding cards and the workspace-wide Funding
-  // source health rollup below. Stale responses (superseded refresh, or a
-  // response arriving after unmount) are dropped rather than applied.
+  // One coherent, generation-guarded refresh: fetch the editable goal records
+  // and the complete workspace Goal Context together. The archive toggle is
+  // presentation-only and never triggers another read. Goal Context is the
+  // sole source for progress, allocations, and designation aggregates.
   const refresh = useCallback(async () => {
     const generation = ++refreshGenerationRef.current;
     const isCurrent = () => mountedRef.current && refreshGenerationRef.current === generation;
@@ -104,22 +117,30 @@ export default function GoalsPage() {
 
     setLoading(true);
     setError("");
-    setAllocationsByGoal({});
+    setGoalContext(undefined);
     setCashAccountsState(undefined);
     setPortfolioValueById({});
 
-    let loadedGoals: WealthGoal[];
-    try {
-      loadedGoals = await listWealthGoals(true);
-    } catch (err) {
-      if (!isCurrent()) return;
+    const [goalsResult, contextResult] = await Promise.allSettled([
+      listWealthGoals(true),
+      getWealthGoalsContext(true),
+    ]);
+    if (!isCurrent()) return;
+    if (goalsResult.status === "rejected") {
       setGoals([]);
-      setError(messageFor(err, "Unable to load goals."));
+      setGoalContext(undefined);
+      setError(messageFor(goalsResult.reason, "Unable to load goals."));
       setLoading(false);
       return;
     }
-    if (!isCurrent()) return;
+
+    const loadedGoals = goalsResult.value;
     setGoals(loadedGoals);
+    if (contextResult.status === "fulfilled") {
+      setGoalContext(contextResult.value);
+    } else {
+      setGoalContext({ error: messageFor(contextResult.reason, "Unable to load Goal Context.") });
+    }
     setLoading(false);
 
     void listCashAccounts(true)
@@ -129,20 +150,6 @@ export default function GoalsPage() {
       .catch((err) => {
         if (isCurrent()) setCashAccountsState({ error: messageFor(err, "Unable to load cash accounts.") });
       });
-
-    const entries = await Promise.all(
-      loadedGoals.map(async (item) => {
-        try {
-          return [item.id, await listGoalFundingAllocations(item.id)] as const;
-        } catch (err) {
-          return [item.id, { error: messageFor(err, "Unable to load funding progress.") }] as const;
-        }
-      })
-    );
-    if (!isCurrent()) return;
-    const nextAllocationsByGoal: Record<number, AllocationsState> = {};
-    for (const [id, result] of entries) nextAllocationsByGoal[id] = result;
-    setAllocationsByGoal(nextAllocationsByGoal);
   }, []);
 
   useEffect(() => {
@@ -152,29 +159,44 @@ export default function GoalsPage() {
   const active = goals.filter((item) => !item.is_archived);
   const archived = goals.filter((item) => item.is_archived);
 
-  // Complete only when every goal's allocation fetch succeeded — a partial
-  // set would under-report a shared source's true total designation, so an
-  // incomplete set is never used to build the workspace rollup below.
-  const allocationEvidenceComplete = !error && goals.every((item) => Array.isArray(allocationsByGoal[item.id]));
-  const allocationFetchesPending = !error && goals.some((item) => allocationsByGoal[item.id] === undefined);
+  const contextResponse = goalContext && "goals" in goalContext ? goalContext : null;
+  const contextMatchesGoals = contextResponse !== null
+    && contextResponse.contract_version === "wealth.goal-context.v1"
+    && contextResponse.completeness === "COMPLETE"
+    && contextResponse.scope.kind === "WORKSPACE"
+    && contextResponse.scope.include_archived === true
+    && contextResponse.goals.length === goals.length
+    && goals.every((item) => {
+      const contextGoal = contextResponse.goals.find((candidate) => candidate.id === item.id);
+      return contextGoal !== undefined && goalRecordMatchesContext(item, contextGoal);
+    });
+  const contextError = goalContext && "error" in goalContext
+    ? goalContext.error
+    : contextResponse && !contextMatchesGoals
+      ? "Goal Context does not match the current goal records."
+      : "";
 
-  const allWorkspaceAllocations = useMemo<GoalFundingAllocation[]>(() => {
-    if (!allocationEvidenceComplete) return [];
-    const combined: GoalFundingAllocation[] = [];
-    for (const item of goals) {
-      const result = allocationsByGoal[item.id];
-      if (Array.isArray(result)) combined.push(...result);
+  const contextByGoal = useMemo(() => {
+    const map = new Map<number, GoalContextGoal>();
+    if (contextResponse && contextMatchesGoals) {
+      for (const contextGoal of contextResponse.goals) map.set(contextGoal.id, contextGoal);
     }
-    return combined;
-  }, [allocationEvidenceComplete, goals, allocationsByGoal]);
+    return map;
+  }, [contextMatchesGoals, contextResponse]);
+
+  const goalContextFor = useCallback((goalId: number): GoalContextViewState => {
+    if (goalContext === undefined) return undefined;
+    if (contextError) return { error: contextError };
+    return contextByGoal.get(goalId) ?? { error: "Goal Context is unavailable for this goal." };
+  }, [contextByGoal, contextError, goalContext]);
 
   const referencedPortfolioIds = useMemo(() => {
     const ids = new Set<number>();
-    for (const allocation of allWorkspaceAllocations) {
-      if (allocation.portfolio_id != null) ids.add(allocation.portfolio_id);
+    for (const designation of contextResponse?.designation_by_source ?? []) {
+      if (designation.source_kind === "PORTFOLIO") ids.add(designation.source_id);
     }
     return ids;
-  }, [allWorkspaceAllocations]);
+  }, [contextResponse]);
 
   // Only after allocation evidence is complete, and only once per referenced
   // portfolio, fetch that portfolio's holdings + prices and reduce them
@@ -183,7 +205,7 @@ export default function GoalsPage() {
   // absent from PortfolioContext's list leaves that source unresolved, which
   // renders as UNAVAILABLE rather than a fabricated value.
   useEffect(() => {
-    if (!allocationEvidenceComplete || portfoliosLoading || portfoliosError) return;
+    if (!contextResponse || !contextMatchesGoals || contextError || portfoliosLoading || portfoliosError) return;
     const generation = refreshGenerationRef.current;
     for (const portfolioId of referencedPortfolioIds) {
       if (requestedPortfolioIdsRef.current.has(portfolioId)) continue;
@@ -204,13 +226,13 @@ export default function GoalsPage() {
         }
       })();
     }
-  }, [allocationEvidenceComplete, referencedPortfolioIds, portfolioCatalog, portfoliosLoading, portfoliosError]);
+  }, [contextError, contextMatchesGoals, contextResponse, referencedPortfolioIds, portfolioCatalog, portfoliosLoading, portfoliosError]);
 
   const currentValueBySource = useMemo(() => {
     const map = new Map<FundingSourceKey, number | null>();
-    for (const allocation of allWorkspaceAllocations) {
-      const kind: GoalFundingSourceKind = allocation.cash_account_id != null ? "CASH_ACCOUNT" : "PORTFOLIO";
-      const id = (allocation.cash_account_id ?? allocation.portfolio_id) as number;
+    for (const designation of contextResponse?.designation_by_source ?? []) {
+      const kind: GoalFundingSourceKind = designation.source_kind;
+      const id = designation.source_id;
       const key = sourceKey(kind, id);
       if (map.has(key)) continue;
       if (kind === "CASH_ACCOUNT") {
@@ -224,11 +246,11 @@ export default function GoalsPage() {
       }
     }
     return map;
-  }, [allWorkspaceAllocations, cashAccountsState, portfolioValueById]);
+  }, [cashAccountsState, contextResponse, portfolioValueById]);
 
   const overviewRows: SourceFundingOverviewRow[] = useMemo(
-    () => buildSourceFundingOverview(allWorkspaceAllocations, currentValueBySource),
-    [allWorkspaceAllocations, currentValueBySource]
+    () => buildSourceFundingOverview(contextResponse?.designation_by_source ?? [], currentValueBySource),
+    [contextResponse, currentValueBySource]
   );
 
   async function handleCreate(event: FormEvent) {
@@ -366,18 +388,18 @@ export default function GoalsPage() {
           <p className="text-sm text-gray-500">No active goals yet. Add your first goal above.</p>
         ) : (
           <div className="space-y-3">{active.map((item) => (
-            <GoalCard key={item.id} item={item} allocations={allocationsByGoal[item.id]} onEdit={openEdit} onArchive={() => void setArchived(item, true)} />
+            <GoalCard key={item.id} item={item} goalContext={goalContextFor(item.id)} onEdit={openEdit} onArchive={() => void setArchived(item, true)} />
           ))}</div>
         )}
       </section>
 
       <section className="space-y-3 pt-2 border-t" aria-labelledby="funding-source-health-heading">
         <h2 id="funding-source-health-heading" className="text-lg font-semibold">Funding source health</h2>
-        {loading || allocationFetchesPending ? (
+        {loading || goalContext === undefined ? (
           <p className="text-sm text-gray-400">Loading funding source health…</p>
-        ) : error || !allocationEvidenceComplete ? (
+        ) : error || contextError || !contextResponse || !contextMatchesGoals ? (
           <p role="alert" className="text-sm text-red-600">
-            Funding source health is unavailable — allocation evidence is incomplete.
+            Funding source health is unavailable — Goal Context evidence is incomplete.
           </p>
         ) : goals.length === 0 ? (
           <p className="text-sm text-gray-500">No funding sources to show yet.</p>
@@ -413,12 +435,12 @@ export default function GoalsPage() {
 
 function GoalCard({
   item,
-  allocations,
+  goalContext,
   onEdit,
   onArchive,
 }: {
   item: WealthGoal;
-  allocations: AllocationsState;
+  goalContext: GoalContextViewState;
   onEdit: (item: WealthGoal) => void;
   onArchive: () => void;
 }) {
@@ -436,7 +458,7 @@ function GoalCard({
           <button type="button" onClick={onArchive} className="text-red-600 hover:underline">Archive</button>
         </div>
       </div>
-      <GoalFundingSummary allocations={allocations} targetAmount={item.target_amount} compact />
+      <GoalFundingSummary goalContext={goalContext} compact />
     </article>
   );
 }

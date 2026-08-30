@@ -7,6 +7,7 @@ import {
   deleteGoalFundingAllocation,
   getHoldings,
   getPortfolioPrices,
+  getWealthGoalsContext,
   listCashAccounts,
   listGoalFundingAllocations,
   listGoalScenarios,
@@ -15,6 +16,7 @@ import {
   updateGoalFundingAllocation,
   updateGoalScenario,
   type CashAccount,
+  type GoalContextResponse,
   type GoalFundingAllocation,
   type GoalScenario,
   type Portfolio,
@@ -29,6 +31,7 @@ vi.mock("@/lib/api", () => ({
   deleteGoalFundingAllocation: vi.fn(),
   getHoldings: vi.fn(),
   getPortfolioPrices: vi.fn(),
+  getWealthGoalsContext: vi.fn(),
   listCashAccounts: vi.fn(),
   listGoalFundingAllocations: vi.fn(),
   listGoalScenarios: vi.fn(),
@@ -173,6 +176,7 @@ function quote(symbol: string, current: number): PriceRefreshItem {
 
 const listMock = vi.mocked(listWealthGoals);
 const allocationsMock = vi.mocked(listGoalFundingAllocations);
+const contextMock = vi.mocked(getWealthGoalsContext);
 const cashAccountsMock = vi.mocked(listCashAccounts);
 const portfoliosMock = vi.mocked(listPortfolios);
 const holdingsMock = vi.mocked(getHoldings);
@@ -184,11 +188,89 @@ const scenariosMock = vi.mocked(listGoalScenarios);
 const scenariosCreateMock = vi.mocked(createGoalScenario);
 const scenariosUpdateMock = vi.mocked(updateGoalScenario);
 
+async function configuredGoalContext(): Promise<GoalContextResponse> {
+  const latestListResult = listMock.mock.results[listMock.mock.results.length - 1] as
+    { value: unknown } | undefined;
+  const loadedGoals: WealthGoal[] = latestListResult
+    ? await Promise.resolve(latestListResult.value).catch(() => []) as WealthGoal[]
+    : [];
+  const sourceTotals = new Map<string, {
+    source_kind: "CASH_ACCOUNT" | "PORTFOLIO";
+    source_id: number;
+    source_name: string;
+    source_is_archived: boolean;
+    currency: "THB";
+    designated_total_in_context_scope: number;
+  }>();
+  const allocationImplementation = allocationsMock.getMockImplementation() as
+    ((goalId: number) => Promise<GoalFundingAllocation[]> | GoalFundingAllocation[]) | undefined;
+  const goals = await Promise.all(loadedGoals.map(async (record) => {
+    // Read the configured fixture implementation directly.  Production must
+    // obtain this complete payload with one Goal Context request and make no
+    // legacy per-goal allocation reads.
+    const historicalAllocations = allocationImplementation ? await allocationImplementation(record.id) : [];
+    const allocations = historicalAllocations.map((allocation) => {
+      const sourceId = (allocation.cash_account_id ?? allocation.portfolio_id) as number;
+      const contextAllocation = {
+        id: allocation.id,
+        wealth_goal_id: allocation.wealth_goal_id,
+        source_kind: allocation.source_kind,
+        source_id: sourceId,
+        source_name: allocation.source_name ?? "Unknown source",
+        source_is_archived: allocation.source_is_archived,
+        designated_amount: allocation.allocated_amount,
+        currency: allocation.currency,
+        updated_at: allocation.updated_at,
+      };
+      const key = `${allocation.source_kind}:${sourceId}`;
+      const existing = sourceTotals.get(key);
+      if (existing) existing.designated_total_in_context_scope += allocation.allocated_amount;
+      else sourceTotals.set(key, {
+        source_kind: allocation.source_kind,
+        source_id: sourceId,
+        source_name: contextAllocation.source_name,
+        source_is_archived: contextAllocation.source_is_archived,
+        currency: "THB",
+        designated_total_in_context_scope: allocation.allocated_amount,
+      });
+      return contextAllocation;
+    });
+    const designatedTotal = allocations.reduce((sum, allocation) => sum + allocation.designated_amount, 0);
+    const progressRatio = designatedTotal / record.target_amount;
+    return {
+      id: record.id,
+      name: record.name,
+      goal_type: record.goal_type,
+      target_amount: record.target_amount,
+      currency: record.currency,
+      target_date: record.target_date,
+      priority: record.priority,
+      is_archived: record.is_archived,
+      updated_at: record.updated_at,
+      allocations,
+      designated_total: designatedTotal,
+      progress_ratio: progressRatio,
+      progress_percent: progressRatio * 100,
+      funding_gap: Math.max(record.target_amount - designatedTotal, 0),
+      fully_designated: designatedTotal >= record.target_amount,
+    };
+  }));
+  return {
+    contract_version: "wealth.goal-context.v1",
+    context_generated_at: "2026-08-26T00:00:00Z",
+    completeness: "COMPLETE",
+    scope: { kind: "WORKSPACE", include_archived: true },
+    goals,
+    designation_by_source: [...sourceTotals.values()],
+  };
+}
+
 describe("GoalDetailPage", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     listMock.mockResolvedValue([goal]);
     allocationsMock.mockResolvedValue([]);
+    contextMock.mockImplementation(configuredGoalContext);
     cashAccountsMock.mockResolvedValue([cashAccount]);
     portfoliosMock.mockResolvedValue([portfolio]);
     holdingsMock.mockResolvedValue([]);
@@ -206,7 +288,9 @@ describe("GoalDetailPage", () => {
     expect(screen.getByText("Loading goal…")).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Retire by 55" })).toBeInTheDocument();
     expect(listMock).toHaveBeenCalledWith(true);
-    expect(allocationsMock).toHaveBeenCalledWith(1);
+    expect(contextMock).toHaveBeenCalledWith(true);
+    expect(contextMock).toHaveBeenCalledTimes(1);
+    expect(allocationsMock).not.toHaveBeenCalled();
     expect(screen.getByRole("link", { name: "← Back to goals" })).toHaveAttribute("href", "/goals");
   });
 
@@ -240,14 +324,31 @@ describe("GoalDetailPage", () => {
       allocated_amount: 250000,
       currency: "THB",
     }));
+    await waitFor(() => expect(contextMock).toHaveBeenCalledTimes(2));
 
     fireEvent.click(screen.getByRole("button", { name: "Edit designated amount for Wedding Savings" }));
     fireEvent.change(screen.getByLabelText("Edit designated amount for Wedding Savings"), { target: { value: "200000" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(allocationsUpdateMock).toHaveBeenCalledWith(1, 100, { allocated_amount: 200000 }));
+    await waitFor(() => expect(contextMock).toHaveBeenCalledTimes(3));
 
     fireEvent.click(screen.getByRole("button", { name: "Remove Wedding Savings as a funding source" }));
     await waitFor(() => expect(allocationsDeleteMock).toHaveBeenCalledWith(1, 100));
+    await waitFor(() => expect(contextMock).toHaveBeenCalledTimes(4));
+  });
+
+  it("removes stale pre-mutation totals when Goal Context refresh fails", async () => {
+    allocationsMock.mockResolvedValue([cashAllocation]);
+    contextMock
+      .mockImplementationOnce(configuredGoalContext)
+      .mockRejectedValueOnce(new Error("context refresh offline"));
+    render(<GoalDetailPage params={{ id: "1" }} />);
+    expect(await screen.findByText("฿300,000.00 designated")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove Wedding Savings as a funding source" }));
+    expect(await screen.findByText("context refresh offline")).toBeInTheDocument();
+    expect(screen.queryByText("฿300,000.00 designated")).not.toBeInTheDocument();
+    expect(screen.getByText("Goal progress unavailable — funding data failed to load.")).toBeInTheDocument();
   });
 
   it("reports Funding Health as supported", async () => {
@@ -274,14 +375,16 @@ describe("GoalDetailPage", () => {
     expect(await screen.findByText((_, element) => element?.textContent === "Current value ฿400,000.00 · Attention: exceeds current value by ฿100,000.00")).toBeInTheDocument();
   });
 
-  it("keeps Funding Health unavailable when another goal's allocation evidence fails", async () => {
+  it("fails the selected goal honestly when the complete workspace Goal Context fails", async () => {
     listMock.mockResolvedValue([goal, secondGoal]);
     allocationsMock.mockImplementation(async (goalId) => {
       if (goalId === 1) return [cashAllocation];
       throw new Error("other allocation read failed");
     });
     render(<GoalDetailPage params={{ id: "1" }} />);
-    expect(await screen.findByText("Current value unavailable · Funding health unavailable")).toBeInTheDocument();
+    expect(await screen.findByText("other allocation read failed")).toBeInTheDocument();
+    expect(screen.getByText("Goal progress unavailable — funding data failed to load.")).toBeInTheDocument();
+    expect(screen.queryByText("฿300,000.00 designated")).not.toBeInTheDocument();
   });
 
   it("keeps Funding Health unavailable when source valuation fails", async () => {
@@ -340,6 +443,19 @@ describe("GoalDetailPage", () => {
     expect(await screen.findByText("Current value unavailable · Funding health unavailable")).toBeInTheDocument();
     expect(screen.getByText("70%")).toBeInTheDocument();
     expect(screen.getByText((_, element) => element?.textContent === "฿700,000.00")).toBeInTheDocument();
+  });
+
+  it("rejects mismatched editable-record and Goal Context generations", async () => {
+    allocationsMock.mockResolvedValue([cashAllocation]);
+    contextMock.mockImplementation(async () => {
+      const response = await configuredGoalContext();
+      response.goals[0].updated_at = "2026-08-26T00:00:01";
+      return response;
+    });
+    render(<GoalDetailPage params={{ id: "1" }} />);
+
+    expect(await screen.findByText("Goal progress unavailable — funding data failed to load.")).toBeInTheDocument();
+    expect(screen.queryByText("฿300,000.00 designated")).not.toBeInTheDocument();
   });
 
   it("renders a goal-not-found state", async () => {

@@ -1,350 +1,223 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import {
-  aggregateDesignatedBySource,
   buildSourceFundingOverview,
-  computeGoalFunding,
   computeSourceFundingHealth,
   sourceKey,
   type FundingSourceKey,
 } from "./goalFunding.ts";
-import type { GoalFundingAllocation } from "@/lib/api";
+import type { GoalContextSourceDesignation } from "@/lib/api";
 
-function allocation(overrides: Partial<GoalFundingAllocation> & { id: number; wealth_goal_id: number; allocated_amount: number }): GoalFundingAllocation {
+type TaggedValue = number | { non_finite: "NaN" | "Infinity" | "-Infinity" };
+type GoldenScalar = TaggedValue | boolean | null;
+type GoldenFixture = {
+  schema_version: number;
+  contract_version: string;
+  goal_funding_cases: Array<{
+    id: string;
+    target_amount: TaggedValue;
+    allocations: Array<{ id: number; source_kind: string; source_id: number; amount: TaggedValue }>;
+    expected: Record<string, GoldenScalar>;
+  }>;
+  source_aggregation_cases: Array<{
+    id: string;
+    metadata?: { source_kind: "CASH_ACCOUNT" | "PORTFOLIO"; source_id: number; source_name: string; source_is_archived: boolean };
+    allocations: Array<{ id: number; goal_id: number; source_kind: "CASH_ACCOUNT" | "PORTFOLIO"; source_id: number; amount: number }>;
+    expected: Array<{ source_kind: "CASH_ACCOUNT" | "PORTFOLIO"; source_id: number; designated_total: number }>;
+  }>;
+};
+
+const golden = JSON.parse(
+  readFileSync(new URL("../../test-fixtures/goal-funding-golden.json", import.meta.url), "utf8"),
+) as GoldenFixture;
+
+function decode(value: TaggedValue): number {
+  if (typeof value === "number") return value;
+  return value.non_finite === "NaN" ? NaN : value.non_finite === "Infinity" ? Infinity : -Infinity;
+}
+
+function assertGoldenValue(actual: unknown, expected: GoldenScalar): void {
+  if (expected === null) {
+    assert.equal(actual, null);
+    return;
+  }
+  if (typeof expected === "boolean") {
+    assert.equal(actual, expected);
+    return;
+  }
+  const expectedNumber = decode(expected);
+  if (Number.isNaN(expectedNumber)) assert.ok(typeof actual === "number" && Number.isNaN(actual));
+  else assert.equal(actual, expectedNumber);
+}
+
+/**
+ * Historical TypeScript arithmetic retained in the parity test only. The
+ * production owner has moved to server Goal Context facts; this helper proves
+ * the shared fixture records the exact pre-cutover behavior, including its
+ * invalid-target/non-finite edge cases.
+ */
+function historicalGoalFunding(targetAmount: TaggedValue, allocations: Array<{ amount: TaggedValue }>) {
+  const target = decode(targetAmount);
+  if (!Number.isFinite(target) || target <= 0) {
+    return { designated_total: null, progress_ratio: null, progress_percent: null, funding_gap: null, fully_designated: null };
+  }
+  const designated = allocations.reduce((sum, allocation) => sum + decode(allocation.amount), 0);
+  const ratio = designated / target;
   return {
-    workspace_id: 1,
-    source_kind: "CASH_ACCOUNT",
-    cash_account_id: 1,
-    portfolio_id: null,
-    source_name: "Source",
-    source_is_archived: false,
-    currency: "THB",
-    created_at: "2026-01-01T00:00:00",
-    updated_at: "2026-01-01T00:00:00",
-    ...overrides,
+    designated_total: designated,
+    progress_ratio: ratio,
+    progress_percent: ratio * 100,
+    funding_gap: Math.max(target - designated, 0),
+    fully_designated: designated >= target,
   };
 }
 
-// ─── computeGoalFunding ─────────────────────────────────────────────────────
-
-test("no allocations (successfully loaded, empty) => 0 designated, 0% progress, full gap", () => {
-  const result = computeGoalFunding(500_000, []);
-  assert.equal(result.designatedFunding, 0);
-  assert.equal(result.progressPercent, 0);
-  assert.equal(result.fundingGap, 500_000);
-  assert.equal(result.fullyDesignated, false);
+test("shared golden fixture matches historical goal-funding arithmetic", () => {
+  assert.equal(golden.schema_version, 1);
+  assert.equal(golden.contract_version, "wealth.goal-context.v1");
+  for (const example of golden.goal_funding_cases) {
+    const actual = historicalGoalFunding(example.target_amount, example.allocations);
+    for (const [field, expected] of Object.entries(example.expected)) {
+      assertGoldenValue(actual[field as keyof typeof actual], expected);
+    }
+  }
 });
 
-test("one allocation", () => {
-  const result = computeGoalFunding(500_000, [allocation({ id: 1, wealth_goal_id: 1, allocated_amount: 100_000 })]);
-  assert.equal(result.designatedFunding, 100_000);
-  assert.equal(result.progressPercent, 20);
-  assert.equal(result.fundingGap, 400_000);
-});
-
-test("multiple allocations sum", () => {
-  const result = computeGoalFunding(500_000, [
-    allocation({ id: 1, wealth_goal_id: 1, allocated_amount: 100_000 }),
-    allocation({ id: 2, wealth_goal_id: 1, allocated_amount: 150_000 }),
-  ]);
-  assert.equal(result.designatedFunding, 250_000);
-  assert.equal(result.progressPercent, 50);
-});
-
-test("Cash + Portfolio allocations both count toward designated funding", () => {
-  const result = computeGoalFunding(1_000_000, [
-    allocation({ id: 1, wealth_goal_id: 1, allocated_amount: 300_000, source_kind: "CASH_ACCOUNT", cash_account_id: 5, portfolio_id: null }),
-    allocation({ id: 2, wealth_goal_id: 1, allocated_amount: 500_000, source_kind: "PORTFOLIO", cash_account_id: null, portfolio_id: 9 }),
-  ]);
-  assert.equal(result.designatedFunding, 800_000);
-  assert.equal(result.progressPercent, 80);
-});
-
-test("exactly 100% progress", () => {
-  const result = computeGoalFunding(500_000, [allocation({ id: 1, wealth_goal_id: 1, allocated_amount: 500_000 })]);
-  assert.equal(result.progressPercent, 100);
-  assert.equal(result.fundingGap, 0);
-  assert.equal(result.fullyDesignated, true);
-});
-
-test("over 100% progress remains over 100%, not clamped", () => {
-  const result = computeGoalFunding(500_000, [allocation({ id: 1, wealth_goal_id: 1, allocated_amount: 600_000 })]);
-  assert.equal(result.progressPercent, 120);
-});
-
-test("funding gap floors at zero when over-designated", () => {
-  const result = computeGoalFunding(500_000, [allocation({ id: 1, wealth_goal_id: 1, allocated_amount: 600_000 })]);
-  assert.equal(result.fundingGap, 0);
-});
-
-test("failed allocation evidence => unavailable, not zero", () => {
-  const result = computeGoalFunding(500_000, null);
-  assert.equal(result.designatedFunding, null);
-  assert.equal(result.progressPercent, null);
-  assert.equal(result.fundingGap, null);
-  assert.equal(result.fullyDesignated, null);
-});
-
-test("one source funding multiple goals: each goal's progress uses only its own allocation", () => {
-  const houseFunding = computeGoalFunding(1_000_000, [allocation({ id: 1, wealth_goal_id: 1, allocated_amount: 600_000, cash_account_id: 5 })]);
-  const retirementFunding = computeGoalFunding(2_000_000, [allocation({ id: 2, wealth_goal_id: 2, allocated_amount: 500_000, cash_account_id: 5 })]);
-  assert.equal(houseFunding.designatedFunding, 600_000);
-  assert.equal(retirementFunding.designatedFunding, 500_000);
-});
-
-test("a source's over-allocation does not alter either goal's progress", () => {
-  // Same Cash Account (id 5) funds both goals; combined 1,100,000 designated
-  // exceeds any plausible balance, but each goal's progress is computed only
-  // from its own allocation evidence, independent of the source's capacity.
-  const house = allocation({ id: 1, wealth_goal_id: 1, allocated_amount: 600_000, cash_account_id: 5 });
-  const retirement = allocation({ id: 2, wealth_goal_id: 2, allocated_amount: 500_000, cash_account_id: 5 });
-
-  const houseFunding = computeGoalFunding(1_000_000, [house]);
-  const retirementFunding = computeGoalFunding(2_000_000, [retirement]);
-  assert.equal(houseFunding.designatedFunding, 600_000);
-  assert.equal(houseFunding.progressPercent, 60);
-  assert.equal(retirementFunding.designatedFunding, 500_000);
-  assert.equal(retirementFunding.progressPercent, 25);
-
-  const health = computeSourceFundingHealth(
-    aggregateDesignatedBySource([house, retirement]).get(sourceKey("CASH_ACCOUNT", 5)) ?? 0,
-    1_000_000
-  );
-  assert.equal(health.status, "OVER_ALLOCATED");
-  assert.equal(health.shortfall, 100_000);
-  // The over-allocation fact above changed nothing about houseFunding/retirementFunding computed earlier.
-  assert.equal(houseFunding.progressPercent, 60);
-  assert.equal(retirementFunding.progressPercent, 25);
-});
-
-test("archived source allocation remains counted in Goal Progress", () => {
-  const result = computeGoalFunding(500_000, [allocation({ id: 1, wealth_goal_id: 1, allocated_amount: 300_000, source_is_archived: true })]);
-  assert.equal(result.designatedFunding, 300_000);
-});
-
-// ─── aggregateDesignatedBySource ────────────────────────────────────────────
-
-test("aggregateDesignatedBySource sums multiple goals funded by one source", () => {
-  const totals = aggregateDesignatedBySource([
-    allocation({ id: 1, wealth_goal_id: 1, allocated_amount: 600_000, cash_account_id: 5 }),
-    allocation({ id: 2, wealth_goal_id: 2, allocated_amount: 500_000, cash_account_id: 5 }),
-  ]);
-  assert.equal(totals.get(sourceKey("CASH_ACCOUNT", 5)), 1_100_000);
-});
-
-test("aggregateDesignatedBySource keeps Cash and Portfolio totals separate", () => {
-  const totals = aggregateDesignatedBySource([
-    allocation({ id: 1, wealth_goal_id: 1, allocated_amount: 100_000, source_kind: "CASH_ACCOUNT", cash_account_id: 5, portfolio_id: null }),
-    allocation({ id: 2, wealth_goal_id: 1, allocated_amount: 200_000, source_kind: "PORTFOLIO", cash_account_id: null, portfolio_id: 5 }),
-  ]);
-  assert.equal(totals.get(sourceKey("CASH_ACCOUNT", 5)), 100_000);
-  assert.equal(totals.get(sourceKey("PORTFOLIO", 5)), 200_000);
-});
-
-// ─── computeSourceFundingHealth ─────────────────────────────────────────────
-
-test("source exactly supported (designated equals current value)", () => {
-  const health = computeSourceFundingHealth(300_000, 300_000);
-  assert.equal(health.status, "SUPPORTED");
-  assert.equal(health.shortfall, null);
-});
-
-test("source under capacity", () => {
-  const health = computeSourceFundingHealth(300_000, 450_000);
-  assert.equal(health.status, "SUPPORTED");
-});
-
-test("source over-allocated reports shortfall", () => {
-  const health = computeSourceFundingHealth(800_000, 650_000);
-  assert.equal(health.status, "OVER_ALLOCATED");
-  assert.equal(health.shortfall, 150_000);
-});
-
-test("source with zero current value: zero designated is supported, positive designated is over-allocated", () => {
-  assert.equal(computeSourceFundingHealth(0, 0).status, "SUPPORTED");
-  assert.equal(computeSourceFundingHealth(1, 0).status, "OVER_ALLOCATED");
-});
-
-test("source capacity unavailable (null) never presented as zero", () => {
-  const health = computeSourceFundingHealth(300_000, null);
-  assert.equal(health.status, "UNAVAILABLE");
-  assert.equal(health.currentValue, null);
-  assert.equal(health.shortfall, null);
-});
-
-test("invalid/non-finite current value fails honestly as unavailable", () => {
-  assert.equal(computeSourceFundingHealth(300_000, NaN).status, "UNAVAILABLE");
-  assert.equal(computeSourceFundingHealth(300_000, Infinity).status, "UNAVAILABLE");
-});
-
-test("negative current value fails honestly as unavailable", () => {
-  const health = computeSourceFundingHealth(300_000, -100);
-  assert.equal(health.status, "UNAVAILABLE");
-});
-
-// ─── buildSourceFundingOverview ─────────────────────────────────────────────
+function sourceDesignation(
+  sourceKind: "CASH_ACCOUNT" | "PORTFOLIO",
+  sourceId: number,
+  total: number,
+  overrides: Partial<GoalContextSourceDesignation> = {},
+): GoalContextSourceDesignation {
+  return {
+    source_kind: sourceKind,
+    source_id: sourceId,
+    source_name: `${sourceKind} ${sourceId}`,
+    source_is_archived: false,
+    currency: "THB",
+    designated_total_in_context_scope: total,
+    ...overrides,
+  };
+}
 
 function valueMap(entries: [FundingSourceKey, number | null][]): ReadonlyMap<FundingSourceKey, number | null> {
   return new Map(entries);
 }
 
-test("no allocations => no rows", () => {
-  assert.deepEqual(buildSourceFundingOverview([], valueMap([])), []);
-});
+function metadataKey(sourceKind: string, sourceId: number): string {
+  return `${sourceKind}:${sourceId}`;
+}
 
-test("one source, one goal", () => {
-  const rows = buildSourceFundingOverview(
-    [allocation({ id: 1, wealth_goal_id: 1, allocated_amount: 100_000, cash_account_id: 5, source_name: "Wedding Savings" })],
-    valueMap([[sourceKey("CASH_ACCOUNT", 5), 150_000]])
+/**
+ * Test-only copy of the retired source aggregation behavior.  The parity
+ * assertion deliberately starts with fixture allocations, not the server
+ * response, so a change in the historical grouping rules cannot be hidden by
+ * feeding expected totals back into the assertion.
+ */
+function historicalAggregateDesignatedBySource(
+  allocations: Array<{ source_kind: "CASH_ACCOUNT" | "PORTFOLIO"; source_id: number; amount: number }>,
+): Array<{ source_kind: "CASH_ACCOUNT" | "PORTFOLIO"; source_id: number; designated_total: number }> {
+  const totals = new Map<string, { source_kind: "CASH_ACCOUNT" | "PORTFOLIO"; source_id: number; designated_total: number }>();
+  for (const allocation of allocations) {
+    const key = metadataKey(allocation.source_kind, allocation.source_id);
+    const existing = totals.get(key);
+    if (existing) {
+      existing.designated_total += allocation.amount;
+    } else {
+      totals.set(key, {
+        source_kind: allocation.source_kind,
+        source_id: allocation.source_id,
+        designated_total: allocation.amount,
+      });
+    }
+  }
+  return [...totals.values()].sort((left, right) =>
+    left.source_kind.localeCompare(right.source_kind) || left.source_id - right.source_id,
   );
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0].sourceName, "Wedding Savings");
-  assert.equal(rows[0].health.totalDesignated, 100_000);
-  assert.equal(rows[0].health.status, "SUPPORTED");
-});
+}
 
-test("two active goals sharing one Cash Account collapse into a single aggregated row", () => {
-  const rows = buildSourceFundingOverview(
-    [
-      allocation({ id: 1, wealth_goal_id: 1, allocated_amount: 100_000, cash_account_id: 5 }),
-      allocation({ id: 2, wealth_goal_id: 2, allocated_amount: 50_000, cash_account_id: 5 }),
-    ],
-    valueMap([[sourceKey("CASH_ACCOUNT", 5), 200_000]])
+function normalizeSourceTotals(
+  totals: Array<{ source_kind: "CASH_ACCOUNT" | "PORTFOLIO"; source_id: number; designated_total: number }>,
+) {
+  return [...totals].sort((left, right) =>
+    left.source_kind.localeCompare(right.source_kind) || left.source_id - right.source_id,
   );
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0].health.totalDesignated, 150_000);
+}
+
+test("historical source aggregation matches golden allocation cases", () => {
+  for (const example of golden.source_aggregation_cases) {
+    assert.deepEqual(
+      historicalAggregateDesignatedBySource(example.allocations),
+      normalizeSourceTotals(example.expected),
+      example.id,
+    );
+  }
 });
 
-test("an active and an archived goal sharing one Portfolio aggregate into one row", () => {
-  const rows = buildSourceFundingOverview(
-    [
-      allocation({ id: 1, wealth_goal_id: 1, allocated_amount: 200_000, source_kind: "PORTFOLIO", cash_account_id: null, portfolio_id: 9 }),
-      allocation({ id: 2, wealth_goal_id: 2, allocated_amount: 10_000, source_kind: "PORTFOLIO", cash_account_id: null, portfolio_id: 9 }),
-    ],
-    valueMap([[sourceKey("PORTFOLIO", 9), 52_000]])
-  );
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0].health.totalDesignated, 210_000);
-  assert.equal(rows[0].health.status, "OVER_ALLOCATED");
-  assert.equal(rows[0].health.shortfall, 158_000);
+test("Goal Context source aggregates consume server totals without recomputing them", () => {
+  for (const example of golden.source_aggregation_cases) {
+    const designations = example.expected.map((expected) => {
+      const metadata = example.metadata
+        && metadataKey(example.metadata.source_kind, example.metadata.source_id) === metadataKey(expected.source_kind, expected.source_id)
+        ? example.metadata
+        : undefined;
+      return sourceDesignation(expected.source_kind, expected.source_id, expected.designated_total, metadata && {
+        source_name: metadata.source_name,
+        source_is_archived: metadata.source_is_archived,
+      });
+    });
+    const rows = buildSourceFundingOverview(designations, valueMap([]));
+    assert.deepEqual(
+      normalizeSourceTotals(rows.map((row) => ({
+        source_kind: row.sourceKind,
+        source_id: row.sourceId,
+        designated_total: row.health.totalDesignated,
+      }))),
+      normalizeSourceTotals(example.expected),
+      example.id,
+    );
+  }
 });
 
-test("a source referenced only by an archived goal still appears", () => {
-  const rows = buildSourceFundingOverview(
-    [allocation({ id: 1, wealth_goal_id: 3, allocated_amount: 5_000, cash_account_id: 7, source_name: "Old Fund", source_is_archived: false })],
-    valueMap([[sourceKey("CASH_ACCOUNT", 7), 1_000]])
-  );
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0].health.status, "OVER_ALLOCATED");
-  assert.equal(rows[0].health.shortfall, 4_000);
-});
-
-test("Cash Account and Portfolio sharing the same numeric ID remain distinct rows", () => {
-  const rows = buildSourceFundingOverview(
-    [
-      allocation({ id: 1, wealth_goal_id: 1, allocated_amount: 20_000, source_kind: "CASH_ACCOUNT", cash_account_id: 9, portfolio_id: null }),
-      allocation({ id: 2, wealth_goal_id: 1, allocated_amount: 30_000, source_kind: "PORTFOLIO", cash_account_id: null, portfolio_id: 9 }),
-    ],
-    valueMap([
-      [sourceKey("CASH_ACCOUNT", 9), 20_000],
-      [sourceKey("PORTFOLIO", 9), 30_000],
-    ])
-  );
-  assert.equal(rows.length, 2);
-  assert.equal(rows.find((row) => row.sourceKind === "CASH_ACCOUNT")?.sourceId, 9);
-  assert.equal(rows.find((row) => row.sourceKind === "PORTFOLIO")?.sourceId, 9);
-});
-
-test("a missing current-value map entry is UNAVAILABLE, never zero", () => {
-  const rows = buildSourceFundingOverview(
-    [allocation({ id: 1, wealth_goal_id: 1, allocated_amount: 100_000, cash_account_id: 5 })],
-    valueMap([])
-  );
-  assert.equal(rows[0].health.status, "UNAVAILABLE");
-  assert.equal(rows[0].health.currentValue, null);
-});
-
-test("an explicit null current-value entry is also UNAVAILABLE", () => {
-  const rows = buildSourceFundingOverview(
-    [allocation({ id: 1, wealth_goal_id: 1, allocated_amount: 100_000, cash_account_id: 5 })],
-    valueMap([[sourceKey("CASH_ACCOUNT", 5), null]])
-  );
-  assert.equal(rows[0].health.status, "UNAVAILABLE");
-});
-
-test("a real zero designation against a real zero balance is SUPPORTED, not unavailable", () => {
-  const rows = buildSourceFundingOverview(
-    [allocation({ id: 1, wealth_goal_id: 1, allocated_amount: 0, cash_account_id: 5 })],
-    valueMap([[sourceKey("CASH_ACCOUNT", 5), 0]])
-  );
-  assert.equal(rows[0].health.status, "SUPPORTED");
-  assert.equal(rows[0].health.currentValue, 0);
-});
-
-test("chooses the first non-null source name in allocation-ID order, not the last", () => {
-  const rows = buildSourceFundingOverview(
-    [
-      allocation({ id: 1, wealth_goal_id: 1, allocated_amount: 10_000, cash_account_id: 5, source_name: null }),
-      allocation({ id: 2, wealth_goal_id: 2, allocated_amount: 20_000, cash_account_id: 5, source_name: "First Real Name" }),
-      allocation({ id: 3, wealth_goal_id: 3, allocated_amount: 5_000, cash_account_id: 5, source_name: "Second Real Name" }),
-    ],
-    valueMap([[sourceKey("CASH_ACCOUNT", 5), 100_000]])
-  );
-  assert.equal(rows[0].sourceName, "First Real Name");
-});
-
-test("name choice follows allocation ID, not array position, and never mutates the caller's array", () => {
-  // Deliberately supplied out of ID order: the caller assembles this array by
-  // concatenating per-goal responses, whose arrival order is not meaningful.
-  const allocations = [
-    allocation({ id: 3, wealth_goal_id: 3, allocated_amount: 5_000, cash_account_id: 5, source_name: "Third By ID" }),
-    allocation({ id: 1, wealth_goal_id: 1, allocated_amount: 10_000, cash_account_id: 5, source_name: null }),
-    allocation({ id: 2, wealth_goal_id: 2, allocated_amount: 20_000, cash_account_id: 5, source_name: "Second By ID" }),
+test("source identity keeps Cash and Portfolio with the same numeric id separate", () => {
+  const designations = [
+    sourceDesignation("CASH_ACCOUNT", 1, 100_000),
+    sourceDesignation("PORTFOLIO", 1, 200_000),
   ];
-  const originalOrder = allocations.map((item) => item.id);
-
-  const rows = buildSourceFundingOverview(allocations, valueMap([[sourceKey("CASH_ACCOUNT", 5), 100_000]]));
-
-  assert.equal(rows[0].sourceName, "Second By ID");
-  assert.equal(rows[0].health.totalDesignated, 35_000);
-  assert.deepEqual(allocations.map((item) => item.id), originalOrder);
+  const rows = buildSourceFundingOverview(designations, valueMap([
+    [sourceKey("CASH_ACCOUNT", 1), 100_000],
+    [sourceKey("PORTFOLIO", 1), 200_000],
+  ]));
+  assert.equal(rows.length, 2);
+  assert.equal(rows.find((row) => row.key === sourceKey("CASH_ACCOUNT", 1))?.health.status, "SUPPORTED");
+  assert.equal(rows.find((row) => row.key === sourceKey("PORTFOLIO", 1))?.health.status, "SUPPORTED");
 });
 
-test("falls back to 'Unknown source' when every matching allocation has a null name", () => {
-  const rows = buildSourceFundingOverview(
-    [allocation({ id: 1, wealth_goal_id: 1, allocated_amount: 10_000, cash_account_id: 5, source_name: null })],
-    valueMap([[sourceKey("CASH_ACCOUNT", 5), 100_000]])
-  );
-  assert.equal(rows[0].sourceName, "Unknown source");
+test("archived source metadata and presentation ordering come from Goal Context", () => {
+  const rows = buildSourceFundingOverview([
+    sourceDesignation("CASH_ACCOUNT", 9, 10, { source_name: "Zeta", source_is_archived: true }),
+    sourceDesignation("CASH_ACCOUNT", 3, 20, { source_name: "Alpha" }),
+  ], valueMap([]));
+  assert.deepEqual(rows.map((row) => row.sourceName), ["Alpha", "Zeta"]);
+  assert.equal(rows[1].sourceIsArchived, true);
+  assert.equal(rows[1].health.status, "UNAVAILABLE");
 });
 
-test("a source is archived if any matching allocation payload says archived", () => {
-  const rows = buildSourceFundingOverview(
-    [
-      allocation({ id: 1, wealth_goal_id: 1, allocated_amount: 10_000, cash_account_id: 5, source_is_archived: false }),
-      allocation({ id: 2, wealth_goal_id: 2, allocated_amount: 5_000, cash_account_id: 5, source_is_archived: true }),
-    ],
-    valueMap([[sourceKey("CASH_ACCOUNT", 5), 100_000]])
-  );
-  assert.equal(rows[0].sourceIsArchived, true);
-});
-
-test("rows sort deterministically by name, then kind, then ID", () => {
-  const rows = buildSourceFundingOverview(
-    [
-      allocation({ id: 1, wealth_goal_id: 1, allocated_amount: 1_000, cash_account_id: 20, source_name: "Zebra Fund" }),
-      allocation({ id: 2, wealth_goal_id: 1, allocated_amount: 1_000, cash_account_id: 10, source_name: "Apple Fund" }),
-      allocation({ id: 3, wealth_goal_id: 1, allocated_amount: 1_000, source_kind: "PORTFOLIO", cash_account_id: null, portfolio_id: 30, source_name: "Apple Fund" }),
-    ],
-    valueMap([
-      [sourceKey("CASH_ACCOUNT", 20), 1_000],
-      [sourceKey("CASH_ACCOUNT", 10), 1_000],
-      [sourceKey("PORTFOLIO", 30), 1_000],
-    ])
-  );
-  assert.deepEqual(
-    rows.map((row) => row.key),
-    [sourceKey("CASH_ACCOUNT", 10), sourceKey("PORTFOLIO", 30), sourceKey("CASH_ACCOUNT", 20)]
-  );
+test("Funding Health semantics remain unchanged", () => {
+  assert.equal(computeSourceFundingHealth(300_000, 300_000).status, "SUPPORTED");
+  assert.equal(computeSourceFundingHealth(300_000, 450_000).status, "SUPPORTED");
+  assert.deepEqual(computeSourceFundingHealth(800_000, 650_000), {
+    totalDesignated: 800_000,
+    currentValue: 650_000,
+    status: "OVER_ALLOCATED",
+    shortfall: 150_000,
+  });
+  assert.equal(computeSourceFundingHealth(0, 0).status, "SUPPORTED");
+  assert.equal(computeSourceFundingHealth(1, 0).status, "OVER_ALLOCATED");
+  assert.equal(computeSourceFundingHealth(300_000, null).status, "UNAVAILABLE");
+  assert.equal(computeSourceFundingHealth(300_000, NaN).status, "UNAVAILABLE");
+  assert.equal(computeSourceFundingHealth(300_000, Infinity).status, "UNAVAILABLE");
+  assert.equal(computeSourceFundingHealth(300_000, -100).status, "UNAVAILABLE");
 });

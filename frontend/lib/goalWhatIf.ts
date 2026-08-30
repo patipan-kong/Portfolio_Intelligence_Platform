@@ -6,9 +6,8 @@
 // reach the target under these assumptions?" and, if the goal has a saved
 // target date, "what would designated funding be by that date?"
 //
-// Starting value is ALWAYS the caller-supplied designated funding
-// (see goalFunding.ts's computeGoalFunding().designatedFunding) — never a
-// source's current capacity. Funding Health (a source's current-value
+// Starting value is ALWAYS the server-supplied Goal Context designated total
+// passed by the caller — never a source's current capacity. Funding Health (a source's current-value
 // comparison) is a separate fact this module does not read or alter.
 //
 // Nothing here is persisted, fetched, or mutated: pure functions only.
@@ -26,7 +25,7 @@ const MONTH_NAMES = [
 
 export interface GoalWhatIfInput {
   targetAmount: number;
-  /** computeGoalFunding(...).designatedFunding — never a source's current capacity. */
+  /** Server-supplied Goal Context designated total — never a source's current capacity. */
   startingValue: number;
   monthlyContribution: number;
   annualReturnPct: number;
@@ -74,7 +73,7 @@ export type GoalWhatIfResult = GoalWhatIfValid | GoalWhatIfInvalid;
 
 export interface RequiredMonthlyContributionInput {
   targetAmount: number;
-  /** computeGoalFunding(...).designatedFunding — never a source's current capacity. */
+  /** Server-supplied Goal Context designated total — never a source's current capacity. */
   startingValue: number;
   annualReturnPct: number;
   /** "YYYY-MM-DD" */

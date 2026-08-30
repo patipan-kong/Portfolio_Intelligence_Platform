@@ -571,10 +571,77 @@ export const createWealthGoal = (body: WealthGoalCreate) =>
 export const updateWealthGoal = (id: number, body: WealthGoalUpdate) =>
   apiFetch<WealthGoal>(`/wealth-goals/${id}`, { method: "PATCH", body: JSON.stringify(body) });
 
+// ─── Wealth Goal Context (Phase 7.2) ───────────────────────────────────────
+// The Goal Context endpoint is the canonical, valuation-free read of goal
+// facts, allocation evidence, and designation arithmetic. Current Cash and
+// Portfolio values remain separate live reads owned by the UI.
+
+export type GoalContextCompleteness = "COMPLETE";
+
+export interface GoalContextScope {
+  kind: "WORKSPACE" | "GOAL";
+  include_archived?: boolean;
+  goal_id?: number;
+}
+
+export interface GoalContextAllocation {
+  id: number;
+  wealth_goal_id: number;
+  source_kind: GoalFundingSourceKind;
+  source_id: number;
+  source_name: string;
+  source_is_archived: boolean;
+  designated_amount: number;
+  currency: "THB";
+  updated_at: string;
+}
+
+export interface GoalContextGoal {
+  id: number;
+  name: string;
+  goal_type: WealthGoalType;
+  target_amount: number;
+  currency: "THB";
+  target_date: string | null;
+  priority: WealthGoalPriority;
+  is_archived: boolean;
+  updated_at: string;
+  allocations: GoalContextAllocation[];
+  designated_total: number;
+  progress_ratio: number;
+  progress_percent: number;
+  funding_gap: number;
+  fully_designated: boolean;
+}
+
+export interface GoalContextSourceDesignation {
+  source_kind: GoalFundingSourceKind;
+  source_id: number;
+  source_name: string;
+  source_is_archived: boolean;
+  currency: "THB";
+  designated_total_in_context_scope: number;
+}
+
+export interface GoalContextResponse {
+  contract_version: "wealth.goal-context.v1";
+  context_generated_at: string;
+  completeness: GoalContextCompleteness;
+  scope: GoalContextScope;
+  goals: GoalContextGoal[];
+  designation_by_source: GoalContextSourceDesignation[];
+}
+
+export const getWealthGoalsContext = (includeArchived = false) =>
+  apiFetch<GoalContextResponse>(`/wealth-goals/context?include_archived=${includeArchived ? "true" : "false"}`);
+
+export const getWealthGoalContext = (goalId: number) =>
+  apiFetch<GoalContextResponse>(`/wealth-goals/${goalId}/context`);
+
 // ─── Goal Funding Allocations (Phase 6, Milestone 2) ───────────────────────
-// "This amount from this source is designated toward this goal." No goal
-// progress, funding gap, or coverage percentage is computed here or by the
-// backend — designation only.
+// "This amount from this source is designated toward this goal." These
+// mutation contracts carry designation evidence only; Goal Context owns the
+// derived progress, funding gap, and coverage facts.
 
 export type GoalFundingSourceKind = "CASH_ACCOUNT" | "PORTFOLIO";
 
