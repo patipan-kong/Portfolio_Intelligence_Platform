@@ -6,6 +6,7 @@ import {
   createGoalScenario,
   deleteGoalFundingAllocation,
   getHoldings,
+  getLegacyGoalProfileEvidence,
   getPortfolioPrices,
   getWealthFactualReview,
   listCashAccounts,
@@ -19,6 +20,7 @@ import {
   type FactualReviewResponse,
   type GoalContextResponse,
   type GoalFundingAllocation,
+  type LegacyGoalProfileEvidenceResponse,
   type GoalScenario,
   type Portfolio,
   type PortfolioItem,
@@ -31,6 +33,7 @@ vi.mock("@/lib/api", () => ({
   createGoalScenario: vi.fn(),
   deleteGoalFundingAllocation: vi.fn(),
   getHoldings: vi.fn(),
+  getLegacyGoalProfileEvidence: vi.fn(),
   getPortfolioPrices: vi.fn(),
   getWealthFactualReview: vi.fn(),
   listCashAccounts: vi.fn(),
@@ -178,6 +181,7 @@ function quote(symbol: string, current: number): PriceRefreshItem {
 const listMock = vi.mocked(listWealthGoals);
 const allocationsMock = vi.mocked(listGoalFundingAllocations);
 const contextMock = vi.mocked(getWealthFactualReview);
+const legacyEvidenceMock = vi.mocked(getLegacyGoalProfileEvidence);
 const cashAccountsMock = vi.mocked(listCashAccounts);
 const portfoliosMock = vi.mocked(listPortfolios);
 const holdingsMock = vi.mocked(getHoldings);
@@ -302,12 +306,74 @@ async function configuredFactualReview(): Promise<FactualReviewResponse> {
   };
 }
 
+async function configuredLegacyEvidence(): Promise<LegacyGoalProfileEvidenceResponse> {
+  const goal_context = await configuredGoalContext();
+  const edges = goal_context.goals.flatMap((contextGoal) => contextGoal.allocations
+    .filter((allocation) => allocation.source_kind === "PORTFOLIO")
+    .map((designation) => ({
+      wealth_goal: {
+        id: contextGoal.id,
+        name: contextGoal.name,
+        goal_type: contextGoal.goal_type,
+        target_amount: contextGoal.target_amount,
+        currency: contextGoal.currency,
+        target_date: contextGoal.target_date,
+        priority: contextGoal.priority,
+        is_archived: contextGoal.is_archived,
+        updated_at: contextGoal.updated_at,
+      },
+      designation,
+      portfolio: { id: designation.source_id, name: designation.source_name },
+      legacy_profile: {
+        evidence_availability: "ALL_FIELDS_RECORDED" as const,
+        goal_type: {
+          raw_value: " retirement ",
+          compatibility_projection: "RETIREMENT",
+          compatibility_label_th: "เกษียณ",
+          projection_status: "NORMALIZED" as const,
+          comparison: contextGoal.goal_type === "RETIREMENT" ? "SAME_RECORDED_CODE" as const : "DIFFERENT_RECORDED_CODES" as const,
+          provenance: "PORTFOLIO.GOAL_TYPE" as const,
+        },
+        goal_priority: {
+          raw_value: "IMPORTANT",
+          compatibility_projection: "IMPORTANT",
+          compatibility_label_th: "สำคัญ",
+          projection_status: "UNCHANGED" as const,
+          provenance: "PORTFOLIO.GOAL_PRIORITY" as const,
+        },
+        goal_target_date: {
+          raw_value: "2055-01-01",
+          compatibility_projection: "2055-01-01",
+          projection_status: "UNCHANGED" as const,
+          comparison: "SAME_RECORDED_DATE" as const,
+          provenance: "PORTFOLIO.GOAL_TARGET_DATE" as const,
+        },
+        goal_target_value: {
+          raw_value: 20_000_000,
+          compatibility_projection: 20_000_000,
+          projection_status: "UNCHANGED" as const,
+          unit_status: "UNSPECIFIED_IN_LEGACY_CONTRACT" as const,
+          provenance: "PORTFOLIO.GOAL_TARGET_VALUE" as const,
+        },
+      },
+    })));
+  return {
+    contract_version: "wealth.legacy-profile-evidence.v1",
+    generated_at: "2026-08-31T00:00:00Z",
+    completeness: "COMPLETE",
+    scope: goal_context.scope,
+    goal_context,
+    evidence_edges: edges,
+  };
+}
+
 describe("GoalDetailPage", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     listMock.mockResolvedValue([goal]);
     allocationsMock.mockResolvedValue([]);
     contextMock.mockImplementation(configuredFactualReview);
+    legacyEvidenceMock.mockImplementation(configuredLegacyEvidence);
     cashAccountsMock.mockResolvedValue([cashAccount]);
     portfoliosMock.mockResolvedValue([portfolio]);
     holdingsMock.mockResolvedValue([]);
@@ -327,8 +393,138 @@ describe("GoalDetailPage", () => {
     expect(listMock).toHaveBeenCalledWith(true);
     expect(contextMock).toHaveBeenCalledWith(true);
     expect(contextMock).toHaveBeenCalledTimes(1);
+    expect(legacyEvidenceMock).toHaveBeenCalledWith(true);
     expect(allocationsMock).not.toHaveBeenCalled();
     expect(screen.getByRole("link", { name: "← Back to goals" })).toHaveAttribute("href", "/goals");
+  });
+
+  describe("Legacy Portfolio goal-profile evidence", () => {
+    it("renders each designation edge after valuation with neutral raw/projection facts and adjacent disclosure", async () => {
+      allocationsMock.mockResolvedValue([portfolioAllocation]);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+
+      const section = await screen.findByLabelText("Legacy Portfolio goal-profile evidence");
+      expect(within(section).getByText("Long-term Portfolio")).toBeInTheDocument();
+      expect(within(section).getByText(/฿700,000.00 from this Portfolio is designated toward Retire by 55/)).toBeInTheDocument();
+      expect(section).toHaveTextContent(/raw " retirement " · compatibility projection RETIREMENT/);
+      expect(within(section).getAllByText("RETIREMENT").length).toBeGreaterThanOrEqual(1);
+      const comparison = within(section).getByText(/The recorded codes are identical/);
+      expect(comparison).toHaveTextContent(/does not establish.*same intended goal/i);
+      const dateComparison = within(section).getByText(/The strict recorded dates are identical/);
+      expect(dateComparison).toHaveTextContent(/does not establish.*same intended goal/i);
+      expect(section.compareDocumentPosition(screen.getByLabelText("Factual valuation evidence")) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+      expect(within(section).getByText(/Priority \(separate vocabularies\)/)).toBeInTheDocument();
+      expect(within(section).getByText(/Legacy unit: unspecified in the legacy contract/)).toBeInTheDocument();
+      expect(within(section).queryByText(/risk_personality|configured/i)).not.toBeInTheDocument();
+      expect(within(section).queryByText(/equal target|target.*match|delta|ratio|coverage|shortfall/i)).not.toBeInTheDocument();
+    });
+
+    it("preserves separate evidence cards for multiple allocations using the same Portfolio", async () => {
+      allocationsMock.mockResolvedValue([
+        portfolioAllocation,
+        { ...portfolioAllocation, id: 102, allocated_amount: 200000 },
+      ]);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      await screen.findByLabelText("Legacy evidence for designation 101");
+      expect(screen.getByLabelText("Legacy evidence for designation 102")).toBeInTheDocument();
+      expect(within(screen.getByLabelText("Legacy Portfolio goal-profile evidence")).getAllByText("Long-term Portfolio")).toHaveLength(2);
+    });
+
+    it("shows partial and unknown raw fields independently without rendering excluded runtime fields", async () => {
+      allocationsMock.mockResolvedValue([portfolioAllocation]);
+      legacyEvidenceMock.mockImplementation(async () => {
+        const value = await configuredLegacyEvidence();
+        const profile = value.evidence_edges[0].legacy_profile;
+        profile.evidence_availability = "PARTIAL_FIELDS_RECORDED";
+        profile.goal_type = {
+          ...profile.goal_type,
+          raw_value: "OLD_CUSTOM_GOAL",
+          compatibility_projection: null,
+          compatibility_label_th: null,
+          projection_status: "UNRECOGNIZED",
+          comparison: "NOT_COMPARABLE",
+        };
+        profile.goal_priority = { ...profile.goal_priority, raw_value: null, compatibility_projection: null, compatibility_label_th: null, projection_status: "UNSET" };
+        Object.assign(profile as object, { risk_personality: "AGGRESSIVE", configured: false });
+        return value;
+      });
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      const section = await screen.findByLabelText("Legacy Portfolio goal-profile evidence");
+      expect(within(section).getByText('"OLD_CUSTOM_GOAL"')).toBeInTheDocument();
+      expect(within(section).getByText(/recorded but unrecognized/)).toBeInTheDocument();
+      expect(within(section).getByText(/Priority/).parentElement).toHaveTextContent("Not recorded");
+      expect(within(section).queryByText("AGGRESSIVE")).not.toBeInTheDocument();
+      expect(within(section).queryByText("false")).not.toBeInTheDocument();
+    });
+
+    it("keeps evidence failure local while funding editing and factual valuation remain available", async () => {
+      allocationsMock.mockResolvedValue([portfolioAllocation]);
+      legacyEvidenceMock.mockRejectedValue(new Error("evidence offline"));
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      expect(await screen.findByText("Legacy Portfolio goal-profile evidence is unavailable.")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Add funding source" })).toBeInTheDocument();
+      expect(screen.getByLabelText("Factual valuation evidence")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Retire by 55" })).toBeInTheDocument();
+    });
+
+    it("does not hold the core Goal Detail behind a pending supplemental request", async () => {
+      allocationsMock.mockResolvedValue([portfolioAllocation]);
+      const pending = deferred<LegacyGoalProfileEvidenceResponse>();
+      legacyEvidenceMock.mockReturnValue(pending.promise);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+
+      expect(await screen.findByRole("heading", { name: "Retire by 55" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Add funding source" })).toBeInTheDocument();
+      expect(screen.getByLabelText("Factual valuation evidence")).toBeInTheDocument();
+      expect(screen.getByText("Loading legacy Portfolio goal-profile evidence…")).toBeInTheDocument();
+    });
+
+    it("does not hold a funding refresh behind a pending supplemental refresh", async () => {
+      allocationsMock.mockResolvedValue([cashAllocation]);
+      const pending = deferred<LegacyGoalProfileEvidenceResponse>();
+      legacyEvidenceMock
+        .mockImplementationOnce(configuredLegacyEvidence)
+        .mockReturnValueOnce(pending.promise);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      const remove = await screen.findByRole("button", { name: "Remove Wedding Savings as a funding source" });
+
+      fireEvent.click(remove);
+      await waitFor(() => expect(allocationsDeleteMock).toHaveBeenCalledWith(1, 100));
+      await waitFor(() => expect(contextMock).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(screen.getByRole("button", { name: "Remove Wedding Savings as a funding source" })).toBeEnabled());
+      expect(screen.getByLabelText("Factual valuation evidence")).toBeInTheDocument();
+      expect(screen.getByText("Loading legacy Portfolio goal-profile evidence…")).toBeInTheDocument();
+    });
+
+    it("fails closed locally when evidence differs from the accepted Goal Context", async () => {
+      allocationsMock.mockResolvedValue([portfolioAllocation]);
+      legacyEvidenceMock.mockImplementation(async () => {
+        const value = await configuredLegacyEvidence();
+        value.evidence_edges[0].designation.designated_amount += 1;
+        return value;
+      });
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      expect(await screen.findByText(/Goal Context is inconsistent/)).toBeInTheDocument();
+      expect(screen.queryByLabelText("Legacy Portfolio goal-profile evidence")).not.toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Retire by 55" })).toBeInTheDocument();
+    });
+
+    it("does not apply an older evidence response after a rapid route transition", async () => {
+      const oldEvidence = await configuredLegacyEvidence();
+      const pending = deferred<LegacyGoalProfileEvidenceResponse>();
+      legacyEvidenceMock.mockReturnValueOnce(pending.promise);
+      const { rerender } = render(<GoalDetailPage params={{ id: "1" }} />);
+
+      listMock.mockResolvedValue([goal, secondGoal]);
+      allocationsMock.mockImplementation(async (id) => id === 2 ? [{ ...portfolioAllocation, id: 202, wealth_goal_id: 2 }] : [portfolioAllocation]);
+      rerender(<GoalDetailPage params={{ id: "2" }} />);
+      expect(await screen.findByRole("heading", { name: "Buy a home" })).toBeInTheDocument();
+      expect(await screen.findByLabelText("Legacy evidence for designation 202")).toBeInTheDocument();
+
+      pending.resolve(oldEvidence);
+      await waitFor(() => expect(screen.queryByLabelText("Legacy evidence for designation 101")).not.toBeInTheDocument());
+      expect(screen.getByRole("heading", { name: "Buy a home" })).toBeInTheDocument();
+    });
   });
 
   it("renders goal metadata, target, progress, and funding gap", async () => {

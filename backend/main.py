@@ -23,6 +23,11 @@ from services.wealth_review import (
     build_factual_wealth_review,
     integrity_error_detail as wealth_review_integrity_error_detail,
 )
+from services.legacy_goal_profile_evidence import (
+    LegacyGoalProfileEvidenceIntegrityError,
+    build_legacy_goal_profile_evidence,
+    integrity_error_detail as legacy_goal_profile_evidence_integrity_error_detail,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -1570,6 +1575,24 @@ async def get_factual_wealth_review(include_archived: bool = False, db: Session 
         raise HTTPException(status_code=409, detail=integrity_error_detail())
     except WealthReviewIntegrityError:
         raise HTTPException(status_code=409, detail=wealth_review_integrity_error_detail())
+
+
+@app.get("/wealth-goals/legacy-profile-evidence")
+async def get_legacy_goal_profile_evidence(
+    include_archived: bool = False, db: Session = Depends(get_db)
+) -> dict:
+    """Return coexistence evidence for designated Portfolio legacy metadata."""
+    try:
+        return build_legacy_goal_profile_evidence(
+            db, _ws_id(db), include_archived=include_archived
+        )
+    except GoalContextIntegrityError:
+        raise HTTPException(status_code=409, detail=integrity_error_detail())
+    except LegacyGoalProfileEvidenceIntegrityError:
+        raise HTTPException(
+            status_code=409,
+            detail=legacy_goal_profile_evidence_integrity_error_detail(),
+        )
 
 
 @app.get("/wealth-goals/{goal_id}/context")

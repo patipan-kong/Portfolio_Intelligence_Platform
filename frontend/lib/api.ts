@@ -678,6 +678,86 @@ export interface FactualReviewResponse {
 export const getWealthFactualReview = (includeArchived = false) =>
   apiFetch<FactualReviewResponse>(`/wealth-goals/factual-review?include_archived=${includeArchived ? "true" : "false"}`);
 
+// ─── Designated Portfolio legacy goal-profile evidence (Phase 7.3B) ───────
+
+export type LegacyGoalProfileProjectionStatus = "UNSET" | "UNCHANGED" | "NORMALIZED" | "UNRECOGNIZED";
+export type LegacyGoalProfileEvidenceAvailability =
+  | "NO_FIELDS_RECORDED"
+  | "PARTIAL_FIELDS_RECORDED"
+  | "ALL_FIELDS_RECORDED";
+export type LegacyGoalTypeComparison =
+  | "SAME_RECORDED_CODE"
+  | "DIFFERENT_RECORDED_CODES"
+  | "NOT_COMPARABLE";
+export type LegacyGoalDateComparison =
+  | "SAME_RECORDED_DATE"
+  | "DIFFERENT_RECORDED_DATES"
+  | "NOT_COMPARABLE";
+
+export interface LegacyGoalProfileGoalTypeEvidence {
+  raw_value: string | null;
+  compatibility_projection: string | null;
+  compatibility_label_th: string | null;
+  projection_status: LegacyGoalProfileProjectionStatus;
+  comparison: LegacyGoalTypeComparison;
+  provenance: "PORTFOLIO.GOAL_TYPE";
+}
+
+export interface LegacyGoalProfilePriorityEvidence {
+  raw_value: string | null;
+  compatibility_projection: string | null;
+  compatibility_label_th: string | null;
+  projection_status: LegacyGoalProfileProjectionStatus;
+  provenance: "PORTFOLIO.GOAL_PRIORITY";
+}
+
+export interface LegacyGoalProfileTargetDateEvidence {
+  raw_value: string | null;
+  compatibility_projection: string | null;
+  projection_status: LegacyGoalProfileProjectionStatus;
+  comparison: LegacyGoalDateComparison;
+  provenance: "PORTFOLIO.GOAL_TARGET_DATE";
+}
+
+export interface LegacyGoalProfileTargetValueEvidence {
+  raw_value: number | null;
+  compatibility_projection: number | null;
+  projection_status: LegacyGoalProfileProjectionStatus;
+  unit_status: "UNSPECIFIED_IN_LEGACY_CONTRACT";
+  provenance: "PORTFOLIO.GOAL_TARGET_VALUE";
+}
+
+export interface LegacyGoalProfileEvidenceEdge {
+  wealth_goal: Omit<GoalContextGoal,
+    "allocations" | "designated_total" | "progress_ratio" | "progress_percent" | "funding_gap" | "fully_designated">;
+  designation: GoalContextAllocation;
+  portfolio: {
+    id: number;
+    name: string;
+  };
+  legacy_profile: {
+    evidence_availability: LegacyGoalProfileEvidenceAvailability;
+    goal_type: LegacyGoalProfileGoalTypeEvidence;
+    goal_priority: LegacyGoalProfilePriorityEvidence;
+    goal_target_date: LegacyGoalProfileTargetDateEvidence;
+    goal_target_value: LegacyGoalProfileTargetValueEvidence;
+  };
+}
+
+export interface LegacyGoalProfileEvidenceResponse {
+  contract_version: "wealth.legacy-profile-evidence.v1";
+  generated_at: string;
+  completeness: "COMPLETE";
+  scope: GoalContextScope;
+  goal_context: GoalContextResponse;
+  evidence_edges: LegacyGoalProfileEvidenceEdge[];
+}
+
+export const getLegacyGoalProfileEvidence = (includeArchived = false) =>
+  apiFetch<LegacyGoalProfileEvidenceResponse>(
+    `/wealth-goals/legacy-profile-evidence?include_archived=${includeArchived ? "true" : "false"}`,
+  );
+
 // ─── Goal Funding Allocations (Phase 6, Milestone 2) ───────────────────────
 // "This amount from this source is designated toward this goal." These
 // mutation contracts carry designation evidence only; Goal Context owns the

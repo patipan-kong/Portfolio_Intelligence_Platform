@@ -3,6 +3,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
+  LegacyGoalProfileEvidence,
+  type LegacyGoalProfileEvidenceState,
+} from "@/components/goals/LegacyGoalProfileEvidence";
+import {
   FundingSourcesSection,
   GoalSummary,
   GoalWhatIfSection,
@@ -21,6 +25,7 @@ import {
 } from "@/lib/goalFunding";
 import {
   createGoalScenario,
+  getLegacyGoalProfileEvidence,
   getWealthFactualReview,
   listCashAccounts,
   listGoalScenarios,
@@ -30,11 +35,16 @@ import {
   type FactualReviewResponse,
   type GoalContextGoal,
   type GoalFundingSourceKind,
+  type LegacyGoalProfileEvidenceResponse,
   type GoalScenario,
   type Portfolio,
   type WealthGoal,
 } from "@/lib/api";
 import { formatThb, priorityLabel, typeLabel } from "@/components/goals/GoalPlanningSections";
+import {
+  evidenceEdgesForGoal,
+  legacyEvidenceMatchesReferenceGoalContext,
+} from "@/lib/legacyGoalProfileEvidence";
 
 function goalRecordMatchesContext(record: WealthGoal, contextGoal: GoalContextGoal): boolean {
   return record.id === contextGoal.id
@@ -57,6 +67,7 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
   const [goal, setGoal] = useState<WealthGoal | null>(null);
   const [allGoals, setAllGoals] = useState<WealthGoal[]>([]);
   const [factualReview, setFactualReview] = useState<FactualReviewResponse | { error: string } | undefined>(undefined);
+  const [legacyEvidence, setLegacyEvidence] = useState<LegacyGoalProfileEvidenceResponse | { error: string } | undefined>(undefined);
   const [scenarios, setScenarios] = useState<ScenariosState>(undefined);
   // Lifted above GoalWhatIfSection so "Load scenario" can populate its
   // transient assumptions from the Saved Scenarios section.
@@ -73,13 +84,16 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
 
   const load = useCallback(async () => {
     const generation = ++loadGenerationRef.current;
-    contextRefreshGenerationRef.current += 1;
+    const contextGeneration = ++contextRefreshGenerationRef.current;
     const isCurrentLoad = () => loadGenerationRef.current === generation && activeGoalIdRef.current === goalId;
+    const isCurrentEvidenceLoad = () => isCurrentLoad()
+      && contextRefreshGenerationRef.current === contextGeneration;
     setLoading(true);
     setError("");
     setErrorGoalId(null);
     setGoal(null);
     setFactualReview(undefined);
+    setLegacyEvidence(undefined);
     setCashAccounts([]);
     setPortfolios([]);
     setSourceLoadError("");
@@ -98,8 +112,21 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
 
     try {
       // WealthGoal records remain the editable metadata source. The workspace
-      // Goal Context is fetched once and is the canonical source for the
-      // selected goal's allocations/derived facts and cross-goal aggregates.
+      // Factual review owns the accepted Goal Context used by this page. The
+      // supplemental legacy response embeds another copy that must agree
+      // structurally before any legacy evidence is rendered.
+      void Promise.resolve()
+        .then(() => getLegacyGoalProfileEvidence(true))
+        .then(
+          (result) => {
+            if (isCurrentEvidenceLoad()) setLegacyEvidence(result);
+          },
+          () => {
+            if (isCurrentEvidenceLoad()) {
+              setLegacyEvidence({ error: "Legacy Portfolio goal-profile evidence is unavailable." });
+            }
+          },
+        );
       const [goalsResult, contextResult] = await Promise.allSettled([
         listWealthGoals(true),
         getWealthFactualReview(true),
@@ -174,6 +201,19 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
         ? contextGoal
         : { error: "Goal Context is unavailable for this goal." };
 
+  const selectedLegacyEvidence: LegacyGoalProfileEvidenceState = legacyEvidence === undefined
+    ? undefined
+    : "error" in legacyEvidence
+      ? legacyEvidence
+      : factualReview === undefined
+        ? undefined
+        : contextMatchesGoals && contextResponse
+          && legacyEvidence.scope.kind === "WORKSPACE"
+          && legacyEvidence.scope.include_archived === true
+          && legacyEvidenceMatchesReferenceGoalContext(legacyEvidence, contextResponse)
+          ? evidenceEdgesForGoal(legacyEvidence, goalId) ?? { error: "Legacy Portfolio goal-profile evidence is unavailable because its Goal Context is inconsistent." }
+          : { error: "Legacy Portfolio goal-profile evidence is unavailable because its Goal Context is inconsistent." };
+
   const factualSourceByKey = useMemo(() => {
     const sources = new Map<FundingSourceKey, FactualReviewResponse["sources"][number]>();
     if (contextMatchesGoals) {
@@ -204,17 +244,29 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
     if (!Number.isInteger(goalId) || goalId <= 0) return;
     const generation = loadGenerationRef.current;
     const contextGeneration = ++contextRefreshGenerationRef.current;
+    const isCurrentRefresh = () => loadGenerationRef.current === generation
+      && contextRefreshGenerationRef.current === contextGeneration
+      && activeGoalIdRef.current === goalId;
     setFactualReview(undefined);
+    setLegacyEvidence(undefined);
+    void Promise.resolve()
+      .then(() => getLegacyGoalProfileEvidence(true))
+      .then(
+        (result) => {
+          if (isCurrentRefresh()) setLegacyEvidence(result);
+        },
+        () => {
+          if (isCurrentRefresh()) {
+            setLegacyEvidence({ error: "Legacy Portfolio goal-profile evidence is unavailable." });
+          }
+        },
+      );
     try {
       const result = await getWealthFactualReview(true);
-      if (loadGenerationRef.current !== generation
-        || contextRefreshGenerationRef.current !== contextGeneration
-        || activeGoalIdRef.current !== goalId) return;
+      if (!isCurrentRefresh()) return;
       setFactualReview(result);
     } catch (err) {
-      if (loadGenerationRef.current !== generation
-        || contextRefreshGenerationRef.current !== contextGeneration
-        || activeGoalIdRef.current !== goalId) return;
+      if (!isCurrentRefresh()) return;
       setFactualReview({ error: messageFor(err, "Unable to refresh factual wealth review.") });
     }
   }, [goalId]);
@@ -289,6 +341,7 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
               fundingHealthForSource={fundingHealthForSource}
             />
             <FactualValuationEvidence sources={selectedFactualSources} />
+            <LegacyGoalProfileEvidence state={selectedLegacyEvidence} />
           </section>
 
           <section className="bg-white border rounded-xl p-4 shadow-sm space-y-3" aria-labelledby="planning-heading">
