@@ -293,6 +293,65 @@ def build_goal_context(db: Session, workspace_id: int, goal_id: int) -> dict | N
     )
 
 
+def normalize_selected_goal_ids(goal_ids: Iterable[int]) -> list[int]:
+    """Deduplicate and ascending-sort an explicit goal-id selection."""
+    return sorted({int(goal_id) for goal_id in goal_ids})
+
+
+def selected_goal_ids_exist(db: Session, workspace_id: int, goal_ids: list[int]) -> bool:
+    """True iff every id names a WealthGoal owned by this workspace.
+
+    Deliberately selects only the id column: this is an existence/membership
+    check, not a read of any Goal fact, so it is safe to call before the
+    recommendation pipeline runs without risking non-influence. Missing and
+    foreign ids are indistinguishable — both simply fail to appear in the
+    workspace-scoped result set.
+    """
+    if not goal_ids:
+        return True
+    found = {
+        row[0]
+        for row in db.query(WealthGoal.id)
+        .filter(WealthGoal.id.in_(goal_ids), WealthGoal.workspace_id == workspace_id)
+        .all()
+    }
+    return found == set(goal_ids)
+
+
+def build_selected_goal_context(db: Session, workspace_id: int, goal_ids: list[int]) -> dict:
+    """Build a complete context for an explicitly selected set of goals.
+
+    Intended for post-decision capture only, after ``selected_goal_ids_exist``
+    has already confirmed every id. An empty selection yields an empty,
+    complete context. Archived goals remain valid for selection — this is a
+    read, and archive status gates new mutations elsewhere in this codebase,
+    never reads. Raises GoalContextIntegrityError if a previously-validated id
+    no longer resolves at capture time.
+    """
+    generated_at = datetime.now(timezone.utc)
+    normalized = normalize_selected_goal_ids(goal_ids)
+    goals: list[WealthGoal] = []
+    if normalized:
+        goals = (
+            db.query(WealthGoal)
+            .filter(WealthGoal.id.in_(normalized), WealthGoal.workspace_id == workspace_id)
+            .order_by(WealthGoal.name, WealthGoal.id)
+            .all()
+        )
+        if len(goals) != len(normalized):
+            _raise_integrity(
+                f"selected goal_ids={normalized} did not resolve to {len(normalized)} "
+                f"workspace goals at capture time"
+            )
+    return _assemble_context(
+        db,
+        goals,
+        workspace_id,
+        {"kind": "SELECTED", "goal_ids": normalized},
+        generated_at,
+    )
+
+
 def integrity_error_detail() -> dict:
     """Stable public error body used by the API boundary."""
     return {"code": "GOAL_CONTEXT_DATA_INTEGRITY", "message": _INTEGRITY_MESSAGE}

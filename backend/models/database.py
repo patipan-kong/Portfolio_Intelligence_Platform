@@ -795,6 +795,13 @@ class RecommendationSnapshot(Base):
     style_drift_json = Column(Text, nullable=True)                 # StyleDrift metrics at snapshot time
     scores_map_json = Column(Text, nullable=True)                  # per-symbol scores used by optimizer
     projected_allocations_json = Column(Text, nullable=True)       # L2 target allocations list
+    # Phase 7.4 — frozen wealth.decision-goal-context.v1 envelope for
+    # explicitly selected Wealth Goals. NULL = no capture attempted (goal_ids
+    # omitted, or capture failed); JSON with context_state=EMPTY = an
+    # explicit empty selection was captured; COMPLETE = a populated selection
+    # was captured. Constructed strictly after the recommendation exists —
+    # see ADR-008 — and never duplicated onto OptimizerHistory.
+    wealth_goal_context_json = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     workspace = relationship("Workspace", back_populates="recommendation_snapshots")

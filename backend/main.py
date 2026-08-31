@@ -17,6 +17,8 @@ from services.goal_context import (
     build_goal_context,
     build_workspace_goal_context,
     integrity_error_detail,
+    normalize_selected_goal_ids,
+    selected_goal_ids_exist,
 )
 from services.wealth_review import (
     WealthReviewIntegrityError,
@@ -3383,6 +3385,12 @@ class OptimizerRequest(BaseModel):
     provider: str | None = None
     model: str | None = None
     force_rebalance: bool = False   # bypass all stabilization filters when True
+    # Phase 7.4 (ADR-008): explicit Wealth Goal selection for context-only
+    # capture on the resulting RecommendationSnapshot. None = no capture
+    # attempted; [] = explicit empty selection; populated = normalized
+    # (deduplicated, ascending-sorted) before use. Never consulted by the
+    # recommendation pipeline itself — see analyze_optimizer.
+    goal_ids: list[int] | None = None
 
 
 @app.post("/analyze/optimizer")
@@ -3394,6 +3402,21 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
     """
     ws = _ws_id(db)
     portfolio = resolve_portfolio_or_404(db, body.portfolio_id, ws)
+
+    # ── Phase 7.4 (ADR-008) — pre-run Wealth Goal selection validation ───────
+    # Cheap existence/workspace-membership check only, before any holdings,
+    # watchlist, provider, or AI work, and before any OptimizerHistory row
+    # exists — mirroring the resolve_portfolio_or_404 fail-fast pattern
+    # immediately above. Inspects no Goal fact beyond id/workspace_id, so it
+    # cannot influence the recommendation. Missing and foreign ids are
+    # indistinguishable by construction; the full factual context is built
+    # only after the recommendation completes (see the decision-memory block
+    # below), never here.
+    selected_goal_ids: list[int] | None = None
+    if body.goal_ids is not None:
+        selected_goal_ids = normalize_selected_goal_ids(body.goal_ids)
+        if selected_goal_ids and not selected_goal_ids_exist(db, ws, selected_goal_ids):
+            raise HTTPException(status_code=404, detail="Wealth goal not found")
 
     holdings = db.query(PortfolioItem).filter(PortfolioItem.portfolio_id == body.portfolio_id).all()
     watchlist_items = db.query(Watchlist).filter(Watchlist.workspace_id == ws).all()
@@ -3829,6 +3852,24 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
             (h.get("shares") or 0) * (h.get("current_price") or h.get("avg_cost") or 0)
             for h in portfolio_data
         )
+
+        # ── Phase 7.4 (ADR-008) — post-run Wealth Goal context capture ────
+        # Constructed only now, strictly after the recommendation result
+        # already exists (L1/L2/L3, policy, constraints, scoring, consensus,
+        # and stabilization have all completed above). If selected_goal_ids
+        # is None, no capture was requested and this stays None (persisted
+        # as SQL NULL). If construction fails for a requested selection
+        # (persisted-data integrity issue discovered only at full-context
+        # time), the exception propagates to this block's except-clause
+        # below: no snapshot is written for this run at all, OptimizerHistory
+        # is preserved, and the optimizer response still succeeds — this is
+        # ordinary best-effort snapshot-capture failure, not a client-visible
+        # error, and never a post-commit 404/409.
+        wealth_goal_context = None
+        if selected_goal_ids is not None:
+            from services.decision_goal_context import build_decision_goal_context
+            wealth_goal_context = build_decision_goal_context(db, ws, selected_goal_ids)
+
         _snap_id = write_recommendation_snapshot(
             db,
             workspace_id=ws,
@@ -3838,6 +3879,7 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
             persona=persona,
             total_portfolio_value=total_mv,
             scores_map=enrich_scores_map_for_snapshot(db, scores_map),
+            wealth_goal_context=wealth_goal_context,
         )
         if _snap_id:
             result["recommendation_snapshot_id"] = _snap_id
@@ -6819,6 +6861,21 @@ async def get_recommendation_snapshot(snapshot_id: int, db: Session = Depends(ge
     if not snap:
         raise HTTPException(status_code=404, detail="Snapshot not found")
 
+    # Phase 7.4 (ADR-008) — isolated, self-contained historical read. Never
+    # flattened alongside policy/consensus/recommendation fields, never
+    # enriched from live WealthGoal/GoalFundingAllocation state. NULL means
+    # no capture was attempted (legacy or unscoped run); a malformed,
+    # unsupported-version, or malformed-shape persisted payload fails closed.
+    from services.decision_goal_context import (
+        DecisionGoalContextIntegrityError,
+        load_persisted_decision_context,
+        integrity_error_detail as decision_context_integrity_error_detail,
+    )
+    try:
+        decision_context = load_persisted_decision_context(snap.wealth_goal_context_json)
+    except DecisionGoalContextIntegrityError:
+        raise HTTPException(status_code=409, detail=decision_context_integrity_error_detail())
+
     return {
         "id": snap.id,
         "optimizer_history_id": snap.optimizer_history_id,
@@ -6836,6 +6893,7 @@ async def get_recommendation_snapshot(snapshot_id: int, db: Session = Depends(ge
         "style_drift": _json.loads(snap.style_drift_json) if snap.style_drift_json else None,
         "projected_allocations": _json.loads(snap.projected_allocations_json) if snap.projected_allocations_json else None,
         "created_at": snap.created_at.isoformat() + "Z" if snap.created_at else None,
+        "decision_context": decision_context,
     }
 
 
