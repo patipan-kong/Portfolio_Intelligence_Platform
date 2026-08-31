@@ -638,6 +638,46 @@ export const getWealthGoalsContext = (includeArchived = false) =>
 export const getWealthGoalContext = (goalId: number) =>
   apiFetch<GoalContextResponse>(`/wealth-goals/${goalId}/context`);
 
+// ─── Factual Wealth Review (Phase 7.3A) ───────────────────────────────
+
+export type FactualReviewValuationCompleteness = "COMPLETE" | "PARTIAL" | "UNAVAILABLE";
+export type FactualReviewValuationAvailability = "AVAILABLE" | "UNAVAILABLE";
+export type FactualReviewValuationQuality = "COMPLETE" | "PARTIAL" | "UNKNOWN";
+export type FactualReviewValuationProvenance = "CASH_ACCOUNT_CURRENT_BALANCE" | "PORTFOLIO_SNAPSHOT";
+export type FactualReviewCoverageStatus = "SUPPORTED" | "OVER_ALLOCATED" | "UNAVAILABLE";
+
+export interface FactualReviewSource {
+  source_kind: GoalFundingSourceKind;
+  source_id: number;
+  source_name: string;
+  source_is_archived: boolean;
+  currency: "THB";
+  designated_total_in_context_scope: number;
+  valuation: {
+    availability: FactualReviewValuationAvailability;
+    observed_value: number | null;
+    as_of: string | null;
+    provenance: FactualReviewValuationProvenance | null;
+    quality: FactualReviewValuationQuality | null;
+  };
+  designation_coverage: {
+    status: FactualReviewCoverageStatus;
+    shortfall: number | null;
+  };
+}
+
+export interface FactualReviewResponse {
+  contract_version: "wealth.factual-review.v1";
+  review_generated_at: string;
+  scope: GoalContextScope;
+  goal_context: GoalContextResponse;
+  valuation_completeness: FactualReviewValuationCompleteness;
+  sources: FactualReviewSource[];
+}
+
+export const getWealthFactualReview = (includeArchived = false) =>
+  apiFetch<FactualReviewResponse>(`/wealth-goals/factual-review?include_archived=${includeArchived ? "true" : "false"}`);
+
 // ─── Goal Funding Allocations (Phase 6, Milestone 2) ───────────────────────
 // "This amount from this source is designated toward this goal." These
 // mutation contracts carry designation evidence only; Goal Context owns the

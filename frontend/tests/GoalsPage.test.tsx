@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import GoalsPage from "@/app/goals/page";
 import type {
   CashAccount,
+  FactualReviewResponse,
   GoalContextResponse,
   GoalFundingAllocation,
   Portfolio,
@@ -13,7 +14,7 @@ import type {
 
 const {
   createWealthGoal,
-  getWealthGoalsContext,
+  getWealthFactualReview,
   listGoalFundingAllocations,
   listWealthGoals,
   updateWealthGoal,
@@ -23,7 +24,7 @@ const {
   portfolioState,
 } = vi.hoisted(() => ({
   createWealthGoal: vi.fn(),
-  getWealthGoalsContext: vi.fn(),
+  getWealthFactualReview: vi.fn(),
   listGoalFundingAllocations: vi.fn(),
   listWealthGoals: vi.fn(),
   updateWealthGoal: vi.fn(),
@@ -39,7 +40,7 @@ const {
 
 vi.mock("@/lib/api", () => ({
   createWealthGoal,
-  getWealthGoalsContext,
+  getWealthFactualReview,
   listGoalFundingAllocations,
   listWealthGoals,
   updateWealthGoal,
@@ -154,7 +155,7 @@ const listMock = vi.mocked(listWealthGoals);
 const createMock = vi.mocked(createWealthGoal);
 const updateMock = vi.mocked(updateWealthGoal);
 const allocationsMock = vi.mocked(listGoalFundingAllocations);
-const contextMock = vi.mocked(getWealthGoalsContext);
+const contextMock = vi.mocked(getWealthFactualReview);
 const cashAccountsMock = vi.mocked(listCashAccounts);
 const holdingsMock = vi.mocked(getHoldings);
 const pricesMock = vi.mocked(getPortfolioPrices);
@@ -234,6 +235,42 @@ async function configuredGoalContext(): Promise<GoalContextResponse> {
   };
 }
 
+async function configuredFactualReview(): Promise<FactualReviewResponse> {
+  const goal_context = await configuredGoalContext();
+  const accountImplementation = cashAccountsMock.getMockImplementation() as
+    ((includeArchived?: boolean) => Promise<CashAccount[]> | CashAccount[]) | undefined;
+  const accounts = accountImplementation ? await Promise.resolve(accountImplementation(true)).catch(() => []) : [];
+  return {
+    contract_version: "wealth.factual-review.v1",
+    review_generated_at: "2026-08-26T00:00:00Z",
+    scope: goal_context.scope,
+    goal_context,
+    valuation_completeness: "COMPLETE",
+    sources: goal_context.designation_by_source.map((designation) => {
+      const account = designation.source_kind === "CASH_ACCOUNT"
+        ? accounts.find((candidate) => candidate.id === designation.source_id)
+        : undefined;
+      const observed = account?.balance ?? null;
+      return {
+        ...designation,
+        valuation: {
+          availability: observed === null ? "UNAVAILABLE" as const : "AVAILABLE" as const,
+          observed_value: observed,
+          as_of: account?.updated_at ?? null,
+          provenance: account ? "CASH_ACCOUNT_CURRENT_BALANCE" as const : null,
+          quality: account ? "COMPLETE" as const : null,
+        },
+        designation_coverage: {
+          status: observed === null ? "UNAVAILABLE" as const
+            : observed < designation.designated_total_in_context_scope ? "OVER_ALLOCATED" as const : "SUPPORTED" as const,
+          shortfall: observed !== null && observed < designation.designated_total_in_context_scope
+            ? designation.designated_total_in_context_scope - observed : null,
+        },
+      };
+    }),
+  };
+}
+
 describe("GoalsPage", () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -241,7 +278,7 @@ describe("GoalsPage", () => {
     createMock.mockResolvedValue(goal);
     updateMock.mockResolvedValue(goal);
     allocationsMock.mockResolvedValue([]);
-    contextMock.mockImplementation(configuredGoalContext);
+    contextMock.mockImplementation(configuredFactualReview);
     cashAccountsMock.mockResolvedValue([]);
     holdingsMock.mockResolvedValue([]);
     pricesMock.mockResolvedValue([]);
@@ -292,8 +329,8 @@ describe("GoalsPage", () => {
     listMock.mockResolvedValue([{ ...goal, target_amount: 1000000 }]);
     allocationsMock.mockResolvedValue([]);
     contextMock.mockImplementation(async () => {
-      const response = await configuredGoalContext();
-      Object.assign(response.goals[0], {
+      const response = await configuredFactualReview();
+      Object.assign(response.goal_context.goals[0], {
         designated_total: 123456,
         progress_ratio: 0.123456,
         progress_percent: 47.6,
@@ -312,14 +349,27 @@ describe("GoalsPage", () => {
   it("marks a record/context generation mismatch unavailable instead of showing mixed facts", async () => {
     listMock.mockResolvedValue([goal]);
     contextMock.mockImplementation(async () => {
-      const response = await configuredGoalContext();
-      response.goals[0].updated_at = "2026-08-26T00:00:01";
+      const response = await configuredFactualReview();
+      response.goal_context.goals[0].updated_at = "2026-08-26T00:00:01";
       return response;
     });
     render(<GoalsPage />);
 
     expect(await screen.findByText("Goal progress unavailable — funding data failed to load.")).toBeInTheDocument();
     expect(screen.getByText("Funding source health is unavailable — Goal Context evidence is incomplete.")).toBeInTheDocument();
+  });
+
+  it("fails closed when factual-review source facts disagree with embedded Goal Context", async () => {
+    listMock.mockResolvedValue([goal]);
+    allocationsMock.mockResolvedValue([cashAllocation]);
+    contextMock.mockImplementation(async () => {
+      const response = await configuredFactualReview();
+      response.sources[0].designated_total_in_context_scope += 1;
+      return response;
+    });
+    render(<GoalsPage />);
+    expect(await screen.findByText("Funding source health is unavailable — Goal Context evidence is incomplete.")).toBeInTheDocument();
+    expect(screen.queryByText(/Funding health: Supported/)).not.toBeInTheDocument();
   });
 
   it("renders an honest no-target-date summary", async () => {
@@ -463,7 +513,7 @@ describe("GoalsPage", () => {
       expect(allocationsMock).not.toHaveBeenCalled();
 
       expect(await screen.findByText("฿150,000.00 designated")).toBeInTheDocument();
-      expect(screen.getByText((_, el) => el?.textContent === "Current value ฿200,000.00 · Funding health: Supported")).toBeInTheDocument();
+      expect(screen.getByText("Observed value ฿200,000.00 · Funding health: Supported · Cash account balance as of 2026-01-01T00:00:00 · Quality: COMPLETE")).toBeInTheDocument();
     });
 
     it("includes an archived goal's allocation in cross-goal aggregation, and shows a source referenced only by an archived goal", async () => {
@@ -481,9 +531,11 @@ describe("GoalsPage", () => {
       render(<GoalsPage />);
       await screen.findByText("Retire by 55");
 
-      // Portfolio 9: designated 200,000, current value = 50,000 cash + 10*200 = 52,000 -> over-allocated by 148,000.
+      // The server review owns portfolio valuation; browser holdings/prices are never consulted.
       expect(await screen.findByText("฿200,000.00 designated")).toBeInTheDocument();
-      expect(screen.getByText((_, el) => el?.textContent === "Current value ฿52,000.00 · Over-allocated by ฿148,000.00")).toBeInTheDocument();
+      expect(screen.getByText("Observed value unavailable · Funding health unavailable · Valuation evidence unavailable")).toBeInTheDocument();
+      expect(holdingsMock).not.toHaveBeenCalled();
+      expect(pricesMock).not.toHaveBeenCalled();
 
       // Cash 7 is referenced only by the archived goal, and still appears.
       expect(screen.getByText((_, el) => el?.textContent === "Archived-Only Cash (Cash Account, archived)")).toBeInTheDocument();
@@ -538,7 +590,7 @@ describe("GoalsPage", () => {
       expect(screen.queryByText(/Funding health: Supported/)).not.toBeInTheDocument();
     });
 
-    it("computes canonical portfolio value (cash + holdings) with exactly one holdings and one prices request", async () => {
+    it("does not compute portfolio value or request holdings and prices", async () => {
       listMock.mockResolvedValue([goal]);
       allocationsMock.mockResolvedValue([
         makeAllocation({ id: 1, wealth_goal_id: 1, allocated_amount: 40000, source_kind: "PORTFOLIO", cash_account_id: null, portfolio_id: 9, source_name: "Growth Portfolio" }),
@@ -550,14 +602,12 @@ describe("GoalsPage", () => {
       render(<GoalsPage />);
       await screen.findByText("Retire by 55");
 
-      // 10,000 cash + 5*300 = 1,500 holdings = 11,500 current value; 40,000 designated -> over-allocated by 28,500.
-      expect(await screen.findByText((_, el) => el?.textContent === "Current value ฿11,500.00 · Over-allocated by ฿28,500.00")).toBeInTheDocument();
-      expect(holdingsMock).toHaveBeenCalledTimes(1);
-      expect(pricesMock).toHaveBeenCalledTimes(1);
-      expect(holdingsMock).toHaveBeenCalledWith(9);
+      expect(await screen.findByText("Observed value unavailable · Funding health unavailable · Valuation evidence unavailable")).toBeInTheDocument();
+      expect(holdingsMock).not.toHaveBeenCalled();
+      expect(pricesMock).not.toHaveBeenCalled();
     });
 
-    it("issues exactly one holdings and one prices request per referenced portfolio when several are referenced", async () => {
+    it("issues no holdings or prices requests when several portfolios are referenced", async () => {
       const goalB = makeGoal({ id: 2, name: "House Down Payment", target_amount: 500000 });
       listMock.mockResolvedValue([goal, goalB]);
       allocationsMock.mockImplementation(async (goalId: number) => {
@@ -589,12 +639,9 @@ describe("GoalsPage", () => {
 
       render(<GoalsPage />);
       await screen.findByText("Retire by 55");
-      await waitFor(() => expect(screen.getAllByText(/Funding health: Supported/)).toHaveLength(3));
-
-      expect(holdingsMock).toHaveBeenCalledTimes(3);
-      expect(pricesMock).toHaveBeenCalledTimes(3);
-      expect(holdingsMock.mock.calls.map((call) => call[0]).sort((a, b) => a - b)).toEqual([9, 10, 11]);
-      expect(pricesMock.mock.calls.map((call) => call[0]).sort((a, b) => a - b)).toEqual([9, 10, 11]);
+      expect(await screen.findAllByText("Observed value unavailable · Funding health unavailable · Valuation evidence unavailable")).toHaveLength(3);
+      expect(holdingsMock).not.toHaveBeenCalled();
+      expect(pricesMock).not.toHaveBeenCalled();
     });
 
     it("isolates a single portfolio's valuation failure without affecting other sources", async () => {
@@ -613,8 +660,9 @@ describe("GoalsPage", () => {
       render(<GoalsPage />);
       await screen.findByText("Retire by 55");
 
-      expect(await screen.findByText((_, el) => el?.textContent === "Current value ฿50,000.00 · Funding health: Supported")).toBeInTheDocument();
-      expect(screen.getByText("Current value unavailable · Funding health unavailable")).toBeInTheDocument();
+      expect(await screen.findAllByText("Observed value unavailable · Funding health unavailable · Valuation evidence unavailable")).toHaveLength(2);
+      expect(holdingsMock).not.toHaveBeenCalled();
+      expect(pricesMock).not.toHaveBeenCalled();
     });
 
     it("isolates a Cash Account catalog failure to Cash rows only", async () => {
@@ -631,8 +679,7 @@ describe("GoalsPage", () => {
       render(<GoalsPage />);
       await screen.findByText("Retire by 55");
 
-      expect(await screen.findByText((_, el) => el?.textContent === "Current value ฿10,000.00 · Funding health: Supported")).toBeInTheDocument();
-      expect(screen.getByText("Current value unavailable · Funding health unavailable")).toBeInTheDocument();
+      expect(await screen.findAllByText("Observed value unavailable · Funding health unavailable · Valuation evidence unavailable")).toHaveLength(2);
     });
 
     it("isolates a Portfolio catalog failure to Portfolio rows only, and never calls holdings/prices", async () => {
@@ -648,8 +695,8 @@ describe("GoalsPage", () => {
       render(<GoalsPage />);
       await screen.findByText("Retire by 55");
 
-      expect(await screen.findByText((_, el) => el?.textContent === "Current value ฿10,000.00 · Funding health: Supported")).toBeInTheDocument();
-      expect(screen.getByText("Current value unavailable · Funding health unavailable")).toBeInTheDocument();
+      expect(await screen.findByText("Observed value ฿10,000.00 · Funding health: Supported · Cash account balance as of 2026-01-01T00:00:00 · Quality: COMPLETE")).toBeInTheDocument();
+      expect(screen.getByText("Observed value unavailable · Funding health unavailable · Valuation evidence unavailable")).toBeInTheDocument();
       expect(holdingsMock).not.toHaveBeenCalled();
       expect(pricesMock).not.toHaveBeenCalled();
     });

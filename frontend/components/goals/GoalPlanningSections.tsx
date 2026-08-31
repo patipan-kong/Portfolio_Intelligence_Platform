@@ -2,7 +2,6 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import {
-  computeSourceFundingHealth,
   sourceKey,
   type SourceFundingHealth,
 } from "@/lib/goalFunding";
@@ -143,16 +142,16 @@ export function GoalFundingSummary({
 
 export function FundingHealthRow({ health }: { health: SourceFundingHealth }) {
   if (health.status === "UNAVAILABLE") {
-    return <p className="text-xs text-gray-400 mt-0.5">Current value unavailable · Funding health unavailable</p>;
+    return <p className="text-xs text-gray-400 mt-0.5">Observed value unavailable · Funding health unavailable</p>;
   }
   if (health.status === "OVER_ALLOCATED") {
     return (
       <p className="text-xs text-amber-600 mt-0.5">
-        Current value {formatThb(health.currentValue as number)} · Attention: exceeds current value by {formatThb(health.shortfall as number)}
+        Observed value {formatThb(health.currentValue as number)} · Attention: exceeds observed value by {formatThb(health.shortfall as number)}
       </p>
     );
   }
-  return <p className="text-xs text-gray-500 mt-0.5">Current value {formatThb(health.currentValue as number)} · Funding health: Supported</p>;
+  return <p className="text-xs text-gray-500 mt-0.5">Observed value {formatThb(health.currentValue as number)} · Funding health: Supported</p>;
 }
 
 export function FundingSourcesSection({

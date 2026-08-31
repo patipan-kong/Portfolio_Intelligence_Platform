@@ -18,6 +18,11 @@ from services.goal_context import (
     build_workspace_goal_context,
     integrity_error_detail,
 )
+from services.wealth_review import (
+    WealthReviewIntegrityError,
+    build_factual_wealth_review,
+    integrity_error_detail as wealth_review_integrity_error_detail,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -1554,6 +1559,17 @@ async def get_workspace_goal_context(include_archived: bool = False, db: Session
         return build_workspace_goal_context(db, _ws_id(db), include_archived=include_archived)
     except GoalContextIntegrityError:
         raise HTTPException(status_code=409, detail=integrity_error_detail())
+
+
+@app.get("/wealth-goals/factual-review")
+async def get_factual_wealth_review(include_archived: bool = False, db: Session = Depends(get_db)) -> dict:
+    """Return DB-only as-of valuation evidence for selected goal designations."""
+    try:
+        return build_factual_wealth_review(db, _ws_id(db), include_archived=include_archived)
+    except GoalContextIntegrityError:
+        raise HTTPException(status_code=409, detail=integrity_error_detail())
+    except WealthReviewIntegrityError:
+        raise HTTPException(status_code=409, detail=wealth_review_integrity_error_detail())
 
 
 @app.get("/wealth-goals/{goal_id}/context")

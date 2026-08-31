@@ -12,29 +12,29 @@ import {
   messageFor,
 } from "@/components/goals/GoalPlanningSections";
 import {
-  computeSourceFundingHealth,
   sourceKey,
+  factualReviewMatchesGoalContext,
+  sourceFundingHealth,
+  unavailableSourceFundingHealth,
+  type FundingSourceKey,
   type SourceFundingHealth,
 } from "@/lib/goalFunding";
-import { computePortfolioCurrentValue } from "@/lib/wealthOverview";
 import {
   createGoalScenario,
-  getWealthGoalsContext,
-  getHoldings,
-  getPortfolioPrices,
+  getWealthFactualReview,
   listCashAccounts,
   listGoalScenarios,
   listPortfolios,
   listWealthGoals,
   type CashAccount,
+  type FactualReviewResponse,
   type GoalContextGoal,
-  type GoalContextResponse,
   type GoalFundingSourceKind,
   type GoalScenario,
   type Portfolio,
   type WealthGoal,
 } from "@/lib/api";
-import { priorityLabel, typeLabel } from "@/components/goals/GoalPlanningSections";
+import { formatThb, priorityLabel, typeLabel } from "@/components/goals/GoalPlanningSections";
 
 function goalRecordMatchesContext(record: WealthGoal, contextGoal: GoalContextGoal): boolean {
   return record.id === contextGoal.id
@@ -56,7 +56,7 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
   activeGoalIdRef.current = goalId;
   const [goal, setGoal] = useState<WealthGoal | null>(null);
   const [allGoals, setAllGoals] = useState<WealthGoal[]>([]);
-  const [goalContext, setGoalContext] = useState<GoalContextResponse | { error: string } | undefined>(undefined);
+  const [factualReview, setFactualReview] = useState<FactualReviewResponse | { error: string } | undefined>(undefined);
   const [scenarios, setScenarios] = useState<ScenariosState>(undefined);
   // Lifted above GoalWhatIfSection so "Load scenario" can populate its
   // transient assumptions from the Saved Scenarios section.
@@ -65,9 +65,7 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
   const [whatIfMonthlyContribution, setWhatIfMonthlyContribution] = useState("");
   const [whatIfAnnualReturnPct, setWhatIfAnnualReturnPct] = useState("0");
   const [cashAccounts, setCashAccounts] = useState<CashAccount[]>([]);
-  const [allCashAccounts, setAllCashAccounts] = useState<CashAccount[]>([]);
   const [portfolios, setPortfolios] = useState<Portfolio[]>([]);
-  const [portfolioValueById, setPortfolioValueById] = useState<Record<number, number | "error" | undefined>>({});
   const [sourceLoadError, setSourceLoadError] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -81,8 +79,9 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
     setError("");
     setErrorGoalId(null);
     setGoal(null);
-    setGoalContext(undefined);
-    setPortfolioValueById({});
+    setFactualReview(undefined);
+    setCashAccounts([]);
+    setPortfolios([]);
     setSourceLoadError("");
     setScenarios(undefined);
     setWhatIfExpanded(false);
@@ -103,7 +102,7 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
       // selected goal's allocations/derived facts and cross-goal aggregates.
       const [goalsResult, contextResult] = await Promise.allSettled([
         listWealthGoals(true),
-        getWealthGoalsContext(true),
+        getWealthFactualReview(true),
       ]);
       if (!isCurrentLoad()) return;
       if (goalsResult.status === "rejected") throw goalsResult.reason;
@@ -118,22 +117,20 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
       }
 
       setGoal(selectedGoal);
-      setGoalContext(contextResult.status === "fulfilled"
+      setFactualReview(contextResult.status === "fulfilled"
         ? contextResult.value
-        : { error: messageFor(contextResult.reason, "Unable to load Goal Context.") });
+        : { error: messageFor(contextResult.reason, "Unable to load factual wealth review.") });
 
-      const [cashResult, allCashResult, portfolioResult, scenariosResult] = await Promise.allSettled([
+      const [cashResult, portfolioResult, scenariosResult] = await Promise.allSettled([
         listCashAccounts(false),
-        listCashAccounts(true),
         listPortfolios(),
         listGoalScenarios(goalId, true),
       ]);
       if (!isCurrentLoad()) return;
-      if (cashResult.status === "fulfilled") setCashAccounts(cashResult.value);
-      if (allCashResult.status === "fulfilled") setAllCashAccounts(allCashResult.value);
-      if (portfolioResult.status === "fulfilled") setPortfolios(portfolioResult.value);
-      if (cashResult.status === "rejected" || allCashResult.status === "rejected" || portfolioResult.status === "rejected") {
-        setSourceLoadError("Some funding source data could not be loaded; affected Funding Health is unavailable.");
+      setCashAccounts(cashResult.status === "fulfilled" ? cashResult.value : []);
+      setPortfolios(portfolioResult.status === "fulfilled" ? portfolioResult.value : []);
+      if (cashResult.status === "rejected" || portfolioResult.status === "rejected") {
+        setSourceLoadError("Some funding source catalogs could not be loaded; allocation editing may be limited.");
       }
       setScenarios(scenariosResult.status === "fulfilled"
         ? scenariosResult.value
@@ -152,9 +149,14 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
     void load();
   }, [load]);
 
-  const contextResponse = goalContext && "goals" in goalContext ? goalContext : null;
+  const reviewResponse = factualReview && "goal_context" in factualReview ? factualReview : null;
+  const contextResponse = reviewResponse?.goal_context ?? null;
   const contextGoal = contextResponse?.goals.find((candidate) => candidate.id === goalId);
   const contextMatchesGoals = contextResponse !== null
+    && reviewResponse?.contract_version === "wealth.factual-review.v1"
+    && reviewResponse.scope.kind === "WORKSPACE"
+    && reviewResponse.scope.include_archived === true
+    && factualReviewMatchesGoalContext(reviewResponse)
     && contextResponse.contract_version === "wealth.goal-context.v1"
     && contextResponse.completeness === "COMPLETE"
     && contextResponse.scope.kind === "WORKSPACE"
@@ -164,84 +166,56 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
       const contextCandidate = contextResponse.goals.find((contextGoal) => contextGoal.id === candidate.id);
       return contextCandidate !== undefined && goalRecordMatchesContext(candidate, contextCandidate);
     });
-  const selectedGoalContext: GoalContextState = goalContext === undefined
+  const selectedGoalContext: GoalContextState = factualReview === undefined
     ? undefined
-    : goalContext && "error" in goalContext
-      ? goalContext
+    : factualReview && "error" in factualReview
+      ? factualReview
       : contextMatchesGoals && contextGoal
         ? contextGoal
         : { error: "Goal Context is unavailable for this goal." };
 
-  const referencedPortfolioIds = useMemo(() => {
-    const ids = new Set<number>();
-    for (const designation of contextResponse?.designation_by_source ?? []) {
-      if (designation.source_kind === "PORTFOLIO") ids.add(designation.source_id);
+  const factualSourceByKey = useMemo(() => {
+    const sources = new Map<FundingSourceKey, FactualReviewResponse["sources"][number]>();
+    if (contextMatchesGoals) {
+      for (const source of reviewResponse?.sources ?? []) {
+        sources.set(sourceKey(source.source_kind, source.source_id), source);
+      }
     }
-    return ids;
-  }, [contextResponse]);
+    return sources;
+  }, [contextMatchesGoals, reviewResponse]);
 
-  useEffect(() => {
-    let cancelled = false;
-    if (!contextMatchesGoals || !contextGoal || !contextResponse) return () => { cancelled = true; };
-    for (const portfolioId of referencedPortfolioIds) {
-      if (portfolioValueById[portfolioId] !== undefined) continue;
-      const portfolio = portfolios.find((item) => item.id === portfolioId);
-      if (!portfolio) continue;
-      void (async () => {
-        try {
-          const [items, prices] = await Promise.all([getHoldings(portfolioId), getPortfolioPrices(portfolioId)]);
-          if (cancelled) return;
-          const { value } = computePortfolioCurrentValue(portfolio, items, prices);
-          setPortfolioValueById((prev) => ({ ...prev, [portfolioId]: value }));
-        } catch {
-          if (cancelled) return;
-          setPortfolioValueById((prev) => ({ ...prev, [portfolioId]: "error" }));
-        }
-      })();
-    }
-    return () => { cancelled = true; };
-    // The referenced IDs and portfolio catalogue are the request inputs. The
-    // value map is intentionally omitted to avoid restarting in-flight reads.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [contextGoal, contextMatchesGoals, contextResponse, referencedPortfolioIds, portfolios]);
-
-  const designatedBySource = useMemo(() => {
-    const totals = new Map<string, number>();
-    for (const designation of contextResponse?.designation_by_source ?? []) {
-      totals.set(sourceKey(designation.source_kind, designation.source_id), designation.designated_total_in_context_scope);
-    }
-    return totals;
-  }, [contextResponse]);
+  const selectedFactualSources = useMemo(() => {
+    if (!contextGoal || !contextMatchesGoals) return [];
+    const keys = new Set(contextGoal.allocations.map((allocation) => sourceKey(allocation.source_kind, allocation.source_id)));
+    return [...factualSourceByKey.entries()]
+      .filter(([key]) => keys.has(key))
+      .map(([, source]) => source);
+  }, [contextGoal, contextMatchesGoals, factualSourceByKey]);
 
   function fundingHealthForSource(kind: GoalFundingSourceKind, id: number): SourceFundingHealth {
     // A missing or mismatched Goal Context means the cross-goal total is not
     // known. Keep the health claim unavailable instead of treating it as 0.
-    if (!contextMatchesGoals || !contextGoal || !contextResponse) return computeSourceFundingHealth(0, null);
-    const totalDesignated = designatedBySource.get(sourceKey(kind, id));
-    if (totalDesignated === undefined) return computeSourceFundingHealth(0, null);
-    const currentValue = kind === "CASH_ACCOUNT"
-      ? allCashAccounts.find((account) => account.id === id)?.balance ?? null
-      : (typeof portfolioValueById[id] === "number" ? portfolioValueById[id] as number : null);
-    return computeSourceFundingHealth(totalDesignated, currentValue);
+    if (!contextMatchesGoals || !contextGoal || !contextResponse) return unavailableSourceFundingHealth();
+    const source = factualSourceByKey.get(sourceKey(kind, id));
+    return source ? sourceFundingHealth(source) : unavailableSourceFundingHealth();
   }
 
   const reloadGoalContext = useCallback(async () => {
     if (!Number.isInteger(goalId) || goalId <= 0) return;
     const generation = loadGenerationRef.current;
     const contextGeneration = ++contextRefreshGenerationRef.current;
-    setGoalContext(undefined);
-    setPortfolioValueById({});
+    setFactualReview(undefined);
     try {
-      const result = await getWealthGoalsContext(true);
+      const result = await getWealthFactualReview(true);
       if (loadGenerationRef.current !== generation
         || contextRefreshGenerationRef.current !== contextGeneration
         || activeGoalIdRef.current !== goalId) return;
-      setGoalContext(result);
+      setFactualReview(result);
     } catch (err) {
       if (loadGenerationRef.current !== generation
         || contextRefreshGenerationRef.current !== contextGeneration
         || activeGoalIdRef.current !== goalId) return;
-      setGoalContext({ error: messageFor(err, "Unable to refresh Goal Context.") });
+      setFactualReview({ error: messageFor(err, "Unable to refresh factual wealth review.") });
     }
   }, [goalId]);
 
@@ -314,6 +288,7 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
               onReload={reloadGoalContext}
               fundingHealthForSource={fundingHealthForSource}
             />
+            <FactualValuationEvidence sources={selectedFactualSources} />
           </section>
 
           <section className="bg-white border rounded-xl p-4 shadow-sm space-y-3" aria-labelledby="planning-heading">
@@ -354,5 +329,24 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
         </article>
       )}
     </main>
+  );
+}
+
+function FactualValuationEvidence({ sources }: { sources: FactualReviewResponse["sources"] }) {
+  if (sources.length === 0) return null;
+  return (
+    <div className="pt-3 border-t space-y-1" aria-label="Factual valuation evidence">
+      <h3 className="text-sm font-semibold text-gray-700">Valuation evidence</h3>
+      {sources.map((source) => (
+        <p key={sourceKey(source.source_kind, source.source_id)} className="text-xs text-gray-500">
+          {source.source_name}{source.source_is_archived ? " (archived)" : ""}: {source.valuation.observed_value === null
+            ? "observed value unavailable"
+            : `${formatThb(source.valuation.observed_value)} observed`}
+          {source.valuation.provenance ? ` · ${source.valuation.provenance}` : ""}
+          {source.valuation.as_of ? ` · as of ${source.valuation.as_of}` : ""}
+          {source.valuation.quality ? ` · quality ${source.valuation.quality}` : ""}
+        </p>
+      ))}
+    </div>
   );
 }

@@ -1,19 +1,14 @@
-// Funding Health — pure composition over server Goal Context source
-// designation facts and live source values.
-//
-// Three separate claims, deliberately never conflated:
-//   Goal Target    — WealthGoal.target_amount (owned by Goal Context)
-//   Goal Funding   — Goal Context designated_total (owned by Goal Context)
-//   Source Capacity — a source's current value (CashAccount.balance, or
-//                      derived live Portfolio value)
-//
-// Goal progress/funding gap are returned by Goal Context and never depend on
-// a source's current value. This module keeps only the separate, source-centric
-// Funding Health comparison. A source over-allocated across multiple goals does
-// not tell the system which goal's designation to reduce, so over-allocation is
-// surfaced as a fact, never resolved automatically.
+// Funding Health presentation adapters over the server-owned factual review.
+// This module deliberately performs no designation, valuation, coverage, or
+// shortfall arithmetic.
 
-import type { GoalContextSourceDesignation, GoalFundingSourceKind } from "@/lib/api";
+import type {
+  FactualReviewSource,
+  FactualReviewResponse,
+  FactualReviewValuationProvenance,
+  FactualReviewValuationQuality,
+  GoalFundingSourceKind,
+} from "@/lib/api";
 
 export type FundingSourceKey = `${GoalFundingSourceKind}:${number}`;
 
@@ -25,28 +20,12 @@ export type FundingHealthStatus = "SUPPORTED" | "OVER_ALLOCATED" | "UNAVAILABLE"
 
 export interface SourceFundingHealth {
   totalDesignated: number;
-  /** null whenever status is UNAVAILABLE — current value could not be honestly determined. */
   currentValue: number | null;
   status: FundingHealthStatus;
-  /** totalDesignated - currentValue; set only when status is OVER_ALLOCATED. */
   shortfall: number | null;
-}
-
-/**
- * `currentValue === null`, non-finite, or negative all mean "cannot honestly
- * determine this source's current value" and collapse to UNAVAILABLE — never
- * treated as zero capacity (a real zero balance is a valid, finite input and
- * is NOT unavailable). Allocations are never mutated, clamped, or
- * redistributed here — this only reports the comparison.
- */
-export function computeSourceFundingHealth(totalDesignated: number, currentValue: number | null): SourceFundingHealth {
-  if (currentValue === null || !Number.isFinite(currentValue) || currentValue < 0) {
-    return { totalDesignated, currentValue: null, status: "UNAVAILABLE", shortfall: null };
-  }
-  if (totalDesignated > currentValue) {
-    return { totalDesignated, currentValue, status: "OVER_ALLOCATED", shortfall: totalDesignated - currentValue };
-  }
-  return { totalDesignated, currentValue, status: "SUPPORTED", shortfall: null };
+  asOf: string | null;
+  provenance: FactualReviewValuationProvenance | null;
+  quality: FactualReviewValuationQuality | null;
 }
 
 export interface SourceFundingOverviewRow {
@@ -58,41 +37,71 @@ export interface SourceFundingOverviewRow {
   health: SourceFundingHealth;
 }
 
-/**
- * Workspace-level, goal-independent view of every distinct funding source.
- * The server Goal Context is the authority for designation aggregation; this
- * function only combines those already-aggregated facts with live source
- * values and applies the unchanged Funding Health comparison.
- *
- * `currentValueBySource` uses `null` (or a missing key) for "unavailable" —
- * never a stand-in for zero — and flows straight into
- * computeSourceFundingHealth unchanged.
- */
-export function buildSourceFundingOverview(
-  designations: GoalContextSourceDesignation[],
-  currentValueBySource: ReadonlyMap<FundingSourceKey, number | null>
-): SourceFundingOverviewRow[] {
-  const rows: SourceFundingOverviewRow[] = designations.map((designation) => {
-    const sourceKind = designation.source_kind;
-    const sourceId = designation.source_id;
-    const key = sourceKey(sourceKind, sourceId);
-    const totalDesignated = designation.designated_total_in_context_scope;
-    const currentValue = currentValueBySource.get(key) ?? null;
-    return {
-      key,
-      sourceKind,
-      sourceId,
-      sourceName: designation.source_name || "Unknown source",
-      sourceIsArchived: designation.source_is_archived,
-      health: computeSourceFundingHealth(totalDesignated, currentValue),
-    };
-  });
+export function sourceFundingHealth(source: FactualReviewSource): SourceFundingHealth {
+  return {
+    totalDesignated: source.designated_total_in_context_scope,
+    currentValue: source.valuation.observed_value,
+    status: source.designation_coverage.status,
+    shortfall: source.designation_coverage.shortfall,
+    asOf: source.valuation.as_of,
+    provenance: source.valuation.provenance,
+    quality: source.valuation.quality,
+  };
+}
+
+/** Structural coherence only; coverage and shortfall remain opaque server facts. */
+export function factualReviewMatchesGoalContext(review: FactualReviewResponse): boolean {
+  const context = review.goal_context;
+  if (review.scope.kind !== context.scope.kind
+    || review.scope.include_archived !== context.scope.include_archived
+    || review.scope.goal_id !== context.scope.goal_id
+    || review.sources.length !== context.designation_by_source.length) return false;
+
+  const contextByKey = new Map(context.designation_by_source.map((source) => [
+    sourceKey(source.source_kind, source.source_id),
+    source,
+  ]));
+  if (contextByKey.size !== context.designation_by_source.length) return false;
+  const seen = new Set<FundingSourceKey>();
+  for (const source of review.sources) {
+    const key = sourceKey(source.source_kind, source.source_id);
+    const designation = contextByKey.get(key);
+    if (seen.has(key) || !designation
+      || source.source_name !== designation.source_name
+      || source.source_is_archived !== designation.source_is_archived
+      || source.currency !== designation.currency
+      || source.designated_total_in_context_scope !== designation.designated_total_in_context_scope) return false;
+    seen.add(key);
+  }
+  return true;
+}
+
+export function unavailableSourceFundingHealth(): SourceFundingHealth {
+  return {
+    totalDesignated: 0,
+    currentValue: null,
+    status: "UNAVAILABLE",
+    shortfall: null,
+    asOf: null,
+    provenance: null,
+    quality: null,
+  };
+}
+
+export function buildSourceFundingOverview(sources: FactualReviewSource[]): SourceFundingOverviewRow[] {
+  const rows = sources.map((source) => ({
+    key: sourceKey(source.source_kind, source.source_id),
+    sourceKind: source.source_kind,
+    sourceId: source.source_id,
+    sourceName: source.source_name || "Unknown source",
+    sourceIsArchived: source.source_is_archived,
+    health: sourceFundingHealth(source),
+  }));
 
   rows.sort((a, b) => {
     if (a.sourceName !== b.sourceName) return a.sourceName < b.sourceName ? -1 : 1;
     if (a.sourceKind !== b.sourceKind) return a.sourceKind < b.sourceKind ? -1 : 1;
     return a.sourceId - b.sourceId;
   });
-
   return rows;
 }

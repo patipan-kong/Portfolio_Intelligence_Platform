@@ -7,7 +7,7 @@ import {
   deleteGoalFundingAllocation,
   getHoldings,
   getPortfolioPrices,
-  getWealthGoalsContext,
+  getWealthFactualReview,
   listCashAccounts,
   listGoalFundingAllocations,
   listGoalScenarios,
@@ -16,6 +16,7 @@ import {
   updateGoalFundingAllocation,
   updateGoalScenario,
   type CashAccount,
+  type FactualReviewResponse,
   type GoalContextResponse,
   type GoalFundingAllocation,
   type GoalScenario,
@@ -31,7 +32,7 @@ vi.mock("@/lib/api", () => ({
   deleteGoalFundingAllocation: vi.fn(),
   getHoldings: vi.fn(),
   getPortfolioPrices: vi.fn(),
-  getWealthGoalsContext: vi.fn(),
+  getWealthFactualReview: vi.fn(),
   listCashAccounts: vi.fn(),
   listGoalFundingAllocations: vi.fn(),
   listGoalScenarios: vi.fn(),
@@ -176,7 +177,7 @@ function quote(symbol: string, current: number): PriceRefreshItem {
 
 const listMock = vi.mocked(listWealthGoals);
 const allocationsMock = vi.mocked(listGoalFundingAllocations);
-const contextMock = vi.mocked(getWealthGoalsContext);
+const contextMock = vi.mocked(getWealthFactualReview);
 const cashAccountsMock = vi.mocked(listCashAccounts);
 const portfoliosMock = vi.mocked(listPortfolios);
 const holdingsMock = vi.mocked(getHoldings);
@@ -265,12 +266,48 @@ async function configuredGoalContext(): Promise<GoalContextResponse> {
   };
 }
 
+async function configuredFactualReview(): Promise<FactualReviewResponse> {
+  const goal_context = await configuredGoalContext();
+  const cashImplementation = cashAccountsMock.getMockImplementation() as
+    ((includeArchived?: boolean) => Promise<CashAccount[]> | CashAccount[]) | undefined;
+  const accountList = cashImplementation ? await cashImplementation(true) : [];
+  return {
+    contract_version: "wealth.factual-review.v1",
+    review_generated_at: "2026-08-26T00:00:00Z",
+    scope: goal_context.scope,
+    goal_context,
+    valuation_completeness: "COMPLETE",
+    sources: goal_context.designation_by_source.map((designation) => {
+      const account = designation.source_kind === "CASH_ACCOUNT"
+        ? accountList.find((candidate) => candidate.id === designation.source_id)
+        : undefined;
+      const observed = account?.balance ?? null;
+      return {
+        ...designation,
+        valuation: {
+          availability: observed === null ? "UNAVAILABLE" as const : "AVAILABLE" as const,
+          observed_value: observed,
+          as_of: account?.updated_at ?? null,
+          provenance: account ? "CASH_ACCOUNT_CURRENT_BALANCE" as const : null,
+          quality: account ? "COMPLETE" as const : null,
+        },
+        designation_coverage: {
+          status: observed === null ? "UNAVAILABLE" as const
+            : observed < designation.designated_total_in_context_scope ? "OVER_ALLOCATED" as const : "SUPPORTED" as const,
+          shortfall: observed !== null && observed < designation.designated_total_in_context_scope
+            ? designation.designated_total_in_context_scope - observed : null,
+        },
+      };
+    }),
+  };
+}
+
 describe("GoalDetailPage", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     listMock.mockResolvedValue([goal]);
     allocationsMock.mockResolvedValue([]);
-    contextMock.mockImplementation(configuredGoalContext);
+    contextMock.mockImplementation(configuredFactualReview);
     cashAccountsMock.mockResolvedValue([cashAccount]);
     portfoliosMock.mockResolvedValue([portfolio]);
     holdingsMock.mockResolvedValue([]);
@@ -340,7 +377,7 @@ describe("GoalDetailPage", () => {
   it("removes stale pre-mutation totals when Goal Context refresh fails", async () => {
     allocationsMock.mockResolvedValue([cashAllocation]);
     contextMock
-      .mockImplementationOnce(configuredGoalContext)
+      .mockImplementationOnce(configuredFactualReview)
       .mockRejectedValueOnce(new Error("context refresh offline"));
     render(<GoalDetailPage params={{ id: "1" }} />);
     expect(await screen.findByText("฿300,000.00 designated")).toBeInTheDocument();
@@ -355,14 +392,38 @@ describe("GoalDetailPage", () => {
     cashAccountsMock.mockResolvedValue([{ ...cashAccount, balance: 450000 }]);
     allocationsMock.mockResolvedValue([cashAllocation]);
     render(<GoalDetailPage params={{ id: "1" }} />);
-    await screen.findByText((_, element) => element?.textContent === "Current value ฿450,000.00 · Funding health: Supported");
+    await screen.findByText((_, element) => element?.textContent === "Observed value ฿450,000.00 · Funding health: Supported");
+  });
+
+  it("renders opaque server-returned coverage without recomputing it", async () => {
+    allocationsMock.mockResolvedValue([cashAllocation]);
+    contextMock.mockImplementation(async () => {
+      const response = await configuredFactualReview();
+      response.sources[0].valuation.observed_value = 900000;
+      response.sources[0].designation_coverage = { status: "OVER_ALLOCATED", shortfall: 17 };
+      return response;
+    });
+    render(<GoalDetailPage params={{ id: "1" }} />);
+    expect(await screen.findByText((_, element) => element?.textContent === "Observed value ฿900,000.00 · Attention: exceeds observed value by ฿17.00")).toBeInTheDocument();
+  });
+
+  it("fails closed when factual-review source facts disagree with embedded Goal Context", async () => {
+    allocationsMock.mockResolvedValue([cashAllocation]);
+    contextMock.mockImplementation(async () => {
+      const response = await configuredFactualReview();
+      response.sources[0].currency = "USD" as "THB";
+      return response;
+    });
+    render(<GoalDetailPage params={{ id: "1" }} />);
+    expect(await screen.findByText("Goal progress unavailable — funding data failed to load.")).toBeInTheDocument();
+    expect(screen.queryByText(/Funding health: Supported/)).not.toBeInTheDocument();
   });
 
   it("reports Funding Health as over-allocated", async () => {
     cashAccountsMock.mockResolvedValue([{ ...cashAccount, balance: 100000 }]);
     allocationsMock.mockResolvedValue([{ ...cashAllocation, allocated_amount: 300000 }]);
     render(<GoalDetailPage params={{ id: "1" }} />);
-    expect(await screen.findByText((_, element) => element?.textContent === "Current value ฿100,000.00 · Attention: exceeds current value by ฿200,000.00")).toBeInTheDocument();
+    expect(await screen.findByText((_, element) => element?.textContent === "Observed value ฿100,000.00 · Attention: exceeds observed value by ฿200,000.00")).toBeInTheDocument();
   });
 
   it("uses complete cross-goal allocation evidence for shared-source Funding Health", async () => {
@@ -372,7 +433,7 @@ describe("GoalDetailPage", () => {
       ? [cashAllocation]
       : [{ ...cashAllocation, id: 200, wealth_goal_id: 2, allocated_amount: 200000 }]);
     render(<GoalDetailPage params={{ id: "1" }} />);
-    expect(await screen.findByText((_, element) => element?.textContent === "Current value ฿400,000.00 · Attention: exceeds current value by ฿100,000.00")).toBeInTheDocument();
+    expect(await screen.findByText((_, element) => element?.textContent === "Observed value ฿400,000.00 · Attention: exceeds observed value by ฿100,000.00")).toBeInTheDocument();
   });
 
   it("fails the selected goal honestly when the complete workspace Goal Context fails", async () => {
@@ -391,19 +452,20 @@ describe("GoalDetailPage", () => {
     allocationsMock.mockResolvedValue([portfolioAllocation]);
     holdingsMock.mockRejectedValue(new Error("holdings offline"));
     render(<GoalDetailPage params={{ id: "1" }} />);
-    expect(await screen.findByText("Current value unavailable · Funding health unavailable")).toBeInTheDocument();
+    expect(await screen.findByText("Observed value unavailable · Funding health unavailable")).toBeInTheDocument();
     expect(screen.getByText("Goal progress")).toBeInTheDocument();
     expect(screen.getByText("4%")).toBeInTheDocument();
   });
 
-  it("derives Portfolio Funding Health from holdings and prices", async () => {
+  it("uses server review evidence and makes no Portfolio holdings or price requests", async () => {
     allocationsMock.mockResolvedValue([portfolioAllocation]);
     holdingsMock.mockResolvedValue([holding({ symbol: "AAA", shares: 10000, avg_cost: 50 })]);
     pricesMock.mockResolvedValue([quote("AAA", 90)]);
     render(<GoalDetailPage params={{ id: "1" }} />);
-    expect(await screen.findByText((_, element) => element?.textContent === "Current value ฿900,000.00 · Funding health: Supported")).toBeInTheDocument();
-    expect(holdingsMock).toHaveBeenCalledWith(9);
-    expect(pricesMock).toHaveBeenCalledWith(9);
+    expect(await screen.findByText("Observed value unavailable · Funding health unavailable")).toBeInTheDocument();
+    expect(screen.getByText((_, element) => element?.textContent === "Long-term Portfolio: observed value unavailable")).toBeInTheDocument();
+    expect(holdingsMock).not.toHaveBeenCalled();
+    expect(pricesMock).not.toHaveBeenCalled();
   });
 
   it("runs the forward What-If from designated funding", async () => {
@@ -440,7 +502,7 @@ describe("GoalDetailPage", () => {
     allocationsMock.mockResolvedValue([portfolioAllocation]);
     holdingsMock.mockRejectedValue(new Error("valuation offline"));
     render(<GoalDetailPage params={{ id: "1" }} />);
-    expect(await screen.findByText("Current value unavailable · Funding health unavailable")).toBeInTheDocument();
+    expect(await screen.findByText("Observed value unavailable · Funding health unavailable")).toBeInTheDocument();
     expect(screen.getByText("70%")).toBeInTheDocument();
     expect(screen.getByText((_, element) => element?.textContent === "฿700,000.00")).toBeInTheDocument();
   });
@@ -448,8 +510,8 @@ describe("GoalDetailPage", () => {
   it("rejects mismatched editable-record and Goal Context generations", async () => {
     allocationsMock.mockResolvedValue([cashAllocation]);
     contextMock.mockImplementation(async () => {
-      const response = await configuredGoalContext();
-      response.goals[0].updated_at = "2026-08-26T00:00:01";
+      const response = await configuredFactualReview();
+      response.goal_context.goals[0].updated_at = "2026-08-26T00:00:01";
       return response;
     });
     render(<GoalDetailPage params={{ id: "1" }} />);
@@ -928,7 +990,7 @@ describe("GoalDetailPage", () => {
       await screen.findByText("Reach date");
       const compareContainer = screen.getByText("Compare scenarios").closest("div") as HTMLElement;
       const warnings = within(compareContainer).getAllByText(
-        (_, element) => element?.textContent === "Current value ฿50,000.00 · Attention: exceeds current value by ฿150,000.00",
+        (_, element) => element?.textContent === "Observed value ฿50,000.00 · Attention: exceeds observed value by ฿150,000.00",
       );
       expect(warnings).toHaveLength(1);
     });
@@ -953,7 +1015,7 @@ describe("GoalDetailPage", () => {
       render(<GoalDetailPage params={{ id: "1" }} />);
       await selectBothScenarios();
       expect(await screen.findByText("Monthly contribution")).toBeInTheDocument();
-      expect(screen.getAllByText("Current value unavailable · Funding health unavailable").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("Observed value unavailable · Funding health unavailable").length).toBeGreaterThan(0);
     });
 
     // 19. scenario edit refresh
