@@ -148,9 +148,51 @@ optimization; and advisory behavior. Goal-aware advice belongs to Phase 7.
 
 # Phase 7 — AI Wealth Advisor
 
-Future direction includes natural-language wealth review, goal-aware
-recommendations, risk-aware coaching, and scenario-aware advice. Learning and
-evaluation remain constrained by the existing trust and configuration
+**Active / in progress.** Phase 7 has delivered a factual, deterministic
+foundation; its Wealth Advisor direction remains future work.
+
+Delivered foundation:
+
+- **7.1 Goal Domain Clarification** — Wealth Goal is the canonical authority;
+  the Legacy Portfolio Goal Profile is a frozen compatibility contract; Goal
+  Funding Allocation is factual designation only; Portfolio Investment Mandate
+  is a distinct future concept; and the Decision Intelligence admission
+  boundary is established. `risk_personality` remains unresolved.
+- **7.2 Canonical Goal Context** — `wealth.goal-context.v1`
+  (`GET /wealth-goals/context`) provides valuation-free canonical Wealth Goal
+  facts, funding allocations, designation totals, progress/gap, fully-
+  designated state, source aggregation, and integrity/completeness semantics.
+- **7.3A Factual Wealth Review** — `wealth.factual-review.v1`
+  (`GET /wealth-goals/factual-review`) provides DB-only factual valuation
+  composition from Cash Account balances and persisted PortfolioSnapshot
+  evidence, with explicit as-of/source-quality semantics, designation coverage,
+  and funding-support composition. It performs no provider fetches or advisory
+  inference.
+- **7.3B Legacy Goal Profile Evidence** —
+  `wealth.legacy-profile-evidence.v1`
+  (`GET /wealth-goals/legacy-profile-evidence`) provides allocation-edge
+  coexistence evidence, raw Legacy Portfolio Goal Profile facts, existing
+  compatibility projections, authorized literal code/date comparisons, and
+  side-by-side priority/target-value evidence. It creates no canonical-to-
+  legacy mapping, precedence, synchronization, goal identity inference, or
+  advisory authority; `risk_personality` is excluded from this contract. Goal
+  Detail is its current consumer.
+
+Still open: **7.4 Decision Intelligence Context Admission** requires separate
+planning for admissible Wealth Goal facts, provenance, completeness, conflict
+behavior, and immutable recommendation-context capture; no automatic optimizer
+admission exists. **7.5 Goal-aware Recommendation Constraints** remains future
+and blocked pending explicit authority. **7.6 Cross-goal Objectives /
+Optimization** remains future and blocked, including cross-goal prioritization,
+conflict resolution, and allocation optimization.
+
+Future direction continues to include natural-language whole-life wealth
+review, goal-aware recommendations, risk-aware coaching, and scenario-aware
+advice. These capabilities, canonical-to-legacy synchronization or automatic
+goal mapping, Portfolio Investment Mandate, Decision Intelligence policy,
+recommendation/advisory authority, canonical `risk_personality`
+interpretation, and optimizer goal admission are not yet delivered. Learning
+and evaluation remain constrained by the existing trust and configuration
 boundaries; current AI investment evaluation is not yet a whole-life Wealth
 Advisor.
 
