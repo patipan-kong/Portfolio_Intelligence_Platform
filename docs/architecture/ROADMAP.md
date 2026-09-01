@@ -178,23 +178,48 @@ Delivered foundation:
   advisory authority; `risk_personality` is excluded from this contract. Goal
   Detail is its current consumer.
 
-Still open: **7.4 Decision Intelligence Context Admission** requires separate
-planning for admissible Wealth Goal facts, provenance, completeness, conflict
-behavior, and immutable recommendation-context capture; no automatic optimizer
-admission exists. **7.5 Goal-aware Recommendation Constraints** remains future
-and blocked pending explicit authority. **7.6 Cross-goal Objectives /
-Optimization** remains future and blocked, including cross-goal prioritization,
-conflict resolution, and allocation optimization.
+- **7.4 Decision Intelligence Context Admission** (ADR-008) —
+  `wealth.decision-goal-context.v1` admits Wealth Goal IDs the caller
+  explicitly names on an optimizer request and captures their factual state on
+  the resulting `RecommendationSnapshot` only, constructed strictly after the
+  recommendation already exists. Capture is permanently `decision_effect:
+  CONTEXT_ONLY` — it never reaches L1/L2/L3, policy, constraints, scoring, or
+  consensus, and `OptimizerHistory` remains unchanged and unconditional.
+- **7.5 Goal-aware Recommendation Constraints** (ADR-009) — an independent,
+  optional `goal_constraint_goal_id` activates exactly one non-archived Wealth
+  Goal with a target date. A horizon of 0–365 days contributes a 20% maximum
+  single-position bound that may only tighten, never loosen, the existing
+  constraint envelope; the resulting application status is persisted as
+  canonical evidence on `OptimizerHistory.result_json`. This does not extend
+  or reinterpret Phase 7.4 context selection.
+
+Still open: **7.6 Cross-Goal Objectives / Optimization** remains future and
+blocked, decomposed as:
+
+  - **7.6A Portfolio Investment Mandate Foundation** (ADR-010) — the next
+    intended milestone. A canonical, user-authored factual Portfolio ↔ Goal
+    relationship answering only "what Goal or Goals is this Portfolio managed
+    for." It is factual only: no behavioral authority, no optimizer objective,
+    no Goal priority, no conflict/tie/gap resolution, and no inference from
+    Goal designation, funding, allocation, or coverage. Goal designation ≠
+    Portfolio Investment Mandate.
+  - **7.6B Goal Objective Authority** — which Goal facts may acquire
+    behavioral authority, and the relevant objective semantics.
+  - **7.6C Cross-Goal Conflict Policy** — priority, insufficient-capital,
+    shared-portfolio, tie, and gap semantics.
+  - **7.6D Cross-Goal Optimization Integration** — integrating the
+    already-defined mandate/authority/conflict model into optimizer behavior.
 
 Future direction continues to include natural-language whole-life wealth
-review, goal-aware recommendations, risk-aware coaching, and scenario-aware
-advice. These capabilities, canonical-to-legacy synchronization or automatic
-goal mapping, Portfolio Investment Mandate, Decision Intelligence policy,
-recommendation/advisory authority, canonical `risk_personality`
-interpretation, and optimizer goal admission are not yet delivered. Learning
-and evaluation remain constrained by the existing trust and configuration
-boundaries; current AI investment evaluation is not yet a whole-life Wealth
-Advisor.
+review, goal-aware recommendations beyond the narrow Phase 7.5 single-position
+bound, risk-aware coaching, and scenario-aware advice. These capabilities,
+canonical-to-legacy synchronization or automatic goal mapping, Portfolio
+Investment Mandate, multi-goal or cross-Goal Decision Intelligence policy,
+general recommendation/advisory authority, canonical `risk_personality`
+interpretation, and cross-goal optimizer admission are not yet delivered.
+Learning and evaluation remain constrained by the existing trust and
+configuration boundaries; current AI investment evaluation is not yet a
+whole-life Wealth Advisor.
 
 ---
 
