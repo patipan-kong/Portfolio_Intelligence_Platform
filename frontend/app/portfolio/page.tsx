@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import PortfolioTable from "@/components/PortfolioTable";
@@ -17,12 +18,13 @@ import {
   getPortfolioPrices, getSectorBreakdown,
   buyTransaction, sellTransaction, depositTransaction, withdrawTransaction,
   initialPositionTransaction, dividendTransaction,
-  isUnresolvedPortfolioError,
+  isUnresolvedPortfolioError, getExecutionDecision,
 } from "@/lib/api";
 import type {
   PortfolioItem, AnalyzeAllResult, SectorBreakdown,
   BuyPayload, SellPayload, DepositPayload, WithdrawPayload,
   InitialPositionPayload, DividendPayload, TransactionResult,
+  ExecutionDecisionDetail,
 } from "@/lib/api";
 
 const PortfolioPieChart = dynamic(
@@ -74,10 +76,13 @@ interface ModalState {
   symbol?: string;
   currentPrice?: number | null;
   maxShares?: number;
+  executionDecisionId?: number;
 }
 
 export default function PortfolioPage() {
-  const { portfolios, currentSelection, createPortfolio, deletePortfolio, refreshPortfolios, reportUnresolvedPortfolio, loading: ctxLoading } = usePortfolio();
+  const { portfolios, currentSelection, createPortfolio, deletePortfolio, refreshPortfolios, reportUnresolvedPortfolio, selectPortfolio, loading: ctxLoading } = usePortfolio();
+  const searchParams = useSearchParams();
+  const router = useRouter();
 
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
@@ -125,6 +130,101 @@ export default function PortfolioPage() {
 
   // Active transaction modal
   const [modal, setModal] = useState<ModalState | null>(null);
+
+  // Decision → Transaction linkage context (?decision=<id> deep link).
+  // Transient only — never persisted, never influences accounting.
+  const [activeDecision, setActiveDecision] = useState<ExecutionDecisionDetail | null>(null);
+  const decisionReqSeqRef = useRef(0);
+  const decisionPortfolioIdRef = useRef<number | null>(null);
+
+  // selectPortfolio is a useCallback keyed to `portfolios`, so its identity
+  // changes once the portfolio list finishes loading. The decision-fetch
+  // effect below only depends on `searchParams` (it must not re-fetch every
+  // time that identity changes) — routing the call through a ref kept
+  // current on every render means the eventual .then() always invokes
+  // whichever selectPortfolio is current, never a closure captured before
+  // portfolios had loaded (e.g. on a fresh direct load of this URL).
+  const selectPortfolioRef = useRef(selectPortfolio);
+  const currentSelectionRef = useRef(currentSelection);
+  const portfoliosRef = useRef(portfolios);
+  const ctxLoadingRef = useRef(ctxLoading);
+  selectPortfolioRef.current = selectPortfolio;
+  currentSelectionRef.current = currentSelection;
+  portfoliosRef.current = portfolios;
+  ctxLoadingRef.current = ctxLoading;
+
+  // A decision that resolved before the portfolio context finished loading
+  // (fresh direct load / pasted deep link / new tab) is held here rather
+  // than acted on immediately — calling selectPortfolio() against an empty,
+  // not-yet-loaded portfolio list would incorrectly resolve to NONE and wipe
+  // the user's persisted selection (PortfolioContext F03). The effect below
+  // re-attempts it once ctxLoading flips to false.
+  const pendingDecisionRef = useRef<{ seq: number; detail: ExecutionDecisionDetail } | null>(null);
+
+  function applyDecision(detail: ExecutionDecisionDetail) {
+    // Fail closed: never establish execution context for a portfolio that
+    // isn't resolvable in this workspace — and never fabricate one.
+    if (!portfoliosRef.current.some((p) => p.id === detail.portfolio_id)) return;
+    setActiveDecision(detail);
+    decisionPortfolioIdRef.current = detail.portfolio_id;
+    if (detail.portfolio_id !== currentSelectionRef.current) {
+      selectPortfolioRef.current(detail.portfolio_id);
+    }
+  }
+
+  // Resolve ?decision=<id> once when present. Guarded against stale
+  // responses (a slow fetch resolving after a newer request superseded it).
+  useEffect(() => {
+    const raw = searchParams.get("decision");
+    const decisionId = raw ? Number(raw) : NaN;
+    if (!Number.isFinite(decisionId)) {
+      pendingDecisionRef.current = null;
+      return;
+    }
+    const seq = ++decisionReqSeqRef.current;
+    getExecutionDecision(decisionId)
+      .then((detail) => {
+        if (decisionReqSeqRef.current !== seq) return; // superseded
+        if (ctxLoadingRef.current) {
+          // Portfolio context isn't ready yet — defer activation.
+          pendingDecisionRef.current = { seq, detail };
+          return;
+        }
+        applyDecision(detail);
+      })
+      .catch(() => {
+        // Unknown/inaccessible decision id — silently skip, no banner shown.
+      });
+  }, [searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Portfolio context finished loading after a decision resolved early —
+  // apply the deferred activation now that the portfolio list can actually
+  // be checked against.
+  useEffect(() => {
+    if (ctxLoading) return;
+    const pending = pendingDecisionRef.current;
+    if (pending == null) return;
+    pendingDecisionRef.current = null;
+    if (decisionReqSeqRef.current !== pending.seq) return; // superseded while deferred
+    applyDecision(pending.detail);
+  }, [ctxLoading]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // If the user manually switches to a different portfolio than the one the
+  // active decision belongs to, the decision context must not silently
+  // attach to the new portfolio's transactions.
+  useEffect(() => {
+    if (decisionPortfolioIdRef.current == null) return;
+    if (currentSelection !== decisionPortfolioIdRef.current) {
+      setActiveDecision(null);
+      decisionPortfolioIdRef.current = null;
+    }
+  }, [currentSelection]);
+
+  function handleClearDecision() {
+    setActiveDecision(null);
+    decisionPortfolioIdRef.current = null;
+    router.replace("/portfolio");
+  }
 
   // Shared helper — patches price fields (including upside_pct) onto items list
   function applyPrices(prev: PortfolioItem[], prices: Awaited<ReturnType<typeof getPortfolioPrices>>) {
@@ -467,7 +567,7 @@ export default function PortfolioPage() {
       <div className="flex flex-wrap gap-2">
         <button
           disabled={currentSelection == null}
-          onClick={() => setModal({ mode: "buy" })}
+          onClick={() => setModal({ mode: "buy", executionDecisionId: activeDecision?.id })}
           className="px-4 py-1.5 rounded text-sm font-semibold text-white bg-[#27500A] hover:bg-[#1d3c07] disabled:opacity-40 transition-colors"
         >
           Buy
@@ -477,9 +577,9 @@ export default function PortfolioPage() {
           onClick={() => {
             // If only one holding, pre-select it; otherwise let user pick in modal
             if (items.length === 1) {
-              setModal({ mode: "sell", symbol: items[0].symbol, currentPrice: items[0].current_price, maxShares: items[0].shares });
+              setModal({ mode: "sell", symbol: items[0].symbol, currentPrice: items[0].current_price, maxShares: items[0].shares, executionDecisionId: activeDecision?.id });
             } else {
-              setModal({ mode: "sell" });
+              setModal({ mode: "sell", executionDecisionId: activeDecision?.id });
             }
           }}
           className="px-4 py-1.5 rounded text-sm font-semibold text-white bg-[#854F0B] hover:bg-[#6b3f09] disabled:opacity-40 transition-colors"
@@ -515,6 +615,35 @@ export default function PortfolioPage() {
           {showImport ? "Cancel Import" : "Import Existing"}
         </button>
       </div>
+
+      {/* ── Active execution-decision context ── */}
+      {activeDecision != null && (
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <p className="text-sm font-semibold text-blue-800">
+              Recording execution for Decision #{activeDecision.id} ({activeDecision.decision})
+            </p>
+            <p className="text-xs text-blue-500 mt-0.5">
+              Buy/Sell trades you record now will link to this decision. Enter what you actually executed —
+              price, shares, and date are not pre-filled from the recommendation.
+            </p>
+            {activeDecision.recommendation_snapshot?.projected_allocations && (
+              <p className="text-xs text-blue-400 mt-1">
+                Plan (reference only):{" "}
+                {activeDecision.recommendation_snapshot.projected_allocations
+                  .map((a) => `${a.action} ${a.symbol}`)
+                  .join(", ")}
+              </p>
+            )}
+          </div>
+          <button
+            onClick={handleClearDecision}
+            className="text-xs text-blue-600 hover:text-blue-800 border border-blue-300 rounded px-2.5 py-1 hover:bg-blue-100 transition-colors whitespace-nowrap"
+          >
+            Clear
+          </button>
+        </div>
+      )}
 
       {/* ── Import Existing Portfolio ── */}
       {showImport && currentSelection != null && (
@@ -590,6 +719,7 @@ export default function PortfolioPage() {
                 mode: "buy",
                 symbol: item.symbol,
                 currentPrice: item.current_price,
+                executionDecisionId: activeDecision?.id,
               })
             }
             onSell={(item) =>
@@ -598,6 +728,7 @@ export default function PortfolioPage() {
                 symbol: item.symbol,
                 currentPrice: item.current_price,
                 maxShares: item.shares,
+                executionDecisionId: activeDecision?.id,
               })
             }
           />
@@ -626,6 +757,7 @@ export default function PortfolioPage() {
           symbol={modal.symbol}
           currentPrice={modal.currentPrice}
           maxShares={modal.maxShares}
+          executionDecisionId={modal.executionDecisionId}
           onConfirm={handleTransactionConfirm}
           onClose={handleModalClose}
         />

@@ -2108,6 +2108,7 @@ export interface BuyPayload {
   exchange_rate?: number;
   transaction_date?: string;
   notes?: string;
+  execution_decision_id?: number;
 }
 
 export interface SellPayload {
@@ -2119,6 +2120,7 @@ export interface SellPayload {
   transaction_date?: string;
   notes?: string;
   remove_if_zero?: boolean;
+  execution_decision_id?: number;
 }
 
 export interface DepositPayload {
@@ -2752,6 +2754,7 @@ export interface ExecutionDecision {
   original_symbol: string | null;
   replacement_symbol: string | null;
   reason_category: string | null;
+  is_system_generated: boolean;
   executed_at: string;
   created_at: string | null;
 }

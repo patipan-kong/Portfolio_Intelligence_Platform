@@ -23,6 +23,8 @@ interface Props {
   currentPrice?: number | null;
   /** For sell: max shares the user can sell */
   maxShares?: number;
+  /** Optional decision context (buy/sell only) — metadata-only, never affects accounting */
+  executionDecisionId?: number;
   /** Called with the filled-out payload; parent owns the API call */
   onConfirm: (payload: Payload) => Promise<TransactionResult>;
   onClose: () => void;
@@ -49,6 +51,7 @@ export default function TransactionModal({
   symbol: symbolProp,
   currentPrice,
   maxShares,
+  executionDecisionId,
   onConfirm,
   onClose,
 }: Props) {
@@ -133,6 +136,7 @@ export default function TransactionModal({
           price_per_share: priceNum,
           transaction_date: txDate,
           notes: txNotes,
+          ...(executionDecisionId != null ? { execution_decision_id: executionDecisionId } : {}),
         } satisfies BuyPayload;
       } else if (mode === "sell") {
         payload = {
@@ -142,6 +146,7 @@ export default function TransactionModal({
           transaction_date: txDate,
           notes: txNotes,
           remove_if_zero: true,
+          ...(executionDecisionId != null ? { execution_decision_id: executionDecisionId } : {}),
         } satisfies SellPayload;
       } else if (mode === "deposit") {
         payload = {
@@ -287,6 +292,11 @@ export default function TransactionModal({
                     <span>{result.holding.avg_cost.toFixed(4)}</span>
                   </div>
                 </div>
+              )}
+              {executionDecisionId != null && (mode === "buy" || mode === "sell") && (
+                <p className="text-xs pt-1" style={{ color: cfg.accent }}>
+                  Linked to Decision #{executionDecisionId}
+                </p>
               )}
             </div>
             <button

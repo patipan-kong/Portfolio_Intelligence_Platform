@@ -212,6 +212,25 @@ def test_execution_detail_no_transactions_is_unavailable_not_partial(db, ws_port
     assert detail["partial_warning"] is None
 
 
+def test_manual_override_with_swapped_symbol_degrades_gracefully(db, ws_portfolio):
+    """Decision -> Transaction Linkage Completion (J): MANUAL_OVERRIDE
+    decisions must accept linkage exactly like APPROVED. When the user
+    actually traded a different symbol than the plan (a swap override), the
+    analyzer must not crash or fabricate a match — the planned symbol reads
+    as unmatched (honest), never silently scored as executed."""
+    ws, portfolio = ws_portfolio
+    _snap, dec = _seed_snapshot_and_decision(
+        db, ws, portfolio, "MANUAL_OVERRIDE", _ALLOCS_BUY_ONLY,
+        with_transaction=True, tx_symbol="ADVANC",
+    )
+
+    detail = get_execution_detail(db, portfolio.id, dec.id)
+    assert detail is not None
+    assert detail["decision"] == "MANUAL_OVERRIDE"
+    assert detail["analysis"]["status"] == "partial"
+    assert detail["analysis"]["symbols"]["CENTEL"]["note"] == "no_linked_transaction"
+
+
 def test_execution_detail_partial_execution_has_warning(db, ws_portfolio):
     ws, portfolio = ws_portfolio
     allocations = _ALLOCS_BUY_ONLY + [

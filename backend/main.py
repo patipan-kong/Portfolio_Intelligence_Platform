@@ -70,7 +70,7 @@ from services.sector_taxonomy import (
     dr_prefix as _dr_prefix, normalize_sector, static_sector_lookup,
 )
 from services.json_utils import safe_parse_json
-from services.portfolio_reference import resolve_portfolio_or_404
+from services.portfolio_reference import resolve_portfolio_or_404, resolve_execution_decision_or_404
 from services.portfolio_transactions import (
     execute_buy, execute_sell,
     execute_deposit, execute_withdraw,
@@ -5459,6 +5459,8 @@ async def transaction_buy(
 ) -> dict:
     ws = _ws_id(db)
     p = resolve_portfolio_or_404(db, portfolio_id, ws)
+    if body.execution_decision_id is not None:
+        resolve_execution_decision_or_404(db, body.execution_decision_id, ws, portfolio_id)
 
     symbol = _normalize_transaction_symbol(body.symbol)
 
@@ -5498,6 +5500,8 @@ async def transaction_sell(
 ) -> dict:
     ws = _ws_id(db)
     p = resolve_portfolio_or_404(db, portfolio_id, ws)
+    if body.execution_decision_id is not None:
+        resolve_execution_decision_or_404(db, body.execution_decision_id, ws, portfolio_id)
 
     symbol = _normalize_transaction_symbol(body.symbol)
 
@@ -7025,6 +7029,7 @@ async def list_execution_decisions(
             "original_symbol": r.original_symbol,
             "replacement_symbol": r.replacement_symbol,
             "reason_category": r.reason_category,
+            "is_system_generated": r.is_system_generated,
             "executed_at": r.executed_at.isoformat() + "Z" if r.executed_at else None,
             "created_at": r.created_at.isoformat() + "Z" if r.created_at else None,
         }
@@ -7053,6 +7058,7 @@ async def get_execution_decision(decision_id: int, db: Session = Depends(get_db)
         "original_symbol": row.original_symbol,
         "replacement_symbol": row.replacement_symbol,
         "reason_category": row.reason_category,
+        "is_system_generated": row.is_system_generated,
         "approved_allocations": _json.loads(row.approved_allocations_json) if row.approved_allocations_json else None,
         "rejected_symbols": _json.loads(row.rejected_symbols_json) if row.rejected_symbols_json else None,
         "executed_at": row.executed_at.isoformat() + "Z" if row.executed_at else None,

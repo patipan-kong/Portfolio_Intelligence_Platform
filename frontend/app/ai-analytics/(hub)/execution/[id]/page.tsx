@@ -7,6 +7,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
+import Link from "next/link";
 import { usePortfolio } from "@/lib/PortfolioContext";
 import { getExecutionDetail, isUnresolvedPortfolioError, type ExecutionDetail } from "@/lib/api";
 import BackBreadcrumb from "@/components/BackBreadcrumb";
@@ -96,9 +97,17 @@ export default function ExecutionDetailPage() {
 
           <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
             {data.analysis.status === "unavailable" ? (
-              <p className="text-sm text-gray-400 italic">
-                Execution analysis unavailable — {data.analysis.reason ?? "no linked transactions"}.
-              </p>
+              <div className="space-y-1.5">
+                <p className="text-sm text-gray-400 italic">
+                  Execution analysis unavailable — {data.analysis.reason ?? "no linked transactions"}.
+                </p>
+                <Link
+                  href={`/portfolio?decision=${data.decision_id}`}
+                  className="text-xs font-semibold text-green-700 hover:underline"
+                >
+                  Record execution →
+                </Link>
+              </div>
             ) : (
               <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
                 <span className="text-gray-500">

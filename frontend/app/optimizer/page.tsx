@@ -10,7 +10,7 @@ import {
   listStrategyProfiles, getPortfolioPersona, updatePortfolioPersona,
   recordDecisionBySnapshot, listExecutionDecisions,
   getDecisionMemoryTimeline, getShadowPerformanceSummary, getOperationsStatus,
-  isUnresolvedPortfolioError,
+  isUnresolvedPortfolioError, getExecutionDetail,
 } from "@/lib/api";
 import SignalBadge from "@/components/SignalBadge";
 import AIBadge from "@/components/AIBadge";
@@ -31,7 +31,7 @@ import type {
   StrategyPersona, StrategyProfile, PortfolioDNA, MarketRegime,
   ActivePolicy, ExecutionDecision, ExecutionDecisionType, OverrideCategoryType,
   DecisionMemoryEntry, ShadowPerformanceSummary, ExecutionRisk, OperationsCenterStatus,
-  StabilizationMeta, OptimizerStatus,
+  StabilizationMeta, OptimizerStatus, ExecutionAnalysis,
 } from "@/lib/api";
 import { marketDataFreshnessTh, optimizerLastAnalysisBadgeTh } from "@/components/operations-center/freshness";
 
@@ -1483,6 +1483,22 @@ const DECISION_BADGE: Record<ExecutionDecisionType, string> = {
   PARTIAL_EXECUTION: "bg-amber-100 text-amber-800 border-amber-200",
 };
 
+// Decision → Transaction Linkage Completion: REJECTED decisions are evaluated
+// via whole-portfolio counterfactual return (opportunity_cost.py), never via
+// linked-transaction analysis, so they never get a "Record execution" entry
+// point. System-generated rows (e.g. EXPIRED) had no human action to execute.
+const RECORD_EXECUTION_ELIGIBLE: ReadonlySet<ExecutionDecisionType> = new Set([
+  "APPROVED", "MANUAL_OVERRIDE", "PARTIAL_EXECUTION",
+]);
+
+function linkageStatusLabel(analysis: ExecutionAnalysis | null): string | null {
+  if (!analysis) return null;
+  if (analysis.status === "unavailable") return "No execution recorded";
+  if (analysis.status === "partial") return `Partially linked (${Math.round(analysis.completeness_pct)}%)`;
+  if (analysis.status === "ok") return "Execution linked";
+  return null; // fail closed on an unrecognized status — never claim "linked"
+}
+
 function ShadowReturnChip({ label, value }: { label: string; value: number | null }) {
   if (value === null) return null;
   const positive = value >= 0;
@@ -1512,6 +1528,7 @@ function DecisionActionPanel({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [shadowPerf, setShadowPerf] = useState<ShadowPerformanceSummary | null>(null);
+  const [linkage, setLinkage] = useState<ExecutionAnalysis | null>(null);
 
   useEffect(() => {
     listExecutionDecisions(portfolioId, undefined, 50)
@@ -1529,6 +1546,20 @@ function DecisionActionPanel({
         .then(setShadowPerf)
         .catch(() => setShadowPerf(null));
     }
+  }, [existing, portfolioId]);
+
+  // Reuse the existing execution-analysis evidence for a small coverage
+  // indicator — no new backend endpoint or status model. Only fetched for
+  // decisions linkage is meaningful for; a REJECTED/system-generated/EXPIRED
+  // decision has no execution to link and would just be a wasted request.
+  useEffect(() => {
+    if (!existing || existing.is_system_generated || !RECORD_EXECUTION_ELIGIBLE.has(existing.decision)) {
+      setLinkage(null);
+      return;
+    }
+    getExecutionDetail(portfolioId, existing.id)
+      .then((detail) => setLinkage(detail.analysis))
+      .catch(() => setLinkage(null));
   }, [existing, portfolioId]);
 
   if (existing === undefined) return null; // still loading
@@ -1646,13 +1677,24 @@ function DecisionActionPanel({
 
         {/* AI Evaluation M7 entry point (UX §2.3): "Track this decision" ->
             the graded execution detail (S4b) for this exact decision. */}
-        <div className="mt-2.5 pt-2.5 border-t border-gray-100">
+        <div className="mt-2.5 pt-2.5 border-t border-gray-100 flex items-center gap-3 flex-wrap">
           <Link
             href={`/ai-analytics/execution/${existing.id}`}
             className="text-xs font-semibold text-blue-600 hover:underline"
           >
             Track this decision in AI Evaluation →
           </Link>
+          {linkageStatusLabel(linkage) && (
+            <span className="text-xs text-gray-400">{linkageStatusLabel(linkage)}</span>
+          )}
+          {!existing.is_system_generated && RECORD_EXECUTION_ELIGIBLE.has(existing.decision) && (
+            <Link
+              href={`/portfolio?decision=${existing.id}`}
+              className="text-xs font-semibold text-green-700 hover:underline ml-auto"
+            >
+              Record execution →
+            </Link>
+          )}
         </div>
       </section>
     );

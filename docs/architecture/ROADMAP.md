@@ -289,8 +289,15 @@ tracked here ([ENGINEERING_PRINCIPLES.md](../engineering/ENGINEERING_PRINCIPLES.
 
 ## Portfolio
 
-- Complete and expose Decision → Transaction linkage where coverage remains
-  incomplete
+- ~~Complete and expose Decision → Transaction linkage where coverage remains
+  incomplete~~ — delivered: `execution_decision_id` is now writable end to
+  end (APPROVED/PARTIAL_EXECUTION/MANUAL_OVERRIDE, BUY/SELL only) via a
+  "Record execution →" deep link from the optimizer decision panel and S4b
+  into `/portfolio?decision=<id>`, with backend workspace/portfolio
+  ownership validation on write. Forward-only in v1 — no retroactive
+  linking and no unlink/relink, since the ledger has no transaction-edit
+  path; historical decisions and imported transactions stay unlinked by
+  design, not backfilled.
 - System-deferral pricing
 
 ## Analytics
