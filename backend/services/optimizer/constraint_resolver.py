@@ -31,6 +31,7 @@ Public API:
 from __future__ import annotations
 
 import logging
+from copy import deepcopy
 from dataclasses import dataclass
 
 log = logging.getLogger(__name__)
@@ -129,6 +130,25 @@ class EffectiveEnvelope:
     emergency_active: bool
     regime_name:      str
     resolver_notes:   list[str]    # human-readable constraint adjustment notes
+
+
+@dataclass(frozen=True)
+class SinglePositionUpperBoundCandidate:
+    """Generic request-scoped upper bound supplied by an external policy source."""
+
+    upper_bound_pct: float
+    binding_source: str
+    tightened_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class SinglePositionUpperBoundOutcome:
+    """Exact result of composing a generic upper bound with an envelope."""
+
+    pre_effective_pct: float
+    post_effective_pct: float
+    relation_to_base: str
+    resulting_binding_source: str
 
 
 # ─── Resolution primitives ────────────────────────────────────────────────────
@@ -378,6 +398,46 @@ def effective_sector_cap(envelope: EffectiveEnvelope, sector: str) -> float:
     """Return the resolved effective sector cap for a given sector name."""
     bd = envelope.sector_limits.get(sector)
     return bd.effective if bd is not None else envelope.global_sector_cap.effective
+
+
+def apply_single_position_upper_bound(
+    envelope: EffectiveEnvelope,
+    candidate: SinglePositionUpperBoundCandidate,
+) -> tuple[EffectiveEnvelope, SinglePositionUpperBoundOutcome]:
+    """Compose an immutable generic single-position cap using strict-min rules.
+
+    Equality and looser candidates leave the existing binding source intact.
+    The original envelope is never mutated.
+    """
+    pre = float(envelope.effective_single_position_pct)
+    upper_bound = float(candidate.upper_bound_pct)
+    if upper_bound < 0:
+        raise ValueError("single-position upper bound must be non-negative")
+
+    composed = deepcopy(envelope)
+    if upper_bound < pre:
+        post = upper_bound
+        relation = "STRICTER_THAN_BASE"
+        composed.single_position.effective = round(post, 1)
+        composed.single_position.binding_source = candidate.binding_source
+        composed.single_position.tightened_reason = candidate.tightened_reason
+        composed.effective_single_position_pct = round(post, 1)
+        resulting_source = candidate.binding_source
+    elif upper_bound == pre:
+        post = pre
+        relation = "EQUAL_TO_BASE"
+        resulting_source = envelope.single_position.binding_source
+    else:
+        post = pre
+        relation = "LOOSER_THAN_BASE"
+        resulting_source = envelope.single_position.binding_source
+
+    return composed, SinglePositionUpperBoundOutcome(
+        pre_effective_pct=round(pre, 1),
+        post_effective_pct=round(post, 1),
+        relation_to_base=relation,
+        resulting_binding_source=resulting_source,
+    )
 
 
 def _bd_to_dict(bd: ConstraintBreakdown) -> dict:

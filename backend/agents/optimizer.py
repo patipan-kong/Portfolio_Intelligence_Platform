@@ -27,6 +27,10 @@ from services.optimizer.constraint_resolver import (  # noqa: F401
 logger = logging.getLogger(__name__)
 
 
+class HardPolicyEnforcementError(RuntimeError):
+    """Deterministic hard-policy enforcement could not be proven safe."""
+
+
 def _emit_stage(on_stage: Callable[[str], None] | None, stage: str) -> None:
     """Fire the optional progress callback; never let it break the run."""
     if on_stage is None:
@@ -1176,6 +1180,196 @@ Return JSON only. No markdown fences.
 }}"""
 
 
+def _enforce_hard_policy(
+    allocations: list[dict],
+    *,
+    total_value: float,
+    policy_context: dict | None,
+    regime_context: dict | None,
+    effective_envelope: "_EffectiveEnvelope | None",
+    portfolio_data: list[dict],
+    watchlist_data: list[dict],
+) -> None:
+    """Apply the existing Goal-agnostic deterministic hard-policy sequence."""
+    if policy_context:
+        pc_hard = policy_context.get("hard_constraints", {})
+        min_cash_pct = float(pc_hard.get("min_cash_pct", 5.0))
+        max_pos_pct = float(pc_hard.get("max_single_position_pct", 22.0))
+        emergency = bool(policy_context.get("emergency_override", False))
+
+        if emergency:
+            for allocation in allocations:
+                if allocation.get("action") in ("BUY", "ACCUMULATE"):
+                    logger.info(
+                        "[POLICY_EMERGENCY] freezing %s BUY→HOLD (emergency override)",
+                        allocation["symbol"],
+                    )
+                    allocation["action"] = "HOLD"
+                    allocation["target_weight"] = allocation.get("current_weight", 0.0)
+                    allocation["allocation_change_percent"] = 0.0
+                    allocation["estimated_amount"] = 0
+
+        for allocation in allocations:
+            if (
+                allocation.get("action") in ("BUY", "ACCUMULATE")
+                and allocation.get("target_weight", 0) > max_pos_pct
+            ):
+                logger.info(
+                    "[POLICY] capping %s target_weight %.1f→%.1f (bias=%s)",
+                    allocation["symbol"], allocation["target_weight"], max_pos_pct,
+                    policy_context.get("deployment_bias"),
+                )
+                allocation["target_weight"] = max_pos_pct
+                allocation["allocation_change_percent"] = round(
+                    allocation["target_weight"] - allocation["current_weight"], 2,
+                )
+                allocation["estimated_amount"] = round(
+                    (allocation["allocation_change_percent"] / 100) * total_value,
+                )
+
+        total_target = sum(
+            allocation.get("target_weight", 0)
+            for allocation in allocations
+            if allocation.get("action") not in ("SELL",)
+        )
+        cash_headroom = 100.0 - total_target
+        if cash_headroom < min_cash_pct:
+            deficit = min_cash_pct - cash_headroom
+            buy_allocations = sorted(
+                [a for a in allocations if a.get("action") in ("BUY", "ACCUMULATE")],
+                key=lambda item: -item.get("target_weight", 0),
+            )
+            for allocation in buy_allocations:
+                if deficit <= 0:
+                    break
+                trim = min(allocation["target_weight"], deficit)
+                allocation["target_weight"] = round(allocation["target_weight"] - trim, 2)
+                allocation["allocation_change_percent"] = round(
+                    allocation["target_weight"] - allocation["current_weight"], 2,
+                )
+                allocation["estimated_amount"] = round(
+                    (allocation["allocation_change_percent"] / 100) * total_value,
+                )
+                deficit -= trim
+            logger.info(
+                "[POLICY] enforced min_cash=%.0f%% deployment=%s",
+                min_cash_pct, policy_context.get("deployment_bias"),
+            )
+    elif regime_context:
+        from services.analytics.regime_detector import get_regime_constraints
+        regime_constraints = get_regime_constraints(regime_context.get("regime", "SIDEWAYS"))
+        min_cash_pct = regime_constraints["min_cash_pct"]
+        max_pos_pct = regime_constraints["max_single_position_pct"]
+        for allocation in allocations:
+            if (
+                allocation.get("action") in ("BUY", "ACCUMULATE")
+                and allocation.get("target_weight", 0) > max_pos_pct
+            ):
+                allocation["target_weight"] = max_pos_pct
+                allocation["allocation_change_percent"] = round(
+                    allocation["target_weight"] - allocation["current_weight"], 2,
+                )
+                allocation["estimated_amount"] = round(
+                    (allocation["allocation_change_percent"] / 100) * total_value,
+                )
+        total_target = sum(
+            allocation.get("target_weight", 0)
+            for allocation in allocations
+            if allocation.get("action") not in ("SELL",)
+        )
+        cash_headroom = 100.0 - total_target
+        if cash_headroom < min_cash_pct:
+            deficit = min_cash_pct - cash_headroom
+            buy_allocations = sorted(
+                [a for a in allocations if a.get("action") in ("BUY", "ACCUMULATE")],
+                key=lambda item: -item.get("target_weight", 0),
+            )
+            for allocation in buy_allocations:
+                if deficit <= 0:
+                    break
+                trim = min(allocation["target_weight"], deficit)
+                allocation["target_weight"] = round(allocation["target_weight"] - trim, 2)
+                allocation["allocation_change_percent"] = round(
+                    allocation["target_weight"] - allocation["current_weight"], 2,
+                )
+                allocation["estimated_amount"] = round(
+                    (allocation["allocation_change_percent"] / 100) * total_value,
+                )
+                deficit -= trim
+            logger.info(
+                "[REGIME] enforced min_cash=%.0f%% regime=%s",
+                min_cash_pct, regime_context.get("regime"),
+            )
+
+    if effective_envelope is not None:
+        sector_by_symbol = {
+            item["symbol"]: normalize_sector(item.get("sector", "Other"))
+            for item in (portfolio_data + watchlist_data)
+        }
+        projected: dict[str, float] = {}
+        for allocation in allocations:
+            if allocation.get("action") == "SELL":
+                continue
+            sector = sector_by_symbol.get(allocation.get("symbol", ""), "Other")
+            projected[sector] = projected.get(sector, 0.0) + float(
+                allocation.get("target_weight") or 0,
+            )
+        for sector, projected_pct in projected.items():
+            limit = _effective_sector_cap(effective_envelope, sector)
+            if projected_pct <= limit:
+                continue
+            excess = projected_pct - limit
+            over_allocations = sorted(
+                [
+                    allocation for allocation in allocations
+                    if sector_by_symbol.get(allocation.get("symbol", ""), "Other") == sector
+                    and allocation.get("action") in ("BUY", "ACCUMULATE")
+                ],
+                key=lambda item: -item.get("target_weight", 0),
+            )
+            for allocation in over_allocations:
+                if excess <= 0:
+                    break
+                trim = min(allocation["target_weight"], excess)
+                allocation["target_weight"] = round(allocation["target_weight"] - trim, 2)
+                allocation["allocation_change_percent"] = round(
+                    allocation["target_weight"] - allocation["current_weight"], 2,
+                )
+                allocation["estimated_amount"] = round(
+                    (allocation["allocation_change_percent"] / 100) * total_value,
+                )
+                excess -= trim
+            logger.info(
+                "[SECTOR_ENFORCE] %s sector %.1f%% > %.1f%% resolved limit — trimmed",
+                sector, projected_pct, limit,
+            )
+
+
+def _reconcile_allocation_actions(allocations: list[dict]) -> None:
+    """Reconcile action labels after deterministic target-weight changes."""
+    for allocation in allocations:
+        delta = allocation.get("allocation_change_percent", 0)
+        action = (allocation.get("action") or "HOLD").upper()
+        if action in ("BUY", "ACCUMULATE") and delta < -1.0:
+            allocation["action"] = "REDUCE"
+            logger.info(
+                "[ACTION_RECONCILE] %s %s→REDUCE (delta=%.1f%% after constraint enforcement)",
+                allocation.get("symbol"), action, delta,
+            )
+        elif action in ("BUY", "ACCUMULATE") and delta <= 0:
+            allocation["action"] = "HOLD"
+            logger.info(
+                "[ACTION_RECONCILE] %s %s→HOLD (delta=%.1f%% suppressed to zero by constraints)",
+                allocation.get("symbol"), action, delta,
+            )
+        elif action == "REDUCE" and delta > 1.0:
+            allocation["action"] = "ACCUMULATE"
+            logger.info(
+                "[ACTION_RECONCILE] %s REDUCE→ACCUMULATE (delta=%.1f%% after constraint enforcement)",
+                allocation.get("symbol"), delta,
+            )
+
+
 def _fallback_prompt(
     pc: list[dict],
     wc: list[dict],
@@ -1185,6 +1379,7 @@ def _fallback_prompt(
     max_sector_pct: int,
     total_value: float,
     cash_balance: float,
+    effective_policy_rules: str = "",
 ) -> str:
     return f"""You are an emergency portfolio analyst. The multi-layer optimizer pipeline failed.
 Produce a complete, compliant capital allocation plan in a single response.
@@ -1204,6 +1399,7 @@ HARD RULES — you MUST follow all of these:
 4. No single sector may exceed {max_sector_pct}% weight
 5. target_weight values are FLAT PERCENTAGES (10.0 = 10% of portfolio), NOT monetary amounts
 6. Every existing portfolio holding must appear in allocations with an explicit action
+{effective_policy_rules}
 
 OUTPUT CONTRACT — this JSON is read by software; do not spend output tokens on prose. Watchlist symbols you are
 not recommending (no BUY/ACCUMULATE) do NOT need an allocations row — omit them, except up to 5 WATCH rows for
@@ -1246,10 +1442,40 @@ def _run_single_shot_fallback(
     portfolio_name: str,
     portfolio_count: int,
     max_reached: bool,
+    policy_context: dict | None = None,
+    effective_envelope: "_EffectiveEnvelope | None" = None,
+    enforce_effective_policy: bool = False,
 ) -> dict:
     """Single-shot emergency fallback when the 3-layer pipeline fails completely."""
     score_map = _build_score_context_map(pc, wc)
-    prompt = _fallback_prompt(pc, wc, sell_forced, locked, max_stocks, max_sector_pct, total_value, cash_balance)
+    effective_policy_rules = ""
+    if enforce_effective_policy:
+        hard = (policy_context or {}).get("hard_constraints", {})
+        max_position = float(hard.get(
+            "max_single_position_pct",
+            effective_envelope.effective_single_position_pct if effective_envelope else 22.0,
+        ))
+        min_cash = float(hard.get(
+            "min_cash_pct",
+            effective_envelope.effective_cash_min_pct if effective_envelope else 5.0,
+        ))
+        emergency = bool((policy_context or {}).get("emergency_override", False))
+        sector_caps = {}
+        if effective_envelope is not None:
+            sector_caps = {
+                "default": effective_envelope.global_sector_cap.effective,
+                **dict(effective_envelope.effective_sector_limits),
+            }
+        effective_policy_rules = (
+            f"7. Effective maximum single-position weight is {max_position:.1f}%\n"
+            f"8. Effective minimum cash weight is {min_cash:.1f}%\n"
+            f"9. Effective sector caps: {json.dumps(sector_caps, sort_keys=True)}\n"
+            + ("10. Emergency policy prohibits BUY and ACCUMULATE\n" if emergency else "")
+        )
+    prompt = _fallback_prompt(
+        pc, wc, sell_forced, locked, max_stocks, max_sector_pct,
+        total_value, cash_balance, effective_policy_rules,
+    )
     raw = call_ai(
         prompt, fallback_provider, fallback_model, max_tokens=4096,
         usage_operation="optimize", usage_layer="fallback",
@@ -1285,6 +1511,20 @@ def _run_single_shot_fallback(
     for a in final_allocations:
         a["allocation_change_percent"] = round(a["target_weight"] - a["current_weight"], 2)
         a["estimated_amount"] = round((a["allocation_change_percent"] / 100) * total_value)
+    if enforce_effective_policy:
+        try:
+            _enforce_hard_policy(
+                final_allocations,
+                total_value=total_value,
+                policy_context=policy_context,
+                regime_context=None,
+                effective_envelope=effective_envelope,
+                portfolio_data=portfolio_data,
+                watchlist_data=wc,
+            )
+            _reconcile_allocation_actions(final_allocations)
+        except Exception as exc:
+            raise HardPolicyEnforcementError("fallback hard-policy enforcement failed") from exc
     _snap_neutral_actions(final_allocations)
 
     swap_suggestions = _derive_swap_suggestions(final_allocations, sell_forced, locked)
@@ -1481,6 +1721,7 @@ def run_layered_optimizer(
     effective_envelope: "_EffectiveEnvelope | None" = None,
     execution_context: dict | None = None,
     on_stage: Callable[[str], None] | None = None,
+    enforce_effective_policy_in_fallback: bool = False,
 ) -> dict:
     """3-layer Dynamic Capital Allocation Engine with global single-shot fallback.
 
@@ -1773,136 +2014,21 @@ def run_layered_optimizer(
             a["allocation_change_percent"] = round(a["target_weight"] - a["current_weight"], 2)
             a["estimated_amount"] = round((a["allocation_change_percent"] / 100) * total_value)
 
-        # ── Policy / Regime hard constraints (applied after AI output) ────────
-        # When policy_context is available it supersedes the raw regime constraints
-        # (policy_engine already synthesizes persona + regime into a single envelope).
-        if policy_context:
-            pc_hard       = policy_context.get("hard_constraints", {})
-            min_cash_pct  = float(pc_hard.get("min_cash_pct", 5.0))
-            max_pos_pct   = float(pc_hard.get("max_single_position_pct", 22.0))
-            suppress_spec = bool(pc_hard.get("suppress_speculative", False))
-            emergency     = bool(policy_context.get("emergency_override", False))
-
-            # Emergency: convert all BUY/ACCUMULATE to HOLD
-            if emergency:
-                for a in final_allocations:
-                    if a.get("action") in ("BUY", "ACCUMULATE"):
-                        logger.info(
-                            "[POLICY_EMERGENCY] freezing %s BUY→HOLD (emergency override)", a["symbol"]
-                        )
-                        a["action"]                   = "HOLD"
-                        a["target_weight"]             = a.get("current_weight", 0.0)
-                        a["allocation_change_percent"] = 0.0
-                        a["estimated_amount"]          = 0
-
-            # Cap BUY/ACCUMULATE target_weight at policy max position
-            for a in final_allocations:
-                if a.get("action") in ("BUY", "ACCUMULATE") and a.get("target_weight", 0) > max_pos_pct:
-                    logger.info(
-                        "[POLICY] capping %s target_weight %.1f→%.1f (bias=%s)",
-                        a["symbol"], a["target_weight"], max_pos_pct,
-                        policy_context.get("deployment_bias"),
-                    )
-                    a["target_weight"]             = max_pos_pct
-                    a["allocation_change_percent"] = round(a["target_weight"] - a["current_weight"], 2)
-                    a["estimated_amount"]          = round((a["allocation_change_percent"] / 100) * total_value)
-
-            # Enforce minimum cash floor
-            total_target  = sum(a.get("target_weight", 0) for a in final_allocations
-                                if a.get("action") not in ("SELL",))
-            cash_headroom = 100.0 - total_target
-            if cash_headroom < min_cash_pct:
-                deficit = min_cash_pct - cash_headroom
-                buy_allocs = sorted(
-                    [a for a in final_allocations if a.get("action") in ("BUY", "ACCUMULATE")],
-                    key=lambda x: -x.get("target_weight", 0),
-                )
-                for a in buy_allocs:
-                    if deficit <= 0:
-                        break
-                    trim            = min(a["target_weight"], deficit)
-                    a["target_weight"]             = round(a["target_weight"] - trim, 2)
-                    a["allocation_change_percent"] = round(a["target_weight"] - a["current_weight"], 2)
-                    a["estimated_amount"]          = round((a["allocation_change_percent"] / 100) * total_value)
-                    deficit -= trim
-                logger.info(
-                    "[POLICY] enforced min_cash=%.0f%% deployment=%s",
-                    min_cash_pct, policy_context.get("deployment_bias"),
-                )
-
-        elif regime_context:
-            # Fallback: legacy regime-only enforcement when no policy_context
-            from services.analytics.regime_detector import get_regime_constraints
-            rc = get_regime_constraints(regime_context.get("regime", "SIDEWAYS"))
-            min_cash_pct  = rc["min_cash_pct"]
-            max_pos_pct   = rc["max_single_position_pct"]
-
-            for a in final_allocations:
-                if a.get("action") in ("BUY", "ACCUMULATE") and a.get("target_weight", 0) > max_pos_pct:
-                    a["target_weight"]             = max_pos_pct
-                    a["allocation_change_percent"] = round(a["target_weight"] - a["current_weight"], 2)
-                    a["estimated_amount"]          = round((a["allocation_change_percent"] / 100) * total_value)
-
-            total_target  = sum(a.get("target_weight", 0) for a in final_allocations
-                                if a.get("action") not in ("SELL",))
-            cash_headroom = 100.0 - total_target
-            if cash_headroom < min_cash_pct:
-                deficit = min_cash_pct - cash_headroom
-                buy_allocs = sorted(
-                    [a for a in final_allocations if a.get("action") in ("BUY", "ACCUMULATE")],
-                    key=lambda x: -x.get("target_weight", 0),
-                )
-                for a in buy_allocs:
-                    if deficit <= 0:
-                        break
-                    trim                           = min(a["target_weight"], deficit)
-                    a["target_weight"]             = round(a["target_weight"] - trim, 2)
-                    a["allocation_change_percent"] = round(a["target_weight"] - a["current_weight"], 2)
-                    a["estimated_amount"]          = round((a["allocation_change_percent"] / 100) * total_value)
-                    deficit -= trim
-                logger.info("[REGIME] enforced min_cash=%.0f%% regime=%s", min_cash_pct, regime_context.get("regime"))
-
-        # ── Phase 3B.5 — Sector-level enforcement from resolved EffectiveEnvelope ──
-        # Runs AFTER position/cash enforcement to ensure no sector exceeds its resolved limit.
-        # This is a new enforcement step that operates on projected weights from target allocations.
-        if effective_envelope is not None:
-            # Build sector lookup from all available data (portfolio + watchlist)
-            _all_sector_data = {d["symbol"]: normalize_sector(d.get("sector", "Other"))
-                                for d in (portfolio_data + watchlist_data)}
-
-            # Compute projected sector weights from current target allocations
-            proj_sector: dict[str, float] = {}
-            for a in final_allocations:
-                if a.get("action") == "SELL":
-                    continue
-                sector = _all_sector_data.get(a.get("symbol", ""), "Other")
-                proj_sector[sector] = proj_sector.get(sector, 0.0) + float(a.get("target_weight") or 0)
-
-            # Enforce per-sector resolved limits
-            for sector, proj_pct in proj_sector.items():
-                limit = _effective_sector_cap(effective_envelope, sector)
-                if proj_pct <= limit:
-                    continue
-                # Trim largest BUY/ACCUMULATE allocations in this sector until within limit
-                excess = proj_pct - limit
-                over_allocs = sorted(
-                    [a for a in final_allocations
-                     if _all_sector_data.get(a.get("symbol", ""), "Other") == sector
-                     and a.get("action") in ("BUY", "ACCUMULATE")],
-                    key=lambda x: -x.get("target_weight", 0),
-                )
-                for a in over_allocs:
-                    if excess <= 0:
-                        break
-                    trim = min(a["target_weight"], excess)
-                    a["target_weight"]             = round(a["target_weight"] - trim, 2)
-                    a["allocation_change_percent"] = round(a["target_weight"] - a["current_weight"], 2)
-                    a["estimated_amount"]          = round((a["allocation_change_percent"] / 100) * total_value)
-                    excess -= trim
-                logger.info(
-                    "[SECTOR_ENFORCE] %s sector %.1f%% > %.1f%% resolved limit — trimmed",
-                    sector, proj_pct, limit,
-                )
+        # ── Policy / regime / resolved-sector hard constraints ────────────────
+        try:
+            _enforce_hard_policy(
+                final_allocations,
+                total_value=total_value,
+                policy_context=policy_context,
+                regime_context=regime_context,
+                effective_envelope=effective_envelope,
+                portfolio_data=portfolio_data,
+                watchlist_data=watchlist_data,
+            )
+        except Exception as exc:
+            if enforce_effective_policy_in_fallback:
+                raise HardPolicyEnforcementError("primary hard-policy enforcement failed") from exc
+            raise
 
         # ── Phase 3B.10 — Execution quality cap enforcement ──────────────────
         # Applies per-asset position caps for DR and illiquid assets.
@@ -1941,28 +2067,7 @@ def run_layered_optimizer(
         # Constraint passes (policy cap, cash floor, sector cap, DR exec cap) all
         # update target_weight + allocation_change_percent but never touch action.
         # A BUY/ACCUMULATE whose delta went negative is now a net REDUCE; fix it.
-        for a in final_allocations:
-            delta  = a.get("allocation_change_percent", 0)
-            action = (a.get("action") or "HOLD").upper()
-            if action in ("BUY", "ACCUMULATE") and delta < -1.0:
-                a["action"] = "REDUCE"
-                logger.info(
-                    "[ACTION_RECONCILE] %s %s→REDUCE (delta=%.1f%% after constraint enforcement)",
-                    a.get("symbol"), action, delta,
-                )
-            elif action in ("BUY", "ACCUMULATE") and delta <= 0:
-                a["action"] = "HOLD"
-                logger.info(
-                    "[ACTION_RECONCILE] %s %s→HOLD (delta=%.1f%% suppressed to zero by constraints)",
-                    a.get("symbol"), action, delta,
-                )
-            elif action == "REDUCE" and delta > 1.0:
-                # Mirror case: REDUCE that became a net increase (rare but possible)
-                a["action"] = "ACCUMULATE"
-                logger.info(
-                    "[ACTION_RECONCILE] %s REDUCE→ACCUMULATE (delta=%.1f%% after constraint enforcement)",
-                    a.get("symbol"), delta,
-                )
+        _reconcile_allocation_actions(final_allocations)
 
         _snap_neutral_actions(final_allocations)
 
@@ -2120,6 +2225,8 @@ def run_layered_optimizer(
             **persona_fields,
         }
 
+    except HardPolicyEnforcementError:
+        raise
     except Exception as exc:
         logger.critical(
             f"Multi-layer pipeline failed. Initiating Global Fallback Model: "
@@ -2130,4 +2237,7 @@ def run_layered_optimizer(
             pc_map, max_stocks, max_sector_pct, sector_limits,
             total_value, cash_balance, fallback_provider, fallback_model,
             portfolio_name, portfolio_count, max_reached,
+            policy_context=policy_context,
+            effective_envelope=effective_envelope,
+            enforce_effective_policy=enforce_effective_policy_in_fallback,
         )

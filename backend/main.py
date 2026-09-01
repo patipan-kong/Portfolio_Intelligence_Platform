@@ -9,7 +9,7 @@ from typing import Literal
 from fastapi import FastAPI, HTTPException, Depends, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_ as sa_or
 from services.goal_context import (
@@ -3391,6 +3391,9 @@ class OptimizerRequest(BaseModel):
     # (deduplicated, ascending-sorted) before use. Never consulted by the
     # recommendation pipeline itself — see analyze_optimizer.
     goal_ids: list[int] | None = None
+    # Phase 7.5 (ADR-009): independent explicit activation of at most one
+    # deterministic Goal recommendation constraint.
+    goal_constraint_goal_id: StrictInt | None = Field(default=None, gt=0)
 
 
 @app.post("/analyze/optimizer")
@@ -3418,6 +3421,65 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
         if selected_goal_ids and not selected_goal_ids_exist(db, ws, selected_goal_ids):
             raise HTTPException(status_code=404, detail="Wealth goal not found")
 
+    # ── Phase 7.5 (ADR-009) — explicit pre-decision Goal policy admission ────
+    # This path is independent from Phase 7.4 goal_ids and reads only the three
+    # facts authorized for deterministic policy derivation.
+    goal_constraint_evaluation = None
+    goal_constraint_candidate = None
+    goal_constraint_evidence: dict | None = None
+    if body.goal_constraint_goal_id is not None:
+        from services.goal_recommendation_constraints import (
+            GoalRecommendationConstraintIntegrityError,
+            build_goal_constraint_evidence,
+            evaluate_goal_recommendation_constraint,
+            load_goal_constraint_admission,
+        )
+        try:
+            _goal_admission = load_goal_constraint_admission(
+                db, ws, body.goal_constraint_goal_id,
+            )
+        except GoalRecommendationConstraintIntegrityError:
+            raise HTTPException(status_code=409, detail={
+                "code": "GOAL_RECOMMENDATION_CONSTRAINT_DATA_INTEGRITY",
+                "message": "Goal recommendation constraint data is invalid",
+            })
+        if _goal_admission is None:
+            raise HTTPException(status_code=404, detail="Wealth goal not found")
+        if _goal_admission.is_archived:
+            raise HTTPException(status_code=409, detail={
+                "code": "GOAL_CONSTRAINT_GOAL_ARCHIVED",
+                "message": "Archived goal cannot drive recommendation constraints",
+            })
+        if _goal_admission.target_date is None:
+            raise HTTPException(status_code=409, detail={
+                "code": "GOAL_CONSTRAINT_TARGET_DATE_REQUIRED",
+                "message": "Goal target date is required for recommendation constraints",
+            })
+        _goal_as_of_date = datetime.now(timezone.utc).date()
+        if _goal_admission.target_date < _goal_as_of_date:
+            raise HTTPException(status_code=409, detail={
+                "code": "GOAL_CONSTRAINT_TARGET_DATE_PAST",
+                "message": "Past goal target date cannot drive recommendation constraints",
+            })
+        try:
+            goal_constraint_evaluation = evaluate_goal_recommendation_constraint(
+                _goal_admission, _goal_as_of_date,
+            )
+            goal_constraint_candidate = goal_constraint_evaluation.candidate
+            if goal_constraint_candidate is None:
+                goal_constraint_evidence = build_goal_constraint_evidence(
+                    goal_constraint_evaluation,
+                )
+        except Exception as _goal_derivation_exc:
+            _log.exception(
+                "analyze_optimizer: activated Goal constraint derivation failed",
+                exc_info=_goal_derivation_exc,
+            )
+            raise HTTPException(status_code=500, detail={
+                "code": "GOAL_RECOMMENDATION_CONSTRAINT_INTERNAL_ERROR",
+                "message": "Unable to apply goal recommendation constraints",
+            })
+
     holdings = db.query(PortfolioItem).filter(PortfolioItem.portfolio_id == body.portfolio_id).all()
     watchlist_items = db.query(Watchlist).filter(Watchlist.workspace_id == ws).all()
 
@@ -3436,6 +3498,29 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
     from functools import partial
     from services.run_progress import start_run, mark_stage, finish_run
     start_run(body.portfolio_id)  # stage: PREPARING_DATA
+
+    def _finish_failed_goal_run() -> None:
+        try:
+            finish_run(body.portfolio_id, ok=False)
+        except Exception as _finish_exc:
+            _log.error(
+                "analyze_optimizer: failed to finalize activated Goal run progress: %s",
+                _finish_exc,
+                exc_info=True,
+            )
+
+    def _raise_goal_internal(stage: str, exc: Exception) -> None:
+        _log.error(
+            "analyze_optimizer: activated Goal constraint failed at %s: %s",
+            stage,
+            exc,
+            exc_info=True,
+        )
+        _finish_failed_goal_run()
+        raise HTTPException(status_code=500, detail={
+            "code": "GOAL_RECOMMENDATION_CONSTRAINT_INTERNAL_ERROR",
+            "message": "Unable to apply goal recommendation constraints",
+        }) from exc
 
     all_symbols = [h.symbol for h in holdings] + [w.symbol for w in watchlist_items]
 
@@ -3625,16 +3710,27 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
     effective_env_dict: dict | None = None
     try:
         from services.optimizer.constraint_resolver import (
+            apply_single_position_upper_bound as _apply_single_position_upper_bound,
             resolve_constraints as _resolve_constraints,
             envelope_to_dict as _eff_env_to_dict,
         )
         effective_env = _resolve_constraints(ps, sector_limits, regime_ctx, persona_ctx)
+        if goal_constraint_candidate is not None:
+            effective_env, _goal_composition_outcome = _apply_single_position_upper_bound(
+                effective_env, goal_constraint_candidate,
+            )
+            from services.goal_recommendation_constraints import build_goal_constraint_evidence
+            goal_constraint_evidence = build_goal_constraint_evidence(
+                goal_constraint_evaluation, _goal_composition_outcome,
+            )
         effective_env_dict = _eff_env_to_dict(effective_env)
         _log.info(
             "analyze_optimizer: constraint_resolver ran — %d adjustment(s), emergency=%s",
             len(effective_env.resolver_notes), effective_env.emergency_active,
         )
     except Exception as _cre:
+        if goal_constraint_candidate is not None:
+            _raise_goal_internal("constraint composition", _cre)
         _log.warning("analyze_optimizer: constraint_resolver failed — continuing without: %s", _cre)
 
     # ── Phase 3B.4 — Build unified Policy Envelope ────────────────────────────
@@ -3651,21 +3747,32 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
         )
         policy_ctx = _env_to_dict(_policy_env)
     except Exception as _pe:
+        if goal_constraint_candidate is not None:
+            _raise_goal_internal("PolicyEngine propagation", _pe)
         _log.error(
             "[POLICY_ENGINE] compute_policy failed — falling back to regime-only mode: %s", _pe,
             exc_info=True,
         )
 
-    result = await asyncio.to_thread(
-        run_layered_optimizer, portfolio_data, watchlist_data, portfolio.name,
-        portfolio_count, max_reached, layers, max_stocks, max_sector_pct, sector_limits,
-        portfolio.cash_balance or 0.0,
-        fallback_cfg["provider"], fallback_cfg["model"],
-        persona_ctx, regime_ctx, policy_ctx,
-        effective_env,
-        execution_ctx,
-        on_stage=partial(mark_stage, body.portfolio_id),
-    )
+    try:
+        result = await asyncio.to_thread(
+            run_layered_optimizer, portfolio_data, watchlist_data, portfolio.name,
+            portfolio_count, max_reached, layers, max_stocks, max_sector_pct, sector_limits,
+            portfolio.cash_balance or 0.0,
+            fallback_cfg["provider"], fallback_cfg["model"],
+            persona_ctx, regime_ctx, policy_ctx,
+            effective_env,
+            execution_ctx,
+            on_stage=partial(mark_stage, body.portfolio_id),
+            enforce_effective_policy_in_fallback=goal_constraint_candidate is not None,
+        )
+    except Exception as _optimizer_exc:
+        from agents.optimizer import HardPolicyEnforcementError
+        if isinstance(_optimizer_exc, HardPolicyEnforcementError):
+            _raise_goal_internal("deterministic hard-policy enforcement", _optimizer_exc)
+        if goal_constraint_candidate is not None:
+            _finish_failed_goal_run()
+        raise
 
     # Surface regime in optimizer result for frontend display
     if regime_ctx:
@@ -3687,6 +3794,10 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
     result.setdefault("max_reached", max_reached)
     if execution_ctx:
         result["execution_context"] = execution_ctx
+    if goal_constraint_evidence is not None:
+        # Canonical evidence is attached before stabilization and therefore
+        # serialized into unconditional OptimizerHistory on every success.
+        result["goal_recommendation_constraints"] = goal_constraint_evidence
 
     # ── Phase 4C.6H.5 — Enrich target_allocations with timing data ───────────
     if timing_ctx_map:
