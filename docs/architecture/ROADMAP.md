@@ -156,7 +156,8 @@ Delivered foundation:
 - **7.1 Goal Domain Clarification** — Wealth Goal is the canonical authority;
   the Legacy Portfolio Goal Profile is a frozen compatibility contract; Goal
   Funding Allocation is factual designation only; Portfolio Investment Mandate
-  is a distinct future concept; and the Decision Intelligence admission
+  (delivered under 7.6A / ADR-010) remains a distinct concept from
+  designation; and the Decision Intelligence admission
   boundary is established. `risk_personality` remains unresolved.
 - **7.2 Canonical Goal Context** — `wealth.goal-context.v1`
   (`GET /wealth-goals/context`) provides valuation-free canonical Wealth Goal
@@ -192,17 +193,16 @@ Delivered foundation:
   constraint envelope; the resulting application status is persisted as
   canonical evidence on `OptimizerHistory.result_json`. This does not extend
   or reinterpret Phase 7.4 context selection.
+- **7.6A Portfolio Investment Mandate Foundation** (ADR-010) — a canonical,
+  user-authored factual Portfolio ↔ Goal relationship records what Goal or
+  Goals a Portfolio is managed for. It has no behavioral authority, optimizer
+  objective, Goal priority, conflict/tie/gap resolution, or inference from
+  Goal designation, funding, allocation, or coverage. Goal designation ≠
+  Portfolio Investment Mandate.
 
-Still open: **7.6 Cross-Goal Objectives / Optimization** remains future and
-blocked, decomposed as:
+Still open: **7.6B–7.6D Cross-Goal Objectives / Optimization** remain future
+and blocked:
 
-  - **7.6A Portfolio Investment Mandate Foundation** (ADR-010) — the next
-    intended milestone. A canonical, user-authored factual Portfolio ↔ Goal
-    relationship answering only "what Goal or Goals is this Portfolio managed
-    for." It is factual only: no behavioral authority, no optimizer objective,
-    no Goal priority, no conflict/tie/gap resolution, and no inference from
-    Goal designation, funding, allocation, or coverage. Goal designation ≠
-    Portfolio Investment Mandate.
   - **7.6B Goal Objective Authority** — which Goal facts may acquire
     behavioral authority, and the relevant objective semantics.
   - **7.6C Cross-Goal Conflict Policy** — priority, insufficient-capital,
@@ -213,8 +213,8 @@ blocked, decomposed as:
 Future direction continues to include natural-language whole-life wealth
 review, goal-aware recommendations beyond the narrow Phase 7.5 single-position
 bound, risk-aware coaching, and scenario-aware advice. These capabilities,
-canonical-to-legacy synchronization or automatic goal mapping, Portfolio
-Investment Mandate, multi-goal or cross-Goal Decision Intelligence policy,
+canonical-to-legacy synchronization or automatic goal mapping, multi-goal or
+cross-Goal Decision Intelligence policy,
 general recommendation/advisory authority, canonical `risk_personality`
 interpretation, and cross-goal optimizer admission are not yet delivered.
 Learning and evaluation remain constrained by the existing trust and
