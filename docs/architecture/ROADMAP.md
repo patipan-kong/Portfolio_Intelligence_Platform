@@ -199,14 +199,24 @@ Delivered foundation:
   objective, Goal priority, conflict/tie/gap resolution, or inference from
   Goal designation, funding, allocation, or coverage. Goal designation ≠
   Portfolio Investment Mandate.
+- **7.6B Goal Objective Authority Foundation** (ADR-011) — freezes the
+  authority vocabulary governing all Goal-fact behavioral questions
+  (canonical Goal fact / fact authority / admission / behavioral authority /
+  optimizer consumption) and the default rule that a canonical Wealth Goal
+  fact carries no behavioral authority merely from existing, being
+  persisted, being derived, being selected on a request, or belonging to a
+  mandated Goal. ADR-009 remains the sole currently-authorized Goal-derived
+  behavioral exception. This introduces no persistence, schema, migration,
+  API, UI, or optimizer change, and no Goal-objective entity or categorical
+  objective vocabulary.
 
-Still open: **7.6B–7.6D Cross-Goal Objectives / Optimization** remain future
-and blocked:
+Still open: **7.6C–7.6D Cross-Goal Objectives / Optimization** remain
+future:
 
-  - **7.6B Goal Objective Authority** — which Goal facts may acquire
-    behavioral authority, and the relevant objective semantics.
   - **7.6C Cross-Goal Conflict Policy** — priority, insufficient-capital,
-    shared-portfolio, tie, and gap semantics.
+    shared-portfolio, tie, and gap semantics. Not automatically next after
+    7.6B; architecture planning should be revisited only when a genuine
+    multi-Goal behavioral conflict surface exists.
   - **7.6D Cross-Goal Optimization Integration** — integrating the
     already-defined mandate/authority/conflict model into optimizer behavior.
 
