@@ -35,6 +35,7 @@ from models.database import (
     Base,
     OptimizerHistory,
     Portfolio,
+    PortfolioInvestmentMandate,
     PortfolioItem,
     PortfolioSnapshot,
     RecommendationSnapshot,
@@ -42,6 +43,7 @@ from models.database import (
     ShadowPortfolioSnapshot,
     Transaction,
     UserExecutionDecision,
+    WealthGoal,
     Workspace,
 )
 from manage import (
@@ -201,6 +203,27 @@ def _seed_attribution_metric(
     return am
 
 
+def _seed_investment_mandate(db, portfolio: Portfolio, ws: Workspace) -> PortfolioInvestmentMandate:
+    goal = WealthGoal(
+        workspace_id=ws.id,
+        name=f"Goal for {portfolio.name}",
+        goal_type="OTHER",
+        target_amount=1.0,
+        currency="THB",
+        priority="LOW",
+    )
+    db.add(goal)
+    db.flush()
+    mandate = PortfolioInvestmentMandate(
+        workspace_id=ws.id,
+        portfolio_id=portfolio.id,
+        wealth_goal_id=goal.id,
+    )
+    db.add(mandate)
+    db.flush()
+    return mandate
+
+
 # ── Tests: _count_portfolio_relations ─────────────────────────────────────────
 
 def test_count_empty_portfolio():
@@ -213,7 +236,8 @@ def test_count_empty_portfolio():
 
     for key in ("portfolio_items", "transactions", "snapshots", "optimizer_history",
                 "recommendation_snapshots", "execution_decisions",
-                "shadow_portfolios", "shadow_snapshots", "attribution_metrics"):
+                "shadow_portfolios", "shadow_snapshots", "attribution_metrics",
+                "investment_mandates"):
         assert counts[key] == 0, f"{key} should be 0 for empty portfolio"
 
 
@@ -372,6 +396,26 @@ def test_delete_removes_attribution_metrics():
 
     assert db.query(AttributionMetric).filter_by(portfolio_id=pid).count() == 0
     assert counts["attribution_metrics"] == 1
+
+
+def test_cli_bulk_delete_removes_only_target_portfolio_investment_mandates():
+    db = make_session()
+    ws = _seed_workspace(db)
+    target = _seed_portfolio(db, ws, "Target")
+    survivor = _seed_portfolio(db, ws, "Survivor")
+    _seed_investment_mandate(db, target, ws)
+    surviving = _seed_investment_mandate(db, survivor, ws)
+    db.commit()
+    target_id = target.id
+    survivor_id = survivor.id
+    surviving_id = surviving.id
+
+    counts = _delete_portfolio_cascade(db, target_id)
+    db.commit()
+
+    assert counts["investment_mandates"] == 1
+    assert db.query(PortfolioInvestmentMandate).filter_by(portfolio_id=target_id).count() == 0
+    assert db.query(PortfolioInvestmentMandate).filter_by(id=surviving_id).one().portfolio_id == survivor_id
 
 
 def test_delete_does_not_touch_other_portfolio():

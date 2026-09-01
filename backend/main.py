@@ -6,12 +6,13 @@ import re
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone, timedelta
 from typing import Literal
-from fastapi import FastAPI, HTTPException, Depends, Request, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Depends, Request, BackgroundTasks, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_ as sa_or
+from sqlalchemy.exc import IntegrityError
 from services.goal_context import (
     GoalContextIntegrityError,
     build_goal_context,
@@ -39,7 +40,7 @@ import uuid as _uuid
 from models.database import (
     init_db, migrate_legacy_data, get_db, SessionLocal,
     Workspace, get_default_workspace,
-    Portfolio, PortfolioItem, CashAccount, CashAccountBaseline, CashAccountTransfer, CashAccountTransaction, Liability, LiabilityBalanceObservation, WealthGoal, GoalFundingAllocation, GoalScenario, Watchlist,
+    Portfolio, PortfolioItem, CashAccount, CashAccountBaseline, CashAccountTransfer, CashAccountTransaction, Liability, LiabilityBalanceObservation, WealthGoal, GoalFundingAllocation, PortfolioInvestmentMandate, GoalScenario, Watchlist,
     AgentCache, AnalysisCache, AnalysisHistory, OptimizerHistory, SignalHistory,
     Settings, UserUsage, Transaction, PortfolioSnapshot, BenchmarkPrice,
     MarketDataCache,
@@ -1649,6 +1650,109 @@ async def update_wealth_goal(goal_id: int, body: WealthGoalUpdate, db: Session =
     db.commit()
     db.refresh(goal)
     return _wealth_goal_payload(goal)
+
+
+# ── Portfolio Investment Mandates (Phase 7.6A) ───────────────────────────────
+# A mandate is only an explicitly authored Portfolio-to-Goal fact. It carries
+# no optimizer, allocation, priority, or policy meaning.
+
+def _portfolio_investment_mandate_payload(mandate: PortfolioInvestmentMandate) -> dict:
+    return {
+        "id": mandate.id,
+        "workspace_id": mandate.workspace_id,
+        "portfolio_id": mandate.portfolio_id,
+        "wealth_goal_id": mandate.wealth_goal_id,
+        "created_at": mandate.created_at.isoformat(),
+    }
+
+
+def _portfolio_investment_mandate_pair(
+    db: Session, portfolio_id: int, wealth_goal_id: int, workspace_id: int
+) -> PortfolioInvestmentMandate | None:
+    return (
+        db.query(PortfolioInvestmentMandate)
+        .filter(
+            PortfolioInvestmentMandate.workspace_id == workspace_id,
+            PortfolioInvestmentMandate.portfolio_id == portfolio_id,
+            PortfolioInvestmentMandate.wealth_goal_id == wealth_goal_id,
+        )
+        .first()
+    )
+
+
+@app.get("/portfolios/{portfolio_id}/investment-mandates")
+async def list_portfolio_investment_mandates(
+    portfolio_id: int, db: Session = Depends(get_db)
+) -> list[dict]:
+    ws = _ws_id(db)
+    portfolio = resolve_portfolio_or_404(db, portfolio_id, ws)
+    mandates = (
+        db.query(PortfolioInvestmentMandate)
+        .filter(
+            PortfolioInvestmentMandate.workspace_id == ws,
+            PortfolioInvestmentMandate.portfolio_id == portfolio.id,
+        )
+        .order_by(PortfolioInvestmentMandate.id)
+        .all()
+    )
+    return [_portfolio_investment_mandate_payload(item) for item in mandates]
+
+
+@app.put("/portfolios/{portfolio_id}/investment-mandates/{wealth_goal_id}")
+async def put_portfolio_investment_mandate(
+    portfolio_id: int,
+    wealth_goal_id: int,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> dict:
+    ws = _ws_id(db)
+    portfolio = resolve_portfolio_or_404(db, portfolio_id, ws)
+    goal = _wealth_goal_or_404(db, wealth_goal_id, ws)
+    existing = _portfolio_investment_mandate_pair(db, portfolio.id, goal.id, ws)
+    if existing is not None:
+        response.status_code = 200
+        return _portfolio_investment_mandate_payload(existing)
+    if goal.is_archived:
+        raise HTTPException(
+            status_code=409,
+            detail="Archived wealth goals cannot receive new portfolio investment mandates",
+        )
+
+    mandate = PortfolioInvestmentMandate(
+        workspace_id=ws,
+        portfolio_id=portfolio.id,
+        wealth_goal_id=goal.id,
+    )
+    db.add(mandate)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        existing = _portfolio_investment_mandate_pair(db, portfolio.id, goal.id, ws)
+        if existing is None:
+            raise
+        response.status_code = 200
+        return _portfolio_investment_mandate_payload(existing)
+    db.refresh(mandate)
+    response.status_code = 201
+    return _portfolio_investment_mandate_payload(mandate)
+
+
+@app.delete(
+    "/portfolios/{portfolio_id}/investment-mandates/{wealth_goal_id}",
+    status_code=204,
+)
+async def delete_portfolio_investment_mandate(
+    portfolio_id: int, wealth_goal_id: int, db: Session = Depends(get_db)
+) -> Response:
+    ws = _ws_id(db)
+    portfolio = resolve_portfolio_or_404(db, portfolio_id, ws)
+    goal = _wealth_goal_or_404(db, wealth_goal_id, ws)
+    mandate = _portfolio_investment_mandate_pair(db, portfolio.id, goal.id, ws)
+    if mandate is not None:
+        db.delete(mandate)
+        db.commit()
+    return Response(status_code=204)
 
 
 # ── Goal Funding Allocations (Phase 6, Milestone 2) ──────────────────────────

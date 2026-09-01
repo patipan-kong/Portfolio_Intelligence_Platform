@@ -71,6 +71,7 @@ class Workspace(Base):
     liability_balance_observations = relationship("LiabilityBalanceObservation", back_populates="workspace", cascade="all, delete-orphan")
     wealth_goals = relationship("WealthGoal", back_populates="workspace", cascade="all, delete-orphan")
     goal_funding_allocations = relationship("GoalFundingAllocation", back_populates="workspace", cascade="all, delete-orphan")
+    portfolio_investment_mandates = relationship("PortfolioInvestmentMandate", back_populates="workspace", cascade="all, delete-orphan")
     goal_scenarios = relationship("GoalScenario", back_populates="workspace", cascade="all, delete-orphan")
     cash_account_transactions = relationship("CashAccountTransaction", back_populates="workspace", cascade="all, delete-orphan")
     cash_account_transfers = relationship("CashAccountTransfer", back_populates="workspace", cascade="all, delete-orphan")
@@ -123,6 +124,7 @@ class Portfolio(Base):
     # explicit PRAGMA this codebase does not set; matches how items/
     # transactions/snapshots above already cascade at the ORM layer.
     goal_funding_allocations = relationship("GoalFundingAllocation", cascade="all, delete-orphan")
+    investment_mandates = relationship("PortfolioInvestmentMandate", cascade="all, delete-orphan")
 
 
 class CashAccount(Base):
@@ -322,6 +324,27 @@ class GoalFundingAllocation(Base):
         UniqueConstraint("wealth_goal_id", "cash_account_id", name="uq_goal_funding_allocations_goal_cash"),
         UniqueConstraint("wealth_goal_id", "portfolio_id", name="uq_goal_funding_allocations_goal_portfolio"),
         Index("ix_goal_funding_allocations_workspace_goal", "workspace_id", "wealth_goal_id"),
+    )
+
+
+class PortfolioInvestmentMandate(Base):
+    """An explicitly authored fact that a Portfolio is managed for a Goal."""
+    __tablename__ = "portfolio_investment_mandates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    portfolio_id = Column(Integer, ForeignKey("portfolios.id", ondelete="CASCADE"), nullable=False, index=True)
+    wealth_goal_id = Column(Integer, ForeignKey("wealth_goals.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    workspace = relationship("Workspace", back_populates="portfolio_investment_mandates")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "portfolio_id",
+            "wealth_goal_id",
+            name="uq_portfolio_investment_mandates_portfolio_goal",
+        ),
     )
 
 

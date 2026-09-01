@@ -89,7 +89,7 @@ def test_goal_scenario_revision_merges_the_repository_heads():
     config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["e5f7a9b1c3d6"]
+    assert script.get_heads() == ["f6a8c0e2d4b6"]
 
 
 # 1. create scenario

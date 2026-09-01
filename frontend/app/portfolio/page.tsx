@@ -6,6 +6,7 @@ import Link from "next/link";
 import PortfolioTable from "@/components/PortfolioTable";
 import PortfolioTabs from "@/components/PortfolioTabs";
 import PortfolioSummary from "@/components/PortfolioSummary";
+import PortfolioInvestmentMandates from "@/components/PortfolioInvestmentMandates";
 import { usePortfolio } from "@/lib/PortfolioContext";
 import WorkspaceScopeSwitcher from "@/components/WorkspaceScopeSwitcher";
 import AnalyzeAllButton from "@/components/AnalyzeAllButton";
@@ -549,6 +550,10 @@ export default function PortfolioPage() {
       ) : (
         <>
           <PortfolioSummary items={items} cashBalance={cashBalance} pricesLoading={pricesLoading} />
+
+          {currentSelection != null && (
+            <PortfolioInvestmentMandates portfolioId={currentSelection} />
+          )}
 
           {/* Cash Balance display (read-only; modified via Deposit / Withdraw) */}
           <div className="bg-white border rounded-xl p-4 shadow-sm flex items-center gap-4">

@@ -23,6 +23,7 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     const text = await res.text();
     throw new Error(`API ${res.status}: ${text}`);
   }
+  if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }
 
@@ -111,6 +112,14 @@ export interface WealthGoal {
   is_archived: boolean;
   created_at: string;
   updated_at: string;
+}
+
+export interface PortfolioInvestmentMandate {
+  id: number;
+  workspace_id: number;
+  portfolio_id: number;
+  wealth_goal_id: number;
+  created_at: string;
 }
 
 export interface CashAccountBaseline {
@@ -570,6 +579,21 @@ export const createWealthGoal = (body: WealthGoalCreate) =>
 
 export const updateWealthGoal = (id: number, body: WealthGoalUpdate) =>
   apiFetch<WealthGoal>(`/wealth-goals/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+
+export const listPortfolioInvestmentMandates = (portfolioId: number) =>
+  apiFetch<PortfolioInvestmentMandate[]>(`/portfolios/${portfolioId}/investment-mandates`);
+
+export const putPortfolioInvestmentMandate = (portfolioId: number, wealthGoalId: number) =>
+  apiFetch<PortfolioInvestmentMandate>(
+    `/portfolios/${portfolioId}/investment-mandates/${wealthGoalId}`,
+    { method: "PUT" },
+  );
+
+export const deletePortfolioInvestmentMandate = (portfolioId: number, wealthGoalId: number) =>
+  apiFetch<void>(
+    `/portfolios/${portfolioId}/investment-mandates/${wealthGoalId}`,
+    { method: "DELETE" },
+  );
 
 // ─── Wealth Goal Context (Phase 7.2) ───────────────────────────────────────
 // The Goal Context endpoint is the canonical, valuation-free read of goal
