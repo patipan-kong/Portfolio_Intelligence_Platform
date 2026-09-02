@@ -7049,6 +7049,22 @@ async def get_execution_decision(decision_id: int, db: Session = Depends(get_db)
         id=row.recommendation_snapshot_id
     ).first()
 
+    # Phase 7.4 (ADR-008) — same fail-closed decision-context load as
+    # GET /optimizer/snapshots/{id}. NULL means no capture was attempted
+    # (legacy or unscoped run); a malformed/unsupported-version payload
+    # fails closed rather than surfacing a fabricated goal.
+    decision_context = None
+    if snap is not None:
+        from services.decision_goal_context import (
+            DecisionGoalContextIntegrityError,
+            load_persisted_decision_context,
+            integrity_error_detail as decision_context_integrity_error_detail,
+        )
+        try:
+            decision_context = load_persisted_decision_context(snap.wealth_goal_context_json)
+        except DecisionGoalContextIntegrityError:
+            raise HTTPException(status_code=409, detail=decision_context_integrity_error_detail())
+
     return {
         "id": row.id,
         "portfolio_id": row.portfolio_id,
@@ -7070,6 +7086,7 @@ async def get_execution_decision(decision_id: int, db: Session = Depends(get_db)
             "regime": _json.loads(snap.regime_snapshot_json) if snap.regime_snapshot_json else None,
             "consensus": _json.loads(snap.consensus_json) if snap.consensus_json else None,
             "projected_allocations": _json.loads(snap.projected_allocations_json) if snap.projected_allocations_json else None,
+            "decision_context": decision_context,
         } if snap else None,
     }
 

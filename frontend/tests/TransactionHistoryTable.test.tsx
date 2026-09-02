@@ -19,6 +19,7 @@ function tx(overrides: Partial<TransactionRecord> = {}): TransactionRecord {
     transaction_date: "2026-08-01T04:00:00Z",
     notes: null,
     sector: "Financials",
+    execution_decision_id: null,
     created_at: "2026-08-01T04:00:01Z",
     ...overrides,
   };
@@ -163,6 +164,25 @@ describe("TransactionHistoryTable", () => {
     );
     expect(screen.getAllByText("Sell").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Buy").length).toBeGreaterThan(0);
+  });
+});
+
+describe("decision provenance (Decision Continuity UX Slice 1)", () => {
+  test("a transaction linked to a decision renders a Decision link to the Execution Detail page", () => {
+    render(<TransactionHistoryTable transactions={[tx({ id: 30, execution_decision_id: 99 })]} />);
+    const links = screen.getAllByRole("link", { name: "Decision #99" });
+    expect(links.length).toBeGreaterThan(0);
+    for (const link of links) {
+      expect(link).toHaveAttribute("href", "/ai-analytics/execution/99");
+    }
+  });
+
+  test("an unlinked historical transaction renders normally with no decision provenance UI", () => {
+    render(<TransactionHistoryTable transactions={[tx({ id: 31, execution_decision_id: null })]} />);
+    expect(screen.queryByText(/^Decision #/)).not.toBeInTheDocument();
+    // the ordinary row still renders in full
+    expect(screen.getAllByText("Buy").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("KBANK").length).toBeGreaterThan(0);
   });
 });
 

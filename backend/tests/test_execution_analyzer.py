@@ -38,8 +38,14 @@ def _alloc(symbol: str, action: str, change_pct: float, estimated_amount: float,
     }
 
 
-def _tx(symbol: str, shares: float, price_per_share: float, total_amount: float) -> dict:
-    return {"symbol": symbol, "shares": shares, "price_per_share": price_per_share, "total_amount": total_amount}
+def _tx(
+    symbol: str, shares: float, price_per_share: float, total_amount: float,
+    id: int = 1, transaction_date: str = "2026-01-01T00:00:00Z",
+) -> dict:
+    return {
+        "symbol": symbol, "shares": shares, "price_per_share": price_per_share,
+        "total_amount": total_amount, "id": id, "transaction_date": transaction_date,
+    }
 
 
 # ── Unavailable / null-handling ─────────────────────────────────────────────
@@ -143,3 +149,63 @@ def test_no_funding_source_planned_fidelity_is_not_applicable():
         recommendation_prices={"CENTEL": 100.0}, linked_transactions=txs,
     )
     assert result["funding_fidelity_pct"] is None
+
+
+# ── Linked transaction provenance (Decision Continuity UX Slice 1) ──────────
+# Additive only — id/transaction_date must reach the per-symbol result
+# without perturbing any score/status/completeness/funding-fidelity math
+# already proven above.
+
+def test_matched_symbol_carries_transaction_provenance():
+    allocations = [_alloc("CENTEL", "BUY", 3.0, 30_000, current_weight=0.0)]
+    txs = [_tx("CENTEL", shares=300, price_per_share=100.0, total_amount=30_000, id=42, transaction_date="2026-03-01T00:00:00Z")]
+    result = compute_execution_analysis(
+        allocations, cash_available=0.0, violations=[],
+        recommendation_prices={"CENTEL": 100.0}, linked_transactions=txs,
+    )
+    assert result["symbols"]["CENTEL"]["transactions"] == [{"id": 42, "transaction_date": "2026-03-01T00:00:00Z"}]
+    # Existing scoring is unaffected by the new field.
+    assert result["symbols"]["CENTEL"]["timing_delta_pct"] == 0.0
+    assert result["symbols"]["CENTEL"]["size_delta_pct"] == 0.0
+    assert result["completeness_pct"] == 100.0
+    assert result["score"] > 90.0
+
+
+def test_multiple_fills_for_one_symbol_all_represented():
+    """Two partial fills against one symbol must both be listed — never
+    arbitrarily reduced to a single reference."""
+    allocations = [_alloc("CENTEL", "BUY", 3.0, 30_000, current_weight=0.0)]
+    txs = [
+        _tx("CENTEL", shares=150, price_per_share=100.0, total_amount=15_000, id=1, transaction_date="2026-03-01T00:00:00Z"),
+        _tx("CENTEL", shares=150, price_per_share=100.0, total_amount=15_000, id=2, transaction_date="2026-03-02T00:00:00Z"),
+    ]
+    result = compute_execution_analysis(
+        allocations, cash_available=0.0, violations=[],
+        recommendation_prices={"CENTEL": 100.0}, linked_transactions=txs,
+    )
+    ids = {t["id"] for t in result["symbols"]["CENTEL"]["transactions"]}
+    assert ids == {1, 2}
+    # Aggregation math (executed_amount, deltas) is untouched by the addition.
+    assert result["symbols"]["CENTEL"]["executed_amount"] == 30_000.0
+
+
+def test_unmatched_symbol_has_empty_transactions_list():
+    allocations = [
+        _alloc("CENTEL", "BUY", 3.0, 30_000, current_weight=0.0),
+        _alloc("ADVANC", "BUY", 2.0, 20_000, current_weight=0.0),
+    ]
+    txs = [_tx("CENTEL", shares=300, price_per_share=100.0, total_amount=30_000)]
+    result = compute_execution_analysis(
+        allocations, cash_available=0.0, violations=[],
+        recommendation_prices={"CENTEL": 100.0, "ADVANC": 200.0}, linked_transactions=txs,
+    )
+    assert result["symbols"]["ADVANC"]["transactions"] == []
+
+
+def test_zero_linked_transactions_gives_empty_transactions_lists():
+    allocations = [_alloc("CENTEL", "BUY", 3.0, 30_000, current_weight=0.0)]
+    result = compute_execution_analysis(
+        allocations, cash_available=0.0, violations=[],
+        recommendation_prices={"CENTEL": 100.0}, linked_transactions=[],
+    )
+    assert result["symbols"]["CENTEL"]["transactions"] == []

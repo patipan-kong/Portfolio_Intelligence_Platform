@@ -20,6 +20,10 @@ function pct(n: number | null | undefined, decimals = 1): string {
   return `${n >= 0 ? "+" : ""}${n.toFixed(decimals)}%`;
 }
 
+function shortDate(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "2-digit" });
+}
+
 export default function ExecutionDetailPage() {
   const params = useParams();
   const decisionId = Number(params?.id);
@@ -135,6 +139,7 @@ export default function ExecutionDetailPage() {
                       <th className="py-2 px-3 font-medium text-right">Timing Δ</th>
                       <th className="py-2 px-3 font-medium text-right">Size Δ</th>
                       <th className="py-2 px-3 font-medium">Note</th>
+                      <th className="py-2 px-3 font-medium">Recorded as</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -151,6 +156,11 @@ export default function ExecutionDetailPage() {
                         <td className="py-2 px-3 text-right tabular-nums text-gray-600">{pct(d.timing_delta_pct)}</td>
                         <td className="py-2 px-3 text-right tabular-nums text-gray-600">{pct(d.size_delta_pct, 0)}</td>
                         <td className="py-2 px-3 text-xs text-gray-400 italic">{d.note ?? ""}</td>
+                        <td className="py-2 px-3 text-xs text-gray-500">
+                          {d.transactions.length > 0
+                            ? d.transactions.map((t) => `#${t.id} (${shortDate(t.transaction_date)})`).join(", ")
+                            : "—"}
+                        </td>
                       </tr>
                     ))}
                   </tbody>

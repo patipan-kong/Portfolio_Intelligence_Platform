@@ -105,6 +105,21 @@ function SymbolCell({ symbol }: { symbol: string | null }) {
   );
 }
 
+// Reverse-navigation into the decision this transaction was recorded
+// against (AI Evaluation S4b). Only rendered when execution_decision_id is
+// present — unlinked historical transactions render exactly as before, no
+// placeholder, no fabricated provenance.
+function DecisionLink({ decisionId }: { decisionId: number }) {
+  return (
+    <Link
+      href={`/ai-analytics/execution/${decisionId}`}
+      className="text-xs text-blue-600 hover:underline whitespace-nowrap"
+    >
+      Decision #{decisionId}
+    </Link>
+  );
+}
+
 function DetailField({ label, value }: { label: string; value: string }) {
   return (
     <div>
@@ -190,6 +205,9 @@ export default function TransactionHistoryTable({ transactions }: { transactions
                 <TypeBadge type={tx.type} />
                 <span className="text-xs text-gray-400">{formatDate(tx.transaction_date)}</span>
               </div>
+              {tx.execution_decision_id != null && (
+                <DecisionLink decisionId={tx.execution_decision_id} />
+              )}
               <div className="flex items-center justify-between">
                 <SymbolCell symbol={tx.symbol} />
                 <span className="text-sm font-semibold text-gray-800 text-right">
@@ -239,7 +257,12 @@ export default function TransactionHistoryTable({ transactions }: { transactions
                 <Fragment key={tx.id}>
                   <tr className="border-b last:border-0 hover:bg-gray-50">
                     <td className="py-2 pr-4 text-gray-500 whitespace-nowrap">{formatDate(tx.transaction_date)}</td>
-                    <td className="py-2 pr-4"><TypeBadge type={tx.type} /></td>
+                    <td className="py-2 pr-4">
+                      <TypeBadge type={tx.type} />
+                      {tx.execution_decision_id != null && (
+                        <div className="mt-1"><DecisionLink decisionId={tx.execution_decision_id} /></div>
+                      )}
+                    </td>
                     <td className="py-2 pr-4"><SymbolCell symbol={tx.symbol} /></td>
                     <td className="py-2 pr-4 text-right text-gray-700">{fmt(tx.shares, 4)}</td>
                     <td className="py-2 pr-4 text-right text-gray-700">{fmt(tx.price_per_share)}</td>

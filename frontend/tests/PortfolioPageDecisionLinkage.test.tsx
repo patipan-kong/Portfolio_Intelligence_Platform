@@ -101,6 +101,17 @@ function txResult(overrides: Partial<TransactionResult> = {}): TransactionResult
   };
 }
 
+// The banner text ("Recording execution for <Link>Decision #N</Link>
+// (STATUS)") now spans a nested <a> element (Decision Continuity UX Slice
+// 1 — the decision reference became a link). RTL's default getByText only
+// matches an element's own direct text-node children, not descendant
+// element text, so a plain string/regex TextMatch would no longer find the
+// full sentence. This matcher checks element.textContent directly instead.
+function bannerWith(text: string) {
+  return (_content: string, element: Element | null) =>
+    element?.tagName === "P" && (element.textContent ?? "").includes(text);
+}
+
 function SwitcherProbe() {
   const { selectPortfolio, loading } = usePortfolio();
   return (
@@ -146,7 +157,7 @@ test("no ?decision= param: no banner, ordinary Buy sends no execution_decision_i
   await act(async () => screen.getByText("select-1").click());
   await waitFor(() => expect(getHoldings).toHaveBeenCalledWith(1));
 
-  expect(screen.queryByText(/Recording execution for Decision/)).not.toBeInTheDocument();
+  expect(screen.queryByText(bannerWith("Recording execution for Decision"))).not.toBeInTheDocument();
   expect(getExecutionDecision).not.toHaveBeenCalled();
 
   await act(async () => screen.getByText("Buy").click());
@@ -174,9 +185,26 @@ test("valid ?decision=<id> fetches the decision, switches portfolio, and shows t
   await waitFor(() => expect(screen.getByText("ready")).toBeInTheDocument());
   await act(async () => resolveDecision(decisionDetail({ id: 42, portfolio_id: 2, decision: "APPROVED" })));
 
-  await waitFor(() => expect(screen.getByText(/Recording execution for Decision #42/)).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText(bannerWith("Recording execution for Decision #42"))).toBeInTheDocument());
   // The decision belongs to portfolio 2 — Current Selection must follow it.
   await waitFor(() => expect(getHoldings).toHaveBeenCalledWith(2));
+});
+
+test("the banner decision reference is a navigable link to the Execution Detail page", async () => {
+  mockSearchParams = new URLSearchParams("decision=42");
+  getExecutionDecision.mockResolvedValue(decisionDetail({ id: 42, portfolio_id: 1 }));
+
+  render(
+    <PortfolioProvider>
+      <SwitcherProbe />
+      <PortfolioPage />
+    </PortfolioProvider>
+  );
+  await act(async () => screen.getByText("select-1").click());
+  await waitFor(() => expect(screen.getByText(bannerWith("Recording execution for Decision #42"))).toBeInTheDocument());
+
+  const link = screen.getByRole("link", { name: "Decision #42" });
+  expect(link).toHaveAttribute("href", "/ai-analytics/execution/42");
 });
 
 test("a decision resolving before the portfolio list loads does not wipe the persisted selection, and activates once portfolios arrive", async () => {
@@ -201,14 +229,14 @@ test("a decision resolving before the portfolio list loads does not wipe the per
   // survive rather than being wiped to NONE by a selectPortfolio() call
   // against an empty, not-yet-loaded portfolio list.
   await waitFor(() => expect(getExecutionDecision).toHaveBeenCalledWith(42));
-  expect(screen.queryByText(/Recording execution for Decision/)).not.toBeInTheDocument();
+  expect(screen.queryByText(bannerWith("Recording execution for Decision"))).not.toBeInTheDocument();
   expect(localStorage.getItem("workspace_current_selection")).toBe("1");
 
   // Portfolio list now arrives — the deferred activation runs against a
   // real, resolvable list.
   await act(async () => resolvePortfolios([makePortfolio(1), makePortfolio(2)]));
 
-  await waitFor(() => expect(screen.getByText(/Recording execution for Decision #42/)).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText(bannerWith("Recording execution for Decision #42"))).toBeInTheDocument());
   await waitFor(() => expect(getHoldings).toHaveBeenCalledWith(2));
   expect(localStorage.getItem("workspace_current_selection")).toBe("2");
 });
@@ -224,11 +252,11 @@ test("Clear removes the banner and strips the query param", async () => {
     </PortfolioProvider>
   );
   await act(async () => screen.getByText("select-1").click());
-  await waitFor(() => expect(screen.getByText(/Recording execution for Decision #42/)).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText(bannerWith("Recording execution for Decision #42"))).toBeInTheDocument());
 
   await act(async () => screen.getByText("Clear").click());
 
-  expect(screen.queryByText(/Recording execution for Decision/)).not.toBeInTheDocument();
+  expect(screen.queryByText(bannerWith("Recording execution for Decision"))).not.toBeInTheDocument();
   expect(routerReplace).toHaveBeenCalledWith("/portfolio");
 });
 
@@ -243,12 +271,12 @@ test("manually switching to a different portfolio clears the active decision con
     </PortfolioProvider>
   );
   await act(async () => screen.getByText("select-1").click());
-  await waitFor(() => expect(screen.getByText(/Recording execution for Decision #42/)).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText(bannerWith("Recording execution for Decision #42"))).toBeInTheDocument());
 
   // User manually navigates to a different portfolio than the decision's own.
   await act(async () => screen.getByText("select-2").click());
 
-  await waitFor(() => expect(screen.queryByText(/Recording execution for Decision/)).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.queryByText(bannerWith("Recording execution for Decision"))).not.toBeInTheDocument());
 });
 
 test("Buy while a decision context is active links the transaction; Buy after Clear does not", async () => {
@@ -263,7 +291,7 @@ test("Buy while a decision context is active links the transaction; Buy after Cl
   );
   await waitFor(() => expect(screen.getByText("ready")).toBeInTheDocument());
   await act(async () => screen.getByText("select-1").click());
-  await waitFor(() => expect(screen.getByText(/Recording execution for Decision #42/)).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText(bannerWith("Recording execution for Decision #42"))).toBeInTheDocument());
 
   await act(async () => screen.getByText("Buy").click());
   await waitFor(() => expect(screen.getByPlaceholderText("AAPL or SCB.BK")).toBeInTheDocument());
@@ -279,7 +307,7 @@ test("Buy while a decision context is active links the transaction; Buy after Cl
   expect(buyTransaction.mock.calls[0][1]).toMatchObject({ execution_decision_id: 42 });
 
   // Banner persists across the trade (multi-trade decisions) until Clear.
-  expect(screen.getByText(/Recording execution for Decision #42/)).toBeInTheDocument();
+  expect(screen.getByText(bannerWith("Recording execution for Decision #42"))).toBeInTheDocument();
   await act(async () => screen.getByText("Done").click());
   await act(async () => screen.getByText("Clear").click());
 
@@ -324,12 +352,12 @@ test("a stale decision response cannot attach to a later portfolio selection", a
       </PortfolioProvider>
     );
   });
-  await waitFor(() => expect(screen.getByText(/Recording execution for Decision #2/)).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText(bannerWith("Recording execution for Decision #2"))).toBeInTheDocument());
 
   // The stale first response now resolves — it must be discarded, not
   // override the already-established decision #2 context.
   await act(async () => resolveFirst(decisionDetail({ id: 1, portfolio_id: 1 })));
 
-  expect(screen.getByText(/Recording execution for Decision #2/)).toBeInTheDocument();
-  expect(screen.queryByText(/Recording execution for Decision #1\b/)).not.toBeInTheDocument();
+  expect(screen.getByText(bannerWith("Recording execution for Decision #2"))).toBeInTheDocument();
+  expect(screen.queryByText(bannerWith("Recording execution for Decision #1 "))).not.toBeInTheDocument();
 });

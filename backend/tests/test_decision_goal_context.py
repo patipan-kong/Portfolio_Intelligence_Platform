@@ -25,6 +25,7 @@ from models.database import (
     Portfolio,
     PortfolioItem,
     RecommendationSnapshot,
+    UserExecutionDecision,
     Watchlist,
     WealthGoal,
     Workspace,
@@ -759,3 +760,82 @@ def test_snapshot_read_unsupported_contract_version_fails_closed_409():
     with pytest.raises(HTTPException) as error:
         asyncio.run(main.get_recommendation_snapshot(snap.id, db))
     assert error.value.status_code == 409
+
+
+# ── GET /optimizer/decisions/{id}: decision_context enrichment ─────────────
+# Decision Continuity UX Slice 1 (D) — reuses load_persisted_decision_context
+# verbatim (no duplicate parser) and follows the exact fail-closed pattern
+# already proven above for GET /optimizer/snapshots/{id}.
+
+def _make_decision(db, ws_id, snap, decision="APPROVED"):
+    item = UserExecutionDecision(
+        workspace_id=ws_id, recommendation_snapshot_id=snap.id, portfolio_id=snap.portfolio_id,
+        decision=decision, is_system_generated=False,
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+def test_decision_read_exposes_null_decision_context_for_legacy_or_unscoped_run():
+    db = make_session()
+    ws_id = main._ws_id(db)
+    snap = _make_snapshot(db, ws_id, None)
+    dec = _make_decision(db, ws_id, snap)
+
+    response = asyncio.run(main.get_execution_decision(dec.id, db))
+    assert response["recommendation_snapshot"]["decision_context"] is None
+
+
+def test_decision_read_exposes_self_contained_captured_decision_context():
+    db = make_session()
+    ws_id = main._ws_id(db)
+    item = goal(db, ws_id, "House")
+    payload = build_decision_goal_context(db, ws_id, [item.id])
+    snap = _make_snapshot(db, ws_id, json.dumps(payload))
+    dec = _make_decision(db, ws_id, snap)
+
+    response = asyncio.run(main.get_execution_decision(dec.id, db))
+    ctx = response["recommendation_snapshot"]["decision_context"]
+    assert ctx["decision_effect"] == CONTEXT_ONLY
+    assert ctx["context_state"] == COMPLETE
+    assert ctx["goals"][0]["name"] == "House"
+    # No pre-existing decision field is disturbed by the enrichment.
+    assert response["decision"] == "APPROVED"
+    assert response["recommendation_snapshot"]["id"] == snap.id
+
+
+def test_decision_read_malformed_decision_context_fails_closed_409():
+    db = make_session()
+    ws_id = main._ws_id(db)
+    snap = _make_snapshot(db, ws_id, "{not valid json")
+    dec = _make_decision(db, ws_id, snap)
+
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(main.get_execution_decision(dec.id, db))
+    assert error.value.status_code == 409
+    assert error.value.detail == {
+        "code": "DECISION_GOAL_CONTEXT_DATA_INTEGRITY",
+        "message": "Decision goal context evidence failed integrity validation.",
+    }
+
+
+def test_decision_read_with_missing_snapshot_row_has_null_recommendation_snapshot():
+    """Mirrors the existing `if snap else None` guard: a decision whose
+    recommendation_snapshot_id does not resolve to a row must not raise —
+    the whole recommendation_snapshot sub-object (decision_context included)
+    is simply None, exactly as before this enrichment."""
+    db = make_session()
+    ws_id = main._ws_id(db)
+    p = portfolio_row(db, ws_id)
+    item = UserExecutionDecision(
+        workspace_id=ws_id, recommendation_snapshot_id=999999, portfolio_id=p.id,
+        decision="REJECTED", is_system_generated=False,
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+
+    response = asyncio.run(main.get_execution_decision(item.id, db))
+    assert response["recommendation_snapshot"] is None

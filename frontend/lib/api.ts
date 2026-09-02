@@ -2115,6 +2115,7 @@ export interface TransactionRecord {
   transaction_date: string;
   notes: string | null;
   sector: string | null;
+  execution_decision_id: number | null;
   created_at: string | null;
   conversion_detail?: PositionConversionDetail | null;
 }
@@ -2804,6 +2805,36 @@ export interface ExecutionDecision {
   created_at: string | null;
 }
 
+// wealth.decision-goal-context.v1 (Phase 7.4/ADR-008) — CONTEXT_ONLY, never
+// fed back into recommendation/optimizer/policy/execution logic. Mirrors
+// backend/services/decision_goal_context.py's admitted field set.
+export interface DecisionGoalContextGoal {
+  id: number;
+  name: string;
+  goal_type: string;
+  priority: string;
+  target_amount: number;
+  currency: string;
+  target_date: string | null;
+  is_archived: boolean;
+  updated_at: string;
+  designated_total: number;
+  progress_ratio: number;
+  progress_percent: number;
+  funding_gap: number;
+  fully_designated: boolean;
+}
+
+export interface DecisionGoalContext {
+  contract_version: string;
+  source_goal_context_version: string;
+  decision_effect: "CONTEXT_ONLY";
+  context_state: "COMPLETE" | "EMPTY";
+  selected_goal_ids: number[];
+  observed_at: string;
+  goals: DecisionGoalContextGoal[];
+}
+
 export interface ExecutionDecisionDetail extends ExecutionDecision {
   approved_allocations: Array<{ symbol: string; target_weight: number; action: string }> | null;
   rejected_symbols: string[] | null;
@@ -2815,6 +2846,7 @@ export interface ExecutionDecisionDetail extends ExecutionDecision {
     regime: Record<string, unknown> | null;
     consensus: Record<string, unknown> | null;
     projected_allocations: Array<{ symbol: string; target_weight: number; action: string }> | null;
+    decision_context: DecisionGoalContext | null;
   } | null;
 }
 
@@ -4200,6 +4232,11 @@ export const getExecutionLedger = (portfolioId: number, periodDays = 90) =>
     `/analytics/evaluation/execution?portfolio_id=${portfolioId}&period_days=${periodDays}`,
   );
 
+export interface ExecutionSymbolLinkedTransaction {
+  id: number;
+  transaction_date: string;
+}
+
 export interface ExecutionSymbolDelta {
   action: string;
   planned_amount: number;
@@ -4207,6 +4244,7 @@ export interface ExecutionSymbolDelta {
   timing_delta_pct: number | null;
   size_delta_pct: number | null;
   note: string | null;
+  transactions: ExecutionSymbolLinkedTransaction[];
 }
 
 export interface ExecutionAnalysis {

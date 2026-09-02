@@ -230,6 +230,7 @@ function dividend(portfolioId: number, id: number, amount: number, date = "2026-
     transaction_date: date,
     notes: null,
     sector: null,
+    execution_decision_id: null,
     created_at: null,
   };
 }

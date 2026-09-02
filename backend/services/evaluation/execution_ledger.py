@@ -93,6 +93,8 @@ def _linked_transactions(db: Session, decision_id: int, known_symbols: list[str]
         {
             "symbol": t.symbol, "shares": t.shares, "price_per_share": t.price_per_share,
             "total_amount": t.total_amount, "asset_id": t.asset_id,
+            "id": t.id,
+            "transaction_date": t.transaction_date.isoformat() + "Z" if t.transaction_date else None,
         }
         for t in rows
     ]

@@ -76,8 +76,9 @@ def compute_execution_analysis(
         recommendation_prices: {symbol: price} — normally
             RecommendationSnapshot.scores_map_json's per-symbol current_price.
         linked_transactions: [{"symbol", "shares", "price_per_share",
-            "total_amount"}, ...] already filtered by the caller to rows
-            whose execution_decision_id matches this decision.
+            "total_amount", "id", "transaction_date"}, ...] already filtered
+            by the caller to rows whose execution_decision_id matches this
+            decision.
     """
     from services.evaluation.plan_grader import derive_full_plan
     from services.optimizer.execution_optimizer import ROLE_FUNDING_SOURCE, STATE_DEFERRED
@@ -122,6 +123,7 @@ def compute_execution_analysis(
                     "timing_delta_pct": None,
                     "size_delta_pct": None,
                     "note": "no_linked_transaction",
+                    "transactions": [],
                 }
                 for sym, p in planned_by_symbol.items()
             },
@@ -141,6 +143,7 @@ def compute_execution_analysis(
                 "timing_delta_pct": None,
                 "size_delta_pct": None,
                 "note": "no_linked_transaction",
+                "transactions": [],
             }
             continue
 
@@ -170,6 +173,9 @@ def compute_execution_analysis(
             "timing_delta_pct": timing_delta_pct,
             "size_delta_pct": size_delta_pct,
             "note": None,
+            "transactions": [
+                {"id": t.get("id"), "transaction_date": t.get("transaction_date")} for t in txs
+            ],
         }
 
     completeness_pct = round(100.0 * matched_count / total_planned, 2) if total_planned else 100.0

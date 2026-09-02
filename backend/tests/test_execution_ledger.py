@@ -323,6 +323,68 @@ def test_native_asset_id_links_transaction_with_no_bk_relationship(db, ws_portfo
     assert detail["analysis"]["symbols"]["BH"]["note"] is None
 
 
+# ── Linked transaction provenance (Decision Continuity UX Slice 1) ──────────
+# _linked_transactions() already loads the full Transaction row; id/
+# transaction_date must now reach get_execution_detail's per-symbol result
+# without perturbing status/score/completeness/funding-fidelity, which the
+# tests above already pin.
+
+def test_execution_detail_includes_linked_transaction_provenance(db, ws_portfolio):
+    ws, portfolio = ws_portfolio
+    _snap, dec = _seed_snapshot_and_decision(db, ws, portfolio, "APPROVED", _ALLOCS_BUY_ONLY, with_transaction=True)
+
+    from models.database import Transaction
+    tx = db.query(Transaction).filter_by(execution_decision_id=dec.id).one()
+
+    detail = get_execution_detail(db, portfolio.id, dec.id)
+    provenance = detail["analysis"]["symbols"]["CENTEL"]["transactions"]
+    assert provenance == [{"id": tx.id, "transaction_date": tx.transaction_date.isoformat() + "Z"}]
+
+
+def test_execution_detail_multiple_linked_transactions_all_represented(db, ws_portfolio):
+    ws, portfolio = ws_portfolio
+    _snap, dec = _seed_snapshot_and_decision(db, ws, portfolio, "APPROVED", _ALLOCS_BUY_ONLY, with_transaction=True)
+
+    from models.database import Transaction
+    db.add(Transaction(
+        workspace_id=ws.id, portfolio_id=portfolio.id, symbol="CENTEL",
+        transaction_type="BUY", shares=100, price_per_share=100.0, total_amount=10_000,
+        transaction_date=datetime.utcnow(), execution_decision_id=dec.id,
+    ))
+    db.commit()
+    all_ids = {t.id for t in db.query(Transaction).filter_by(execution_decision_id=dec.id).all()}
+    assert len(all_ids) == 2  # sanity: two rows actually exist
+
+    detail = get_execution_detail(db, portfolio.id, dec.id)
+    provenance_ids = {t["id"] for t in detail["analysis"]["symbols"]["CENTEL"]["transactions"]}
+    assert provenance_ids == all_ids
+
+
+def test_execution_detail_unmatched_symbol_has_empty_transactions(db, ws_portfolio):
+    ws, portfolio = ws_portfolio
+    _snap, dec = _seed_snapshot_and_decision(
+        db, ws, portfolio, "MANUAL_OVERRIDE", _ALLOCS_BUY_ONLY,
+        with_transaction=True, tx_symbol="ADVANC",
+    )
+    detail = get_execution_detail(db, portfolio.id, dec.id)
+    assert detail["analysis"]["symbols"]["CENTEL"]["transactions"] == []
+
+
+def test_execution_detail_provenance_addition_leaves_existing_fields_unchanged(db, ws_portfolio):
+    """Regression pin: adding provenance must not change any value already
+    asserted by test_approved_decision_with_transaction_is_scored (ledger
+    level) for the identical fixture, read here at the detail level."""
+    ws, portfolio = ws_portfolio
+    _snap, dec = _seed_snapshot_and_decision(db, ws, portfolio, "APPROVED", _ALLOCS_WITH_FUNDING, with_transaction=True)
+
+    detail = get_execution_detail(db, portfolio.id, dec.id)
+    analysis = detail["analysis"]
+    assert analysis["symbols"]["CENTEL"]["executed_amount"] == 30_000.0
+    assert analysis["symbols"]["CENTEL"]["note"] is None
+    assert analysis["symbols"]["XYZ"]["note"] == "no_linked_transaction"
+    assert analysis["completeness_pct"] == 50.0
+
+
 def test_unrelated_symbols_stay_unmatched(db, ws_portfolio):
     """A transaction recorded under a wholly unrelated symbol (not a .BK
     variant, no Registry data at all) must not be linked — regression

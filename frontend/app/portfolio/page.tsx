@@ -621,7 +621,11 @@ export default function PortfolioPage() {
         <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 flex items-start justify-between gap-3 flex-wrap">
           <div>
             <p className="text-sm font-semibold text-blue-800">
-              Recording execution for Decision #{activeDecision.id} ({activeDecision.decision})
+              Recording execution for{" "}
+              <Link href={`/ai-analytics/execution/${activeDecision.id}`} className="underline hover:text-blue-900">
+                Decision #{activeDecision.id}
+              </Link>{" "}
+              ({activeDecision.decision})
             </p>
             <p className="text-xs text-blue-500 mt-0.5">
               Buy/Sell trades you record now will link to this decision. Enter what you actually executed —

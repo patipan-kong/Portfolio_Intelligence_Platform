@@ -29,6 +29,7 @@ function tx(overrides: Partial<TransactionRecord> & { type: TransactionRecord["t
     transaction_date: "2026-01-15T00:00:00Z",
     notes: null,
     sector: null,
+    execution_decision_id: null,
     created_at: null,
     ...overrides,
   };

@@ -48,6 +48,7 @@ function tx(overrides: Partial<TransactionRecord> = {}): TransactionRecord {
     transaction_date: "2026-08-10T03:00:00Z",
     notes: null,
     sector: "Energy",
+    execution_decision_id: null,
     created_at: "2026-08-10T03:00:01Z",
     ...overrides,
   };
