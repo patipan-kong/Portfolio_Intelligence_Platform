@@ -1532,6 +1532,7 @@ export type ConstraintSource =
   | "USER_PREFERENCE"
   | "REGIME_POLICY"
   | "EMERGENCY_OVERRIDE"
+  | "WEALTH_GOAL_POLICY"
   | "SYSTEM_SAFETY";
 
 export interface ConstraintBreakdown {
@@ -1618,6 +1619,47 @@ export interface ActionSummary {
   hold: ActionSummaryEntry[];
 }
 
+export type GoalConstraintRelationToBase =
+  | "STRICTER_THAN_BASE"
+  | "EQUAL_TO_BASE"
+  | "LOOSER_THAN_BASE"
+  | "NOT_APPLICABLE";
+
+export type GoalConstraintApplicationStatus =
+  | "APPLIED_AND_BINDING"
+  | "APPLIED_BUT_DOMINATED"
+  | "NOT_APPLICABLE";
+
+export interface GoalRecommendationConstraintEvidence {
+  contract_version: "wealth.goal-recommendation-constraints.v1";
+  rule_set: {
+    id: "GOAL_HORIZON_SINGLE_POSITION_CAP";
+    version: "1";
+  };
+  source: "EXPLICIT_GOAL_ACTIVATION";
+  activated_goal_id: number;
+  activation: {
+    field: "goal_constraint_goal_id";
+    mode: "EXPLICIT";
+  };
+  observed_is_archived: boolean;
+  target_date: string;
+  as_of_date: string;
+  days_remaining: number;
+  matched_rule: "TARGET_DATE_WITHIN_365_DAYS" | null;
+  contribution: {
+    constraint: "MAX_SINGLE_POSITION_PCT";
+    upper_bound_pct: number;
+  } | null;
+  resolution: {
+    pre_goal_effective_pct: number | null;
+    post_goal_effective_pct: number | null;
+    relation_to_base: GoalConstraintRelationToBase;
+    application_status: GoalConstraintApplicationStatus;
+    resulting_binding_source: ConstraintSource | null;
+  };
+}
+
 export interface OptimizerResult {
   portfolio_name: string;
   status?: OptimizerStatus;
@@ -1686,6 +1728,7 @@ export interface OptimizerResult {
   action_summary?: ActionSummary | null;
   // Execution Optimization — deterministic post-processing stage
   execution_optimization?: ExecutionOptimizationResult | null;
+  goal_recommendation_constraints?: GoalRecommendationConstraintEvidence | null;
 }
 
 // ── Execution Optimization ────────────────────────────────────────────────────
@@ -1738,6 +1781,7 @@ export const runOptimizer = (
   provider?: string,
   model?: string,
   forceRebalance?: boolean,
+  goalConstraintGoalId?: number | null,
 ) =>
   apiFetch<OptimizerResult>("/analyze/optimizer", {
     method: "POST",
@@ -1746,6 +1790,7 @@ export const runOptimizer = (
       ...(provider        ? { provider }                       : {}),
       ...(model           ? { model }                          : {}),
       ...(forceRebalance  ? { force_rebalance: true }          : {}),
+      ...(goalConstraintGoalId != null ? { goal_constraint_goal_id: goalConstraintGoalId } : {}),
     }),
   });
 

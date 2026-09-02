@@ -8,6 +8,7 @@ import { usePortfolio } from "@/lib/PortfolioContext";
 import {
   runOptimizer, listOptimizerHistory, getOptimizerHistory,
   listStrategyProfiles, getPortfolioPersona, updatePortfolioPersona,
+  listWealthGoals,
   recordDecisionBySnapshot, listExecutionDecisions,
   getDecisionMemoryTimeline, getShadowPerformanceSummary, getOperationsStatus,
   isUnresolvedPortfolioError, getExecutionDetail,
@@ -19,6 +20,7 @@ import ActivePolicyEnvelopeCard from "@/components/ActivePolicyEnvelopeCard";
 import AttributionPanel from "@/components/AttributionPanel";
 import OperationsTimeline from "@/components/operations-center/quant/OperationsTimeline";
 import ExecutionPlanCard from "@/components/optimizer/ExecutionPlanCard";
+import GoalConstraintDisclosure from "@/components/optimizer/GoalConstraintDisclosure";
 import { isDeferred, NO_ACTION_REASON_LABELS } from "@/lib/executionPlan";
 import PersonaMatchCard from "@/components/PersonaMatchCard";
 import WorkspaceScopeSwitcher from "@/components/WorkspaceScopeSwitcher";
@@ -31,7 +33,7 @@ import type {
   StrategyPersona, StrategyProfile, PortfolioDNA, MarketRegime,
   ActivePolicy, ExecutionDecision, ExecutionDecisionType, OverrideCategoryType,
   DecisionMemoryEntry, ShadowPerformanceSummary, ExecutionRisk, OperationsCenterStatus,
-  StabilizationMeta, OptimizerStatus, ExecutionAnalysis,
+  StabilizationMeta, OptimizerStatus, ExecutionAnalysis, WealthGoal,
 } from "@/lib/api";
 import { marketDataFreshnessTh, optimizerLastAnalysisBadgeTh } from "@/components/operations-center/freshness";
 
@@ -2233,7 +2235,7 @@ function sectorImpactSummary(warnings: SectorWarning[]): string {
 
 // ─── Result Panel ─────────────────────────────────────────────────────────────
 
-function ResultPanel({ result, loading, profiles, portfolioId, onForceRebalance, forceRunning, onSendToWorkspace }: {
+function ResultPanel({ result, loading, profiles, portfolioId, onForceRebalance, forceRunning, onSendToWorkspace, currentGoalName, expectedGoalEvidence }: {
   result: OptimizerResult | null;
   loading: boolean;
   onForceRebalance?: () => void;
@@ -2241,6 +2243,8 @@ function ResultPanel({ result, loading, profiles, portfolioId, onForceRebalance,
   profiles: StrategyProfile[];
   portfolioId: number | null;
   onSendToWorkspace: (symbols: string[]) => void;
+  currentGoalName?: string | null;
+  expectedGoalEvidence?: boolean;
 }) {
   if (loading) {
     return (
@@ -2340,6 +2344,12 @@ function ResultPanel({ result, loading, profiles, portfolioId, onForceRebalance,
           </CollapsibleSection>
         </div>
       )}
+
+      <GoalConstraintDisclosure
+        evidence={result.goal_recommendation_constraints}
+        currentGoalName={currentGoalName}
+        expectedEvidence={expectedGoalEvidence}
+      />
 
       {/* ── Execution ────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -2621,6 +2631,11 @@ export default function OptimizerPage() {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [error, setError] = useState("");
   const [opsStatus, setOpsStatus] = useState<OperationsCenterStatus | null>(null);
+  const [goals, setGoals] = useState<WealthGoal[]>([]);
+  const [goalsLoading, setGoalsLoading] = useState(true);
+  const [goalsError, setGoalsError] = useState("");
+  const [selectedGoalId, setSelectedGoalId] = useState<number | null>(null);
+  const [liveExpectedGoalId, setLiveExpectedGoalId] = useState<number | null>(null);
 
   const [profiles, setProfiles] = useState<StrategyProfile[]>([]);
   const [persona, setPersona] = useState<StrategyPersona>("BALANCED");
@@ -2636,6 +2651,25 @@ export default function OptimizerPage() {
   // were issued for.
   const selectionRef = useRef<number | null>(portfolioId);
   selectionRef.current = portfolioId;
+  const goalsRequestRef = useRef(0);
+
+  const loadGoals = useCallback(async () => {
+    const requestId = ++goalsRequestRef.current;
+    setGoalsLoading(true);
+    setGoalsError("");
+    try {
+      const items = await listWealthGoals(true);
+      if (goalsRequestRef.current !== requestId) return;
+      setGoals(items);
+    } catch {
+      if (goalsRequestRef.current !== requestId) return;
+      setGoals([]);
+      setSelectedGoalId(null);
+      setGoalsError("Goal constraints are unavailable.");
+    } finally {
+      if (goalsRequestRef.current === requestId) setGoalsLoading(false);
+    }
+  }, []);
 
   const loadHistory = useCallback(async (pid: number): Promise<OptimizerHistoryItem[]> => {
     setLoadingHistory(true);
@@ -2681,8 +2715,14 @@ export default function OptimizerPage() {
     listStrategyProfiles().then((d) => setProfiles(d.profiles)).catch(() => {});
   }, []);
 
+  useEffect(() => {
+    void loadGoals();
+  }, [loadGoals]);
+
   // Load portfolio persona when portfolio changes
   useEffect(() => {
+    setSelectedGoalId(null);
+    setLiveExpectedGoalId(null);
     if (portfolioId == null) {
       // M36.1 WP4B F04 — Current Selection is NONE: don't leave a previous
       // portfolio's persona choice visible/authoritative.
@@ -2758,6 +2798,7 @@ export default function OptimizerPage() {
         const detail = await getOptimizerHistory(target.id);
         if (!cancelled) {
           setResult(detail);
+          setLiveExpectedGoalId(null);
           setHistoryDetails((prev) => ({ ...prev, [target.id]: detail }));
           rememberSelectedHistory(portfolioId, target.id);
         }
@@ -2794,6 +2835,7 @@ export default function OptimizerPage() {
   async function handleRun(forceRebalance = false) {
     if (portfolioId == null) return;
     const pid = portfolioId;
+    const runGoalId = selectedGoalId;
     if (forceRebalance) {
       setForceRunning(true);
     } else {
@@ -2801,12 +2843,13 @@ export default function OptimizerPage() {
     }
     setError("");
     try {
-      const data = await runOptimizer(pid, undefined, undefined, forceRebalance || undefined);
+      const data = await runOptimizer(pid, undefined, undefined, forceRebalance || undefined, runGoalId);
       // M36.1 WP4C F04 — discard a run's completion if the user has since
       // switched Current Selection away from the portfolio this run was
       // issued for; never let it repopulate a different portfolio's page.
       if (selectionRef.current !== pid) return;
       setResult(data);
+      setLiveExpectedGoalId(runGoalId);
       setSelectedHistoryId(data.history_id ?? null);
       if (data.history_id != null) {
         setHistoryDetails((prev) => ({ ...prev, [data.history_id as number]: data }));
@@ -2851,6 +2894,7 @@ export default function OptimizerPage() {
       const detail = await getOptimizerHistory(item.id);
       if (selectionRef.current !== pid) return;
       setResult(detail);
+      setLiveExpectedGoalId(null);
       setHistoryDetails((prev) => ({ ...prev, [item.id]: detail }));
     } catch {
       if (selectionRef.current === pid) setError("Failed to load history");
@@ -2867,6 +2911,15 @@ export default function OptimizerPage() {
   const deepLinkedHistoryId = deepLinkedHistoryIdRaw ? Number(deepLinkedHistoryIdRaw) : Number.NaN;
   const hasDeepLinkedHistory = Number.isFinite(deepLinkedHistoryId);
   const isViewingDeepLinkedHistory = hasDeepLinkedHistory && selectedHistoryId === deepLinkedHistoryId;
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const activeGoals = goals.filter((goal) => !goal.is_archived);
+  const eligibleGoals = activeGoals.filter((goal) => goal.target_date != null && goal.target_date >= todayIso);
+  const missingTargetCount = activeGoals.filter((goal) => goal.target_date == null).length;
+  const pastTargetCount = activeGoals.filter((goal) => goal.target_date != null && goal.target_date < todayIso).length;
+  const evidenceGoalId = result?.goal_recommendation_constraints?.activated_goal_id;
+  const currentGoalName = evidenceGoalId == null
+    ? null
+    : goals.find((goal) => goal.id === evidenceGoalId)?.name ?? null;
 
   return (
     <div className="space-y-6">
@@ -2916,6 +2969,40 @@ export default function OptimizerPage() {
           saving={savingPersona}
           onSave={handlePersonaSave}
         />
+
+        <div className="min-w-[260px]">
+          <label htmlFor="goal-constraint" className="block text-xs text-gray-500 mb-1">Goal constraint</label>
+          <select
+            id="goal-constraint"
+            value={selectedGoalId ?? ""}
+            disabled={running || forceRunning || goalsLoading || Boolean(goalsError) || portfolioId == null}
+            onChange={(event) => setSelectedGoalId(event.target.value ? Number(event.target.value) : null)}
+            className="border rounded px-2 py-1.5 text-sm bg-white w-full disabled:opacity-60"
+          >
+            <option value="">{goalsLoading ? "Loading Goals…" : goalsError ? "Goals unavailable" : "None"}</option>
+            {eligibleGoals.map((goal) => (
+              <option key={goal.id} value={goal.id}>{goal.name} — target {goal.target_date}</option>
+            ))}
+          </select>
+          <p className="mt-1 text-[11px] text-gray-500">Optionally use one Goal to tighten recommendation concentration limits.</p>
+          {!goalsLoading && !goalsError && eligibleGoals.length === 0 && (
+            <p className="mt-1 text-[11px] text-gray-500">No eligible Goals are available.</p>
+          )}
+          {!goalsLoading && !goalsError && (missingTargetCount > 0 || pastTargetCount > 0) && (
+            <p className="mt-1 text-[11px] text-amber-700">
+              {[
+                missingTargetCount > 0 ? `${missingTargetCount} missing a target date` : null,
+                pastTargetCount > 0 ? `${pastTargetCount} with a past target date` : null,
+              ].filter(Boolean).join("; ")} — unavailable for optimizer constraints.
+            </p>
+          )}
+          {goalsError && (
+            <div className="mt-1 flex items-center gap-2 text-[11px] text-red-600">
+              <span>{goalsError}</span>
+              <button type="button" onClick={() => void loadGoals()} className="font-semibold underline">Retry</button>
+            </div>
+          )}
+        </div>
 
         {activePortfolio && (
           <div>
@@ -2975,6 +3062,8 @@ export default function OptimizerPage() {
                     onForceRebalance={() => handleRun(true)}
                     forceRunning={forceRunning}
                     onSendToWorkspace={handleSendToWorkspace}
+                    currentGoalName={currentGoalName}
+                    expectedGoalEvidence={liveExpectedGoalId != null}
                   />
                 </div>
               )}
