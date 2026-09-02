@@ -11,6 +11,7 @@ import {
   formatMonthLabel,
 } from "@/lib/goalWhatIf";
 import { computeScenarioComparison } from "@/lib/scenarioComparison";
+import { currentMonthKey } from "@/lib/cashFlow";
 import {
   createGoalFundingAllocation,
   deleteGoalFundingAllocation,
@@ -341,8 +342,15 @@ export function FundingSourcesSection({
   );
 }
 
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+/**
+ * Local calendar date, "YYYY-MM-DD" — matches the convention in
+ * goalAffordability.ts's goalAffordabilityCalendar. Deliberately not
+ * toISOString(): at 2026-09-01T00:30+07:00 the UTC date is still
+ * 2026-08-31, which would disagree with Goal Affordability's as-of date
+ * on the same page for the first 7 hours of every month in Thailand.
+ */
+export function todayIso(now: Date = new Date()): string {
+  return `${currentMonthKey(now)}-${String(now.getDate()).padStart(2, "0")}`;
 }
 
 export function GoalWhatIfSection({
