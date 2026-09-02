@@ -23,6 +23,15 @@ import {
   type MonthlyFetchResult,
   type RecordedExpenseCoverageResult,
 } from "@/lib/emergencyFund";
+import {
+  computeCashFlowTrend,
+  computeTrendPopulation,
+  DEFAULT_TREND_WINDOW_SIZE,
+  TREND_WINDOW_SIZES,
+  type CashFlowTrendResult,
+  type TrendWindowSize,
+} from "@/lib/cashFlowTrend";
+import CashFlowTrendChart from "@/components/CashFlowTrendChart";
 
 type EntryType = "INCOME" | "EXPENSE";
 
@@ -56,8 +65,12 @@ export default function CashFlowPage() {
   const [mutationError, setMutationError] = useState("");
   const [coverage, setCoverage] = useState<RecordedExpenseCoverageResult | null>(null);
   const [coverageLoading, setCoverageLoading] = useState(true);
+  const [trendWindowSize, setTrendWindowSize] = useState<TrendWindowSize>(DEFAULT_TREND_WINDOW_SIZE);
+  const [trend, setTrend] = useState<CashFlowTrendResult | null>(null);
+  const [trendLoading, setTrendLoading] = useState(true);
   const reportRequestId = useRef(0);
   const coverageRequestId = useRef(0);
+  const trendRequestId = useRef(0);
 
   const loadReport = useCallback(async (selectedMonth: string) => {
     const requestId = ++reportRequestId.current;
@@ -113,12 +126,43 @@ export default function CashFlowPage() {
     }
   }, []);
 
+  const loadTrend = useCallback(async (accountsList: CashAccount[] | null, status: "success" | "error", windowSize: TrendWindowSize) => {
+    const requestId = ++trendRequestId.current;
+    setTrendLoading(true);
+    const population = computeTrendPopulation(status, accountsList ?? [], windowSize, new Date());
+    if (population.eligibleMonths.length === 0) {
+      if (requestId === trendRequestId.current) {
+        setTrend(computeCashFlowTrend(population, []));
+        setTrendLoading(false);
+      }
+      return;
+    }
+    const monthlyResults: MonthlyFetchResult[] = await Promise.all(
+      population.eligibleMonths.map(async (trendMonth): Promise<MonthlyFetchResult> => {
+        try {
+          const monthlyReport = await getCashFlowReport(trendMonth);
+          return { month: trendMonth, status: "success", events: monthlyReport.events };
+        } catch {
+          return { month: trendMonth, status: "error", events: [] };
+        }
+      }),
+    );
+    if (requestId === trendRequestId.current) {
+      setTrend(computeCashFlowTrend(population, monthlyResults));
+      setTrendLoading(false);
+    }
+  }, []);
+
   useEffect(() => { void loadReport(month); }, [loadReport, month]);
   useEffect(() => { void loadAccounts(); }, [loadAccounts]);
   useEffect(() => {
     if (accountsLoading) return;
     void loadCoverage(accounts, accountsError ? "error" : "success");
   }, [accountsLoading, accounts, accountsError, loadCoverage]);
+  useEffect(() => {
+    if (accountsLoading) return;
+    void loadTrend(accounts, accountsError ? "error" : "success", trendWindowSize);
+  }, [accountsLoading, accounts, accountsError, trendWindowSize, loadTrend]);
 
   const summary = useMemo(
     () => report ? aggregateMonthlyCashFlow(report.events, month) : null,
@@ -273,6 +317,18 @@ export default function CashFlowPage() {
             </section>
           )}
 
+          <TrendSection
+            trend={trend}
+            loading={trendLoading}
+            accountsLoading={accountsLoading}
+            windowSize={trendWindowSize}
+            onWindowSizeChange={setTrendWindowSize}
+            onRetry={() => {
+              if (accountsError) void loadAccounts();
+              else void loadTrend(accounts, "success", trendWindowSize);
+            }}
+          />
+
           <EntrySection
             accounts={trackedAccounts}
             accountsLoading={accountsLoading}
@@ -413,6 +469,77 @@ function CoverageSection({
         </>
       )}
     </section>
+  );
+}
+
+function TrendSection({
+  trend, loading, accountsLoading, windowSize, onWindowSizeChange, onRetry,
+}: {
+  trend: CashFlowTrendResult | null;
+  loading: boolean;
+  accountsLoading: boolean;
+  windowSize: TrendWindowSize;
+  onWindowSizeChange: (size: TrendWindowSize) => void;
+  onRetry: () => void;
+}) {
+  const allUnavailable = trend != null && trend.points.length > 0 && trend.points.every((point) => point.status === "UNAVAILABLE");
+
+  return (
+    <section aria-label="Cash flow trend" className="bg-white border rounded-xl p-4 shadow-sm space-y-3">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h2 className="font-semibold">Cash Flow Trend</h2>
+          <p className="text-xs text-gray-500 mt-1">Historical monthly Income, Expenses, and Net Cash Flow. Completed months only — not a forecast.</p>
+        </div>
+        <div className="flex items-center gap-0.5">
+          {TREND_WINDOW_SIZES.map((size) => (
+            <button
+              key={size}
+              type="button"
+              onClick={() => onWindowSizeChange(size)}
+              className={`text-xs px-2.5 py-1 rounded-md font-medium transition-colors ${
+                size === windowSize ? "bg-blue-600 text-white" : "text-gray-500 hover:bg-gray-100"
+              }`}
+            >
+              {size}M
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {(accountsLoading || loading) && <p className="text-sm text-gray-400">Loading Cash Flow Trend…</p>}
+
+      {!accountsLoading && !loading && trend && (
+        allUnavailable ? (
+          <div role="alert" className="border border-red-200 bg-red-50 rounded-xl p-4 text-sm text-red-700 space-y-2">
+            <p>Unable to load Cash Flow Trend.</p>
+            <button type="button" onClick={onRetry} className="text-blue-700 hover:underline">Try again</button>
+          </div>
+        ) : (
+          <>
+            <CashFlowTrendChart points={trend.points} />
+            {trend.summary.availableMonths > 0 && (
+              <div className="grid gap-3 sm:grid-cols-4 text-sm border-t pt-3">
+                <TrendSummaryStat label="Avg Income" value={trend.summary.averageIncome} />
+                <TrendSummaryStat label="Avg Expenses" value={trend.summary.averageExpenses} />
+                <TrendSummaryStat label="Avg Net Cash Flow" value={trend.summary.averageNetCashFlow} />
+                <TrendSummaryStat label="Latest Net Cash Flow" value={trend.summary.latestAvailableNetCashFlow} />
+              </div>
+            )}
+            <p className="text-xs text-gray-500">{`${trend.summary.availableMonths} of ${trend.summary.requestedMonths} months available.`}</p>
+          </>
+        )
+      )}
+    </section>
+  );
+}
+
+function TrendSummaryStat({ label, value }: { label: string; value: number | null }) {
+  return (
+    <div>
+      <p className="text-xs uppercase tracking-wide text-gray-400">{label}</p>
+      <p className="text-sm font-semibold mt-0.5">{value !== null ? formatThb(value) : "—"}</p>
+    </div>
   );
 }
 

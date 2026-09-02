@@ -358,14 +358,14 @@ describe("CashFlowPage", () => {
       });
       render(<CashFlowPage />);
       await screen.findByText(/Tracked cash covers 4\.2 months/);
-      // Snapshot exactly which months coverage asked for, then move the picker
-      // twice. A window derived from the selection would request 2026-04 (and
-      // 2026-03) for the new trailing windows; an independent window requests
-      // only the newly selected month for the report itself.
+      // Cash Flow Trend's default 6-month window legitimately overlaps this
+      // Coverage window (both request 2026-05/06/07, and Trend additionally
+      // requests 2026-02/03/04 independently) — that duplication is accepted
+      // by design (see docs). This test only proves Coverage's own fixed
+      // window never moves when the month picker moves, so it compares deltas
+      // rather than asserting an absolute call count.
       const callsFor = (target: string) => reportMock.mock.calls.filter((call) => call[0] === target).length;
-      expect(callsFor("2026-05")).toBe(1);
-      expect(callsFor("2026-06")).toBe(1);
-      expect(callsFor("2026-07")).toBe(1);
+      const baselineCalls05 = callsFor("2026-05");
 
       fireEvent.click(screen.getByRole("button", { name: "Previous month" }));
       await screen.findByText("July 2026");
@@ -377,16 +377,10 @@ describe("CashFlowPage", () => {
       expect(screen.queryByText("Loading recorded monthly expense evidence…")).not.toBeInTheDocument();
 
       // Let every pending promise settle, then prove the window never moved:
-      // no month outside it was requested, and no month inside it was re-fetched.
+      // no new request for 2026-05 was made even though it was never selected.
       await waitFor(() => expect(reportMock).toHaveBeenCalledWith("2026-06"));
       await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-      const requested = reportMock.mock.calls.map((call) => call[0]);
-      expect(requested).not.toContain("2026-04");
-      expect(requested).not.toContain("2026-03");
-      // 2026-05 is inside the fixed window but was never selected, so exactly
-      // one request for it proves the window was never recomputed. (2026-06 and
-      // 2026-07 are excluded from this check: selecting them fetches the report.)
-      expect(callsFor("2026-05")).toBe(1);
+      expect(callsFor("2026-05")).toBe(baselineCalls05);
       expect(screen.getByText(/Tracked cash covers 4\.2 months/)).toBeInTheDocument();
     });
 
@@ -553,17 +547,20 @@ describe("CashFlowPage", () => {
       createMock.mockResolvedValue(event({ id: 9 }));
       render(<CashFlowPage />);
       await screen.findByText("Loading recorded monthly expense evidence…");
-      await waitFor(() => expect(pending.length).toBe(3));
+      // 3 from Recorded Expense Coverage's fixed window + 6 from Cash Flow
+      // Trend's default 6-month window (both fetch against the same
+      // earlyBaseline account, and the overlap is accepted by design).
+      await waitFor(() => expect(pending.length).toBe(9));
       fireEvent.click(screen.getByRole("button", { name: "Add income" }));
       fireEvent.change(screen.getByLabelText("Cash flow amount"), { target: { value: "1" } });
       fireEvent.change(screen.getByLabelText("Cash flow category"), { target: { value: "Test" } });
       fireEvent.click(screen.getByRole("button", { name: "Save income" }));
       await waitFor(() => expect(accountsCall).toBe(2));
-      await waitFor(() => expect(pending.length).toBe(6));
+      await waitFor(() => expect(pending.length).toBe(18));
       // Resolve the NEWER generation first, then let the stale one land last.
       // Without a generation guard the stale response would win by arriving
       // last, so this ordering is what actually discriminates.
-      const [staleGeneration, newGeneration] = [pending.slice(0, 3), pending.slice(3)];
+      const [staleGeneration, newGeneration] = [pending.slice(0, 9), pending.slice(9)];
       newGeneration.forEach((p) => p.resolve({ month: p.month, events: [] }));
       await waitFor(() => expect(screen.getByText(/฿9,000\.00/)).toBeInTheDocument());
       staleGeneration.forEach((p) => p.resolve({ month: p.month, events: [] }));
@@ -624,6 +621,114 @@ describe("CashFlowPage", () => {
       for (const banned of ["observed", "eligible", "liquid fund", "safe", "should", "fully tracked", "complete evidence", "complete expense history"]) {
         expect(bodyText.toLowerCase()).not.toContain(banned);
       }
+    });
+  });
+
+  describe("Cash Flow Trend", () => {
+    const earlyBaseline = { id: 1, cash_account_id: 1, effective_on: "2026-01-01", observed_balance: 1000, created_at: "2026-01-01T00:00:00Z" };
+    const WINDOW_3M = ["2026-05", "2026-06", "2026-07"];
+    const WINDOW_6M = ["2026-02", "2026-03", "2026-04", "2026-05", "2026-06", "2026-07"];
+
+    function reportForMonths(byMonth: Record<string, CashFlowEvent[]>) {
+      reportMock.mockImplementation(async (selectedMonth) => ({ month: selectedMonth, events: byMonth[selectedMonth] ?? [] }));
+    }
+
+    function allZero(months: string[]): Record<string, CashFlowEvent[]> {
+      return Object.fromEntries(months.map((month) => [month, []]));
+    }
+
+    it("defaults to a 6-month window and reports full availability", async () => {
+      accountsMock.mockResolvedValue([account({ baseline: earlyBaseline })]);
+      reportForMonths(allZero(WINDOW_6M));
+      render(<CashFlowPage />);
+      const trendSection = await screen.findByRole("region", { name: "Cash flow trend" });
+      expect(await within(trendSection).findByText("6 of 6 months available.")).toBeInTheDocument();
+      for (const trendMonth of WINDOW_6M) {
+        expect(reportMock.mock.calls.some((call) => call[0] === trendMonth)).toBe(true);
+      }
+    });
+
+    it("switches to a 3-month window on request and requests exactly those months", async () => {
+      accountsMock.mockResolvedValue([account({ baseline: earlyBaseline })]);
+      reportForMonths(allZero(WINDOW_6M));
+      render(<CashFlowPage />);
+      const trendSection = await screen.findByRole("region", { name: "Cash flow trend" });
+      await within(trendSection).findByText("6 of 6 months available.");
+      fireEvent.click(within(trendSection).getByRole("button", { name: "3M" }));
+      expect(await within(trendSection).findByText("3 of 3 months available.")).toBeInTheDocument();
+      for (const trendMonth of WINDOW_3M) {
+        expect(reportMock.mock.calls.some((call) => call[0] === trendMonth)).toBe(true);
+      }
+    });
+
+    it("renders a genuine zero month as AVAILABLE, not a gap", async () => {
+      accountsMock.mockResolvedValue([account({ baseline: earlyBaseline })]);
+      reportForMonths(allZero(WINDOW_6M));
+      render(<CashFlowPage />);
+      const trendSection = await screen.findByRole("region", { name: "Cash flow trend" });
+      expect(await within(trendSection).findByText("6 of 6 months available.")).toBeInTheDocument();
+      expect(within(trendSection).queryByText(/before tracking began/)).not.toBeInTheDocument();
+      expect(within(trendSection).queryByText(/could not load/)).not.toBeInTheDocument();
+    });
+
+    it("renders pre-tracking months as a distinct gap, never as ฿0", async () => {
+      const lateBaseline = { id: 1, cash_account_id: 1, effective_on: "2026-06-01", observed_balance: 500, created_at: "2026-06-01T00:00:00Z" };
+      accountsMock.mockResolvedValue([account({ baseline: lateBaseline })]);
+      reportForMonths(allZero(["2026-06", "2026-07"]));
+      render(<CashFlowPage />);
+      const trendSection = await screen.findByRole("region", { name: "Cash flow trend" });
+      expect(await within(trendSection).findByText("2 of 6 months available.")).toBeInTheDocument();
+      expect(within(trendSection).getByText(/4 months before tracking began/)).toBeInTheDocument();
+      expect(within(trendSection).queryByText(/could not load/)).not.toBeInTheDocument();
+    });
+
+    it("renders a technical fetch failure as a distinct unavailable gap, never as ฿0", async () => {
+      accountsMock.mockResolvedValue([account({ baseline: earlyBaseline })]);
+      reportMock.mockImplementation(async (selectedMonth) => {
+        if (selectedMonth === "2026-04") throw new Error("month offline");
+        return { month: selectedMonth, events: [] };
+      });
+      render(<CashFlowPage />);
+      const trendSection = await screen.findByRole("region", { name: "Cash flow trend" });
+      expect(await within(trendSection).findByText("5 of 6 months available.")).toBeInTheDocument();
+      expect(within(trendSection).getByText(/1 month could not load/)).toBeInTheDocument();
+      expect(within(trendSection).queryByText(/before tracking began/)).not.toBeInTheDocument();
+    });
+
+    it("shows a consolidated error with retry when every trend month fails", async () => {
+      accountsMock.mockResolvedValue([account({ baseline: earlyBaseline })]);
+      reportMock.mockImplementation(async (selectedMonth) => {
+        if (selectedMonth === "2026-08") return { month: selectedMonth, events: [] };
+        throw new Error("month offline");
+      });
+      render(<CashFlowPage />);
+      const trendSection = await screen.findByRole("region", { name: "Cash flow trend" });
+      expect(await within(trendSection).findByText("Unable to load Cash Flow Trend.")).toBeInTheDocument();
+      expect(within(trendSection).getByRole("button", { name: "Try again" })).toBeInTheDocument();
+    });
+
+    it("does not let a stale window-switch response overwrite the newer selection", async () => {
+      accountsMock.mockResolvedValue([account({ baseline: earlyBaseline })]);
+      const pending: Array<{ month: string; resolve: (value: { month: string; events: CashFlowEvent[] }) => void }> = [];
+      reportMock.mockImplementation(async (selectedMonth) => {
+        if (selectedMonth === "2026-08") return { month: selectedMonth, events: [] };
+        return await new Promise((resolve) => pending.push({ month: selectedMonth, resolve }));
+      });
+      render(<CashFlowPage />);
+      const trendSection = await screen.findByRole("region", { name: "Cash flow trend" });
+      await within(trendSection).findByText("Loading Cash Flow Trend…");
+      // 3 from Recorded Expense Coverage's fixed window + 6 from Cash Flow
+      // Trend's initial default 6-month window (accepted overlap by design).
+      await waitFor(() => expect(pending.length).toBe(9));
+      fireEvent.click(within(trendSection).getByRole("button", { name: "12M" }));
+      fireEvent.click(within(trendSection).getByRole("button", { name: "6M" }));
+      await waitFor(() => expect(pending.length).toBeGreaterThan(6));
+      const finalGeneration = pending.slice(-6);
+      const staleGenerations = pending.slice(0, pending.length - 6);
+      finalGeneration.forEach((p) => p.resolve({ month: p.month, events: [] }));
+      expect(await within(trendSection).findByText("6 of 6 months available.")).toBeInTheDocument();
+      staleGenerations.forEach((p) => p.resolve({ month: p.month, events: [event({ amount: 12345 })] }));
+      await waitFor(() => expect(within(trendSection).getByText("6 of 6 months available.")).toBeInTheDocument());
     });
   });
 });
