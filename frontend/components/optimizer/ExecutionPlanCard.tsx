@@ -2,12 +2,23 @@
 
 import Link from "next/link";
 import SignalBadge from "@/components/SignalBadge";
-import type { OptimizerResult } from "@/lib/api";
+import type { OptimizerResult, TradeReason } from "@/lib/api";
 import {
   deriveExecutionPlan,
   NO_ACTION_REASON_LABELS,
   type ExecutionTrade,
 } from "@/lib/executionPlan";
+
+// Structured trade classification (execution_optimizer.py) rendered as
+// product-facing copy — wording mirrors the historical Recommendation
+// Report Card (AI Evaluation S3) so the same decision reads the same way
+// whether viewed live or after the fact. No new taxonomy: this is a fixed
+// mapping over the existing three canonical reason values.
+const TRADE_REASON_LABELS: Record<TradeReason, string> = {
+  MANDATORY_RISK_REDUCTION: "Mandatory risk reduction",
+  POLICY_ENFORCEMENT: "Policy enforcement",
+  PORTFOLIO_IMPROVEMENT: "Portfolio improvement",
+};
 
 // ─── No-trade reason resolution ──────────────────────────────────────────────
 
@@ -112,52 +123,76 @@ function NecessityBadge({ trade }: { trade: ExecutionTrade }) {
   return null;
 }
 
+/** Structured Reason/Execution Role for sell/reduce trades — surfaces the
+ *  same execution_optimizer.py classification the Report Card already
+ *  renders historically (frontend/app/ai-analytics/(hub)/recommendations/[id]/page.tsx),
+ *  now on the live plan too. Renders nothing when unavailable (buy-side
+ *  trades, or history rows predating Execution Optimization). */
+function TradeReasonLine({ trade }: { trade: ExecutionTrade }) {
+  if (!trade.optimizerReason) return null;
+  return (
+    <div className="flex items-center gap-2 flex-wrap px-3 pb-2 -mt-1">
+      <span className="text-[10px] text-gray-400">
+        Reason: {TRADE_REASON_LABELS[trade.optimizerReason]}
+      </span>
+      {trade.executionRole === "FUNDING_SOURCE" && (
+        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full border bg-blue-50 border-blue-200 text-blue-700">
+          Funding source
+        </span>
+      )}
+    </div>
+  );
+}
+
 function TradeRow({ trade }: { trade: ExecutionTrade }) {
   const chg = trade.allocationChangePercent;
   const chgCls = chg > 0 ? "text-green-600" : chg < 0 ? "text-red-500" : "text-gray-400";
   const amt = trade.estimatedAmount;
 
   return (
-    <div className="flex items-center gap-3 px-3 py-2 border-b last:border-b-0 hover:bg-gray-50 flex-wrap">
-      <div className="w-24 shrink-0">
-        <SignalBadge signal={trade.action} />
-      </div>
-      <div className="flex items-center gap-1.5 min-w-[7rem]">
-        <Link
-          href={`/stock/${encodeURIComponent(trade.symbol)}`}
-          className="text-sm font-semibold text-blue-600 hover:underline"
-        >
-          {trade.symbol.replace(".BK", "")}
-          {trade.symbol.endsWith(".BK") && <span className="text-xs text-gray-400 font-normal">.BK</span>}
-        </Link>
-        {trade.isNew && (
-          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-green-100 border border-green-300 text-green-700">
-            New
-          </span>
-        )}
-        <NecessityBadge trade={trade} />
-      </div>
-      <span className={`text-xs font-semibold tabular-nums w-14 text-right ${chgCls}`}>
-        {chg >= 0 ? "+" : ""}{chg.toFixed(1)}%
-      </span>
-      <span className="text-sm tabular-nums ml-auto text-right">
-        {amt == null || amt === 0 ? (
-          <span className="text-gray-400">—</span>
-        ) : amt > 0 ? (
-          <span className="font-semibold text-gray-800">
-            ฿{amt.toLocaleString("th-TH")} <span className="text-xs text-gray-400 font-normal">required</span>
-          </span>
-        ) : (
-          <span className="font-semibold text-gray-800">
-            ฿{Math.abs(amt).toLocaleString("th-TH")} <span className="text-xs text-gray-400 font-normal">released</span>
-          </span>
-        )}
-      </span>
-      {trade.timingScore != null && (
-        <span className="text-[10px] text-gray-400 tabular-nums w-16 text-right hidden sm:inline">
-          Timing {trade.timingScore.toFixed(0)}
+    <div className="border-b last:border-b-0 hover:bg-gray-50">
+      <div className="flex items-center gap-3 px-3 py-2 flex-wrap">
+        <div className="w-24 shrink-0">
+          <SignalBadge signal={trade.action} />
+        </div>
+        <div className="flex items-center gap-1.5 min-w-[7rem]">
+          <Link
+            href={`/stock/${encodeURIComponent(trade.symbol)}`}
+            className="text-sm font-semibold text-blue-600 hover:underline"
+          >
+            {trade.symbol.replace(".BK", "")}
+            {trade.symbol.endsWith(".BK") && <span className="text-xs text-gray-400 font-normal">.BK</span>}
+          </Link>
+          {trade.isNew && (
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-green-100 border border-green-300 text-green-700">
+              New
+            </span>
+          )}
+          <NecessityBadge trade={trade} />
+        </div>
+        <span className={`text-xs font-semibold tabular-nums w-14 text-right ${chgCls}`}>
+          {chg >= 0 ? "+" : ""}{chg.toFixed(1)}%
         </span>
-      )}
+        <span className="text-sm tabular-nums ml-auto text-right">
+          {amt == null || amt === 0 ? (
+            <span className="text-gray-400">—</span>
+          ) : amt > 0 ? (
+            <span className="font-semibold text-gray-800">
+              ฿{amt.toLocaleString("th-TH")} <span className="text-xs text-gray-400 font-normal">required</span>
+            </span>
+          ) : (
+            <span className="font-semibold text-gray-800">
+              ฿{Math.abs(amt).toLocaleString("th-TH")} <span className="text-xs text-gray-400 font-normal">released</span>
+            </span>
+          )}
+        </span>
+        {trade.timingScore != null && (
+          <span className="text-[10px] text-gray-400 tabular-nums w-16 text-right hidden sm:inline">
+            Timing {trade.timingScore.toFixed(0)}
+          </span>
+        )}
+      </div>
+      <TradeReasonLine trade={trade} />
     </div>
   );
 }

@@ -3,10 +3,12 @@ import type {
   ActionSummaryEntry,
   AllocationAction,
   ExecutionOptimizationResult,
+  ExecutionRole,
   NoActionReason,
   TargetAllocation,
   TradeExecutionState,
   TradeNecessity,
+  TradeReason,
 } from "@/lib/api";
 
 // ─── Shared deferral rule ─────────────────────────────────────────────────────
@@ -49,6 +51,8 @@ export interface ExecutionTrade {
   estimatedAmount: number | null;
   isNew: boolean;
   timingScore: number | null;
+  /** Free-text AI rationale for the underlying allocation — distinct from
+   *  optimizerReason below (structured Execution Optimization classification). */
   reason: string | null;
   /** Execution Optimization metadata — present only for sell/reduce trades
    *  when result.execution_optimization is available (see
@@ -56,6 +60,11 @@ export interface ExecutionTrade {
    *  history rows predating this stage. */
   necessity: TradeNecessity | null;
   executionState: TradeExecutionState | null;
+  /** Structured trade classification (Mandatory Risk Reduction / Policy
+   *  Enforcement / Portfolio Improvement) — the deterministic "why" axis,
+   *  not to be confused with the free-text `reason` above. */
+  optimizerReason: TradeReason | null;
+  executionRole: ExecutionRole | null;
   note: string | null;
 }
 
@@ -125,6 +134,8 @@ export function deriveExecutionPlan(
         reason: alloc?.reason ?? null,
         necessity: optimized?.necessity ?? null,
         executionState: optimized?.execution_state ?? null,
+        optimizerReason: optimized?.reason ?? null,
+        executionRole: optimized?.execution_role ?? null,
         note: optimized?.note ?? null,
       };
 

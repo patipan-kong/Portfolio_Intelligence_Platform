@@ -20,6 +20,7 @@ import {
 import type {
   ExecutionDecision, ExecutionDecisionType, OverrideCategoryType,
   ShadowPerformanceSummary, ExecutionAnalysis, DecisionGoalContext,
+  DecisionGoalContextGoal,
 } from "@/lib/api";
 
 export const TZ = "Asia/Bangkok";
@@ -52,6 +53,50 @@ function linkageStatusLabel(analysis: ExecutionAnalysis | null): string | null {
   if (analysis.status === "partial") return `Partially linked (${Math.round(analysis.completeness_pct)}%)`;
   if (analysis.status === "ok") return "Execution linked";
   return null; // fail closed on an unrecognized status — never claim "linked"
+}
+
+// Goal context at time of decision (Phase 7.4/ADR-008, CONTEXT_ONLY) — a
+// factual disclosure of what a goal looked like when this recommendation
+// was made, sourced entirely from the already-fetched, already-frozen
+// decision_context payload above. No causal claim is made or implied; see
+// OPTIMIZER_PHILOSOPHY.md and docs/decisions/ADR-008 for the CONTEXT_ONLY
+// boundary this must not cross.
+function formatGoalPriority(priority: string): string {
+  return priority.charAt(0) + priority.slice(1).toLowerCase();
+}
+
+function formatGoalTargetDate(targetDate: string | null): string | null {
+  if (!targetDate) return null;
+  const d = new Date(targetDate);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString("en-GB", { month: "short", year: "numeric" });
+}
+
+function GoalContextFactsRow({ goal }: { goal: DecisionGoalContextGoal }) {
+  const targetDate = formatGoalTargetDate(goal.target_date);
+  return (
+    <div className="text-xs">
+      <span className="font-semibold text-gray-700">{goal.name}</span>
+      <span className="text-gray-500">
+        {" — "}฿{goal.target_amount.toLocaleString("th-TH")} target
+        {targetDate ? ` · ${targetDate}` : ""}
+        {" · "}{goal.progress_percent.toFixed(0)}% funded
+        {" · "}{formatGoalPriority(goal.priority)} priority
+      </span>
+    </div>
+  );
+}
+
+function GoalContextAtDecisionTime({ goalContext }: { goalContext: DecisionGoalContext | null }) {
+  if (goalContext?.context_state !== "COMPLETE" || goalContext.goals.length === 0) return null;
+  return (
+    <div className="mt-2.5 pt-2.5 border-t border-gray-100 space-y-1">
+      <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">
+        Goal context at time of decision
+      </p>
+      {goalContext.goals.map((g) => <GoalContextFactsRow key={g.id} goal={g} />)}
+    </div>
+  );
 }
 
 function ShadowReturnChip({ label, value }: { label: string; value: number | null }) {
@@ -205,6 +250,8 @@ export function DecisionActionPanel({
             {new Date(existing.executed_at).toLocaleString("en-GB", { dateStyle: "short", timeStyle: "short", timeZone: TZ })}
           </span>
         </div>
+
+        <GoalContextAtDecisionTime goalContext={goalContext} />
 
         {/* Shadow tracking status */}
         {existing.decision === "APPROVED" && (

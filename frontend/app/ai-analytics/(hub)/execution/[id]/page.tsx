@@ -93,6 +93,16 @@ export default function ExecutionDetailPage() {
             <AsOfStamp asOf={data.as_of} />
           </div>
 
+          {/* Explanation bridge to the historical Recommendation Report Card
+              (S3) — the deterministic, frozen source of "why" for this
+              decision. Navigation only; no rationale is duplicated here. */}
+          <Link
+            href={`/ai-analytics/recommendations/${data.snapshot_id}`}
+            className="inline-block text-xs font-semibold text-blue-600 hover:underline"
+          >
+            See why this was recommended →
+          </Link>
+
           {data.partial_warning && (
             <div className="p-3 bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg">
               ⚠ {data.partial_warning}
