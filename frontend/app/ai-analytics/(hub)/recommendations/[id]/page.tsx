@@ -153,13 +153,13 @@ function ExecutionSection({ execution, decision }: { execution: RecommendationRe
           <>
             <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-gray-500">
               <span>Execution score: <strong className="text-gray-700">{analysis.score != null ? analysis.score.toFixed(0) : "—"}</strong></span>
-              <span>Completeness: <strong className="text-gray-700">{analysis.completeness_pct.toFixed(0)}%</strong></span>
+              <span>Completeness: <strong className="text-gray-700">{analysis.completeness_pct != null ? `${analysis.completeness_pct.toFixed(0)}%` : "—"}</strong></span>
               <span>Funding fidelity: <strong className="text-gray-700">{analysis.funding_fidelity_pct != null ? `${analysis.funding_fidelity_pct.toFixed(0)}%` : "n/a"}</strong></span>
               {analysis.status === "partial" && <span className="text-amber-600 font-semibold">⚠ partial execution</span>}
             </div>
             {Object.keys(analysis.symbols ?? {}).length > 0 && (
               <div className="space-y-1 pt-1">
-                {Object.entries(analysis.symbols).map(([sym, d]) => (
+                {Object.entries(analysis.symbols ?? {}).map(([sym, d]) => (
                   <div key={sym} className="flex items-center gap-3 text-xs text-gray-600 flex-wrap">
                     <span className="font-semibold text-gray-800 w-16">{sym.replace(".BK", "")}</span>
                     <span>Timing: {d.timing_delta_pct != null ? pct(d.timing_delta_pct) : "not measurable"}</span>

@@ -42,6 +42,18 @@ Transaction.execution_decision_id column it depends on is populated by the
 buy/sell endpoints (services/portfolio_transactions.py), which is decision-
 recording, not evaluation.
 
+Completion (Execution Completion Polish, Slice 3) is a canonical derived
+fact, never a persisted one: `matched_count`/`total_planned`/`is_complete`
+are additive fields on this same result, computed from the identical
+matching this module already performs — not a second notion of "done." A
+plan with zero actionable trades (`total_planned == 0`) is complete by
+definition: there is nothing left to record. A linked transaction only
+counts as a match when its `transaction_type` matches the planned action's
+required side (SELL/REDUCE plans require a SELL fill; BUY and ACCUMULATE
+plans both require a BUY fill) — a wrong-side transaction must never
+satisfy a recommendation row, in completion or in any of the four scoring
+components below.
+
 Public API
 ----------
 compute_execution_analysis(target_allocations, cash_available, violations,
@@ -60,6 +72,29 @@ _SIZE_PENALTY_PER_PCT = 1.0     # 100 - (avg |size delta %|) * this, floored at 
 _COMPONENT_WEIGHT = 25.0        # all four components weigh equally
 
 
+_SELL_SIDE_ACTIONS = ("SELL", "REDUCE")
+
+
+def _required_side(action: str) -> str:
+    """The Transaction.transaction_type a fill must carry to satisfy a
+    planned trade with this action. SELL/REDUCE plans require a SELL fill
+    (REDUCE is a partial SELL, not a distinct transaction_type —
+    models/database.py only defines BUY/SELL for equity transactions);
+    every other planned action is buy-side and requires a BUY fill.
+
+    planned_by_symbol (the only caller of this function) is built solely
+    from plan_grader's buy_trades (action in {"BUY", "ACCUMULATE"} — see
+    optimizer_action_summary.build_action_summary) and execution_optimizer's
+    SELL/REDUCE trades; WATCH/HOLD rows never reach this function, so
+    treating "not SELL/REDUCE" as buy-side does not broaden plan semantics."""
+    return "SELL" if action in _SELL_SIDE_ACTIONS else "BUY"
+
+
+def _side_matched(action: str, txs: list[dict]) -> list[dict]:
+    required = _required_side(action)
+    return [t for t in txs if t.get("transaction_type") == required]
+
+
 def compute_execution_analysis(
     target_allocations: list[dict],
     cash_available: float,
@@ -76,9 +111,9 @@ def compute_execution_analysis(
         recommendation_prices: {symbol: price} — normally
             RecommendationSnapshot.scores_map_json's per-symbol current_price.
         linked_transactions: [{"symbol", "shares", "price_per_share",
-            "total_amount", "id", "transaction_date"}, ...] already filtered
-            by the caller to rows whose execution_decision_id matches this
-            decision.
+            "total_amount", "id", "transaction_date", "transaction_type"},
+            ...] already filtered by the caller to rows whose
+            execution_decision_id matches this decision.
     """
     from services.evaluation.plan_grader import derive_full_plan
     from services.optimizer.execution_optimizer import ROLE_FUNDING_SOURCE, STATE_DEFERRED
@@ -129,12 +164,15 @@ def compute_execution_analysis(
             },
             "completeness_pct": 0.0 if total_planned else 100.0,
             "funding_fidelity_pct": None,
+            "matched_count": 0,
+            "total_planned": total_planned,
+            "is_complete": total_planned == 0,
         }
 
     symbol_results: dict[str, dict] = {}
     matched_count = 0
     for sym, p in planned_by_symbol.items():
-        txs = tx_by_symbol.get(sym, [])
+        txs = _side_matched(p["action"], tx_by_symbol.get(sym, []))
         if not txs:
             symbol_results[sym] = {
                 "action": p["action"],
@@ -184,7 +222,10 @@ def compute_execution_analysis(
         sym for sym, p in planned_by_symbol.items() if p.get("execution_role") == ROLE_FUNDING_SOURCE
     }
     if funding_planned:
-        funding_matched = sum(1 for sym in funding_planned if tx_by_symbol.get(sym))
+        funding_matched = sum(
+            1 for sym in funding_planned
+            if _side_matched(planned_by_symbol[sym]["action"], tx_by_symbol.get(sym, []))
+        )
         funding_fidelity_pct = round(100.0 * funding_matched / len(funding_planned), 2)
     else:
         funding_fidelity_pct = None  # nothing was planned as a funding source — not applicable
@@ -224,4 +265,7 @@ def compute_execution_analysis(
         "symbols": symbol_results,
         "completeness_pct": completeness_pct,
         "funding_fidelity_pct": funding_fidelity_pct,
+        "matched_count": matched_count,
+        "total_planned": total_planned,
+        "is_complete": matched_count == total_planned,
     }

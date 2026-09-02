@@ -14,10 +14,21 @@ import BackBreadcrumb from "@/components/BackBreadcrumb";
 import DecisionStatusBadge from "@/components/evaluation/DecisionStatusBadge";
 import AsOfStamp from "@/components/evaluation/AsOfStamp";
 import PortfolioSelectionNotice from "@/components/PortfolioSelectionNotice";
+import { executionCompletionLabel } from "@/components/optimizer/DecisionActionPanel";
 
 function pct(n: number | null | undefined, decimals = 1): string {
   if (n == null) return "not measurable";
   return `${n >= 0 ? "+" : ""}${n.toFixed(decimals)}%`;
+}
+
+// Execution Completion Polish (Slice 3): humanize the analyzer's internal
+// per-symbol note — never expose the raw enum-like string. Degrades safely
+// (renders nothing) for a note value not in this known, evidenced set,
+// rather than fabricating a label for it.
+function recordedLabel(note: string | null): string {
+  if (note === null) return "Recorded";
+  if (note === "no_linked_transaction") return "Not recorded";
+  return "";
 }
 
 function shortDate(iso: string): string {
@@ -128,12 +139,24 @@ export default function ExecutionDetailPage() {
                   Execution score: <strong className="text-gray-800">{data.analysis.score != null ? data.analysis.score.toFixed(0) : "—"}</strong>
                 </span>
                 <span className="text-gray-500">
-                  Completeness: <strong className="text-gray-800">{data.analysis.completeness_pct.toFixed(0)}%</strong>
+                  Completeness: <strong className="text-gray-800">{data.analysis.completeness_pct != null ? `${data.analysis.completeness_pct.toFixed(0)}%` : "—"}</strong>
                 </span>
                 <span className="text-gray-500">
                   Funding fidelity: <strong className="text-gray-800">{data.analysis.funding_fidelity_pct != null ? `${data.analysis.funding_fidelity_pct.toFixed(0)}%` : "n/a"}</strong>
                 </span>
-                {data.analysis.status === "partial" && <span className="text-amber-600 font-semibold">⚠ partial</span>}
+                {executionCompletionLabel(data.analysis) && (
+                  <span
+                    className={`font-semibold ${
+                      data.analysis.is_complete === true
+                        ? "text-green-600"
+                        : data.analysis.is_complete === false
+                          ? "text-amber-600"
+                          : "text-gray-400"
+                    }`}
+                  >
+                    {executionCompletionLabel(data.analysis)}
+                  </span>
+                )}
               </div>
             )}
 
@@ -148,12 +171,12 @@ export default function ExecutionDetailPage() {
                       <th className="py-2 px-3 font-medium text-right">Executed</th>
                       <th className="py-2 px-3 font-medium text-right">Timing Δ</th>
                       <th className="py-2 px-3 font-medium text-right">Size Δ</th>
-                      <th className="py-2 px-3 font-medium">Note</th>
+                      <th className="py-2 px-3 font-medium">Status</th>
                       <th className="py-2 px-3 font-medium">Recorded as</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {Object.entries(data.analysis.symbols).map(([sym, d]) => (
+                    {Object.entries(data.analysis.symbols ?? {}).map(([sym, d]) => (
                       <tr key={sym} className="border-b last:border-0">
                         <td className="py-2 px-3 font-semibold text-gray-800">{sym.replace(".BK", "")}</td>
                         <td className="py-2 px-3 text-gray-500">{d.action}</td>
@@ -165,7 +188,7 @@ export default function ExecutionDetailPage() {
                         </td>
                         <td className="py-2 px-3 text-right tabular-nums text-gray-600">{pct(d.timing_delta_pct)}</td>
                         <td className="py-2 px-3 text-right tabular-nums text-gray-600">{pct(d.size_delta_pct, 0)}</td>
-                        <td className="py-2 px-3 text-xs text-gray-400 italic">{d.note ?? ""}</td>
+                        <td className="py-2 px-3 text-xs text-gray-400 italic">{recordedLabel(d.note)}</td>
                         <td className="py-2 px-3 text-xs text-gray-500">
                           {d.transactions.length > 0
                             ? d.transactions.map((t) => `#${t.id} (${shortDate(t.transaction_date)})`).join(", ")

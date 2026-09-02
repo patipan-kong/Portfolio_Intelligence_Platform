@@ -47,12 +47,28 @@ const RECORD_EXECUTION_ELIGIBLE: ReadonlySet<ExecutionDecisionType> = new Set([
   "APPROVED", "MANUAL_OVERRIDE", "PARTIAL_EXECUTION",
 ]);
 
-function linkageStatusLabel(analysis: ExecutionAnalysis | null): string | null {
+// Execution Completion Polish (Slice 3): completion is derived solely from
+// matched_count/total_planned/is_complete — never from analysis.status,
+// which is a grading-measurability flag (e.g. a fully-recorded decision
+// with no planned funding-source trade still reports status="partial").
+// Exported so the Execution Detail page renders identical copy rather than
+// re-deriving its own notion of "complete" (ENGINEERING_PRINCIPLES.md
+// Single Source of Truth).
+export function executionCompletionLabel(analysis: ExecutionAnalysis | null): string | null {
   if (!analysis) return null;
-  if (analysis.status === "unavailable") return "No execution recorded";
-  if (analysis.status === "partial") return `Partially linked (${Math.round(analysis.completeness_pct)}%)`;
-  if (analysis.status === "ok") return "Execution linked";
-  return null; // fail closed on an unrecognized status — never claim "linked"
+  const { matched_count, total_planned, is_complete } = analysis;
+  // Correction pass (review finding 2/4): `no_target_allocations` is a
+  // genuinely missing-evidence response (execution_ledger.py's
+  // _decision_analysis short-circuits before computing anything) — distinct
+  // from "plan known, zero matches yet", which always populates all three
+  // fields. Never infer completion, and never interpolate undefined, when
+  // evidence is absent.
+  if (matched_count == null || total_planned == null || is_complete == null) {
+    return "Recording status unavailable";
+  }
+  if (is_complete) return "Execution complete";
+  if (matched_count === 0) return "Not recorded";
+  return `Partially recorded (${matched_count} of ${total_planned})`;
 }
 
 // Goal context at time of decision (Phase 7.4/ADR-008, CONTEXT_ONLY) — a
@@ -307,8 +323,8 @@ export function DecisionActionPanel({
           >
             Track this decision in AI Evaluation →
           </Link>
-          {linkageStatusLabel(linkage) && (
-            <span className="text-xs text-gray-400">{linkageStatusLabel(linkage)}</span>
+          {executionCompletionLabel(linkage) && (
+            <span className="text-xs text-gray-400">{executionCompletionLabel(linkage)}</span>
           )}
           {!existing.is_system_generated && RECORD_EXECUTION_ELIGIBLE.has(existing.decision) && (
             <Link

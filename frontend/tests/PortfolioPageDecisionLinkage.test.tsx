@@ -2,7 +2,7 @@ import { describe, test, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
 import { PortfolioProvider, usePortfolio } from "@/lib/PortfolioContext";
 import PortfolioPage from "@/app/portfolio/page";
-import type { Portfolio, ExecutionDecisionDetail, TransactionResult } from "@/lib/api";
+import type { Portfolio, ExecutionDecisionDetail, TransactionResult, ExecutionAnalysis, ExecutionDetail } from "@/lib/api";
 
 // Decision -> Transaction Linkage Completion: /portfolio reads ?decision=<id>,
 // fetches the decision, switches Current Selection to its portfolio if
@@ -17,7 +17,7 @@ const {
   removeHolding, analyzeSymbol, updateSwapPermission,
   buyTransaction, sellTransaction, depositTransaction, withdrawTransaction,
   initialPositionTransaction, dividendTransaction, isUnresolvedPortfolioError,
-  getExecutionDecision,
+  getExecutionDecision, getExecutionDetail,
   listPortfolioInvestmentMandates, listWealthGoals,
   deletePortfolioInvestmentMandate, putPortfolioInvestmentMandate,
 } = vi.hoisted(() => ({
@@ -36,6 +36,7 @@ const {
   dividendTransaction: vi.fn(),
   isUnresolvedPortfolioError: vi.fn(() => false),
   getExecutionDecision: vi.fn(),
+  getExecutionDetail: vi.fn(),
   listPortfolioInvestmentMandates: vi.fn(),
   listWealthGoals: vi.fn(),
   deletePortfolioInvestmentMandate: vi.fn(),
@@ -47,7 +48,7 @@ vi.mock("@/lib/api", () => ({
   removeHolding, analyzeSymbol, updateSwapPermission,
   buyTransaction, sellTransaction, depositTransaction, withdrawTransaction,
   initialPositionTransaction, dividendTransaction, isUnresolvedPortfolioError,
-  getExecutionDecision,
+  getExecutionDecision, getExecutionDetail,
   listPortfolioInvestmentMandates, listWealthGoals,
   deletePortfolioInvestmentMandate, putPortfolioInvestmentMandate,
 }));
@@ -84,6 +85,22 @@ function decisionDetail(overrides: Partial<ExecutionDecisionDetail> = {}): Execu
     rejected_symbols: null,
     recommendation_snapshot: null,
     ...overrides,
+  };
+}
+
+function executionAnalysis(overrides: Partial<ExecutionAnalysis> = {}): ExecutionAnalysis {
+  return {
+    status: "partial", score: 50, completeness_pct: 50, funding_fidelity_pct: null,
+    matched_count: 0, total_planned: 0, is_complete: true, symbols: {},
+    ...overrides,
+  };
+}
+
+function executionDetailFixture(overrides: Partial<ExecutionAnalysis> = {}, decisionId = 42, portfolioId = 1): ExecutionDetail {
+  return {
+    decision_id: decisionId, snapshot_id: 7, portfolio_id: portfolioId, decision: "APPROVED",
+    executed_at: "2026-08-20T00:00:00Z", partial_warning: null, as_of: "2026-08-21T00:00:00Z",
+    analysis: executionAnalysis(overrides),
   };
 }
 
@@ -144,6 +161,10 @@ beforeEach(() => {
   sellTransaction.mockReset();
   sellTransaction.mockResolvedValue(txResult({ type: "SELL" }));
   getExecutionDecision.mockReset();
+  getExecutionDetail.mockReset();
+  // Default: no fixture supplied -> no completion-progress paragraph should
+  // render. Individual tests below override with a resolved fixture.
+  getExecutionDetail.mockRejectedValue(new Error("no execution-detail fixture for this test"));
 });
 
 test("no ?decision= param: no banner, ordinary Buy sends no execution_decision_id", async () => {
@@ -360,4 +381,181 @@ test("a stale decision response cannot attach to a later portfolio selection", a
 
   expect(screen.getByText(bannerWith("Recording execution for Decision #2"))).toBeInTheDocument();
   expect(screen.queryByText(bannerWith("Recording execution for Decision #1 "))).not.toBeInTheDocument();
+});
+
+// Execution Completion Polish (Slice 3): the recording banner surfaces the
+// existing frozen-evidence-scoped execution-detail analysis as a completion
+// count, and refreshes it after a linked Buy/Sell — without any full-page
+// navigation. This reuses getExecutionDetail (already exercised by
+// ExecutionDetailPage.test.tsx); no new backend endpoint is involved.
+describe("Execution Completion Polish (Slice 3) — recording-progress banner", () => {
+  test("fetches and renders the initial recording-progress count for the active decision", async () => {
+    mockSearchParams = new URLSearchParams("decision=42");
+    getExecutionDecision.mockResolvedValue(decisionDetail({ id: 42, portfolio_id: 1 }));
+    getExecutionDetail.mockResolvedValue(executionDetailFixture({ matched_count: 1, total_planned: 2, is_complete: false }));
+
+    render(
+      <PortfolioProvider>
+        <SwitcherProbe />
+        <PortfolioPage />
+      </PortfolioProvider>
+    );
+    await act(async () => screen.getByText("select-1").click());
+
+    await waitFor(() => expect(getExecutionDetail).toHaveBeenCalledWith(1, 42));
+    expect(await screen.findByText(/1 of 2 recommended trades recorded/)).toBeInTheDocument();
+  });
+
+  test("an incomplete decision's progress links back to the existing Execution Detail page", async () => {
+    mockSearchParams = new URLSearchParams("decision=42");
+    getExecutionDecision.mockResolvedValue(decisionDetail({ id: 42, portfolio_id: 1 }));
+    getExecutionDetail.mockResolvedValue(executionDetailFixture({ matched_count: 1, total_planned: 2, is_complete: false }));
+
+    render(
+      <PortfolioProvider>
+        <SwitcherProbe />
+        <PortfolioPage />
+      </PortfolioProvider>
+    );
+    await act(async () => screen.getByText("select-1").click());
+    await screen.findByText(/1 of 2 recommended trades recorded/);
+
+    const link = screen.getByRole("link", { name: "view remaining →" });
+    expect(link).toHaveAttribute("href", "/ai-analytics/execution/42");
+  });
+
+  test("a complete decision's progress shows no 'view remaining' link", async () => {
+    mockSearchParams = new URLSearchParams("decision=42");
+    getExecutionDecision.mockResolvedValue(decisionDetail({ id: 42, portfolio_id: 1 }));
+    getExecutionDetail.mockResolvedValue(executionDetailFixture({ matched_count: 2, total_planned: 2, is_complete: true }));
+
+    render(
+      <PortfolioProvider>
+        <SwitcherProbe />
+        <PortfolioPage />
+      </PortfolioProvider>
+    );
+    await act(async () => screen.getByText("select-1").click());
+
+    expect(await screen.findByText(/2 of 2 recommended trades recorded/)).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "view remaining →" })).not.toBeInTheDocument();
+  });
+
+  test("confirming a linked Buy re-fetches execution detail and updates the count, with no navigation away", async () => {
+    mockSearchParams = new URLSearchParams("decision=42");
+    getExecutionDecision.mockResolvedValue(decisionDetail({ id: 42, portfolio_id: 1 }));
+    getExecutionDetail
+      .mockResolvedValueOnce(executionDetailFixture({ matched_count: 1, total_planned: 2, is_complete: false }))
+      .mockResolvedValueOnce(executionDetailFixture({ matched_count: 2, total_planned: 2, is_complete: true }));
+
+    render(
+      <PortfolioProvider>
+        <SwitcherProbe />
+        <PortfolioPage />
+      </PortfolioProvider>
+    );
+    await act(async () => screen.getByText("select-1").click());
+    await screen.findByText(/1 of 2 recommended trades recorded/);
+
+    await act(async () => screen.getByText("Buy").click());
+    await waitFor(() => expect(screen.getByPlaceholderText("AAPL or SCB.BK")).toBeInTheDocument());
+    await act(async () => {
+      fireEvent.change(screen.getByPlaceholderText("AAPL or SCB.BK"), { target: { value: "PTT" } });
+      fireEvent.change(screen.getByPlaceholderText("0"), { target: { value: "100" } });
+      fireEvent.change(screen.getByPlaceholderText("0.00"), { target: { value: "35" } });
+    });
+    await act(async () => screen.getByText("Confirm Buy").click());
+    await waitFor(() => expect(buyTransaction).toHaveBeenCalledTimes(1));
+
+    expect(getExecutionDetail).toHaveBeenCalledTimes(2);
+    expect(await screen.findByText(/2 of 2 recommended trades recorded/)).toBeInTheDocument();
+
+    // No full-page navigation was introduced — the recording banner for the
+    // same decision (and the still-open transaction confirmation) remain in
+    // place rather than routing away.
+    expect(screen.getByText(bannerWith("Recording execution for Decision #42"))).toBeInTheDocument();
+    expect(routerReplace).not.toHaveBeenCalled();
+  });
+
+  // Correction pass (review finding 3): refreshExecutionProgress's fetch is
+  // keyed to the active decision and must not apply an out-of-order response.
+  test("a stale execution-progress response cannot overwrite a newer decision's progress", async () => {
+    mockSearchParams = new URLSearchParams("decision=1");
+    getExecutionDecision.mockImplementation((id: number) =>
+      Promise.resolve(decisionDetail({ id, portfolio_id: 1 }))
+    );
+
+    let resolveA!: (v: ExecutionDetail) => void;
+    let resolveB!: (v: ExecutionDetail) => void;
+    const pendingA = new Promise<ExecutionDetail>((r) => (resolveA = r));
+    const pendingB = new Promise<ExecutionDetail>((r) => (resolveB = r));
+    getExecutionDetail.mockImplementation((_portfolioId: number, decisionId: number) => {
+      if (decisionId === 1) return pendingA;
+      if (decisionId === 2) return pendingB;
+      return Promise.reject(new Error("unexpected decision id"));
+    });
+
+    const { rerender } = render(
+      <PortfolioProvider>
+        <SwitcherProbe />
+        <PortfolioPage />
+      </PortfolioProvider>
+    );
+    await act(async () => screen.getByText("select-1").click());
+    await waitFor(() => expect(screen.getByText(bannerWith("Recording execution for Decision #1"))).toBeInTheDocument());
+    await waitFor(() => expect(getExecutionDetail).toHaveBeenCalledWith(1, 1));
+
+    // URL moves on to decision #2 before decision #1's progress resolves.
+    mockSearchParams = new URLSearchParams("decision=2");
+    await act(async () => {
+      rerender(
+        <PortfolioProvider>
+          <SwitcherProbe />
+          <PortfolioPage />
+        </PortfolioProvider>
+      );
+    });
+    await waitFor(() => expect(screen.getByText(bannerWith("Recording execution for Decision #2"))).toBeInTheDocument());
+    await waitFor(() => expect(getExecutionDetail).toHaveBeenCalledWith(1, 2));
+
+    // The newer decision's (#2) progress resolves first.
+    await act(async () => resolveB(executionDetailFixture({ matched_count: 2, total_planned: 2, is_complete: true }, 2, 1)));
+    expect(await screen.findByText(/2 of 2 recommended trades recorded/)).toBeInTheDocument();
+
+    // Decision #1's older, now-stale request resolves afterward — it must
+    // not overwrite decision #2's already-displayed progress.
+    await act(async () => resolveA(executionDetailFixture({ matched_count: 0, total_planned: 5, is_complete: false }, 1, 1)));
+
+    expect(screen.getByText(/2 of 2 recommended trades recorded/)).toBeInTheDocument();
+    expect(screen.queryByText(/0 of 5 recommended trades recorded/)).not.toBeInTheDocument();
+  });
+
+  // Correction pass (review findings 2 + 4): execution_ledger.py's
+  // no_target_allocations short-circuit returns {"status": "unavailable",
+  // "reason": ..., "score": null} with matched_count/total_planned/
+  // is_complete entirely absent. The banner must suppress the progress line
+  // rather than render "undefined of undefined" or fabricate a link.
+  test("missing completion evidence suppresses the progress line without rendering undefined or a false link", async () => {
+    mockSearchParams = new URLSearchParams("decision=42");
+    getExecutionDecision.mockResolvedValue(decisionDetail({ id: 42, portfolio_id: 1 }));
+    getExecutionDetail.mockResolvedValue({
+      decision_id: 42, snapshot_id: 7, portfolio_id: 1, decision: "APPROVED",
+      executed_at: "2026-08-20T00:00:00Z", partial_warning: null, as_of: "2026-08-21T00:00:00Z",
+      analysis: { status: "unavailable", reason: "no_target_allocations", score: null } as ExecutionAnalysis,
+    });
+
+    render(
+      <PortfolioProvider>
+        <SwitcherProbe />
+        <PortfolioPage />
+      </PortfolioProvider>
+    );
+    await act(async () => screen.getByText("select-1").click());
+    await waitFor(() => expect(screen.getByText(bannerWith("Recording execution for Decision #42"))).toBeInTheDocument());
+    await waitFor(() => expect(getExecutionDetail).toHaveBeenCalledWith(1, 42));
+
+    expect(screen.queryByText(/undefined/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/recommended trades? recorded/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "view remaining →" })).not.toBeInTheDocument();
+  });
 });

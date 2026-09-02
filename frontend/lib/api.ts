@@ -4248,12 +4248,27 @@ export interface ExecutionSymbolDelta {
 }
 
 export interface ExecutionAnalysis {
+  // Grading/measurability status — NOT a completion signal (a decision with
+  // no planned funding-source trade is "partial" here even when fully
+  // recorded). Use matched_count/total_planned/is_complete for completion.
   status: "ok" | "partial" | "unavailable";
   reason?: string | null;
   score: number | null;
-  symbols: Record<string, ExecutionSymbolDelta>;
-  completeness_pct: number;
-  funding_fidelity_pct: number | null;
+  // Absent when reason === "no_target_allocations": the backend has no plan
+  // evidence at all for this decision (execution_ledger.py's
+  // _decision_analysis short-circuits before computing anything else). This
+  // is a stricter degraded case than "plan known, zero linked transactions
+  // yet" (reason === "no_linked_transactions"), which still populates every
+  // field below with real evidence. Never assume these are present just
+  // because status === "unavailable" — check the fields themselves.
+  symbols?: Record<string, ExecutionSymbolDelta>;
+  completeness_pct?: number;
+  funding_fidelity_pct?: number | null;
+  // Canonical derived completion facts (Execution Completion Polish, Slice 3).
+  // Absent, not zeroed, when there is no plan evidence to derive them from.
+  matched_count?: number;
+  total_planned?: number;
+  is_complete?: boolean;
 }
 
 export interface ExecutionDetail {

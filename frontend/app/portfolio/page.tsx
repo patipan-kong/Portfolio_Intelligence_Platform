@@ -18,13 +18,13 @@ import {
   getPortfolioPrices, getSectorBreakdown,
   buyTransaction, sellTransaction, depositTransaction, withdrawTransaction,
   initialPositionTransaction, dividendTransaction,
-  isUnresolvedPortfolioError, getExecutionDecision,
+  isUnresolvedPortfolioError, getExecutionDecision, getExecutionDetail,
 } from "@/lib/api";
 import type {
   PortfolioItem, AnalyzeAllResult, SectorBreakdown,
   BuyPayload, SellPayload, DepositPayload, WithdrawPayload,
   InitialPositionPayload, DividendPayload, TransactionResult,
-  ExecutionDecisionDetail,
+  ExecutionDecisionDetail, ExecutionAnalysis,
 } from "@/lib/api";
 
 const PortfolioPieChart = dynamic(
@@ -137,6 +137,31 @@ export default function PortfolioPage() {
   const decisionReqSeqRef = useRef(0);
   const decisionPortfolioIdRef = useRef<number | null>(null);
 
+  // Execution Completion Polish (Slice 3): reuse the existing frozen-
+  // evidence-scoped execution-detail analysis to show recording progress
+  // for the active decision. Purely additive display state — never
+  // persisted, never a substitute for the historical analysis itself.
+  const [executionProgress, setExecutionProgress] = useState<ExecutionAnalysis | null>(null);
+  // Correction pass (review finding 3): a request-sequence guard, mirroring
+  // decisionReqSeqRef above — a fetch issued for decision A (or an earlier
+  // fetch for the same decision, e.g. two rapid post-confirm refreshes) must
+  // never overwrite state with a response that resolves after a newer
+  // request for a different/same decision has already been issued.
+  const executionProgressReqSeqRef = useRef(0);
+
+  const refreshExecutionProgress = useCallback((decision: ExecutionDecisionDetail) => {
+    const seq = ++executionProgressReqSeqRef.current;
+    getExecutionDetail(decision.portfolio_id, decision.id)
+      .then((detail) => {
+        if (executionProgressReqSeqRef.current !== seq) return; // superseded
+        setExecutionProgress(detail.analysis);
+      })
+      .catch(() => {
+        if (executionProgressReqSeqRef.current !== seq) return; // superseded
+        setExecutionProgress(null);
+      });
+  }, []);
+
   // selectPortfolio is a useCallback keyed to `portfolios`, so its identity
   // changes once the portfolio list finishes loading. The decision-fetch
   // effect below only depends on `searchParams` (it must not re-fetch every
@@ -225,6 +250,19 @@ export default function PortfolioPage() {
     decisionPortfolioIdRef.current = null;
     router.replace("/portfolio");
   }
+
+  // Initial recording-progress fetch whenever an execution decision becomes
+  // (in)active — e.g. resolved from ?decision=, or cleared on portfolio switch.
+  useEffect(() => {
+    if (!activeDecision) {
+      // Invalidate any still-in-flight request — there is no longer an
+      // active decision for it to attach its (eventual) response to.
+      executionProgressReqSeqRef.current++;
+      setExecutionProgress(null);
+      return;
+    }
+    refreshExecutionProgress(activeDecision);
+  }, [activeDecision, refreshExecutionProgress]);
 
   // Shared helper — patches price fields (including upside_pct) onto items list
   function applyPrices(prev: PortfolioItem[], prices: Awaited<ReturnType<typeof getPortfolioPrices>>) {
@@ -398,6 +436,12 @@ export default function PortfolioPage() {
     await refreshHoldings(currentSelection);
     await refreshPortfolios();
     if (result.cash_balance != null) setCashBalance(result.cash_balance);
+
+    // A linked buy/sell may have just satisfied a planned trade — refresh
+    // the recording-progress count without a full-page navigation.
+    if (activeDecision && (modal.mode === "buy" || modal.mode === "sell")) {
+      refreshExecutionProgress(activeDecision);
+    }
 
     return result;
   }
@@ -631,6 +675,23 @@ export default function PortfolioPage() {
               Buy/Sell trades you record now will link to this decision. Enter what you actually executed —
               price, shares, and date are not pre-filled from the recommendation.
             </p>
+            {executionProgress &&
+              executionProgress.matched_count != null &&
+              executionProgress.total_planned != null &&
+              executionProgress.is_complete != null && (
+              <p className="text-xs text-blue-600 font-medium mt-1">
+                {executionProgress.matched_count} of {executionProgress.total_planned} recommended trade
+                {executionProgress.total_planned === 1 ? "" : "s"} recorded
+                {!executionProgress.is_complete && (
+                  <>
+                    {" — "}
+                    <Link href={`/ai-analytics/execution/${activeDecision.id}`} className="underline hover:text-blue-800">
+                      view remaining →
+                    </Link>
+                  </>
+                )}
+              </p>
+            )}
             {activeDecision.recommendation_snapshot?.projected_allocations && (
               <p className="text-xs text-blue-400 mt-1">
                 Plan (reference only):{" "}

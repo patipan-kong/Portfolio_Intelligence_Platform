@@ -1,7 +1,7 @@
 import { describe, test, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { DecisionActionPanel } from "@/components/optimizer/DecisionActionPanel";
-import type { ExecutionDecision, ExecutionDecisionDetail } from "@/lib/api";
+import type { ExecutionDecision, ExecutionDecisionDetail, ExecutionAnalysis, ExecutionDetail } from "@/lib/api";
 
 // Decision Continuity UX Slice 1 (D): DecisionActionPanel enriches its
 // existing single-decision fetch with already-persisted goal provenance
@@ -383,5 +383,85 @@ describe("DecisionActionPanel goal context at time of decision", () => {
     const container = block.closest("div") ?? block;
     const text = container.textContent?.toLowerCase() ?? "";
     expect(text).not.toMatch(/because|caused by|recommended due to/);
+  });
+});
+
+// Execution Completion Polish (Slice 3): the panel's completion label must
+// derive from matched_count/total_planned/is_complete, never analysis.status
+// — an APPROVED decision (RECORD_EXECUTION_ELIGIBLE) is used here since that
+// is the path that actually fetches execution-linkage evidence.
+function executionAnalysis(overrides: Partial<ExecutionAnalysis> = {}): ExecutionAnalysis {
+  return {
+    status: "ok", score: 90, completeness_pct: 100, funding_fidelity_pct: 100,
+    matched_count: 1, total_planned: 1, is_complete: true, symbols: {},
+    ...overrides,
+  };
+}
+
+function executionDetailFixture(analysis: ExecutionAnalysis): ExecutionDetail {
+  return {
+    decision_id: 7, snapshot_id: 5, portfolio_id: 1, decision: "APPROVED",
+    executed_at: "2026-08-20T00:00:00Z", analysis, partial_warning: null,
+    as_of: "2026-08-21T00:00:00Z",
+  };
+}
+
+describe("DecisionActionPanel execution completion label", () => {
+  beforeEach(() => {
+    getShadowPerformanceSummary.mockResolvedValue({ has_shadows: false, shadows: [], summary: null });
+    getExecutionDecision.mockResolvedValue({ ...baseDecision({ decision: "APPROVED" }), approved_allocations: null, rejected_symbols: null, recommendation_snapshot: null });
+  });
+
+  test("status='partial' with matched_count == total_planned renders 'Execution complete', not the raw grading status", async () => {
+    listExecutionDecisions.mockResolvedValue([baseDecision({ decision: "APPROVED" })]);
+    getExecutionDetail.mockResolvedValue(executionDetailFixture(
+      executionAnalysis({ status: "partial", funding_fidelity_pct: null, matched_count: 1, total_planned: 1, is_complete: true }),
+    ));
+
+    render(<DecisionActionPanel snapshotId={5} portfolioId={1} />);
+
+    expect(await screen.findByText("Execution complete")).toBeInTheDocument();
+  });
+
+  test("zero of N matched renders 'Not recorded'", async () => {
+    listExecutionDecisions.mockResolvedValue([baseDecision({ decision: "APPROVED" })]);
+    getExecutionDetail.mockResolvedValue(executionDetailFixture(
+      executionAnalysis({ status: "unavailable", completeness_pct: 0, funding_fidelity_pct: null, matched_count: 0, total_planned: 2, is_complete: false }),
+    ));
+
+    render(<DecisionActionPanel snapshotId={5} portfolioId={1} />);
+
+    expect(await screen.findByText("Not recorded")).toBeInTheDocument();
+  });
+
+  test("a partial match renders 'Partially recorded (X of Y)'", async () => {
+    listExecutionDecisions.mockResolvedValue([baseDecision({ decision: "APPROVED" })]);
+    getExecutionDetail.mockResolvedValue(executionDetailFixture(
+      executionAnalysis({ status: "partial", completeness_pct: 50, funding_fidelity_pct: null, matched_count: 1, total_planned: 2, is_complete: false }),
+    ));
+
+    render(<DecisionActionPanel snapshotId={5} portfolioId={1} />);
+
+    expect(await screen.findByText("Partially recorded (1 of 2)")).toBeInTheDocument();
+  });
+
+  // Correction pass (review finding 2): a decision whose snapshot has no
+  // reconstructable plan (execution_ledger.py's _decision_analysis returns
+  // {"status": "unavailable", "reason": "no_target_allocations", "score":
+  // null} with matched_count/total_planned/is_complete entirely absent — not
+  // zeroed) must never be rendered as "Partially recorded (undefined of
+  // undefined)" or any other fabricated completion state.
+  test("missing completion evidence (no_target_allocations) never renders undefined and never fabricates completion", async () => {
+    listExecutionDecisions.mockResolvedValue([baseDecision({ decision: "APPROVED" })]);
+    getExecutionDetail.mockResolvedValue(executionDetailFixture({
+      status: "unavailable", reason: "no_target_allocations", score: null,
+    } as ExecutionAnalysis));
+
+    render(<DecisionActionPanel snapshotId={5} portfolioId={1} />);
+
+    expect(await screen.findByText("Recording status unavailable")).toBeInTheDocument();
+    expect(screen.queryByText(/undefined/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Execution complete")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Partially recorded/)).not.toBeInTheDocument();
   });
 });
