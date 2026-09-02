@@ -1,10 +1,11 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import GoalDetailPage from "@/app/goals/[id]/page";
 import {
   createGoalFundingAllocation,
   createGoalScenario,
   deleteGoalFundingAllocation,
+  getCashFlowReport,
   getHoldings,
   getLegacyGoalProfileEvidence,
   getPortfolioPrices,
@@ -17,6 +18,7 @@ import {
   updateGoalFundingAllocation,
   updateGoalScenario,
   type CashAccount,
+  type CashFlowEvent,
   type FactualReviewResponse,
   type GoalContextResponse,
   type GoalFundingAllocation,
@@ -32,6 +34,7 @@ vi.mock("@/lib/api", () => ({
   createGoalFundingAllocation: vi.fn(),
   createGoalScenario: vi.fn(),
   deleteGoalFundingAllocation: vi.fn(),
+  getCashFlowReport: vi.fn(),
   getHoldings: vi.fn(),
   getLegacyGoalProfileEvidence: vi.fn(),
   getPortfolioPrices: vi.fn(),
@@ -192,6 +195,7 @@ const allocationsDeleteMock = vi.mocked(deleteGoalFundingAllocation);
 const scenariosMock = vi.mocked(listGoalScenarios);
 const scenariosCreateMock = vi.mocked(createGoalScenario);
 const scenariosUpdateMock = vi.mocked(updateGoalScenario);
+const cashFlowMock = vi.mocked(getCashFlowReport);
 
 async function configuredGoalContext(): Promise<GoalContextResponse> {
   const latestListResult = listMock.mock.results[listMock.mock.results.length - 1] as
@@ -384,6 +388,7 @@ describe("GoalDetailPage", () => {
     scenariosMock.mockResolvedValue([]);
     scenariosCreateMock.mockResolvedValue(scenario);
     scenariosUpdateMock.mockResolvedValue(scenario);
+    cashFlowMock.mockImplementation((month: string) => Promise.resolve({ month, events: [] }));
   });
 
   it("loads a valid URL-anchored goal and keeps a back link", async () => {
@@ -1284,6 +1289,391 @@ describe("GoalDetailPage", () => {
       expect(await screen.findByText(
         "Scenarios are compared using the goal's current target and designated funding.",
       )).toBeInTheDocument();
+    });
+  });
+
+  describe("Goal Affordability Bridge", () => {
+    // Fixed "today" so the trailing completed-month window is deterministic:
+    // local 2026-08-15 -> window is 2026-05, 2026-06, 2026-07.
+    let nextAffordabilityEventId = 9000;
+
+    // A cash account the user has actually begun tracking. A baseline is the
+    // repository's marker for that (the same marker Recorded Expense Coverage
+    // uses); the default `cashAccount` fixture deliberately has none.
+    const trackedCashAccount: CashAccount = {
+      ...cashAccount,
+      baseline: {
+        id: 1,
+        cash_account_id: cashAccount.id,
+        effective_on: "2026-01-01",
+        observed_balance: 300000,
+        created_at: "2026-01-01T00:00:00",
+      },
+    };
+
+    /** A tracked account whose baseline began on the given date (W1: pre-tracking presence gate). */
+    function trackedAccountWithBaseline(effectiveOn: string): CashAccount {
+      return {
+        ...cashAccount,
+        baseline: {
+          id: 1,
+          cash_account_id: cashAccount.id,
+          effective_on: effectiveOn,
+          observed_balance: 300000,
+          created_at: "2026-01-01T00:00:00",
+        },
+      };
+    }
+
+    beforeEach(() => {
+      vi.setSystemTime(new Date("2026-08-15T12:00:00Z"));
+      listMock.mockResolvedValue([{ ...goal, target_amount: 120_000, target_date: "2027-08-15" }]);
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    function flowEvent(month: string, overrides: Partial<CashFlowEvent> = {}): CashFlowEvent {
+      return {
+        id: nextAffordabilityEventId++,
+        workspace_id: 1,
+        cash_account_id: 5,
+        account_name: "Wedding Savings",
+        account_is_archived: false,
+        transaction_type: "INCOME",
+        amount: 0,
+        signed_amount: 0,
+        occurred_on: `${month}-10`,
+        category: null,
+        note: null,
+        created_at: "2026-08-26T00:00:00",
+        ...overrides,
+      };
+    }
+
+    function income(month: string, amount: number): CashFlowEvent {
+      return flowEvent(month, { transaction_type: "INCOME", amount, signed_amount: amount });
+    }
+
+    function expense(month: string, amount: number): CashFlowEvent {
+      return flowEvent(month, { transaction_type: "EXPENSE", amount, signed_amount: -amount });
+    }
+
+    function withMonthlyCashFlow(byMonth: Record<string, CashFlowEvent[] | "error">) {
+      cashFlowMock.mockImplementation((month: string) => {
+        const value = byMonth[month];
+        if (value === "error") return Promise.reject(new Error("cash flow offline"));
+        return Promise.resolve({ month, events: value ?? [] });
+      });
+    }
+
+    it("does not block Goal rendering while affordability data is loading", async () => {
+      const pending = deferred<{ month: string; events: CashFlowEvent[] }>();
+      cashFlowMock.mockReturnValue(pending.promise);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      expect(await screen.findByRole("heading", { name: "Retire by 55" })).toBeInTheDocument();
+      expect(await screen.findByText("Checking affordability…")).toBeInTheDocument();
+    });
+
+    it("renders AFFORDABLE with the standing and independent-goal disclosures", async () => {
+      withMonthlyCashFlow({
+        "2026-05": [income("2026-05", 17_000), expense("2026-05", 5_000)],
+        "2026-06": [income("2026-06", 20_000), expense("2026-06", 5_000)],
+        "2026-07": [income("2026-07", 14_000), expense("2026-07", 5_000)],
+      });
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      expect(await screen.findByRole("heading", { name: "Can I afford this goal?" })).toBeInTheDocument();
+      expect(await screen.findByText(
+        /Based on your recorded cash flow over the last 3 completed months, your average monthly surplus is ฿12,000\.00, enough to cover the ฿10,000\.00\/month this goal needs\./,
+      )).toBeInTheDocument();
+      expect(screen.getByText(/not reserved for this goal and may/)).toBeInTheDocument();
+      expect(screen.getByText(/Each goal is evaluated independently\./)).toBeInTheDocument();
+    });
+
+    it("renders SHORTFALL using the exact recorded evidence-month count", async () => {
+      withMonthlyCashFlow({
+        "2026-05": [income("2026-05", 10_000), expense("2026-05", 5_000)],
+        "2026-06": [income("2026-06", 12_000), expense("2026-06", 5_000)],
+        "2026-07": [income("2026-07", 11_000), expense("2026-07", 5_000)],
+      });
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      expect(await screen.findByText(
+        /Based on your recorded cash flow over the last 3 completed months, your average monthly surplus is ฿6,000\.00, which is ฿4,000\.00 short of the ฿10,000\.00\/month this goal needs\./,
+      )).toBeInTheDocument();
+    });
+
+    it("requests exactly the three completed calendar months and never the current one", async () => {
+      withMonthlyCashFlow({});
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      await waitFor(() => expect(cashFlowMock).toHaveBeenCalledTimes(3));
+      expect(cashFlowMock.mock.calls.map(([month]) => month)).toEqual(["2026-05", "2026-06", "2026-07"]);
+      expect(cashFlowMock).not.toHaveBeenCalledWith("2026-08");
+    });
+
+    it("derives the requested months from the local calendar just after a month boundary", async () => {
+      // Local 2026-09-01T00:00:30. In Thailand (UTC+7) this instant is still
+      // 2026-08-31 in UTC, so a toISOString()-derived anchor would request
+      // May/June/July and silently drop August — the most recent completed
+      // month — for the first 7 hours of every month.
+      vi.setSystemTime(new Date(2026, 8, 1, 0, 0, 30));
+      withMonthlyCashFlow({});
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      await waitFor(() => expect(cashFlowMock).toHaveBeenCalledTimes(3));
+      expect(cashFlowMock.mock.calls.map(([month]) => month)).toEqual(["2026-06", "2026-07", "2026-08"]);
+      expect(cashFlowMock).not.toHaveBeenCalledWith("2026-09");
+    });
+
+    it("derives the requested months from the local calendar just before a month boundary", async () => {
+      vi.setSystemTime(new Date(2026, 7, 31, 23, 59, 30));
+      withMonthlyCashFlow({});
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      await waitFor(() => expect(cashFlowMock).toHaveBeenCalledTimes(3));
+      expect(cashFlowMock.mock.calls.map(([month]) => month)).toEqual(["2026-05", "2026-06", "2026-07"]);
+    });
+
+    it("fails closed when one month fails technically, never degrading to a smaller sample", async () => {
+      withMonthlyCashFlow({
+        "2026-06": [income("2026-06", 13_000), expense("2026-06", 5_000)],
+        "2026-07": [income("2026-07", 17_000), expense("2026-07", 5_000)],
+        "2026-05": "error",
+      });
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      expect(await screen.findByText(
+        "Affordability can't be assessed yet — Cash Flow data could not be fully loaded. Try again.",
+      )).toBeInTheDocument();
+      expect(screen.queryByText(/the last 2 completed months/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/completed month/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/enough to cover|short of/)).not.toBeInTheDocument();
+    });
+
+    it("fails closed on a technical failure even when the surviving months are negative", async () => {
+      withMonthlyCashFlow({
+        "2026-05": "error",
+        "2026-06": [income("2026-06", 1_000), expense("2026-06", 9_000)],
+        "2026-07": [income("2026-07", 1_000), expense("2026-07", 9_000)],
+      });
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      expect(await screen.findByText(
+        "Affordability can't be assessed yet — Cash Flow data could not be fully loaded. Try again.",
+      )).toBeInTheDocument();
+      expect(screen.queryByText(/enough to cover|short of/)).not.toBeInTheDocument();
+    });
+
+    it("reports a total retrieval failure as unavailable data, not as an absence of history", async () => {
+      withMonthlyCashFlow({ "2026-05": "error", "2026-06": "error", "2026-07": "error" });
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      expect(await screen.findByText(
+        "Affordability can't be assessed yet — Cash Flow data could not be fully loaded. Try again.",
+      )).toBeInTheDocument();
+      expect(screen.queryByText(/No completed month of recorded cash flow/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/enough to cover|short of/)).not.toBeInTheDocument();
+    });
+
+    it("fails closed when the cash-account population itself could not be loaded", async () => {
+      // Only the page's own listCashAccounts(false) read fails; the Goal
+      // Context fixture's include_archived read still resolves, so this
+      // isolates the population load from the factual-review load.
+      cashAccountsMock.mockImplementation((includeArchived?: boolean) => (includeArchived
+        ? Promise.resolve([cashAccount])
+        : Promise.reject(new Error("cash accounts offline"))));
+      withMonthlyCashFlow({
+        "2026-05": [income("2026-05", 17_000), expense("2026-05", 5_000)],
+        "2026-06": [income("2026-06", 20_000), expense("2026-06", 5_000)],
+        "2026-07": [income("2026-07", 14_000), expense("2026-07", 5_000)],
+      });
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      expect(await screen.findByText(
+        "Affordability can't be assessed yet — Cash account data could not be fully loaded. Try again.",
+      )).toBeInTheDocument();
+      expect(screen.queryByText(/enough to cover|short of/)).not.toBeInTheDocument();
+    });
+
+    it("does not give an untracked user a confident ฿0.00 shortfall from three empty months", async () => {
+      cashAccountsMock.mockResolvedValue([]);
+      withMonthlyCashFlow({ "2026-05": [], "2026-06": [], "2026-07": [] });
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      expect(await screen.findByText(
+        "Affordability can't be assessed yet — Not enough recorded cash flow to assess affordability yet.",
+      )).toBeInTheDocument();
+      expect(screen.queryByText(/average monthly surplus/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/enough to cover|short of/)).not.toBeInTheDocument();
+    });
+
+    it("treats a genuinely empty month as a real zero once cash flow is actually tracked", async () => {
+      // Every month retrieved successfully and the workspace tracks a cash
+      // account, so the empty month is measured zero flow, not missing
+      // evidence: (15,000 + 0 + 15,000) / 3 = 10,000.
+      cashAccountsMock.mockResolvedValue([trackedCashAccount]);
+      withMonthlyCashFlow({
+        "2026-05": [income("2026-05", 20_000), expense("2026-05", 5_000)],
+        "2026-06": [],
+        "2026-07": [income("2026-07", 20_000), expense("2026-07", 5_000)],
+      });
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      expect(await screen.findByText(
+        /over the last 3 completed months, your average monthly surplus is ฿10,000\.00, enough to cover the ฿10,000\.00\/month/,
+      )).toBeInTheDocument();
+    });
+
+    it("keeps a sparse but genuinely recorded history assessable", async () => {
+      // The Goal page always resolves all three window months, so a genuine
+      // 1-2 month sample reaches the helper as successful zero-flow months.
+      // The helper's own 1-2 month evidence path is proven directly in
+      // lib/goalAffordability.test.ts (missing-month and month -4 cases).
+      cashAccountsMock.mockResolvedValue([trackedCashAccount]);
+      withMonthlyCashFlow({
+        "2026-05": [],
+        "2026-06": [],
+        "2026-07": [income("2026-07", 26_000), expense("2026-07", 5_000)],
+      });
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      expect(await screen.findByText(
+        /your average monthly surplus is ฿7,000\.00, which is ฿3,000\.00 short of the ฿10,000\.00\/month/,
+      )).toBeInTheDocument();
+    });
+
+    it("W1: one month of evidence when tracking begins in the latest completed month — older empty responses never dilute it", async () => {
+      // Baseline begins in July (the most recent completed month). May and
+      // June predate tracking and hold no events, so they must be excluded
+      // rather than diluting the average: (0 + 0 + 21,000) / 3 = 7,000 would
+      // wrongly read SHORTFALL; the correct read is July alone, AFFORDABLE.
+      cashAccountsMock.mockResolvedValue([trackedAccountWithBaseline("2026-07-01")]);
+      withMonthlyCashFlow({
+        "2026-05": [],
+        "2026-06": [],
+        "2026-07": [income("2026-07", 21_000)],
+      });
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      expect(await screen.findByText(
+        /Based on your recorded cash flow over the last 1 completed month, your average monthly surplus is ฿21,000\.00, enough to cover the ฿10,000\.00\/month this goal needs\./,
+      )).toBeInTheDocument();
+    });
+
+    it("W1: two months of evidence when tracking begins in the middle completed month", async () => {
+      // Baseline begins in June; May predates tracking and is excluded.
+      cashAccountsMock.mockResolvedValue([trackedAccountWithBaseline("2026-06-01")]);
+      withMonthlyCashFlow({
+        "2026-05": [],
+        "2026-06": [income("2026-06", 12_000)],
+        "2026-07": [income("2026-07", 8_000)],
+      });
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      expect(await screen.findByText(
+        /Based on your recorded cash flow over the last 2 completed months, your average monthly surplus is ฿10,000\.00, enough to cover the ฿10,000\.00\/month this goal needs\./,
+      )).toBeInTheDocument();
+    });
+
+    it("W1: three months of evidence when tracking began on the first day of the window", async () => {
+      // Baseline begins exactly on the first day of the oldest window month,
+      // so all three completed months qualify.
+      cashAccountsMock.mockResolvedValue([trackedAccountWithBaseline("2026-05-01")]);
+      withMonthlyCashFlow({
+        "2026-05": [income("2026-05", 15_000), expense("2026-05", 5_000)],
+        "2026-06": [income("2026-06", 20_000), expense("2026-06", 5_000)],
+        "2026-07": [income("2026-07", 10_000), expense("2026-07", 5_000)],
+      });
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      expect(await screen.findByText(
+        /Based on your recorded cash flow over the last 3 completed months, your average monthly surplus is ฿10,000\.00, enough to cover the ฿10,000\.00\/month this goal needs\./,
+      )).toBeInTheDocument();
+    });
+
+    it("W1: a real historical event before the active baseline remains admitted as evidence", async () => {
+      // Baseline begins in July, but May already has a recorded event (e.g.
+      // an archived account's history) proving population there too, so May
+      // is rescued despite predating the baseline; June has neither and stays
+      // excluded: (5,000 + 21,000) / 2 = 13,000.
+      cashAccountsMock.mockResolvedValue([trackedAccountWithBaseline("2026-07-01")]);
+      withMonthlyCashFlow({
+        "2026-05": [income("2026-05", 5_000)],
+        "2026-06": [],
+        "2026-07": [income("2026-07", 21_000)],
+      });
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      expect(await screen.findByText(
+        /Based on your recorded cash flow over the last 2 completed months, your average monthly surplus is ฿13,000\.00, enough to cover the ฿10,000\.00\/month this goal needs\./,
+      )).toBeInTheDocument();
+    });
+
+    it("W1: a technical failure still fails closed even when a tracking baseline is established", async () => {
+      cashAccountsMock.mockResolvedValue([trackedAccountWithBaseline("2026-07-01")]);
+      withMonthlyCashFlow({
+        "2026-05": "error",
+        "2026-06": [],
+        "2026-07": [income("2026-07", 21_000)],
+      });
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      expect(await screen.findByText(
+        "Affordability can't be assessed yet — Cash Flow data could not be fully loaded. Try again.",
+      )).toBeInTheDocument();
+      expect(screen.queryByText(/enough to cover|short of/)).not.toBeInTheDocument();
+    });
+
+    it("never renders one goal's affordability under another after a route transition", async () => {
+      listMock.mockResolvedValue([
+        { ...goal, target_amount: 120_000, target_date: "2027-08-15" },
+        { ...secondGoal, target_amount: 120_000, target_date: "2027-08-15" },
+      ]);
+      const firstGoalMonths = [
+        deferred<{ month: string; events: CashFlowEvent[] }>(),
+        deferred<{ month: string; events: CashFlowEvent[] }>(),
+        deferred<{ month: string; events: CashFlowEvent[] }>(),
+      ];
+      let callIndex = 0;
+      cashFlowMock.mockImplementation((month: string) => {
+        callIndex += 1;
+        if (callIndex <= 3) return firstGoalMonths[callIndex - 1].promise;
+        return Promise.resolve({ month, events: [income(month, 17_000), expense(month, 5_000)] });
+      });
+
+      const { rerender } = render(<GoalDetailPage params={{ id: "1" }} />);
+      await waitFor(() => expect(cashFlowMock).toHaveBeenCalledTimes(3));
+      rerender(<GoalDetailPage params={{ id: "2" }} />);
+      expect(await screen.findByRole("heading", { name: "Buy a home" })).toBeInTheDocument();
+      expect(await screen.findByText(/your average monthly surplus is ฿12,000\.00/)).toBeInTheDocument();
+
+      // Goal 1's in-flight Cash Flow now lands with a wildly different surplus.
+      firstGoalMonths.forEach((pending, index) => {
+        const month = ["2026-05", "2026-06", "2026-07"][index];
+        pending.resolve({ month, events: [income(month, 905_000), expense(month, 5_000)] });
+      });
+      await waitFor(() => expect(screen.getByText(/your average monthly surplus is ฿12,000\.00/)).toBeInTheDocument());
+      expect(screen.queryByText(/฿900,000\.00/)).not.toBeInTheDocument();
+    });
+
+    it("reports INSUFFICIENT_DATA using goalWhatIf's own reason when no target date is saved", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 120_000, target_date: null }]);
+      withMonthlyCashFlow({
+        "2026-05": [income("2026-05", 17_000), expense("2026-05", 5_000)],
+        "2026-06": [income("2026-06", 20_000), expense("2026-06", 5_000)],
+        "2026-07": [income("2026-07", 14_000), expense("2026-07", 5_000)],
+      });
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      expect(await screen.findByText(
+        "Affordability can't be assessed yet — A saved target date is required for this calculation.",
+      )).toBeInTheDocument();
+    });
+
+    it("reports NO_CONTRIBUTION_REQUIRED when designated funding already meets the target, regardless of Cash Flow", async () => {
+      allocationsMock.mockResolvedValue([{ ...cashAllocation, allocated_amount: 500_000 }]);
+      withMonthlyCashFlow({ "2026-05": "error", "2026-06": "error", "2026-07": "error" });
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      expect(await screen.findByText(
+        "This goal's designated funding already meets its target — no monthly contribution is required.",
+      )).toBeInTheDocument();
+    });
+
+    it("does not render the Affordability Bridge for an archived Goal", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 120_000, target_date: "2027-08-15", is_archived: true }]);
+      withMonthlyCashFlow({
+        "2026-05": [income("2026-05", 17_000), expense("2026-05", 5_000)],
+        "2026-06": [income("2026-06", 20_000), expense("2026-06", 5_000)],
+        "2026-07": [income("2026-07", 14_000), expense("2026-07", 5_000)],
+      });
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      await screen.findByRole("heading", { name: "Retire by 55" });
+      expect(screen.queryByText("Can I afford this goal?")).not.toBeInTheDocument();
     });
   });
 });

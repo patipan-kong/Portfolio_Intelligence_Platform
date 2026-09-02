@@ -16,6 +16,12 @@ import {
   messageFor,
 } from "@/components/goals/GoalPlanningSections";
 import {
+  GoalAffordabilitySection,
+  type GoalAffordabilityEvidence,
+} from "@/components/goals/GoalAffordabilitySection";
+import { goalAffordabilityCalendar } from "@/lib/goalAffordability";
+import type { CashAccountsFetchStatus } from "@/lib/emergencyFund";
+import {
   sourceKey,
   factualReviewMatchesGoalContext,
   sourceFundingHealth,
@@ -25,6 +31,7 @@ import {
 } from "@/lib/goalFunding";
 import {
   createGoalScenario,
+  getCashFlowReport,
   getLegacyGoalProfileEvidence,
   getWealthFactualReview,
   listCashAccounts,
@@ -77,6 +84,10 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
   const [whatIfAnnualReturnPct, setWhatIfAnnualReturnPct] = useState("0");
   const [cashAccounts, setCashAccounts] = useState<CashAccount[]>([]);
   const [portfolios, setPortfolios] = useState<Portfolio[]>([]);
+  const [affordabilityEvidence, setAffordabilityEvidence] = useState<GoalAffordabilityEvidence | undefined>(undefined);
+  // Fail closed until the cash-account list is known to have loaded: an
+  // unknown population must never read as a measured absence of cash flow.
+  const [cashAccountsStatus, setCashAccountsStatus] = useState<CashAccountsFetchStatus>("error");
   const [sourceLoadError, setSourceLoadError] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -96,6 +107,8 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
     setLegacyEvidence(undefined);
     setCashAccounts([]);
     setPortfolios([]);
+    setAffordabilityEvidence(undefined);
+    setCashAccountsStatus("error");
     setSourceLoadError("");
     setScenarios(undefined);
     setWhatIfExpanded(false);
@@ -127,6 +140,32 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
             }
           },
         );
+      // Goal Affordability Bridge: fetch the trailing 3 completed calendar
+      // months of Cash Flow (current month never participates). Runs
+      // independently of the goal load so a slow or failed Cash Flow
+      // fetch never blocks or fails rendering of the Goal itself — a
+      // failed month is recorded as "error", which fails the assessment
+      // closed rather than silently narrowing the sample or reading as zero.
+      void (() => {
+        // One calendar anchor for the whole feature: the months requested
+        // here are exactly the months the helper evaluates, and the as-of
+        // date used for the required side comes from the same instant on the
+        // same local calendar. Nothing downstream reads a second clock.
+        const calendar = goalAffordabilityCalendar(new Date());
+        const trailingMonths = calendar.trailingCompletedMonths;
+        return Promise.allSettled(trailingMonths.map((month) => getCashFlowReport(month))).then((settled) => {
+          if (!isCurrentLoad()) return;
+          setAffordabilityEvidence({
+            calendar,
+            monthlyCashFlowResults: trailingMonths.map((month, index) => {
+              const outcome = settled[index];
+              return outcome.status === "fulfilled"
+                ? { month, status: "success" as const, events: outcome.value.events }
+                : { month, status: "error" as const, events: [] };
+            }),
+          });
+        });
+      })();
       const [goalsResult, contextResult] = await Promise.allSettled([
         listWealthGoals(true),
         getWealthFactualReview(true),
@@ -155,6 +194,7 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
       ]);
       if (!isCurrentLoad()) return;
       setCashAccounts(cashResult.status === "fulfilled" ? cashResult.value : []);
+      setCashAccountsStatus(cashResult.status === "fulfilled" ? "success" : "error");
       setPortfolios(portfolioResult.status === "fulfilled" ? portfolioResult.value : []);
       if (cashResult.status === "rejected" || portfolioResult.status === "rejected") {
         setSourceLoadError("Some funding source catalogs could not be loaded; allocation editing may be limited.");
@@ -363,6 +403,14 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
                 setAnnualReturnPct: setWhatIfAnnualReturnPct,
               }}
             />
+            {!currentGoal.is_archived && (
+              <GoalAffordabilitySection
+                goalContext={selectedGoalContext}
+                evidence={affordabilityEvidence}
+                cashAccountsStatus={cashAccountsStatus}
+                cashAccounts={cashAccounts}
+              />
+            )}
           </section>
 
           <section className="bg-white border rounded-xl p-4 shadow-sm space-y-3" aria-labelledby="saved-scenarios-heading">
