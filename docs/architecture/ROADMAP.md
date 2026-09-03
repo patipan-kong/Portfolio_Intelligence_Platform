@@ -10,8 +10,11 @@
 > **Phase 5 — True Net Worth & Wealth Intelligence** core is complete: current
 > and historical Net Worth (Assets − Liabilities) are in place, together with
 > Recorded Expense Coverage — a factual tracked-cash to average-recorded-
-> monthly-expense ratio on Cash Flow. Emergency-fund target semantics are not
-> defined.
+> monthly-expense ratio on Cash Flow — and an optional, user-set Recorded
+> Expense Coverage target. The target is a user-supplied preference compared
+> deterministically against recorded expense evidence; it is not a
+> system-recommended emergency-fund target, and no `EMERGENCY_FUND`-specific
+> Goal semantics exist.
 >
 > **Phase 6 — Planning, Goals & Scenarios is complete** as a deterministic,
 > factual planning foundation. See the Phase 6 section for the delivered chain
@@ -63,51 +66,100 @@ represent a generic, complete Corporate Actions engine.
 
 ---
 
-# Phase 2 — Wealth Accounts
+# Phase 2 — Wealth Accounts ✅ COMPLETE
 
 Expand beyond investment portfolios into first-class owned wealth accounts
 without weakening Investment Core semantics.
 
 ## Cash Accounts v1
 
-Cash Accounts v1 introduces standalone external Cash Accounts with a current
-observed balance. They support an explicit currency, optional
-institution/provider, and create, edit, archive, and manual balance-update
-workflows.
+Cash Accounts v1 delivers standalone external Cash Accounts with an explicit
+currency, optional institution/provider, and create, edit, archive/restore,
+and manual balance-update workflows, plus a baseline/start balance, an
+as-of balance reconstruction, and explicit reconciliation against an
+observed balance.
 
-- Dashboard aggregation will present **Total Assets**: current investment
-  assets plus external Cash Account balances.
+- Dashboard aggregation presents **Total Assets**: current investment assets
+  plus external Cash Account balances.
 - Portfolio cash (brokerage cash) remains inside its investment Portfolio NAV;
-  it must not be added again as a separate Cash Account balance.
-- The existing historical chart remains **Investment Wealth History**. Cash
-  Accounts v1 has no cash historical series yet.
+  it is not added again as a separate Cash Account balance.
+- **Total Assets History** is now delivered (see Phase 5 / Open Engineering
+  Backlog): Investment Wealth History combined with Cash Account as-of
+  evidence.
+- Cash-account-to-cash-account transfers are supported (paired, excluded from
+  income/expense/net-flow aggregation) — see Phase 3. This is distinct from
+  cash ↔ investment portfolio funding, which remains a deferred, separate
+  concept.
 - Asset Foundation is intentionally not the Cash Account ownership or balance
   model for this milestone.
 
-`Total Assets` is not `Net Worth`: liabilities are not yet represented.
+`Total Assets` is not `Net Worth`: see Phase 5 for where liabilities enter.
 
 ---
 
-# Phase 3 — Personal Cash Flow
+# Phase 3 — Personal Cash Flow ✅ COMPLETE
 
-Future direction: income, expenses, transfers, recurring flows, and
-cash-account ledger discipline.
+A prospective cash ledger on top of Cash Accounts: `INCOME`, `EXPENSE`, and
+`ADJUSTMENT` entries, plus paired `TRANSFER` legs between two Cash Accounts
+(excluded from income/expense/net-flow aggregation — a transfer moves money,
+it does not earn or spend it). Delivered:
+
+- Month navigation with monthly income/expense/net-flow totals
+- Activity/history and category breakdown, with trend visualization
+- Reconciliation integration (Phase 2) surfaced in cash-flow activity
+- No fabricated pre-baseline history — a Cash Account's ledger starts at its
+  baseline, not before
+- **Recorded Expense Coverage** — a factual tracked-cash to
+  average-recorded-monthly-expense ratio, plus an optional, user-set
+  **Recorded Expense Coverage target** (in months) on `/cash-flow`. The
+  system performs deterministic target/gap arithmetic against recorded
+  expense evidence; it does not recommend, default, or infer the number of
+  months. See Phase 5 for how this relates to emergency-fund semantics.
+
+`TRANSFER` here means a cash-account-to-cash-account transfer, not cash ↔
+investment portfolio funding — that remains a deferred, separate concept.
 
 ---
 
-# Phase 4 — Liabilities
+# Phase 4 — Liabilities ✅ COMPLETE
 
-Future direction: debts, loans, mortgages, other obligations, and payment
-tracking.
+First-class owned Liability records, symmetric to Cash Accounts (Phase 2), so
+Net Worth (Phase 5) can subtract real debt instead of treating it as
+unmodeled. Delivered:
+
+- Liability records with a type (`MORTGAGE`, `AUTO_LOAN`, `PERSONAL_LOAN`,
+  `CREDIT_CARD`, `STUDENT_LOAN`, `OTHER`), optional lender, and a current
+  outstanding THB balance
+- Create, edit, and archive/restore lifecycle — no delete, matching the
+  WealthGoal/CashAccount precedent (an archived Liability keeps its history
+  but stops receiving new activity)
+- Dated balance observations recording an explicit, effective-state
+  outstanding balance as of a date, plus as-of balance reconstruction for
+  historical evidence (available even for an archived Liability)
+- Dashboard aggregation presents **Total Liabilities** — see Phase 5 for Net
+  Worth, which combines this with Total Assets — and **Total Liabilities
+  History** alongside Total Assets History
+
+This is a balance-tracking record, not a loan-servicing system: there is no
+amortization schedule, interest forecasting, or automatic link between Cash
+Flow (Phase 3) payments and a Liability's balance — a balance only ever
+changes through an explicit observation or edit.
 
 ---
 
-# Phase 5 — True Net Worth & Wealth Intelligence
+# Phase 5 — True Net Worth & Wealth Intelligence ✅ CORE COMPLETE
 
 This is the first phase in which **Net Worth = Assets − Liabilities** becomes
-semantically valid. Future direction includes a household wealth view,
-historical net-worth evolution, emergency-fund intelligence, and cash-flow /
-wealth insight.
+semantically valid. Delivered: current and historical Net Worth, Total Assets
+History (Investment Wealth History combined with Cash Account as-of
+evidence), Recorded Expense Coverage, and an optional user-set Recorded
+Expense Coverage target with deterministic target/gap arithmetic (Phase 3).
+
+Future direction: a household wealth view and system-recommended or
+AI-assisted emergency-fund guidance. The Recorded Expense Coverage target
+remains a user-supplied preference compared against recorded expense
+evidence, not a system recommendation, and introduces no `EMERGENCY_FUND`-
+specific Goal math (see Phase 6).
 
 ---
 
@@ -304,7 +356,9 @@ tracked here ([ENGINEERING_PRINCIPLES.md](../engineering/ENGINEERING_PRINCIPLES.
 
 - Sector BHB attribution
 - Cross-portfolio exposure and allocation analysis
-- Total Assets History after external Cash Accounts have dated balance evidence
+- ~~Total Assets History after external Cash Accounts have dated balance
+  evidence~~ — delivered: `TotalAssetsHistoryCard` combines Investment Wealth
+  History with Cash Account as-of evidence on the dashboard.
 
 ## Architecture
 
