@@ -950,6 +950,17 @@ export const createCashAccountTransfer = (body: CashAccountTransferCreate) =>
 export const getCashFlowReport = (month: string) =>
   apiFetch<CashFlowReport>(`/cash-flow?month=${encodeURIComponent(month)}`);
 
+export interface CashFlowSettings {
+  target_coverage_months: number | null;
+}
+
+export const getCashFlowSettings = () => apiFetch<CashFlowSettings>("/settings/cash-flow");
+export const updateCashFlowSettings = (body: CashFlowSettings) =>
+  apiFetch<CashFlowSettings>("/settings/cash-flow", {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+
 // ─── Holdings ────────────────────────────────────────────────────────────────
 
 export const getHoldings = (portfolioId: number) =>

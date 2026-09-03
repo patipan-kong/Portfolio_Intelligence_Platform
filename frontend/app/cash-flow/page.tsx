@@ -6,9 +6,12 @@ import {
   createCashAccountTransfer,
   createCashAccountTransaction,
   getCashFlowReport,
+  getCashFlowSettings,
+  updateCashFlowSettings,
   listCashAccounts,
   type CashAccount,
   type CashFlowEvent,
+  type CashFlowSettings,
 } from "@/lib/api";
 import {
   aggregateMonthlyCashFlow,
@@ -19,6 +22,7 @@ import {
 } from "@/lib/cashFlow";
 import {
   computeCoveragePopulation,
+  computeCoverageGap,
   computeRecordedExpenseCoverage,
   type MonthlyFetchResult,
   type RecordedExpenseCoverageResult,
@@ -65,6 +69,13 @@ export default function CashFlowPage() {
   const [mutationError, setMutationError] = useState("");
   const [coverage, setCoverage] = useState<RecordedExpenseCoverageResult | null>(null);
   const [coverageLoading, setCoverageLoading] = useState(true);
+  const [targetSettings, setTargetSettings] = useState<CashFlowSettings | null>(null);
+  const [targetLoading, setTargetLoading] = useState(true);
+  const [targetLoadError, setTargetLoadError] = useState("");
+  const [targetEditing, setTargetEditing] = useState(false);
+  const [targetDraft, setTargetDraft] = useState("");
+  const [targetSaving, setTargetSaving] = useState(false);
+  const [targetSaveError, setTargetSaveError] = useState("");
   const [trendWindowSize, setTrendWindowSize] = useState<TrendWindowSize>(DEFAULT_TREND_WINDOW_SIZE);
   const [trend, setTrend] = useState<CashFlowTrendResult | null>(null);
   const [trendLoading, setTrendLoading] = useState(true);
@@ -153,8 +164,21 @@ export default function CashFlowPage() {
     }
   }, []);
 
+  const loadTargetSettings = useCallback(async () => {
+    setTargetLoading(true);
+    setTargetLoadError("");
+    try {
+      setTargetSettings(await getCashFlowSettings());
+    } catch (error) {
+      setTargetLoadError(messageFor(error, "Unable to load your target."));
+    } finally {
+      setTargetLoading(false);
+    }
+  }, []);
+
   useEffect(() => { void loadReport(month); }, [loadReport, month]);
   useEffect(() => { void loadAccounts(); }, [loadAccounts]);
+  useEffect(() => { void loadTargetSettings(); }, [loadTargetSettings]);
   useEffect(() => {
     if (accountsLoading) return;
     void loadCoverage(accounts, accountsError ? "error" : "success");
@@ -259,6 +283,48 @@ export default function CashFlowPage() {
     }
   }
 
+  function openTargetEdit() {
+    setTargetSaveError("");
+    setTargetDraft(targetSettings?.target_coverage_months != null ? String(targetSettings.target_coverage_months) : "");
+    setTargetEditing(true);
+  }
+
+  function cancelTargetEdit() {
+    setTargetEditing(false);
+    setTargetSaveError("");
+  }
+
+  async function submitTargetEdit(event: FormEvent) {
+    event.preventDefault();
+    const months = Number(targetDraft);
+    if (!Number.isFinite(months) || months <= 0) {
+      setTargetSaveError("Enter a target greater than zero.");
+      return;
+    }
+    setTargetSaving(true);
+    setTargetSaveError("");
+    try {
+      setTargetSettings(await updateCashFlowSettings({ target_coverage_months: months }));
+      setTargetEditing(false);
+    } catch (error) {
+      setTargetSaveError(messageFor(error, "Unable to save your target."));
+    } finally {
+      setTargetSaving(false);
+    }
+  }
+
+  async function clearTarget() {
+    setTargetSaving(true);
+    setTargetSaveError("");
+    try {
+      setTargetSettings(await updateCashFlowSettings({ target_coverage_months: null }));
+    } catch (error) {
+      setTargetSaveError(messageFor(error, "Unable to clear your target."));
+    } finally {
+      setTargetSaving(false);
+    }
+  }
+
   return (
     <div className="space-y-6 max-w-4xl">
       <header className="flex items-start justify-between gap-4 flex-wrap">
@@ -280,6 +346,19 @@ export default function CashFlowPage() {
           if (accountsError) void loadAccounts();
           else void loadCoverage(accounts, "success");
         }}
+        targetSettings={targetSettings}
+        targetLoading={targetLoading}
+        targetLoadError={targetLoadError}
+        onRetryTarget={() => void loadTargetSettings()}
+        targetEditing={targetEditing}
+        targetDraft={targetDraft}
+        setTargetDraft={setTargetDraft}
+        targetSaving={targetSaving}
+        targetSaveError={targetSaveError}
+        onOpenTargetEdit={openTargetEdit}
+        onCancelTargetEdit={cancelTargetEdit}
+        onSubmitTargetEdit={submitTargetEdit}
+        onClearTarget={clearTarget}
       />
 
       <section className="bg-white border rounded-xl p-4 shadow-sm flex items-center justify-between gap-3">
@@ -391,11 +470,27 @@ function SummaryCard({ label, value, tone }: { label: string; value: string; ton
 
 function CoverageSection({
   coverage, loading, accountsLoading, onRetry,
+  targetSettings, targetLoading, targetLoadError, onRetryTarget,
+  targetEditing, targetDraft, setTargetDraft, targetSaving, targetSaveError,
+  onOpenTargetEdit, onCancelTargetEdit, onSubmitTargetEdit, onClearTarget,
 }: {
   coverage: RecordedExpenseCoverageResult | null;
   loading: boolean;
   accountsLoading: boolean;
   onRetry: () => void;
+  targetSettings: CashFlowSettings | null;
+  targetLoading: boolean;
+  targetLoadError: string;
+  onRetryTarget: () => void;
+  targetEditing: boolean;
+  targetDraft: string;
+  setTargetDraft: (value: string) => void;
+  targetSaving: boolean;
+  targetSaveError: string;
+  onOpenTargetEdit: () => void;
+  onCancelTargetEdit: () => void;
+  onSubmitTargetEdit: (event: FormEvent) => void;
+  onClearTarget: () => void;
 }) {
   const recordedMonthLabels = coverage?.recordedMonths.map(formatMonthLabel) ?? [];
   const monthRangeLabel = recordedMonthLabels.length === 0
@@ -407,6 +502,7 @@ function CoverageSection({
   // INSUFFICIENT_EVIDENCE, where an unexplained ฿0.00 tracked cash balance is
   // exactly the figure that most needs the untracked-account caveat.
   const showDisclosures = coverage != null && coverage.trackedCash !== null;
+  const gap = coverage ? computeCoverageGap(targetSettings?.target_coverage_months ?? null, coverage) : null;
 
   return (
     <section aria-label="Recorded expense coverage" className="bg-white border rounded-xl p-4 shadow-sm space-y-4">
@@ -451,6 +547,61 @@ function CoverageSection({
           {coverage.status === "UNAVAILABLE" && (
             <button type="button" onClick={onRetry} className="text-sm text-blue-700 hover:underline">Try again</button>
           )}
+
+          <div className="border-t pt-3 space-y-2">
+            {targetLoading && <p className="text-xs text-gray-400">Loading your target…</p>}
+            {!targetLoading && targetLoadError && (
+              <div role="alert" className="text-xs text-red-600 space-y-1">
+                <p>{targetLoadError}</p>
+                <button type="button" onClick={onRetryTarget} className="text-blue-600 hover:underline">Try again</button>
+              </div>
+            )}
+            {!targetLoading && !targetLoadError && !targetEditing && (
+              <div className="flex items-center gap-3 flex-wrap">
+                {targetSettings?.target_coverage_months == null ? (
+                  <p className="text-sm text-gray-500">No target set.</p>
+                ) : (
+                  <p className="text-sm text-gray-800">
+                    Your target: {targetSettings.target_coverage_months} months
+                    {gap ? ` (${formatThb(gap.targetAmount)})` : ""}
+                  </p>
+                )}
+                <button type="button" onClick={onOpenTargetEdit} className="text-xs text-blue-600 hover:underline">
+                  {targetSettings?.target_coverage_months == null ? "Set target" : "Edit"}
+                </button>
+                {targetSettings?.target_coverage_months != null && (
+                  <button type="button" onClick={onClearTarget} disabled={targetSaving} className="text-xs text-gray-500 hover:underline">Clear</button>
+                )}
+              </div>
+            )}
+            {!targetLoading && !targetLoadError && targetEditing && (
+              <form onSubmit={onSubmitTargetEdit} className="flex items-center gap-2 flex-wrap">
+                <label className="text-sm">
+                  Target months
+                  <input
+                    aria-label="Target coverage months"
+                    type="number"
+                    min="0.1"
+                    step="0.1"
+                    value={targetDraft}
+                    onChange={(event) => setTargetDraft(event.target.value)}
+                    placeholder="Months"
+                    className="ml-2 border rounded px-2 py-1 w-24"
+                  />
+                </label>
+                <button type="submit" disabled={targetSaving} className="text-sm text-blue-600 hover:underline">Save</button>
+                <button type="button" onClick={onCancelTargetEdit} className="text-sm text-gray-600">Cancel</button>
+              </form>
+            )}
+            {targetSaveError && <p role="alert" className="text-xs text-red-600">{targetSaveError}</p>}
+            {gap && !targetEditing && (
+              <p className="text-sm text-gray-800">
+                {gap.gapAmount < 0 && `${formatThb(Math.abs(gap.gapAmount))} more tracked cash would reach your target.`}
+                {gap.gapAmount > 0 && `Tracked cash is ${formatThb(gap.gapAmount)} above your target.`}
+                {gap.gapAmount === 0 && "Tracked cash matches your target."}
+              </p>
+            )}
+          </div>
 
           {showDisclosures && (
             <ul className="text-xs text-gray-500 space-y-1 border-t pt-3">

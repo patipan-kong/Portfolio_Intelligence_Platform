@@ -5,6 +5,8 @@ import {
   createCashAccountTransfer,
   createCashAccountTransaction,
   getCashFlowReport,
+  getCashFlowSettings,
+  updateCashFlowSettings,
   listCashAccounts,
   type CashAccount,
   type CashFlowEvent,
@@ -14,6 +16,8 @@ vi.mock("@/lib/api", () => ({
   createCashAccountTransfer: vi.fn(),
   createCashAccountTransaction: vi.fn(),
   getCashFlowReport: vi.fn(),
+  getCashFlowSettings: vi.fn(),
+  updateCashFlowSettings: vi.fn(),
   listCashAccounts: vi.fn(),
 }));
 
@@ -26,6 +30,8 @@ const reportMock = vi.mocked(getCashFlowReport);
 const accountsMock = vi.mocked(listCashAccounts);
 const createMock = vi.mocked(createCashAccountTransaction);
 const transferMock = vi.mocked(createCashAccountTransfer);
+const getSettingsMock = vi.mocked(getCashFlowSettings);
+const updateSettingsMock = vi.mocked(updateCashFlowSettings);
 
 function account(overrides: Partial<CashAccount> = {}): CashAccount {
   return {
@@ -76,6 +82,8 @@ describe("CashFlowPage", () => {
     vi.resetAllMocks();
     accountsMock.mockResolvedValue([account()]);
     setReport();
+    getSettingsMock.mockResolvedValue({ target_coverage_months: null });
+    updateSettingsMock.mockImplementation(async (body) => body);
     createMock.mockResolvedValue(event({ id: 9 }));
     transferMock.mockResolvedValue({
       id: 7,
@@ -621,6 +629,102 @@ describe("CashFlowPage", () => {
       for (const banned of ["observed", "eligible", "liquid fund", "safe", "should", "fully tracked", "complete evidence", "complete expense history"]) {
         expect(bodyText.toLowerCase()).not.toContain(banned);
       }
+    });
+
+    describe("Coverage target", () => {
+      function availableCoverageFixture() {
+        accountsMock.mockResolvedValue([account({ balance: 42000, baseline: earlyBaseline })]);
+        reportForMonths({
+          "2026-05": [event({ id: 1, transaction_type: "EXPENSE", amount: 10000, signed_amount: -10000, occurred_on: "2026-05-01" })],
+          "2026-06": [event({ id: 2, transaction_type: "EXPENSE", amount: 10000, signed_amount: -10000, occurred_on: "2026-06-01" })],
+          "2026-07": [event({ id: 3, transaction_type: "EXPENSE", amount: 10000, signed_amount: -10000, occurred_on: "2026-07-01" })],
+        });
+      }
+
+      it("shows no saved target and an option to set one, with no gap shown", async () => {
+        availableCoverageFixture();
+        getSettingsMock.mockResolvedValue({ target_coverage_months: null });
+        render(<CashFlowPage />);
+        await screen.findByText(/Tracked cash covers 4\.2 months/);
+        expect(await screen.findByText("No target set.")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Set target" })).toBeInTheDocument();
+        expect(screen.queryByText(/more tracked cash would reach your target/)).not.toBeInTheDocument();
+        expect(screen.queryByText(/above your target/)).not.toBeInTheDocument();
+      });
+
+      it("shows the saved target and derived gap when coverage is AVAILABLE", async () => {
+        availableCoverageFixture();
+        getSettingsMock.mockResolvedValue({ target_coverage_months: 6 });
+        render(<CashFlowPage />);
+        await screen.findByText(/Tracked cash covers 4\.2 months/);
+        expect(await screen.findByText(/Your target: 6 months/)).toBeInTheDocument();
+        expect(screen.getByText(/more tracked cash would reach your target/)).toBeInTheDocument();
+      });
+
+      it("sets a target: saves through the API and confirms it in the UI", async () => {
+        availableCoverageFixture();
+        getSettingsMock.mockResolvedValue({ target_coverage_months: null });
+        updateSettingsMock.mockResolvedValue({ target_coverage_months: 6 });
+        render(<CashFlowPage />);
+        await screen.findByText("No target set.");
+        fireEvent.click(screen.getByRole("button", { name: "Set target" }));
+        fireEvent.change(screen.getByLabelText("Target coverage months"), { target: { value: "6" } });
+        fireEvent.click(screen.getByRole("button", { name: "Save" }));
+        await waitFor(() => expect(updateSettingsMock).toHaveBeenCalledWith({ target_coverage_months: 6 }));
+        expect(await screen.findByText(/Your target: 6 months/)).toBeInTheDocument();
+      });
+
+      it("clears a saved target: calls the API with null and removes the gap", async () => {
+        availableCoverageFixture();
+        getSettingsMock.mockResolvedValue({ target_coverage_months: 6 });
+        updateSettingsMock.mockResolvedValue({ target_coverage_months: null });
+        render(<CashFlowPage />);
+        await screen.findByText(/Your target: 6 months/);
+        fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+        await waitFor(() => expect(updateSettingsMock).toHaveBeenCalledWith({ target_coverage_months: null }));
+        expect(await screen.findByText("No target set.")).toBeInTheDocument();
+        expect(screen.queryByText(/more tracked cash would reach your target/)).not.toBeInTheDocument();
+      });
+
+      it("keeps the last confirmed target and shows an error when clearing fails", async () => {
+        availableCoverageFixture();
+        getSettingsMock.mockResolvedValue({ target_coverage_months: 6 });
+        updateSettingsMock.mockRejectedValue(new Error("clear offline"));
+        render(<CashFlowPage />);
+        await screen.findByText(/Your target: 6 months/);
+        expect(screen.getByText(/more tracked cash would reach your target/)).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+        await waitFor(() => expect(updateSettingsMock).toHaveBeenCalledWith({ target_coverage_months: null }));
+        expect(await screen.findByRole("alert")).toHaveTextContent("clear offline");
+        expect(screen.getByText(/Your target: 6 months/)).toBeInTheDocument();
+        expect(screen.getByText(/more tracked cash would reach your target/)).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Clear" })).toBeInTheDocument();
+      });
+
+      it("keeps the last confirmed target and shows an error when saving fails", async () => {
+        availableCoverageFixture();
+        getSettingsMock.mockResolvedValue({ target_coverage_months: null });
+        updateSettingsMock.mockRejectedValue(new Error("save offline"));
+        render(<CashFlowPage />);
+        await screen.findByText("No target set.");
+        fireEvent.click(screen.getByRole("button", { name: "Set target" }));
+        fireEvent.change(screen.getByLabelText("Target coverage months"), { target: { value: "6" } });
+        fireEvent.click(screen.getByRole("button", { name: "Save" }));
+        expect(await screen.findByRole("alert")).toHaveTextContent("save offline");
+        expect(screen.queryByText(/Your target:/)).not.toBeInTheDocument();
+        expect(screen.getByLabelText("Target coverage months")).toBeInTheDocument();
+      });
+
+      it("shows the saved target but no gap when coverage evidence is not AVAILABLE", async () => {
+        accountsMock.mockResolvedValue([account({ balance: 9000, baseline: earlyBaseline })]);
+        reportForMonths({ "2026-05": [], "2026-06": [], "2026-07": [] });
+        getSettingsMock.mockResolvedValue({ target_coverage_months: 6 });
+        render(<CashFlowPage />);
+        expect(await screen.findByText(/No recorded expenses in the recorded months/)).toBeInTheDocument();
+        expect(await screen.findByText(/Your target: 6 months/)).toBeInTheDocument();
+        expect(screen.queryByText(/more tracked cash would reach your target/)).not.toBeInTheDocument();
+        expect(screen.queryByText(/above your target/)).not.toBeInTheDocument();
+      });
     });
   });
 

@@ -141,3 +141,30 @@ export function computeRecordedExpenseCoverage(
     hasArchivedAccountExpenses,
   };
 }
+
+export interface CoverageGap {
+  targetMonths: number;
+  targetAmount: number;
+  /** trackedCash - targetAmount. Negative = shortfall, positive = surplus, zero = exactly at target. */
+  gapAmount: number;
+}
+
+/**
+ * Derives a THB target and gap from a user-supplied months target — never
+ * a system-suggested one. Only defined when coverage evidence is AVAILABLE;
+ * insufficient or unavailable evidence must never be interpreted as zero
+ * expense or zero tracked cash, so this returns null rather than fabricate
+ * a target/gap in those states. The saved target itself is still valid to
+ * display even when this returns null.
+ */
+export function computeCoverageGap(
+  targetMonths: number | null,
+  coverage: RecordedExpenseCoverageResult,
+): CoverageGap | null {
+  if (targetMonths === null) return null;
+  if (coverage.status !== "AVAILABLE" || coverage.averageRecordedMonthlyExpense === null || coverage.trackedCash === null) {
+    return null;
+  }
+  const targetAmount = targetMonths * coverage.averageRecordedMonthlyExpense;
+  return { targetMonths, targetAmount, gapAmount: coverage.trackedCash - targetAmount };
+}

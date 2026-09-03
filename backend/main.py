@@ -1022,6 +1022,57 @@ async def get_cash_flow_report(month: str, db: Session = Depends(get_db)) -> dic
     return {"month": month, "events": events}
 
 
+def _get_cash_flow_settings(db: Session, ws: int) -> dict:
+    row = db.query(Settings).filter(
+        Settings.workspace_id == ws,
+        Settings.key == "cash_flow_target_coverage_months",
+    ).first()
+    if not row:
+        return {"target_coverage_months": None}
+    try:
+        return {"target_coverage_months": float(row.value)}
+    except (TypeError, ValueError):
+        return {"target_coverage_months": None}
+
+
+@app.get("/settings/cash-flow")
+async def get_cash_flow_settings(db: Session = Depends(get_db)) -> dict:
+    """User-supplied Recorded Expense Coverage target, in months.
+
+    Purely a stored preference — the system never computes or suggests this
+    value (Recorded Expense Coverage itself is deliberately factual, not
+    advisory; see emergencyFund.ts). No row means no target is configured,
+    which is a normal product state, not an error.
+    """
+    return _get_cash_flow_settings(db, _ws_id(db))
+
+
+class CashFlowSettingsBody(BaseModel):
+    target_coverage_months: float | None = None
+
+    @model_validator(mode="after")
+    def validate_target_coverage_months(self):
+        if self.target_coverage_months is not None and (
+            not math.isfinite(self.target_coverage_months) or self.target_coverage_months <= 0
+        ):
+            raise ValueError("target_coverage_months must be finite and greater than zero")
+        return self
+
+
+@app.patch("/settings/cash-flow")
+async def update_cash_flow_settings(body: CashFlowSettingsBody, db: Session = Depends(get_db)) -> dict:
+    ws = _ws_id(db)
+    if body.target_coverage_months is None:
+        db.query(Settings).filter(
+            Settings.workspace_id == ws,
+            Settings.key == "cash_flow_target_coverage_months",
+        ).delete()
+    else:
+        _upsert_setting(db, ws, "cash_flow_target_coverage_months", str(body.target_coverage_months))
+    db.commit()
+    return _get_cash_flow_settings(db, ws)
+
+
 @app.post("/cash-account-transfers", status_code=201)
 async def create_cash_account_transfer(body: CashAccountTransferCreate, db: Session = Depends(get_db)) -> dict:
     workspace_id = _ws_id(db)

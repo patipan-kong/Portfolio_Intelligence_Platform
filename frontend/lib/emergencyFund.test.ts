@@ -4,6 +4,7 @@ import { test } from "node:test";
 import type { CashAccount, CashFlowEvent } from "./api.ts";
 import {
   computeCoveragePopulation,
+  computeCoverageGap,
   computeRecordedExpenseCoverage,
   type MonthlyFetchResult,
 } from "./emergencyFund.ts";
@@ -323,4 +324,72 @@ test("16. does not mutate the population or monthlyResults inputs", () => {
   computeRecordedExpenseCoverage(population, results);
   assert.deepEqual(population, populationSnapshot);
   assert.deepEqual(results, resultsSnapshot);
+});
+
+// ─── computeCoverageGap ──────────────────────────────────────────────────
+
+test("computeCoverageGap: no target returns null even when coverage is AVAILABLE", () => {
+  const population = threeMonthPopulation(42000);
+  const results: MonthlyFetchResult[] = population.recordedMonths.map((month) => ({
+    month, status: "success", events: [expenseEvent({ occurred_on: `${month}-01`, amount: 10000, signed_amount: -10000 })],
+  }));
+  const coverage = computeRecordedExpenseCoverage(population, results);
+  assert.equal(coverage.status, "AVAILABLE");
+  assert.equal(computeCoverageGap(null, coverage), null);
+});
+
+test("computeCoverageGap: shortfall (target above tracked cash) is a negative gap", () => {
+  const population = threeMonthPopulation(140000);
+  const results: MonthlyFetchResult[] = population.recordedMonths.map((month) => ({
+    month, status: "success", events: [expenseEvent({ occurred_on: `${month}-01`, amount: 30000, signed_amount: -30000 })],
+  }));
+  const coverage = computeRecordedExpenseCoverage(population, results);
+  const gap = computeCoverageGap(6, coverage);
+  assert.ok(gap);
+  assert.equal(gap!.targetMonths, 6);
+  assert.equal(gap!.targetAmount, 180000);
+  assert.equal(gap!.gapAmount, -40000);
+});
+
+test("computeCoverageGap: surplus (tracked cash above target) is a positive gap", () => {
+  const population = threeMonthPopulation(200000);
+  const results: MonthlyFetchResult[] = population.recordedMonths.map((month) => ({
+    month, status: "success", events: [expenseEvent({ occurred_on: `${month}-01`, amount: 30000, signed_amount: -30000 })],
+  }));
+  const coverage = computeRecordedExpenseCoverage(population, results);
+  const gap = computeCoverageGap(6, coverage);
+  assert.ok(gap);
+  assert.equal(gap!.targetAmount, 180000);
+  assert.equal(gap!.gapAmount, 20000);
+});
+
+test("computeCoverageGap: tracked cash exactly at target yields a zero gap", () => {
+  const population = threeMonthPopulation(180000);
+  const results: MonthlyFetchResult[] = population.recordedMonths.map((month) => ({
+    month, status: "success", events: [expenseEvent({ occurred_on: `${month}-01`, amount: 30000, signed_amount: -30000 })],
+  }));
+  const coverage = computeRecordedExpenseCoverage(population, results);
+  const gap = computeCoverageGap(6, coverage);
+  assert.ok(gap);
+  assert.equal(gap!.gapAmount, 0);
+});
+
+test("computeCoverageGap: never fabricates a target/gap for any non-AVAILABLE status", () => {
+  const noExpensePopulation = threeMonthPopulation(9000);
+  const noExpenseResults: MonthlyFetchResult[] = noExpensePopulation.recordedMonths.map((month) => ({ month, status: "success", events: [] }));
+  const noExpenseCoverage = computeRecordedExpenseCoverage(noExpensePopulation, noExpenseResults);
+  assert.equal(noExpenseCoverage.status, "NO_RECORDED_EXPENSE");
+  assert.equal(computeCoverageGap(6, noExpenseCoverage), null);
+
+  const insufficientPopulation = computeCoveragePopulation("success", [account({
+    baseline: { id: 1, cash_account_id: 1, effective_on: "2026-08-01", observed_balance: 1000, created_at: "2026-08-01T00:00:00Z" },
+  })], NOW);
+  const insufficientCoverage = computeRecordedExpenseCoverage(insufficientPopulation, []);
+  assert.equal(insufficientCoverage.status, "INSUFFICIENT_EVIDENCE");
+  assert.equal(computeCoverageGap(6, insufficientCoverage), null);
+
+  const unavailablePopulation = computeCoveragePopulation("error", [], NOW);
+  const unavailableCoverage = computeRecordedExpenseCoverage(unavailablePopulation, []);
+  assert.equal(unavailableCoverage.status, "UNAVAILABLE");
+  assert.equal(computeCoverageGap(6, unavailableCoverage), null);
 });
