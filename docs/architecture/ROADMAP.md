@@ -153,6 +153,9 @@ unmodeled. Delivered:
 - Dashboard aggregation presents **Total Liabilities** — see Phase 5 for Net
   Worth, which combines this with Total Assets — and **Total Liabilities
   History** alongside Total Assets History
+- Liability observation history and historical as-of lookup are visible in
+  the Liabilities UI (per-liability balance history list and a date lookup),
+  reading the existing observation/as-of endpoints — no new persistence
 
 This is a balance-tracking record, not a loan-servicing system: there is no
 amortization schedule, interest forecasting, or automatic link between Cash
