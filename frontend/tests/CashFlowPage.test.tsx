@@ -4,21 +4,26 @@ import CashFlowPage from "@/app/cash-flow/page";
 import {
   createCashAccountTransfer,
   createCashAccountTransaction,
+  createCashInvestmentTransfer,
   getCashFlowReport,
   getCashFlowSettings,
   updateCashFlowSettings,
   listCashAccounts,
+  listPortfolios,
   type CashAccount,
   type CashFlowEvent,
+  type Portfolio,
 } from "@/lib/api";
 
 vi.mock("@/lib/api", () => ({
   createCashAccountTransfer: vi.fn(),
   createCashAccountTransaction: vi.fn(),
+  createCashInvestmentTransfer: vi.fn(),
   getCashFlowReport: vi.fn(),
   getCashFlowSettings: vi.fn(),
   updateCashFlowSettings: vi.fn(),
   listCashAccounts: vi.fn(),
+  listPortfolios: vi.fn(),
 }));
 
 vi.mock("@/lib/cashFlow", async () => {
@@ -32,6 +37,12 @@ const createMock = vi.mocked(createCashAccountTransaction);
 const transferMock = vi.mocked(createCashAccountTransfer);
 const getSettingsMock = vi.mocked(getCashFlowSettings);
 const updateSettingsMock = vi.mocked(updateCashFlowSettings);
+const portfoliosMock = vi.mocked(listPortfolios);
+const investmentTransferMock = vi.mocked(createCashInvestmentTransfer);
+
+function portfolio(overrides: Partial<Portfolio> = {}): Portfolio {
+  return { id: 1, name: "Growth Portfolio", cash_balance: 0, created_at: "2026-08-01T00:00:00Z", ...overrides };
+}
 
 function account(overrides: Partial<CashAccount> = {}): CashAccount {
   return {
@@ -85,6 +96,21 @@ describe("CashFlowPage", () => {
     getSettingsMock.mockResolvedValue({ target_coverage_months: null });
     updateSettingsMock.mockImplementation(async (body) => body);
     createMock.mockResolvedValue(event({ id: 9 }));
+    // Empty by default so existing tests (written before Investment Transfer
+    // existed) keep seeing exactly "Add income"/"Add expense"/"Transfer" —
+    // only the tests in the "Investment transfer" describe block below
+    // override this to a non-empty list.
+    portfoliosMock.mockResolvedValue([]);
+    investmentTransferMock.mockResolvedValue(event({
+      id: 11,
+      transaction_type: "INVESTMENT_TRANSFER",
+      amount: -300,
+      signed_amount: -300,
+      category: null,
+      counterparty_portfolio_id: 1,
+      counterparty_portfolio_name: "Growth Portfolio",
+      investment_direction: "TO_PORTFOLIO",
+    }));
     transferMock.mockResolvedValue({
       id: 7,
       workspace_id: 1,
@@ -274,6 +300,126 @@ describe("CashFlowPage", () => {
     expect(screen.getAllByText("Transfer").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByRole("region", { name: "Monthly summary" })).toHaveTextContent("฿0.00");
     expect(screen.getAllByText(/Savings A → Savings B/)).toHaveLength(1);
+  });
+
+  describe("Investment transfer", () => {
+    it("is hidden when no portfolio exists, even with a tracked account", async () => {
+      portfoliosMock.mockResolvedValue([]);
+      render(<CashFlowPage />);
+      await screen.findByText("No cash flow events in August 2026. Income, Expenses, and Net Cash Flow are all ฿0.00.");
+      expect(screen.queryByRole("button", { name: "Investment transfer" })).not.toBeInTheDocument();
+    });
+
+    it("submits an outbound (Cash → Investment) transfer with a positive-magnitude payload", async () => {
+      portfoliosMock.mockResolvedValue([portfolio()]);
+      let events: CashFlowEvent[] = [];
+      reportMock.mockImplementation(async (selectedMonth) => ({ month: selectedMonth, events }));
+      investmentTransferMock.mockImplementation(async (accountId, body) => {
+        const created = event({
+          id: 11,
+          cash_account_id: accountId,
+          transaction_type: "INVESTMENT_TRANSFER",
+          amount: -body.amount,
+          signed_amount: -body.amount,
+          category: null,
+          occurred_on: body.occurred_on,
+          counterparty_portfolio_id: body.portfolio_id,
+          counterparty_portfolio_name: "Growth Portfolio",
+          investment_direction: "TO_PORTFOLIO",
+        });
+        events = [created];
+        return created;
+      });
+      render(<CashFlowPage />);
+      await screen.findByText("No cash flow events in August 2026. Income, Expenses, and Net Cash Flow are all ฿0.00.");
+      fireEvent.click(await screen.findByRole("button", { name: "Investment transfer" }));
+      fireEvent.change(screen.getByLabelText("Investment transfer amount"), { target: { value: "300" } });
+      fireEvent.click(screen.getByRole("button", { name: "Record transfer" }));
+      await waitFor(() => expect(investmentTransferMock).toHaveBeenCalledWith(1, expect.objectContaining({
+        portfolio_id: 1,
+        direction: "TO_PORTFOLIO",
+        amount: 300,
+      })));
+      expect(await screen.findByText("2026-08-01 · Everyday Cash → Growth Portfolio")).toBeInTheDocument();
+      expect(screen.getAllByText("Investment transfer").length).toBeGreaterThanOrEqual(1);
+      expect(screen.getByRole("region", { name: "Monthly summary" })).toHaveTextContent("฿0.00");
+    });
+
+    it("submits an inbound (Investment → Cash) transfer with the reverse direction", async () => {
+      portfoliosMock.mockResolvedValue([portfolio()]);
+      let events: CashFlowEvent[] = [];
+      reportMock.mockImplementation(async (selectedMonth) => ({ month: selectedMonth, events }));
+      investmentTransferMock.mockImplementation(async (accountId, body) => {
+        const created = event({
+          id: 12,
+          cash_account_id: accountId,
+          transaction_type: "INVESTMENT_TRANSFER",
+          amount: body.amount,
+          signed_amount: body.amount,
+          category: null,
+          occurred_on: body.occurred_on,
+          counterparty_portfolio_id: body.portfolio_id,
+          counterparty_portfolio_name: "Growth Portfolio",
+          investment_direction: "FROM_PORTFOLIO",
+        });
+        events = [created];
+        return created;
+      });
+      render(<CashFlowPage />);
+      await screen.findByText("No cash flow events in August 2026. Income, Expenses, and Net Cash Flow are all ฿0.00.");
+      fireEvent.click(await screen.findByRole("button", { name: "Investment transfer" }));
+      fireEvent.change(screen.getByLabelText("Investment transfer direction"), { target: { value: "FROM_PORTFOLIO" } });
+      fireEvent.change(screen.getByLabelText("Investment transfer amount"), { target: { value: "150" } });
+      fireEvent.click(screen.getByRole("button", { name: "Record transfer" }));
+      await waitFor(() => expect(investmentTransferMock).toHaveBeenCalledWith(1, expect.objectContaining({
+        direction: "FROM_PORTFOLIO",
+        amount: 150,
+      })));
+      expect(await screen.findByText("2026-08-01 · Growth Portfolio → Everyday Cash")).toBeInTheDocument();
+    });
+
+    it("falls back to a neutral label when the counterparty Portfolio has been deleted", async () => {
+      portfoliosMock.mockResolvedValue([portfolio()]);
+      setReport([event({
+        id: 13,
+        transaction_type: "INVESTMENT_TRANSFER",
+        amount: -300,
+        signed_amount: -300,
+        category: null,
+        counterparty_portfolio_id: null,
+        counterparty_portfolio_name: null,
+        investment_direction: "TO_PORTFOLIO",
+      })]);
+      render(<CashFlowPage />);
+      expect(await screen.findByText("2026-08-15 · Everyday Cash → Investment portfolio (no longer available)")).toBeInTheDocument();
+    });
+
+    it("shows an inline error and creates nothing on API failure, without claiming automatic pairing anywhere", async () => {
+      portfoliosMock.mockResolvedValue([portfolio()]);
+      investmentTransferMock.mockRejectedValue(new Error("Cash activity cannot make the observed balance negative"));
+      render(<CashFlowPage />);
+      await screen.findByText("No cash flow events in August 2026. Income, Expenses, and Net Cash Flow are all ฿0.00.");
+      fireEvent.click(await screen.findByRole("button", { name: "Investment transfer" }));
+      fireEvent.change(screen.getByLabelText("Investment transfer amount"), { target: { value: "300" } });
+      fireEvent.click(screen.getByRole("button", { name: "Record transfer" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent("Cash activity cannot make the observed balance negative");
+      expect(screen.getByText("No cash flow events in August 2026. Income, Expenses, and Net Cash Flow are all ฿0.00.")).toBeInTheDocument();
+      const bodyText = document.body.textContent ?? "";
+      for (const banned of ["Incomplete", "Unmatched", "Missing deposit", "Pending", "Awaiting confirmation"]) {
+        expect(bodyText).not.toContain(banned);
+      }
+    });
+
+    it("does not disturb the existing Add income / Add expense / Transfer flows", async () => {
+      portfoliosMock.mockResolvedValue([portfolio()]);
+      accountsMock.mockResolvedValue([account({ id: 1, name: "Savings A" }), account({ id: 2, name: "Savings B" })]);
+      render(<CashFlowPage />);
+      await screen.findByText("No cash flow events in August 2026. Income, Expenses, and Net Cash Flow are all ฿0.00.");
+      expect(screen.getByRole("button", { name: "Add income" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Add expense" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Transfer" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Investment transfer" })).toBeInTheDocument();
+    });
   });
 
   it("prevents selecting the same account and handles insufficient funds honestly", async () => {

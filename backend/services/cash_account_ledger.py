@@ -6,6 +6,7 @@ INCOME = "INCOME"
 EXPENSE = "EXPENSE"
 ADJUSTMENT = "ADJUSTMENT"
 TRANSFER = "TRANSFER"
+INVESTMENT_TRANSFER = "INVESTMENT_TRANSFER"
 
 
 def signed_amount(transaction_type: str, amount: float) -> float:
@@ -23,6 +24,12 @@ def signed_amount(transaction_type: str, amount: float) -> float:
     if transaction_type == TRANSFER:
         # Transfer legs store their signed balance effect directly: the source
         # leg is negative and the destination leg is positive.
+        return amount
+    if transaction_type == INVESTMENT_TRANSFER:
+        # Same convention as TRANSFER: the stored amount is the signed effect
+        # directly (negative moving to the Portfolio, positive moving from
+        # it) — see ADR-012. This is a Cash Account fact only; it never
+        # writes, infers, or reconciles the Portfolio ledger.
         return amount
     raise ValueError(f"Unsupported cash transaction type: {transaction_type}")
 

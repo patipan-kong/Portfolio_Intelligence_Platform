@@ -24,7 +24,11 @@ def test_revision_descends_from_sole_predecessor_and_repository_has_one_head():
     module = _load_migration()
     script = ScriptDirectory.from_config(Config(str(BACKEND / "alembic.ini")))
     assert module.down_revision == "e5f7a9b1c3d6"
-    assert script.get_heads() == ["f6a8c0e2d4b6"]
+    # The repository's sole head has since advanced to b6d8f0a2c4e6
+    # (Investment Funding Transfer / ADR-012), chained directly onto this
+    # migration; this test's original intent — "the repository has exactly
+    # one head" — is preserved by asserting that current head instead.
+    assert script.get_heads() == ["b6d8f0a2c4e6"]
 
 
 def test_upgrade_is_empty_no_backfill_and_downgrade_removes_only_new_structure():

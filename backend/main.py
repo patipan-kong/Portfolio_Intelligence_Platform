@@ -79,7 +79,7 @@ from services.portfolio_transactions import (
     execute_dividend,
 )
 from services.transaction_canonicalizer import parse_position_conversion_payload
-from services.cash_account_ledger import ADJUSTMENT, EXPENSE, INCOME, TRANSFER, cash_balance_as_of, resulting_balance, signed_amount
+from services.cash_account_ledger import ADJUSTMENT, EXPENSE, INCOME, TRANSFER, INVESTMENT_TRANSFER, cash_balance_as_of, resulting_balance, signed_amount
 from services.liability_balance import liability_balance_as_of
 from services.portfolio_snapshots import generate_daily_snapshot, SnapshotCoverageError
 from services.snapshot_scheduler import setup_scheduler, shutdown_scheduler
@@ -613,6 +613,17 @@ def _cash_account_transaction_payload(transaction: CashAccountTransaction) -> di
         "category": transaction.category,
         "note": transaction.note,
         "transfer_id": transaction.transfer_id,
+        "counterparty_portfolio_id": transaction.counterparty_portfolio_id,
+        "counterparty_portfolio_name": (
+            transaction.counterparty_portfolio.name
+            if transaction.counterparty_portfolio_id is not None and transaction.counterparty_portfolio is not None
+            else None
+        ),
+        "investment_direction": (
+            ("TO_PORTFOLIO" if transaction.amount < 0 else "FROM_PORTFOLIO")
+            if transaction.transaction_type == INVESTMENT_TRANSFER
+            else None
+        ),
         "created_at": transaction.created_at.isoformat(),
     }
     transfer = transaction.transfer
@@ -756,6 +767,27 @@ class CashAccountTransferCreate(BaseModel):
     def validate_transfer(self):
         if self.source_cash_account_id == self.destination_cash_account_id:
             raise ValueError("source and destination cash accounts must differ")
+        if not math.isfinite(self.amount) or self.amount <= 0:
+            raise ValueError("amount must be finite and greater than zero")
+        return self
+
+
+class CashInvestmentTransferCreate(BaseModel):
+    """Investment Funding Transfer (ADR-012) — a Cash Account fact only.
+
+    `portfolio_id` records that the user associates this cash movement with
+    a Portfolio; it never writes, matches, or reconciles the Portfolio
+    ledger. `amount` is always a positive magnitude — the server derives the
+    stored signed effect from `direction`.
+    """
+    portfolio_id: int
+    direction: Literal["TO_PORTFOLIO", "FROM_PORTFOLIO"]
+    amount: float
+    occurred_on: date
+    note: str | None = None
+
+    @model_validator(mode="after")
+    def validate_investment_transfer(self):
         if not math.isfinite(self.amount) or self.amount <= 0:
             raise ValueError("amount must be finite and greater than zero")
         return self
@@ -1118,6 +1150,36 @@ async def create_cash_account_transfer(body: CashAccountTransferCreate, db: Sess
     _commit_cash_mutation(db)
     db.refresh(transfer)
     return _cash_account_transfer_payload(transfer)
+
+
+@app.post("/cash-accounts/{cash_account_id}/investment-transfers", status_code=201)
+async def create_cash_investment_transfer(
+    cash_account_id: int,
+    body: CashInvestmentTransferCreate,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Record that money moved between a Cash Account and a Portfolio (ADR-012).
+
+    This is authoritative only for the Cash Account side. It never creates a
+    Portfolio Transaction, changes Portfolio.cash_balance, or asserts that a
+    matching Portfolio-side deposit/withdrawal exists — see ADR-012.
+    """
+    ws = _ws_id(db)
+    account = _cash_account_or_404(db, cash_account_id, ws)
+    portfolio = resolve_portfolio_or_404(db, body.portfolio_id, ws)
+    _require_active_cash_account(account)
+    if account.currency != "THB":
+        raise HTTPException(status_code=422, detail="Investment transfers require a THB cash account")
+    baseline = _require_cash_tracking(account)
+    occurred_on = _require_on_or_after_baseline(body.occurred_on, baseline)
+    signed_effect = -body.amount if body.direction == "TO_PORTFOLIO" else body.amount
+    transaction = _record_cash_account_transaction(
+        db, account, INVESTMENT_TRANSFER, signed_effect, occurred_on, None, body.note,
+    )
+    transaction.counterparty_portfolio_id = portfolio.id
+    _commit_cash_mutation(db)
+    db.refresh(transaction)
+    return _cash_account_transaction_payload(transaction)
 
 
 @app.post("/cash-accounts/{cash_account_id}/transactions", status_code=201)

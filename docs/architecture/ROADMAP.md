@@ -117,7 +117,21 @@ it does not earn or spend it). Delivered:
   months. See Phase 5 for how this relates to emergency-fund semantics.
 
 `TRANSFER` here means a cash-account-to-cash-account transfer, not cash ↔
-investment portfolio funding — that remains a deferred, separate concept.
+investment portfolio funding.
+
+- **Investment Funding Transfer** (ADR-012) — a Cash Account movement to or
+  from an investment Portfolio can be recorded as a distinct, one-sided
+  factual event (`INVESTMENT_TRANSFER`). It moves the Cash Account balance
+  and names the associated Portfolio as user-asserted metadata; it does not
+  count as income, expense, or net cash flow, and does not affect Recorded
+  Expense Coverage.
+
+**Paired, atomic cross-domain funding remains deferred.** Recording the cash
+side does not create, match, validate, or reconcile the Portfolio's ledger
+transaction: no automatic `DEPOSIT`/`WITHDRAW` creation, no cross-domain
+atomicity, no matching or completeness signal between the two sides. The
+Portfolio-side entry remains a separate, user-initiated act through the
+investment ledger (Phase 1).
 
 ---
 

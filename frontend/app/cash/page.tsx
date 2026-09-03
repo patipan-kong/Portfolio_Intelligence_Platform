@@ -92,6 +92,10 @@ function accountActivityLabel(item: CashAccountTransaction): string {
       ? `Transfer to ${item.transfer_destination_account_name ?? "another account"}`
       : `Transfer from ${item.transfer_source_account_name ?? "another account"}`;
   }
+  if (item.transaction_type === "INVESTMENT_TRANSFER") {
+    const portfolio = item.counterparty_portfolio_name ?? "investment portfolio (no longer available)";
+    return item.investment_direction === "FROM_PORTFOLIO" ? `Investment transfer from ${portfolio}` : `Investment transfer to ${portfolio}`;
+  }
   return item.category ?? item.transaction_type;
 }
 

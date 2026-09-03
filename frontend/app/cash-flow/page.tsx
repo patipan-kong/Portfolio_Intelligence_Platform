@@ -5,13 +5,16 @@ import Link from "next/link";
 import {
   createCashAccountTransfer,
   createCashAccountTransaction,
+  createCashInvestmentTransfer,
   getCashFlowReport,
   getCashFlowSettings,
   updateCashFlowSettings,
   listCashAccounts,
+  listPortfolios,
   type CashAccount,
   type CashFlowEvent,
   type CashFlowSettings,
+  type Portfolio,
 } from "@/lib/api";
 import {
   aggregateMonthlyCashFlow,
@@ -66,6 +69,16 @@ export default function CashFlowPage() {
   const [transferAmount, setTransferAmount] = useState("");
   const [transferDate, setTransferDate] = useState(localDateKey());
   const [transferNote, setTransferNote] = useState("");
+  const [portfolios, setPortfolios] = useState<Portfolio[] | null>(null);
+  const [portfoliosLoading, setPortfoliosLoading] = useState(true);
+  const [portfoliosError, setPortfoliosError] = useState("");
+  const [investmentTransferOpen, setInvestmentTransferOpen] = useState(false);
+  const [investmentTransferAccountId, setInvestmentTransferAccountId] = useState("");
+  const [investmentTransferPortfolioId, setInvestmentTransferPortfolioId] = useState("");
+  const [investmentTransferDirection, setInvestmentTransferDirection] = useState<"TO_PORTFOLIO" | "FROM_PORTFOLIO">("TO_PORTFOLIO");
+  const [investmentTransferAmount, setInvestmentTransferAmount] = useState("");
+  const [investmentTransferDate, setInvestmentTransferDate] = useState(localDateKey());
+  const [investmentTransferNote, setInvestmentTransferNote] = useState("");
   const [mutationError, setMutationError] = useState("");
   const [coverage, setCoverage] = useState<RecordedExpenseCoverageResult | null>(null);
   const [coverageLoading, setCoverageLoading] = useState(true);
@@ -107,6 +120,18 @@ export default function CashFlowPage() {
       setAccountsError(messageFor(error, "Unable to load active cash accounts."));
     } finally {
       setAccountsLoading(false);
+    }
+  }, []);
+
+  const loadPortfolios = useCallback(async () => {
+    setPortfoliosLoading(true);
+    setPortfoliosError("");
+    try {
+      setPortfolios(await listPortfolios());
+    } catch (error) {
+      setPortfoliosError(messageFor(error, "Unable to load portfolios."));
+    } finally {
+      setPortfoliosLoading(false);
     }
   }, []);
 
@@ -178,6 +203,7 @@ export default function CashFlowPage() {
 
   useEffect(() => { void loadReport(month); }, [loadReport, month]);
   useEffect(() => { void loadAccounts(); }, [loadAccounts]);
+  useEffect(() => { void loadPortfolios(); }, [loadPortfolios]);
   useEffect(() => { void loadTargetSettings(); }, [loadTargetSettings]);
   useEffect(() => {
     if (accountsLoading) return;
@@ -226,6 +252,22 @@ export default function CashFlowPage() {
 
   function closeTransfer() {
     setTransferOpen(false);
+    setMutationError("");
+  }
+
+  function openInvestmentTransfer() {
+    setMutationError("");
+    setInvestmentTransferOpen(true);
+    setInvestmentTransferAccountId(String(trackedAccounts[0]?.id ?? ""));
+    setInvestmentTransferPortfolioId(String((portfolios ?? [])[0]?.id ?? ""));
+    setInvestmentTransferDirection("TO_PORTFOLIO");
+    setInvestmentTransferAmount("");
+    setInvestmentTransferDate(`${month}-01`);
+    setInvestmentTransferNote("");
+  }
+
+  function closeInvestmentTransfer() {
+    setInvestmentTransferOpen(false);
     setMutationError("");
   }
 
@@ -280,6 +322,33 @@ export default function CashFlowPage() {
       await Promise.all([loadReport(month), loadAccounts()]);
     } catch (error) {
       setMutationError(messageFor(error, "Unable to transfer cash between accounts."));
+    }
+  }
+
+  async function handleInvestmentTransfer(event: FormEvent) {
+    event.preventDefault();
+    setMutationError("");
+    const accountId = Number(investmentTransferAccountId);
+    const portfolioId = Number(investmentTransferPortfolioId);
+    const amount = Number(investmentTransferAmount);
+    if (!Number.isInteger(accountId) || !trackedAccounts.some((account) => account.id === accountId) ||
+      !Number.isInteger(portfolioId) || !(portfolios ?? []).some((portfolio) => portfolio.id === portfolioId) ||
+      !investmentTransferDate || !Number.isFinite(amount) || amount <= 0) {
+      setMutationError("Choose a tracked account, a portfolio, and enter a positive amount and date.");
+      return;
+    }
+    try {
+      await createCashInvestmentTransfer(accountId, {
+        portfolio_id: portfolioId,
+        direction: investmentTransferDirection,
+        amount,
+        occurred_on: investmentTransferDate,
+        note: investmentTransferNote.trim() || null,
+      });
+      closeInvestmentTransfer();
+      await Promise.all([loadReport(month), loadAccounts()]);
+    } catch (error) {
+      setMutationError(messageFor(error, "Unable to record the investment transfer."));
     }
   }
 
@@ -442,6 +511,24 @@ export default function CashFlowPage() {
             setTransferAmount={setTransferAmount}
             setTransferDate={setTransferDate}
             setTransferNote={setTransferNote}
+            portfolios={portfolios ?? []}
+            portfoliosLoading={portfoliosLoading}
+            investmentTransferOpen={investmentTransferOpen}
+            investmentTransferAccountId={investmentTransferAccountId}
+            investmentTransferPortfolioId={investmentTransferPortfolioId}
+            investmentTransferDirection={investmentTransferDirection}
+            investmentTransferAmount={investmentTransferAmount}
+            investmentTransferDate={investmentTransferDate}
+            investmentTransferNote={investmentTransferNote}
+            onOpenInvestmentTransfer={openInvestmentTransfer}
+            onCloseInvestmentTransfer={closeInvestmentTransfer}
+            onSubmitInvestmentTransfer={handleInvestmentTransfer}
+            setInvestmentTransferAccountId={setInvestmentTransferAccountId}
+            setInvestmentTransferPortfolioId={setInvestmentTransferPortfolioId}
+            setInvestmentTransferDirection={setInvestmentTransferDirection}
+            setInvestmentTransferAmount={setInvestmentTransferAmount}
+            setInvestmentTransferDate={setInvestmentTransferDate}
+            setInvestmentTransferNote={setInvestmentTransferNote}
           />
 
           {expenseCategories.length > 0 && (
@@ -701,6 +788,11 @@ function EntrySection({
   transferOpen, transferSourceId, transferDestinationId, transferAmount, transferDate, transferNote,
   onOpenTransfer, onCloseTransfer, onSubmitTransfer, setTransferSourceId, setTransferDestinationId,
   setTransferAmount, setTransferDate, setTransferNote,
+  portfolios, portfoliosLoading, investmentTransferOpen, investmentTransferAccountId, investmentTransferPortfolioId,
+  investmentTransferDirection, investmentTransferAmount, investmentTransferDate, investmentTransferNote,
+  onOpenInvestmentTransfer, onCloseInvestmentTransfer, onSubmitInvestmentTransfer,
+  setInvestmentTransferAccountId, setInvestmentTransferPortfolioId, setInvestmentTransferDirection,
+  setInvestmentTransferAmount, setInvestmentTransferDate, setInvestmentTransferNote,
 }: {
   accounts: CashAccount[];
   accountsLoading: boolean;
@@ -735,20 +827,86 @@ function EntrySection({
   setTransferAmount: (value: string) => void;
   setTransferDate: (value: string) => void;
   setTransferNote: (value: string) => void;
+  portfolios: Portfolio[];
+  portfoliosLoading: boolean;
+  investmentTransferOpen: boolean;
+  investmentTransferAccountId: string;
+  investmentTransferPortfolioId: string;
+  investmentTransferDirection: "TO_PORTFOLIO" | "FROM_PORTFOLIO";
+  investmentTransferAmount: string;
+  investmentTransferDate: string;
+  investmentTransferNote: string;
+  onOpenInvestmentTransfer: () => void;
+  onCloseInvestmentTransfer: () => void;
+  onSubmitInvestmentTransfer: (event: FormEvent) => void;
+  setInvestmentTransferAccountId: (value: string) => void;
+  setInvestmentTransferPortfolioId: (value: string) => void;
+  setInvestmentTransferDirection: (value: "TO_PORTFOLIO" | "FROM_PORTFOLIO") => void;
+  setInvestmentTransferAmount: (value: string) => void;
+  setInvestmentTransferDate: (value: string) => void;
+  setInvestmentTransferNote: (value: string) => void;
 }) {
   const source = accounts.find((account) => account.id === Number(transferSourceId));
   const destination = accounts.find((account) => account.id === Number(transferDestinationId));
   const transferAmountValue = Number(transferAmount);
+  const investmentTransferAccount = accounts.find((account) => account.id === Number(investmentTransferAccountId));
+  const investmentTransferPortfolio = portfolios.find((portfolio) => portfolio.id === Number(investmentTransferPortfolioId));
+  const investmentTransferAmountValue = Number(investmentTransferAmount);
+  const canOpenInvestmentTransfer = accounts.length > 0 && portfolios.length > 0;
   return (
     <section className="bg-white border rounded-xl p-4 shadow-sm space-y-3">
       <div><h2 className="font-semibold">Add activity</h2><p className="text-xs text-gray-500 mt-1">Only active accounts with explicit Cash Flow tracking can receive new events.</p></div>
       {accountsLoading && <p className="text-sm text-gray-400">Loading tracked accounts…</p>}
       {!accountsLoading && accountsError && <div role="alert" className="text-sm text-red-600 space-y-1"><p>{accountsError}</p><button type="button" onClick={onRetryAccounts} className="text-blue-600 hover:underline">Try again</button></div>}
       {!accountsLoading && !accountsError && accounts.length === 0 && <p className="text-sm text-gray-500">No active tracked cash account is available. Transfers need two active tracked accounts. <Link href="/cash" className="text-blue-600 hover:underline">Start tracking under Cash Accounts →</Link></p>}
-      {!accountsLoading && !accountsError && accounts.length > 0 && !entryType && !transferOpen && <div className="flex gap-3 flex-wrap"><button type="button" onClick={() => onOpen("INCOME")} className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700">Add income</button><button type="button" onClick={() => onOpen("EXPENSE")} className="border border-blue-600 text-blue-700 px-3 py-1.5 rounded text-sm hover:bg-blue-50">Add expense</button>{accounts.length >= 2 && <button type="button" onClick={onOpenTransfer} className="border border-gray-500 text-gray-700 px-3 py-1.5 rounded text-sm hover:bg-gray-50">Transfer</button>}</div>}
+      {!accountsLoading && !accountsError && accounts.length > 0 && !entryType && !transferOpen && !investmentTransferOpen && <div className="flex gap-3 flex-wrap"><button type="button" onClick={() => onOpen("INCOME")} className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700">Add income</button><button type="button" onClick={() => onOpen("EXPENSE")} className="border border-blue-600 text-blue-700 px-3 py-1.5 rounded text-sm hover:bg-blue-50">Add expense</button>{accounts.length >= 2 && <button type="button" onClick={onOpenTransfer} className="border border-gray-500 text-gray-700 px-3 py-1.5 rounded text-sm hover:bg-gray-50">Transfer</button>}{!portfoliosLoading && canOpenInvestmentTransfer && <button type="button" onClick={onOpenInvestmentTransfer} className="border border-gray-500 text-gray-700 px-3 py-1.5 rounded text-sm hover:bg-gray-50">Investment transfer</button>}</div>}
       {!accountsLoading && !accountsError && accounts.length === 1 && !entryType && !transferOpen && <p className="text-xs text-gray-500">Transfer requires at least two active tracked Cash Accounts. <Link href="/cash" className="text-blue-600 hover:underline">Add or start tracking another account →</Link></p>}
       {entryType && <form onSubmit={onSubmit} className="border-t pt-3 space-y-3"><h3 className="font-medium">Add {entryType === "INCOME" ? "income" : "expense"}</h3><div className="grid gap-3 sm:grid-cols-2"><label className="text-sm">Cash account<select aria-label="Cash flow account" value={entryAccountId} onChange={(event) => setEntryAccountId(event.target.value)} className={inputClass}>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label><label className="text-sm">Amount (THB)<input aria-label="Cash flow amount" type="number" min="0.01" step="0.01" value={entryAmount} onChange={(event) => setEntryAmount(event.target.value)} className={inputClass} /></label><label className="text-sm">Occurred date<input aria-label="Cash flow date" type="date" value={entryDate} onChange={(event) => setEntryDate(event.target.value)} className={inputClass} /></label><label className="text-sm">Category<input aria-label="Cash flow category" value={entryCategory} onChange={(event) => setEntryCategory(event.target.value)} className={inputClass} /></label><label className="text-sm sm:col-span-2">Note (optional)<input aria-label="Cash flow note" value={entryNote} onChange={(event) => setEntryNote(event.target.value)} className={inputClass} /></label></div>{mutationError && <p role="alert" className="text-sm text-red-600">{mutationError}</p>}<div className="flex gap-2"><button type="submit" className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700">Save {entryType === "INCOME" ? "income" : "expense"}</button><button type="button" onClick={onClose} className="text-sm text-gray-600">Cancel</button></div></form>}
       {transferOpen && <form onSubmit={onSubmitTransfer} className="border-t pt-3 space-y-3"><h3 className="font-medium">Transfer between Cash Accounts</h3><div className="grid gap-3 sm:grid-cols-2"><label className="text-sm">From Account<select aria-label="Transfer from account" value={transferSourceId} onChange={(event) => { setTransferSourceId(event.target.value); if (event.target.value === transferDestinationId) setTransferDestinationId(String(accounts.find((account) => account.id !== Number(event.target.value))?.id ?? "")); }} className={inputClass}>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label><label className="text-sm">To Account<select aria-label="Transfer to account" value={transferDestinationId} onChange={(event) => setTransferDestinationId(event.target.value)} className={inputClass}>{accounts.filter((account) => account.id !== Number(transferSourceId)).map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label><label className="text-sm">Amount (THB)<input aria-label="Transfer amount" type="number" min="0.01" step="0.01" value={transferAmount} onChange={(event) => setTransferAmount(event.target.value)} className={inputClass} /></label><label className="text-sm">Occurred date<input aria-label="Transfer date" type="date" value={transferDate} onChange={(event) => setTransferDate(event.target.value)} className={inputClass} /></label><label className="text-sm sm:col-span-2">Note (optional)<input aria-label="Transfer note" value={transferNote} onChange={(event) => setTransferNote(event.target.value)} className={inputClass} /></label></div><p className="text-sm text-gray-700">Transfer preview: <strong>{source?.name ?? "—"} → {destination?.name ?? "—"}</strong>{Number.isFinite(transferAmountValue) && transferAmountValue > 0 ? ` · ${formatThb(transferAmountValue)}` : ""}</p>{mutationError && <p role="alert" className="text-sm text-red-600">{mutationError}</p>}<div className="flex gap-2"><button type="submit" className="bg-gray-700 text-white px-3 py-1.5 rounded text-sm hover:bg-gray-800">Save transfer</button><button type="button" onClick={onCloseTransfer} className="text-sm text-gray-600">Cancel</button></div></form>}
+      {investmentTransferOpen && (
+        <form onSubmit={onSubmitInvestmentTransfer} className="border-t pt-3 space-y-3">
+          <h3 className="font-medium">Record investment transfer</h3>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="text-sm">Direction
+              <select aria-label="Investment transfer direction" value={investmentTransferDirection} onChange={(event) => setInvestmentTransferDirection(event.target.value as "TO_PORTFOLIO" | "FROM_PORTFOLIO")} className={inputClass}>
+                <option value="TO_PORTFOLIO">Cash → Investment</option>
+                <option value="FROM_PORTFOLIO">Investment → Cash</option>
+              </select>
+            </label>
+            <label className="text-sm">Cash account
+              <select aria-label="Investment transfer cash account" value={investmentTransferAccountId} onChange={(event) => setInvestmentTransferAccountId(event.target.value)} className={inputClass}>
+                {accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+              </select>
+            </label>
+            <label className="text-sm">Investment portfolio
+              <select aria-label="Investment transfer portfolio" value={investmentTransferPortfolioId} onChange={(event) => setInvestmentTransferPortfolioId(event.target.value)} className={inputClass}>
+                {portfolios.map((portfolio) => <option key={portfolio.id} value={portfolio.id}>{portfolio.name}</option>)}
+              </select>
+            </label>
+            <label className="text-sm">Amount (THB)
+              <input aria-label="Investment transfer amount" type="number" min="0.01" step="0.01" value={investmentTransferAmount} onChange={(event) => setInvestmentTransferAmount(event.target.value)} className={inputClass} />
+            </label>
+            <label className="text-sm">Date
+              <input aria-label="Investment transfer date" type="date" value={investmentTransferDate} onChange={(event) => setInvestmentTransferDate(event.target.value)} className={inputClass} />
+            </label>
+            <label className="text-sm sm:col-span-2">Note (optional)
+              <input aria-label="Investment transfer note" value={investmentTransferNote} onChange={(event) => setInvestmentTransferNote(event.target.value)} className={inputClass} />
+            </label>
+          </div>
+          <p className="text-sm text-gray-700">
+            {investmentTransferDirection === "TO_PORTFOLIO"
+              ? <>{investmentTransferAccount?.name ?? "—"} → {investmentTransferPortfolio?.name ?? "—"}</>
+              : <>{investmentTransferPortfolio?.name ?? "—"} → {investmentTransferAccount?.name ?? "—"}</>}
+            {Number.isFinite(investmentTransferAmountValue) && investmentTransferAmountValue > 0 ? ` · ${formatThb(investmentTransferAmountValue)}` : ""}
+          </p>
+          <p className="text-xs text-gray-500">Records the cash side only. The portfolio&apos;s deposit or withdrawal is recorded separately in the investment ledger.</p>
+          {mutationError && <p role="alert" className="text-sm text-red-600">{mutationError}</p>}
+          <div className="flex gap-2">
+            <button type="submit" className="bg-gray-700 text-white px-3 py-1.5 rounded text-sm hover:bg-gray-800">Record transfer</button>
+            <button type="button" onClick={onCloseInvestmentTransfer} className="text-sm text-gray-600">Cancel</button>
+          </div>
+        </form>
+      )}
     </section>
   );
 }
@@ -761,6 +919,7 @@ function eventTypeLabel(event: CashFlowEvent): string {
   if (event.transaction_type === "INCOME") return "Income";
   if (event.transaction_type === "EXPENSE") return "Expense";
   if (event.transaction_type === "TRANSFER") return "Transfer";
+  if (event.transaction_type === "INVESTMENT_TRANSFER") return "Investment transfer";
   return "Adjustment";
 }
 
@@ -769,6 +928,11 @@ function eventActivityLabel(event: CashFlowEvent): string {
     const source = `${event.transfer_source_account_name ?? event.account_name}${event.source_account_is_archived ? " (Archived)" : ""}`;
     const destination = `${event.transfer_destination_account_name ?? "destination"}${event.destination_account_is_archived ? " (Archived)" : ""}`;
     return `${source} → ${destination}`;
+  }
+  if (event.transaction_type === "INVESTMENT_TRANSFER") {
+    const account = `${event.account_name}${event.account_is_archived ? " (Archived)" : ""}`;
+    const portfolio = event.counterparty_portfolio_name ?? "Investment portfolio (no longer available)";
+    return event.investment_direction === "FROM_PORTFOLIO" ? `${portfolio} → ${account}` : `${account} → ${portfolio}`;
   }
   return `${event.account_name}${event.account_is_archived ? " (Archived)" : ""}`;
 }

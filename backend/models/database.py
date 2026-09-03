@@ -125,6 +125,19 @@ class Portfolio(Base):
     # transactions/snapshots above already cascade at the ORM layer.
     goal_funding_allocations = relationship("GoalFundingAllocation", cascade="all, delete-orphan")
     investment_mandates = relationship("PortfolioInvestmentMandate", cascade="all, delete-orphan")
+    # Investment Funding Transfer (ADR-012): deliberately NOT cascade="delete"
+    # — a cash-side funding record is a Cash Account fact and must survive
+    # Portfolio deletion. This relationship exists so the ORM disassociates
+    # (sets counterparty_portfolio_id to NULL) instead of leaving a dangling
+    # reference: SQLite (this app's default DATABASE_URL) does not enforce FK
+    # ondelete actions without a PRAGMA this codebase does not set, so the
+    # column's ondelete="SET NULL" alone would not fire here — same reasoning
+    # as ADR-010 §4's ORM-level cascade for goal_funding_allocations.
+    cash_investment_transfer_references = relationship(
+        "CashAccountTransaction",
+        foreign_keys="CashAccountTransaction.counterparty_portfolio_id",
+        back_populates="counterparty_portfolio",
+    )
 
 
 class CashAccount(Base):
@@ -443,23 +456,42 @@ class CashAccountTransaction(Base):
     id = Column(Integer, primary_key=True, index=True)
     workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
     cash_account_id = Column(Integer, ForeignKey("cash_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
-    transaction_type = Column(String(16), nullable=False)
+    # String(32): repository convention for enum-like type columns (matches
+    # liability_type/goal_type). Widened from String(16) — the prior width
+    # was too narrow for 'INVESTMENT_TRANSFER' (19 chars); see IFT-001.
+    transaction_type = Column(String(32), nullable=False)
     amount = Column(Float, nullable=False)
     occurred_on = Column(String(10), nullable=False)
     category = Column(String, nullable=True)
     note = Column(Text, nullable=True)
     transfer_id = Column(Integer, ForeignKey("cash_account_transfers.id", ondelete="SET NULL"), nullable=True, index=True)
+    # Investment Funding Transfer (ADR-012): user-asserted association only —
+    # never evidence that a matching Portfolio-side transaction exists, was
+    # amount/date-matched, or has been reconciled. Legal only when
+    # transaction_type = 'INVESTMENT_TRANSFER' (ck_..._counterparty_type).
+    counterparty_portfolio_id = Column(Integer, ForeignKey("portfolios.id", ondelete="SET NULL"), nullable=True, index=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     workspace = relationship("Workspace", back_populates="cash_account_transactions")
     cash_account = relationship("CashAccount", back_populates="transactions")
     transfer = relationship("CashAccountTransfer", back_populates="legs")
+    counterparty_portfolio = relationship(
+        "Portfolio", foreign_keys=[counterparty_portfolio_id], back_populates="cash_investment_transfer_references"
+    )
 
     __table_args__ = (
         CheckConstraint(
             "(transaction_type IN ('INCOME', 'EXPENSE') AND amount > 0) "
-            "OR (transaction_type IN ('ADJUSTMENT', 'TRANSFER') AND amount <> 0)",
+            "OR (transaction_type IN ('ADJUSTMENT', 'TRANSFER', 'INVESTMENT_TRANSFER') AND amount <> 0)",
             name="ck_cash_account_transactions_type_amount",
+        ),
+        CheckConstraint(
+            "counterparty_portfolio_id IS NULL OR transaction_type = 'INVESTMENT_TRANSFER'",
+            name="ck_cash_account_transactions_counterparty_type",
+        ),
+        CheckConstraint(
+            "transfer_id IS NULL OR transaction_type = 'TRANSFER'",
+            name="ck_cash_account_transactions_transfer_leg_type",
         ),
         Index("ix_cash_account_transactions_account_occurred", "cash_account_id", "occurred_on"),
     )

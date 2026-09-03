@@ -242,6 +242,50 @@ test("13. computes AVAILABLE coverage correctly", () => {
   assert.ok(Math.abs((coverage.coverageMonths ?? 0) - 4.2) < 1e-9);
 });
 
+test("13b. an Investment Transfer leaves Recorded Expense Coverage unchanged, while an equivalent EXPENSE contaminates it (ADR-012 acceptance test)", () => {
+  const population = threeMonthPopulation(42000);
+  const baselineResults: MonthlyFetchResult[] = [
+    { month: "2026-05", status: "success", events: [expenseEvent({ occurred_on: "2026-05-01", amount: 10000, signed_amount: -10000 })] },
+    { month: "2026-06", status: "success", events: [expenseEvent({ occurred_on: "2026-06-01", amount: 10000, signed_amount: -10000 })] },
+    { month: "2026-07", status: "success", events: [expenseEvent({ occurred_on: "2026-07-01", amount: 10000, signed_amount: -10000 })] },
+  ];
+  const baseline = computeRecordedExpenseCoverage(population, baselineResults);
+
+  const investmentTransferEvent = expenseEvent({
+    id: 99,
+    transaction_type: "INVESTMENT_TRANSFER",
+    amount: -50000,
+    signed_amount: -50000,
+    category: null,
+    occurred_on: "2026-06-15",
+    counterparty_portfolio_id: 1,
+    counterparty_portfolio_name: "Growth Portfolio",
+    investment_direction: "TO_PORTFOLIO",
+  });
+  const withInvestmentTransfer = computeRecordedExpenseCoverage(population, [
+    baselineResults[0],
+    { month: "2026-06", status: "success", events: [...baselineResults[1].events, investmentTransferEvent] },
+    baselineResults[2],
+  ]);
+  assert.equal(withInvestmentTransfer.averageRecordedMonthlyExpense, baseline.averageRecordedMonthlyExpense);
+  assert.equal(withInvestmentTransfer.coverageMonths, baseline.coverageMonths);
+
+  // Contrast: recording the same 50000 as an EXPENSE instead demonstrably
+  // inflates the denominator and shrinks coverage — proving the original
+  // correctness trap this design closes is real.
+  const equivalentExpenseEvent = expenseEvent({
+    id: 99, amount: 50000, signed_amount: -50000, occurred_on: "2026-06-15", category: "Investment funding",
+  });
+  const withExpense = computeRecordedExpenseCoverage(population, [
+    baselineResults[0],
+    { month: "2026-06", status: "success", events: [...baselineResults[1].events, equivalentExpenseEvent] },
+    baselineResults[2],
+  ]);
+  assert.notEqual(withExpense.averageRecordedMonthlyExpense, baseline.averageRecordedMonthlyExpense);
+  assert.equal(withExpense.averageRecordedMonthlyExpense, baseline.averageRecordedMonthlyExpense! + 50000 / 3);
+  assert.ok((withExpense.coverageMonths ?? 0) < (baseline.coverageMonths ?? 0));
+});
+
 test("14. does not cap or clamp a huge coverage ratio", () => {
   const population = threeMonthPopulation(10_000_000);
   const results: MonthlyFetchResult[] = population.recordedMonths.map((month) => ({

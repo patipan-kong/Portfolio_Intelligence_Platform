@@ -134,7 +134,7 @@ export interface CashAccountTransaction {
   id: number;
   workspace_id: number;
   cash_account_id: number;
-  transaction_type: "INCOME" | "EXPENSE" | "ADJUSTMENT" | "TRANSFER";
+  transaction_type: "INCOME" | "EXPENSE" | "ADJUSTMENT" | "TRANSFER" | "INVESTMENT_TRANSFER";
   amount: number;
   signed_amount: number;
   occurred_on: string;
@@ -146,6 +146,13 @@ export interface CashAccountTransaction {
   transfer_source_account_name?: string;
   transfer_destination_account_name?: string;
   transfer_direction?: "OUT" | "IN";
+  // Investment Funding Transfer (ADR-012) — counterparty_portfolio_id is a
+  // user-asserted association only, never evidence of a matching Portfolio-
+  // side transaction. null for every other transaction_type, and also null
+  // after the referenced Portfolio has been deleted.
+  counterparty_portfolio_id?: number | null;
+  counterparty_portfolio_name?: string | null;
+  investment_direction?: "TO_PORTFOLIO" | "FROM_PORTFOLIO" | null;
   created_at: string;
 }
 
@@ -946,6 +953,25 @@ export const getCashAccountBalanceAsOf = (id: number, date: string) =>
 
 export const createCashAccountTransfer = (body: CashAccountTransferCreate) =>
   apiFetch<CashAccountTransfer>("/cash-account-transfers", { method: "POST", body: JSON.stringify(body) });
+
+// ─── Investment Funding Transfer (ADR-012) ────────────────────────────────────
+// Records that money moved between a Cash Account and a Portfolio. Authoritative
+// only for the Cash Account side — it never creates a Portfolio transaction or
+// asserts that one exists. See ADR-012.
+
+export type CashInvestmentTransferCreate = {
+  portfolio_id: number;
+  direction: "TO_PORTFOLIO" | "FROM_PORTFOLIO";
+  amount: number;
+  occurred_on: string;
+  note?: string | null;
+};
+
+export const createCashInvestmentTransfer = (cashAccountId: number, body: CashInvestmentTransferCreate) =>
+  apiFetch<CashAccountTransaction>(`/cash-accounts/${cashAccountId}/investment-transfers`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 
 export const getCashFlowReport = (month: string) =>
   apiFetch<CashFlowReport>(`/cash-flow?month=${encodeURIComponent(month)}`);
