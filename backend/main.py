@@ -8215,9 +8215,16 @@ async def get_evaluation_report_card(
     reality arrives.
     """
     _ws_id(db)
+    from services.decision_goal_context import (
+        DecisionGoalContextIntegrityError,
+        integrity_error_detail as decision_context_integrity_error_detail,
+    )
     from services.evaluation.recommendation_ledger import get_report_card
 
-    result = await asyncio.to_thread(get_report_card, db, portfolio_id, snapshot_id)
+    try:
+        result = await asyncio.to_thread(get_report_card, db, portfolio_id, snapshot_id)
+    except DecisionGoalContextIntegrityError:
+        raise HTTPException(status_code=409, detail=decision_context_integrity_error_detail())
     if result is None:
         raise HTTPException(status_code=404, detail="Recommendation snapshot not found")
     return result

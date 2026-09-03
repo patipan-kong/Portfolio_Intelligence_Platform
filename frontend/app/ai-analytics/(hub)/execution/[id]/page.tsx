@@ -35,6 +35,33 @@ function shortDate(iso: string): string {
   return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "2-digit" });
 }
 
+// Decision → Transaction Linkage Completion (mirrors
+// DecisionActionPanel.tsx's RECORD_EXECUTION_ELIGIBLE, kept as a local,
+// identical set rather than exported/imported — DecisionActionPanel is an
+// optimizer-page component and out of scope for this slice). REJECTED
+// decisions are evaluated via whole-portfolio counterfactual return, never
+// linked-transaction analysis, so they never get a "Record execution" entry
+// point. Every system-generated row in this codebase (verified against
+// every UserExecutionDecision write site) is decision="EXPIRED", so
+// excluding it by decision value alone already implements the
+// is_system_generated exclusion — no separate flag needed here.
+const RECORD_EXECUTION_ELIGIBLE = new Set(["APPROVED", "MANUAL_OVERRIDE", "PARTIAL_EXECUTION"]);
+
+// Historical timestamp semantics (Slice 3 finding, reconfirmed Slice 4 §H):
+// UserExecutionDecision.executed_at is the decision-row creation timestamp,
+// not a trade-fill time — never label it "executed". For EXPIRED rows this
+// is when the daily scheduler wrote the row, not necessarily the exact
+// moment the recommendation went stale.
+function decisionRecordedLabel(iso: string): string {
+  return `decision recorded ${iso.slice(0, 10)}`;
+}
+
+function noExecutionCopy(decision: string): string {
+  if (decision === "REJECTED") return "No execution was recorded for this rejected decision.";
+  if (decision === "EXPIRED") return "No execution was recorded for this expired recommendation.";
+  return "No execution was recorded for this decision.";
+}
+
 export default function ExecutionDetailPage() {
   const params = useParams();
   const decisionId = Number(params?.id);
@@ -99,7 +126,7 @@ export default function ExecutionDetailPage() {
             <div className="flex items-center gap-3">
               <h1 className="text-xl font-bold text-gray-900">Decision #{data.decision_id}</h1>
               <DecisionStatusBadge decision={data.decision} />
-              {data.executed_at && <span className="text-xs text-gray-400">executed {data.executed_at.slice(0, 10)}</span>}
+              {data.executed_at && <span className="text-xs text-gray-400">{decisionRecordedLabel(data.executed_at)}</span>}
             </div>
             <AsOfStamp asOf={data.as_of} />
           </div>
@@ -126,12 +153,16 @@ export default function ExecutionDetailPage() {
                 <p className="text-sm text-gray-400 italic">
                   Execution analysis unavailable — {data.analysis.reason ?? "no linked transactions"}.
                 </p>
-                <Link
-                  href={`/portfolio?decision=${data.decision_id}`}
-                  className="text-xs font-semibold text-green-700 hover:underline"
-                >
-                  Record execution →
-                </Link>
+                {RECORD_EXECUTION_ELIGIBLE.has(data.decision) ? (
+                  <Link
+                    href={`/portfolio?decision=${data.decision_id}`}
+                    className="text-xs font-semibold text-green-700 hover:underline"
+                  >
+                    Record execution →
+                  </Link>
+                ) : (
+                  <p className="text-xs text-gray-400">{noExecutionCopy(data.decision)}</p>
+                )}
               </div>
             ) : (
               <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm">

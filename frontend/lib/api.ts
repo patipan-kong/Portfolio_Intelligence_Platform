@@ -4166,7 +4166,17 @@ export interface ReportCardExecutionSection {
   decision_id?: number;
   decision?: string;
   executed_at?: string | null;
-  analysis?: Record<string, unknown>;
+  analysis?: ExecutionAnalysis;
+  // Slice 4 (Decision History / Audit UX) — already-persisted decision
+  // rationale (UX.2D) and frozen goal context at recommendation time
+  // (Phase 7.4/ADR-008, CONTEXT_ONLY), reused from the same columns/helper
+  // DecisionActionPanel and GET /optimizer/decisions/{id} already expose.
+  override_notes?: string | null;
+  override_type?: OverrideCategoryType | null;
+  original_symbol?: string | null;
+  replacement_symbol?: string | null;
+  reason_category?: string | null;
+  goal_context?: DecisionGoalContext | null;
 }
 
 export interface RecommendationReportCard {

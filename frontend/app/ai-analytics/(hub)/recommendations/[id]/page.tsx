@@ -8,8 +8,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
+import Link from "next/link";
 import { usePortfolio } from "@/lib/PortfolioContext";
-import { getRecommendationReportCard, isUnresolvedPortfolioError, type RecommendationReportCard, type ExecutionAnalysis } from "@/lib/api";
+import { getRecommendationReportCard, isUnresolvedPortfolioError, type RecommendationReportCard, type ExecutionAnalysis, type DecisionGoalContextGoal } from "@/lib/api";
 import BackBreadcrumb from "@/components/BackBreadcrumb";
 import PortfolioSelectionNotice from "@/components/PortfolioSelectionNotice";
 import VerdictSentence from "@/components/evaluation/VerdictSentence";
@@ -132,6 +133,81 @@ function PlanSection({ plan }: { plan: RecommendationReportCard["plan"] }) {
   );
 }
 
+// Historical timestamp semantics (Slice 3 finding, reconfirmed Slice 4 §H):
+// UserExecutionDecision.executed_at is the decision-row creation timestamp,
+// not a trade-fill time — never label it "executed".
+function decisionRecordedLabel(iso: string): string {
+  return `decision recorded ${iso.slice(0, 10)}`;
+}
+
+function formatGoalTargetDate(targetDate: string | null): string | null {
+  if (!targetDate) return null;
+  const d = new Date(targetDate);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString("en-GB", { month: "short", year: "numeric" });
+}
+
+function formatGoalPriority(priority: string): string {
+  return priority.charAt(0) + priority.slice(1).toLowerCase();
+}
+
+// Rationale chips (Slice 4 §F) — read-only display of fields already
+// persisted on UserExecutionDecision (UX.2D). Renders nothing for a null
+// field rather than an empty label/placeholder.
+function DecisionRationale({ execution }: { execution: RecommendationReportCard["execution"] }) {
+  const hasRationale =
+    execution.override_type || execution.original_symbol || execution.reason_category || execution.override_notes;
+  if (!hasRationale) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-xs">
+      {execution.override_type && (
+        <span className="px-2 py-0.5 rounded-full border border-gray-200 bg-gray-50 text-gray-600 font-medium">
+          {execution.override_type.replace(/_/g, " ")}
+        </span>
+      )}
+      {execution.reason_category && (
+        <span className="px-2 py-0.5 rounded-full border border-gray-200 bg-gray-50 text-gray-600 font-medium">
+          {execution.reason_category.replace(/_/g, " ")}
+        </span>
+      )}
+      {execution.original_symbol && (
+        <span className="text-gray-500 font-mono">
+          {execution.original_symbol}
+          {execution.replacement_symbol && ` → ${execution.replacement_symbol}`}
+        </span>
+      )}
+      {execution.override_notes && <span className="text-gray-500 italic">&ldquo;{execution.override_notes}&rdquo;</span>}
+    </div>
+  );
+}
+
+// Goal context at time of decision (Slice 4 §G; Phase 7.4/ADR-008,
+// CONTEXT_ONLY) — frozen historical evidence from RecommendationSnapshot,
+// never causal. Omits cleanly when absent/EMPTY, matching
+// DecisionActionPanel's existing GoalContextAtDecisionTime treatment.
+function GoalContextAtDecisionTime({ goalContext }: { goalContext: RecommendationReportCard["execution"]["goal_context"] }) {
+  if (!goalContext || goalContext.context_state !== "COMPLETE" || goalContext.goals.length === 0) return null;
+  return (
+    <div className="pt-2 border-t border-gray-100 space-y-1">
+      <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Goal context at time of decision</p>
+      {goalContext.goals.map((g: DecisionGoalContextGoal) => {
+        const targetDate = formatGoalTargetDate(g.target_date);
+        return (
+          <div key={g.id} className="text-xs">
+            <span className="font-semibold text-gray-700">{g.name}</span>
+            <span className="text-gray-500">
+              {" — "}฿{g.target_amount.toLocaleString("th-TH")} target
+              {targetDate ? ` · ${targetDate}` : ""}
+              {" · "}{g.progress_percent.toFixed(0)}% funded
+              {" · "}{formatGoalPriority(g.priority)} priority
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function ExecutionSection({ execution, decision }: { execution: RecommendationReportCard["execution"]; decision: RecommendationReportCard["decision"] }) {
   if (execution.status === "no_decision_recorded") {
     return <p className="text-sm text-gray-400 italic">No decision recorded yet for this recommendation.</p>;
@@ -142,9 +218,20 @@ function ExecutionSection({ execution, decision }: { execution: RecommendationRe
       <div className="flex items-center gap-2 flex-wrap text-sm">
         <span className="text-gray-500">Your decision:</span>
         <DecisionStatusBadge decision={execution.decision} />
-        {execution.executed_at && <span className="text-gray-400 text-xs">executed {execution.executed_at.slice(0, 10)}</span>}
+        {execution.executed_at && <span className="text-gray-400 text-xs">{decisionRecordedLabel(execution.executed_at)}</span>}
         {decision?.is_system_generated && <span className="text-xs text-gray-400 italic">(system-generated)</span>}
+        {execution.decision_id != null && (
+          <Link
+            href={`/ai-analytics/execution/${execution.decision_id}`}
+            className="text-xs font-semibold text-blue-600 hover:underline ml-auto"
+          >
+            View full execution detail →
+          </Link>
+        )}
       </div>
+
+      <DecisionRationale execution={execution} />
+      <GoalContextAtDecisionTime goalContext={execution.goal_context} />
 
       {analysis && (
         analysis.status === "unavailable" ? (

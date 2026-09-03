@@ -187,3 +187,60 @@ describe("Execution Detail — completion (Execution Completion Polish, Slice 3)
     expect(screen.queryByText(/Partially recorded/)).not.toBeInTheDocument();
   });
 });
+
+// Slice 4 (Decision History / Audit UX), Behavior 1: the "Record execution"
+// CTA previously rendered unconditionally whenever analysis.status ===
+// "unavailable", regardless of decision type — misleading for REJECTED
+// (evaluated via whole-portfolio counterfactual return, never linked-
+// transaction analysis) and EXPIRED (system-generated, no human action to
+// execute). Eligibility now mirrors DecisionActionPanel's
+// RECORD_EXECUTION_ELIGIBLE (APPROVED/MANUAL_OVERRIDE/PARTIAL_EXECUTION).
+describe("Execution Detail — Record execution CTA eligibility (Slice 4)", () => {
+  test("REJECTED with zero linked transactions never offers Record execution", async () => {
+    getExecutionDetail.mockResolvedValue(executionDetail({
+      decision: "REJECTED",
+      analysis: { status: "unavailable", reason: "no_linked_transactions", score: null } as ExecutionDetail["analysis"],
+    }));
+
+    render(<ExecutionDetailPage />);
+
+    await screen.findByText(/Execution analysis unavailable/);
+    expect(screen.queryByText("Record execution →")).not.toBeInTheDocument();
+    expect(await screen.findByText("No execution was recorded for this rejected decision.")).toBeInTheDocument();
+  });
+
+  test("EXPIRED (system-generated) never offers Record execution", async () => {
+    getExecutionDetail.mockResolvedValue(executionDetail({
+      decision: "EXPIRED",
+      analysis: { status: "unavailable", reason: "no_linked_transactions", score: null } as ExecutionDetail["analysis"],
+    }));
+
+    render(<ExecutionDetailPage />);
+
+    await screen.findByText(/Execution analysis unavailable/);
+    expect(screen.queryByText("Record execution →")).not.toBeInTheDocument();
+    expect(await screen.findByText("No execution was recorded for this expired recommendation.")).toBeInTheDocument();
+  });
+
+  test("APPROVED with zero linked transactions still offers Record execution (regression)", async () => {
+    getExecutionDetail.mockResolvedValue(executionDetail({
+      decision: "APPROVED",
+      analysis: { status: "unavailable", reason: "no_linked_transactions", score: null } as ExecutionDetail["analysis"],
+    }));
+
+    render(<ExecutionDetailPage />);
+
+    await screen.findByText(/Execution analysis unavailable/);
+    const link = await screen.findByText("Record execution →");
+    expect(link.closest("a")).toHaveAttribute("href", "/portfolio?decision=42");
+  });
+
+  test("historical timestamp is never labeled 'executed'", async () => {
+    getExecutionDetail.mockResolvedValue(executionDetail({ executed_at: "2026-08-20T00:00:00Z" }));
+
+    render(<ExecutionDetailPage />);
+
+    expect(await screen.findByText("decision recorded 2026-08-20")).toBeInTheDocument();
+    expect(screen.queryByText(/^executed /)).not.toBeInTheDocument();
+  });
+});

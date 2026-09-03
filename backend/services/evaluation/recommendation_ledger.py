@@ -256,23 +256,53 @@ def get_report_card(db: Session, portfolio_id: int, snapshot_id: int) -> dict[st
     )
 
     execution_section: dict[str, Any] = {"status": "no_decision_recorded"}
-    if decision_row and inputs is not None:
-        from services.evaluation.execution_analyzer import compute_execution_analysis
-        from services.evaluation.execution_ledger import _linked_transactions, _recommendation_prices
+    if decision_row:
+        from services.decision_goal_context import load_persisted_decision_context
 
-        plan_symbols = [a.get("symbol") for a in (inputs["target_allocations"] or []) if a.get("symbol")]
+        if inputs is not None:
+            from services.evaluation.execution_analyzer import compute_execution_analysis
+            from services.evaluation.execution_ledger import _linked_transactions, _recommendation_prices
 
-        analysis = compute_execution_analysis(
-            inputs["target_allocations"], inputs["cash_available"], inputs["violations"],
-            _recommendation_prices(snap),
-            _linked_transactions(db, decision_row.id, known_symbols=plan_symbols),
-        )
+            plan_symbols = [a.get("symbol") for a in (inputs["target_allocations"] or []) if a.get("symbol")]
+
+            analysis = compute_execution_analysis(
+                inputs["target_allocations"], inputs["cash_available"], inputs["violations"],
+                _recommendation_prices(snap),
+                _linked_transactions(db, decision_row.id, known_symbols=plan_symbols),
+            )
+        else:
+            # Plan reconstruction unavailable (legacy/malformed snapshot) —
+            # same short-circuit shape execution_ledger._decision_analysis
+            # already uses for ExecutionDetail, reused here rather than
+            # invented, so both surfaces degrade identically. A missing plan
+            # is not evidence that no decision happened: decision identity,
+            # rationale, and goal context below are independently persisted
+            # and must still surface (Review Correction Pass — this must
+            # never regress to "no_decision_recorded" merely because the
+            # plan is unavailable).
+            analysis = {"status": "unavailable", "reason": "no_target_allocations", "score": None}
+
+        # Slice 4 (Decision History / Audit UX) — surface rationale already
+        # persisted on the decision row, and frozen goal context already
+        # persisted on the snapshot (Phase 7.4/ADR-008, CONTEXT_ONLY). Both
+        # were already queried/serialized elsewhere (DecisionActionPanel,
+        # GET /optimizer/decisions/{id}) — this reuses the same helper and
+        # column set rather than re-deriving anything. May raise
+        # DecisionGoalContextIntegrityError for a corrupt persisted payload;
+        # the caller (main.py) maps that to the same 409 its sibling
+        # endpoints already use.
         execution_section = {
             "status": "ok",
             "decision_id": decision_row.id,
             "decision": decision_row.decision,
             "executed_at": decision_row.executed_at.isoformat() + "Z" if decision_row.executed_at else None,
             "analysis": analysis,
+            "override_notes": decision_row.override_notes,
+            "override_type": decision_row.override_type,
+            "original_symbol": decision_row.original_symbol,
+            "replacement_symbol": decision_row.replacement_symbol,
+            "reason_category": decision_row.reason_category,
+            "goal_context": load_persisted_decision_context(snap.wealth_goal_context_json),
         }
 
     horizons = _horizon_days(db, ws)
