@@ -40,7 +40,7 @@ import uuid as _uuid
 from models.database import (
     init_db, migrate_legacy_data, get_db, SessionLocal,
     Workspace, get_default_workspace,
-    Portfolio, PortfolioItem, CashAccount, CashAccountBaseline, CashAccountTransfer, CashAccountTransaction, Liability, LiabilityBalanceObservation, WealthGoal, GoalFundingAllocation, PortfolioInvestmentMandate, GoalScenario, Watchlist,
+    Portfolio, PortfolioItem, CashAccount, CashAccountBaseline, CashAccountTransfer, CashAccountTransaction, CashEntryTemplate, Liability, LiabilityBalanceObservation, WealthGoal, GoalFundingAllocation, PortfolioInvestmentMandate, GoalScenario, Watchlist,
     AgentCache, AnalysisCache, AnalysisHistory, OptimizerHistory, SignalHistory,
     Settings, UserUsage, Transaction, PortfolioSnapshot, BenchmarkPrice,
     MarketDataCache,
@@ -1270,6 +1270,168 @@ async def get_cash_account_balance_as_of(
         "available": balance is not None,
         "baseline_effective_on": baseline.effective_on if baseline is not None else None,
     }
+
+
+# ─── Cash Entry Templates ───────────────────────────────────────────────────────
+# User-triggered recurring cash-entry templates: workspace-owned convenience
+# metadata that prefills the existing Add income / Add expense form. A
+# template is never a financial fact — creating, editing, deleting, or
+# invoking one never writes to CashAccountTransaction or changes
+# CashAccount.balance. Only explicit submission of the existing entry form
+# (createCashAccountTransaction) does that. Deliberately carries no date,
+# frequency, or recurrence field — see docs/architecture/ROADMAP.md.
+
+def _cash_entry_template_payload(template: CashEntryTemplate) -> dict:
+    account = template.cash_account
+    return {
+        "id": template.id,
+        "workspace_id": template.workspace_id,
+        "name": template.name,
+        "transaction_type": template.transaction_type,
+        "cash_account_id": template.cash_account_id,
+        "cash_account_name": account.name if account is not None else None,
+        "cash_account_is_archived": bool(account.is_archived) if account is not None else None,
+        "amount": template.amount,
+        "category": template.category,
+        "note": template.note,
+        "created_at": template.created_at.isoformat(),
+        "updated_at": template.updated_at.isoformat(),
+    }
+
+
+def _cash_entry_template_or_404(db: Session, template_id: int, workspace_id: int) -> CashEntryTemplate:
+    template = (
+        db.query(CashEntryTemplate)
+        .filter(CashEntryTemplate.id == template_id, CashEntryTemplate.workspace_id == workspace_id)
+        .first()
+    )
+    if template is None:
+        raise HTTPException(status_code=404, detail="Cash entry template not found")
+    return template
+
+
+class CashEntryTemplateCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    transaction_type: Literal["INCOME", "EXPENSE"]
+    cash_account_id: int
+    amount: float
+    category: str
+    note: str | None = None
+
+    @model_validator(mode="after")
+    def validate_cash_entry_template(self):
+        if not self.name.strip():
+            raise ValueError("name must not be blank")
+        if not math.isfinite(self.amount) or self.amount <= 0:
+            raise ValueError("amount must be finite and greater than zero")
+        if not self.category.strip():
+            raise ValueError("category must not be blank")
+        return self
+
+
+class CashEntryTemplateUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = None
+    transaction_type: Literal["INCOME", "EXPENSE"] | None = None
+    cash_account_id: int | None = None
+    amount: float | None = None
+    category: str | None = None
+    note: str | None = None
+
+    @model_validator(mode="after")
+    def validate_cash_entry_template_update(self):
+        if not self.model_fields_set:
+            raise ValueError("at least one field is required")
+        if "name" in self.model_fields_set and (self.name is None or not self.name.strip()):
+            raise ValueError("name must not be blank")
+        if "transaction_type" in self.model_fields_set and self.transaction_type is None:
+            raise ValueError("transaction_type must be supplied when updating it")
+        if "cash_account_id" in self.model_fields_set and self.cash_account_id is None:
+            raise ValueError("cash_account_id must be supplied when updating it")
+        if "amount" in self.model_fields_set:
+            if self.amount is None or not math.isfinite(self.amount) or self.amount <= 0:
+                raise ValueError("amount must be finite and greater than zero")
+        if "category" in self.model_fields_set and (self.category is None or not self.category.strip()):
+            raise ValueError("category must not be blank")
+        return self
+
+
+@app.get("/cash-entry-templates")
+async def list_cash_entry_templates(db: Session = Depends(get_db)) -> list[dict]:
+    ws = _ws_id(db)
+    templates = (
+        db.query(CashEntryTemplate)
+        .filter(CashEntryTemplate.workspace_id == ws)
+        .order_by(CashEntryTemplate.name, CashEntryTemplate.id)
+        .all()
+    )
+    return [_cash_entry_template_payload(template) for template in templates]
+
+
+@app.post("/cash-entry-templates", status_code=201)
+async def create_cash_entry_template(body: CashEntryTemplateCreate, db: Session = Depends(get_db)) -> dict:
+    ws = _ws_id(db)
+    account = _cash_account_or_404(db, body.cash_account_id, ws)
+    # Bounded rule: a template may only be created against an active account —
+    # there is little value in deliberately creating one that is already
+    # unusable. An existing template may still survive later account archival
+    # (see PATCH below).
+    _require_active_cash_account(account)
+    template = CashEntryTemplate(
+        workspace_id=ws,
+        name=body.name.strip(),
+        transaction_type=body.transaction_type,
+        cash_account_id=account.id,
+        amount=body.amount,
+        category=body.category.strip(),
+        note=body.note.strip() or None if body.note is not None else None,
+    )
+    db.add(template)
+    db.commit()
+    db.refresh(template)
+    return _cash_entry_template_payload(template)
+
+
+@app.patch("/cash-entry-templates/{template_id}")
+async def update_cash_entry_template(
+    template_id: int, body: CashEntryTemplateUpdate, db: Session = Depends(get_db)
+) -> dict:
+    ws = _ws_id(db)
+    template = _cash_entry_template_or_404(db, template_id, ws)
+    fields = body.model_dump(exclude_unset=True)
+    if "cash_account_id" in fields:
+        # Repointing requires an active account for the same reason create
+        # does; an existing template whose account is later archived is left
+        # alone below (§10 — remains stored/visible/editable, not repointed).
+        account = _cash_account_or_404(db, fields["cash_account_id"], ws)
+        _require_active_cash_account(account)
+        template.cash_account_id = account.id
+    if "name" in fields:
+        template.name = fields["name"].strip()
+    if "transaction_type" in fields:
+        template.transaction_type = fields["transaction_type"]
+    if "amount" in fields:
+        template.amount = fields["amount"]
+    if "category" in fields:
+        template.category = fields["category"].strip()
+    if "note" in fields:
+        note = fields["note"]
+        template.note = note.strip() or None if note is not None else None
+    db.commit()
+    db.refresh(template)
+    return _cash_entry_template_payload(template)
+
+
+@app.delete("/cash-entry-templates/{template_id}")
+async def delete_cash_entry_template(template_id: int, db: Session = Depends(get_db)) -> dict:
+    ws = _ws_id(db)
+    template = _cash_entry_template_or_404(db, template_id, ws)
+    db.delete(template)
+    db.commit()
+    return {"deleted": template_id}
 
 
 # ─── Liabilities ──────────────────────────────────────────────────────────────

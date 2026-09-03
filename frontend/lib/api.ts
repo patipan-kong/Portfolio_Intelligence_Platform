@@ -168,6 +168,55 @@ export interface CashFlowReport {
   events: CashFlowEvent[];
 }
 
+// ─── Cash Entry Templates ────────────────────────────────────────────────────
+// Workspace-owned convenience metadata that prefills the existing Add income /
+// Add expense form — never a financial fact. No date, frequency, or
+// recurrence field exists; see docs/architecture/ROADMAP.md.
+
+export interface CashEntryTemplate {
+  id: number;
+  workspace_id: number;
+  name: string;
+  transaction_type: "INCOME" | "EXPENSE";
+  cash_account_id: number;
+  cash_account_name: string | null;
+  cash_account_is_archived: boolean | null;
+  amount: number;
+  category: string;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type CashEntryTemplateCreate = {
+  name: string;
+  transaction_type: "INCOME" | "EXPENSE";
+  cash_account_id: number;
+  amount: number;
+  category: string;
+  note?: string | null;
+};
+
+export type CashEntryTemplateUpdate = {
+  name?: string;
+  transaction_type?: "INCOME" | "EXPENSE";
+  cash_account_id?: number;
+  amount?: number;
+  category?: string;
+  note?: string | null;
+};
+
+export const listCashEntryTemplates = () => apiFetch<CashEntryTemplate[]>("/cash-entry-templates");
+
+export const createCashEntryTemplate = (body: CashEntryTemplateCreate) =>
+  apiFetch<CashEntryTemplate>("/cash-entry-templates", { method: "POST", body: JSON.stringify(body) });
+
+export const updateCashEntryTemplate = (id: number, body: CashEntryTemplateUpdate) =>
+  apiFetch<CashEntryTemplate>(`/cash-entry-templates/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+
+export const deleteCashEntryTemplate = (id: number) =>
+  apiFetch<{ deleted: number }>(`/cash-entry-templates/${id}`, { method: "DELETE" });
+
 export const updatePortfolioGoal = (portfolioId: number, goal: number | null) =>
   apiFetch<{ id: number; goal_target_value: number | null; ok: boolean }>(
     `/portfolios/${portfolioId}/goal`,

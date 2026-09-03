@@ -4,13 +4,18 @@ import CashFlowPage from "@/app/cash-flow/page";
 import {
   createCashAccountTransfer,
   createCashAccountTransaction,
+  createCashEntryTemplate,
   createCashInvestmentTransfer,
+  deleteCashEntryTemplate,
   getCashFlowReport,
   getCashFlowSettings,
   updateCashFlowSettings,
+  updateCashEntryTemplate,
   listCashAccounts,
+  listCashEntryTemplates,
   listPortfolios,
   type CashAccount,
+  type CashEntryTemplate,
   type CashFlowEvent,
   type Portfolio,
 } from "@/lib/api";
@@ -18,11 +23,15 @@ import {
 vi.mock("@/lib/api", () => ({
   createCashAccountTransfer: vi.fn(),
   createCashAccountTransaction: vi.fn(),
+  createCashEntryTemplate: vi.fn(),
   createCashInvestmentTransfer: vi.fn(),
+  deleteCashEntryTemplate: vi.fn(),
   getCashFlowReport: vi.fn(),
   getCashFlowSettings: vi.fn(),
   updateCashFlowSettings: vi.fn(),
+  updateCashEntryTemplate: vi.fn(),
   listCashAccounts: vi.fn(),
+  listCashEntryTemplates: vi.fn(),
   listPortfolios: vi.fn(),
 }));
 
@@ -39,6 +48,10 @@ const getSettingsMock = vi.mocked(getCashFlowSettings);
 const updateSettingsMock = vi.mocked(updateCashFlowSettings);
 const portfoliosMock = vi.mocked(listPortfolios);
 const investmentTransferMock = vi.mocked(createCashInvestmentTransfer);
+const templatesMock = vi.mocked(listCashEntryTemplates);
+const createTemplateMock = vi.mocked(createCashEntryTemplate);
+const updateTemplateMock = vi.mocked(updateCashEntryTemplate);
+const deleteTemplateMock = vi.mocked(deleteCashEntryTemplate);
 
 function portfolio(overrides: Partial<Portfolio> = {}): Portfolio {
   return { id: 1, name: "Growth Portfolio", cash_balance: 0, created_at: "2026-08-01T00:00:00Z", ...overrides };
@@ -88,6 +101,24 @@ function setReport(events: CashFlowEvent[] = []) {
   reportMock.mockResolvedValue({ month: "2026-08", events });
 }
 
+function template(overrides: Partial<CashEntryTemplate> = {}): CashEntryTemplate {
+  return {
+    id: 1,
+    workspace_id: 1,
+    name: "Monthly Salary",
+    transaction_type: "INCOME",
+    cash_account_id: 1,
+    cash_account_name: "Everyday Cash",
+    cash_account_is_archived: false,
+    amount: 45000,
+    category: "Salary",
+    note: null,
+    created_at: "2026-08-01T00:00:00Z",
+    updated_at: "2026-08-01T00:00:00Z",
+    ...overrides,
+  };
+}
+
 describe("CashFlowPage", () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -101,6 +132,10 @@ describe("CashFlowPage", () => {
     // only the tests in the "Investment transfer" describe block below
     // override this to a non-empty list.
     portfoliosMock.mockResolvedValue([]);
+    templatesMock.mockResolvedValue([]);
+    createTemplateMock.mockResolvedValue(template());
+    updateTemplateMock.mockResolvedValue(template());
+    deleteTemplateMock.mockResolvedValue({ deleted: 1 });
     investmentTransferMock.mockResolvedValue(event({
       id: 11,
       transaction_type: "INVESTMENT_TRANSFER",
@@ -979,6 +1014,202 @@ describe("CashFlowPage", () => {
       expect(await within(trendSection).findByText("6 of 6 months available.")).toBeInTheDocument();
       staleGenerations.forEach((p) => p.resolve({ month: p.month, events: [event({ amount: 12345 })] }));
       await waitFor(() => expect(within(trendSection).getByText("6 of 6 months available.")).toBeInTheDocument());
+    });
+  });
+
+  describe("Cash Entry Templates", () => {
+    it("lists templates with type, amount, category, and account", async () => {
+      templatesMock.mockResolvedValue([template()]);
+      render(<CashFlowPage />);
+      const section = await screen.findByRole("region", { name: "Cash entry templates" });
+      expect(within(section).getByText("Monthly Salary")).toBeInTheDocument();
+      expect(within(section).getByText(/Income · Salary · ฿45,000\.00 · Everyday Cash/)).toBeInTheDocument();
+    });
+
+    it("shows an archived-account template as visible but unusable", async () => {
+      templatesMock.mockResolvedValue([template({
+        cash_account_name: "Old Reserve",
+        cash_account_is_archived: true,
+      })]);
+      // The account itself is archived, so it is absent from listCashAccounts(false)
+      // — the template's cash_account_name/is_archived fields are the only source.
+      accountsMock.mockResolvedValue([account({ id: 2, name: "Other Active" })]);
+      render(<CashFlowPage />);
+      const section = await screen.findByRole("region", { name: "Cash entry templates" });
+      expect(within(section).getByText(/Old Reserve \(Archived\)/)).toBeInTheDocument();
+      const useButton = within(section).getByRole("button", { name: "Account archived" });
+      expect(useButton).toBeDisabled();
+      expect(within(section).getByRole("button", { name: "Edit" })).toBeInTheDocument();
+      expect(within(section).getByRole("button", { name: "Delete" })).toBeInTheDocument();
+    });
+
+    it("creates a template through the compact management form", async () => {
+      let stored: CashEntryTemplate[] = [];
+      templatesMock.mockImplementation(async () => stored);
+      createTemplateMock.mockImplementation(async (body) => {
+        const created = template({ id: 5, name: body.name, transaction_type: body.transaction_type, amount: body.amount, category: body.category });
+        stored = [created];
+        return created;
+      });
+      render(<CashFlowPage />);
+      const section = await screen.findByRole("region", { name: "Cash entry templates" });
+      fireEvent.click(within(section).getByRole("button", { name: "Add template" }));
+      fireEvent.change(within(section).getByLabelText("Template name"), { target: { value: "Rent" } });
+      fireEvent.change(within(section).getByLabelText("Template type"), { target: { value: "EXPENSE" } });
+      fireEvent.change(within(section).getByLabelText("Template amount"), { target: { value: "15000" } });
+      fireEvent.change(within(section).getByLabelText("Template category"), { target: { value: "Housing" } });
+      fireEvent.click(within(section).getByRole("button", { name: "Save template" }));
+      await waitFor(() => expect(createTemplateMock).toHaveBeenCalledWith(expect.objectContaining({
+        name: "Rent", transaction_type: "EXPENSE", amount: 15000, category: "Housing",
+      })));
+      expect(await within(section).findByText("Rent")).toBeInTheDocument();
+    });
+
+    it("edits an existing template", async () => {
+      let stored = [template()];
+      templatesMock.mockImplementation(async () => stored);
+      updateTemplateMock.mockImplementation(async (id, body) => {
+        stored = [{ ...stored[0], ...body } as CashEntryTemplate];
+        return stored[0];
+      });
+      render(<CashFlowPage />);
+      const section = await screen.findByRole("region", { name: "Cash entry templates" });
+      await within(section).findByText("Monthly Salary");
+      fireEvent.click(within(section).getByRole("button", { name: "Edit" }));
+      const nameInput = within(section).getByLabelText("Template name") as HTMLInputElement;
+      expect(nameInput.value).toBe("Monthly Salary");
+      fireEvent.change(nameInput, { target: { value: "Salary v2" } });
+      fireEvent.click(within(section).getByRole("button", { name: "Save template" }));
+      await waitFor(() => expect(updateTemplateMock).toHaveBeenCalledWith(1, expect.objectContaining({ name: "Salary v2" })));
+      expect(await within(section).findByText("Salary v2")).toBeInTheDocument();
+    });
+
+    it("saves a metadata-only edit for an archived-account template without resending the archived account (CET-01)", async () => {
+      let stored = [template({
+        cash_account_id: 9, cash_account_name: "Old Reserve", cash_account_is_archived: true,
+      })];
+      templatesMock.mockImplementation(async () => stored);
+      // The archived account is absent from listCashAccounts(false) — same as
+      // the "visible but unusable" test above — plus an unrelated active
+      // account, to prove the editor never silently substitutes it in.
+      accountsMock.mockResolvedValue([account({ id: 2, name: "Other Active" })]);
+      updateTemplateMock.mockImplementation(async (id, body) => {
+        stored = [{ ...stored[0], ...body } as CashEntryTemplate];
+        return stored[0];
+      });
+      render(<CashFlowPage />);
+      const section = await screen.findByRole("region", { name: "Cash entry templates" });
+      await within(section).findByText("Monthly Salary");
+      fireEvent.click(within(section).getByRole("button", { name: "Edit" }));
+
+      expect(within(section).getByText(/Current account: Old Reserve — Archived/)).toBeInTheDocument();
+      const accountSelect = within(section).getByLabelText("Template cash account") as HTMLSelectElement;
+      // Defaults to the "keep current" sentinel, never silently to Other Active.
+      expect(accountSelect.value).toBe("");
+
+      fireEvent.change(within(section).getByLabelText("Template name"), { target: { value: "Salary v2" } });
+      fireEvent.click(within(section).getByRole("button", { name: "Save template" }));
+
+      await waitFor(() => expect(updateTemplateMock).toHaveBeenCalledTimes(1));
+      const [, payload] = updateTemplateMock.mock.calls[0];
+      expect(payload).toMatchObject({ name: "Salary v2" });
+      expect(payload).not.toHaveProperty("cash_account_id");
+      expect(await within(section).findByText("Salary v2")).toBeInTheDocument();
+      expect(within(section).getByText(/Old Reserve \(Archived\)/)).toBeInTheDocument();
+    });
+
+    it("lets the user explicitly repoint an archived-account template to a different active account", async () => {
+      let stored = [template({
+        cash_account_id: 9, cash_account_name: "Old Reserve", cash_account_is_archived: true,
+      })];
+      templatesMock.mockImplementation(async () => stored);
+      accountsMock.mockResolvedValue([account({ id: 2, name: "Other Active" })]);
+      updateTemplateMock.mockImplementation(async (id, body) => {
+        stored = [{
+          ...stored[0], ...body,
+          cash_account_name: body.cash_account_id === 2 ? "Other Active" : stored[0].cash_account_name,
+          cash_account_is_archived: body.cash_account_id === 2 ? false : stored[0].cash_account_is_archived,
+        } as CashEntryTemplate];
+        return stored[0];
+      });
+      render(<CashFlowPage />);
+      const section = await screen.findByRole("region", { name: "Cash entry templates" });
+      await within(section).findByText("Monthly Salary");
+      fireEvent.click(within(section).getByRole("button", { name: "Edit" }));
+
+      fireEvent.change(within(section).getByLabelText("Template cash account"), { target: { value: "2" } });
+      fireEvent.click(within(section).getByRole("button", { name: "Save template" }));
+
+      await waitFor(() => expect(updateTemplateMock).toHaveBeenCalledWith(1, expect.objectContaining({ cash_account_id: 2 })));
+      expect(await within(section).findByRole("button", { name: "Use template" })).toBeEnabled();
+    });
+
+    it("deletes a template", async () => {
+      let stored = [template()];
+      templatesMock.mockImplementation(async () => stored);
+      deleteTemplateMock.mockImplementation(async (id) => {
+        stored = stored.filter((row) => row.id !== id);
+        return { deleted: id };
+      });
+      render(<CashFlowPage />);
+      const section = await screen.findByRole("region", { name: "Cash entry templates" });
+      await within(section).findByText("Monthly Salary");
+      fireEvent.click(within(section).getByRole("button", { name: "Delete" }));
+      await waitFor(() => expect(deleteTemplateMock).toHaveBeenCalledWith(1));
+      expect(await within(section).findByText(/No templates yet/)).toBeInTheDocument();
+    });
+
+    it("prefills the Add income form from an Income template and does not submit until the user explicitly does", async () => {
+      accountsMock.mockResolvedValue([account({ id: 1, name: "Everyday Cash" })]);
+      templatesMock.mockResolvedValue([template({ cash_account_id: 1, note: "From my job" })]);
+      render(<CashFlowPage />);
+      const section = await screen.findByRole("region", { name: "Cash entry templates" });
+      fireEvent.click(await within(section).findByRole("button", { name: "Use template" }));
+
+      expect(screen.getByRole("heading", { name: "Add income" })).toBeInTheDocument();
+      expect((screen.getByLabelText("Cash flow account") as HTMLSelectElement).value).toBe("1");
+      expect((screen.getByLabelText("Cash flow amount") as HTMLInputElement).value).toBe("45000");
+      expect((screen.getByLabelText("Cash flow category") as HTMLInputElement).value).toBe("Salary");
+      expect((screen.getByLabelText("Cash flow note") as HTMLInputElement).value).toBe("From my job");
+      // The date is the form's own fresh default, never a value stored on the template.
+      expect((screen.getByLabelText("Cash flow date") as HTMLInputElement).value).toBe("2026-08-01");
+
+      // Explicit-submit boundary: opening/prefilling the form must not itself call the ledger endpoint.
+      expect(createMock).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByRole("button", { name: "Save income" }));
+      await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1));
+      expect(createMock).toHaveBeenCalledWith(1, expect.objectContaining({
+        transaction_type: "INCOME", amount: 45000, category: "Salary", note: "From my job",
+      }));
+    });
+
+    it("prefills the Add expense form from an Expense template", async () => {
+      accountsMock.mockResolvedValue([account({ id: 1, name: "Everyday Cash" })]);
+      templatesMock.mockResolvedValue([template({
+        transaction_type: "EXPENSE", cash_account_id: 1, name: "Rent", amount: 15000, category: "Housing",
+      })]);
+      render(<CashFlowPage />);
+      const section = await screen.findByRole("region", { name: "Cash entry templates" });
+      fireEvent.click(await within(section).findByRole("button", { name: "Use template" }));
+      expect(screen.getByRole("heading", { name: "Add expense" })).toBeInTheDocument();
+      expect((screen.getByLabelText("Cash flow amount") as HTMLInputElement).value).toBe("15000");
+      expect((screen.getByLabelText("Cash flow category") as HTMLInputElement).value).toBe("Housing");
+    });
+
+    it("lets the user change prefilled values before submitting", async () => {
+      accountsMock.mockResolvedValue([account({ id: 1, name: "Everyday Cash" })]);
+      templatesMock.mockResolvedValue([template({ cash_account_id: 1 })]);
+      render(<CashFlowPage />);
+      const section = await screen.findByRole("region", { name: "Cash entry templates" });
+      fireEvent.click(await within(section).findByRole("button", { name: "Use template" }));
+      fireEvent.change(screen.getByLabelText("Cash flow amount"), { target: { value: "50000" } });
+      fireEvent.change(screen.getByLabelText("Cash flow category"), { target: { value: "Bonus" } });
+      fireEvent.change(screen.getByLabelText("Cash flow date"), { target: { value: "2026-08-15" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save income" }));
+      await waitFor(() => expect(createMock).toHaveBeenCalledWith(1, expect.objectContaining({
+        amount: 50000, category: "Bonus", occurred_on: "2026-08-15",
+      })));
     });
   });
 });

@@ -75,6 +75,7 @@ class Workspace(Base):
     goal_scenarios = relationship("GoalScenario", back_populates="workspace", cascade="all, delete-orphan")
     cash_account_transactions = relationship("CashAccountTransaction", back_populates="workspace", cascade="all, delete-orphan")
     cash_account_transfers = relationship("CashAccountTransfer", back_populates="workspace", cascade="all, delete-orphan")
+    cash_entry_templates = relationship("CashEntryTemplate", back_populates="workspace", cascade="all, delete-orphan")
     watchlist_items = relationship("Watchlist", back_populates="workspace", cascade="all, delete-orphan")
     settings = relationship("Settings", back_populates="workspace", cascade="all, delete-orphan")
     analysis_cache_items = relationship("AnalysisCache", back_populates="workspace", cascade="all, delete-orphan")
@@ -494,6 +495,37 @@ class CashAccountTransaction(Base):
             name="ck_cash_account_transactions_transfer_leg_type",
         ),
         Index("ix_cash_account_transactions_account_occurred", "cash_account_id", "occurred_on"),
+    )
+
+
+class CashEntryTemplate(Base):
+    """Workspace-owned convenience metadata that prefills the ordinary Cash
+    Flow Add Income / Add Expense form — never a financial fact.
+
+    Creating, editing, deleting, or invoking a template must never write to
+    CashAccountTransaction or change CashAccount.balance; only explicit
+    submission of the existing entry form does that. Deliberately carries no
+    date, schedule, or recurrence field — see docs/architecture/ROADMAP.md.
+    """
+    __tablename__ = "cash_entry_templates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    transaction_type = Column(String(16), nullable=False)
+    cash_account_id = Column(Integer, ForeignKey("cash_accounts.id", ondelete="RESTRICT"), nullable=False, index=True)
+    amount = Column(Float, nullable=False)
+    category = Column(String, nullable=False)
+    note = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    workspace = relationship("Workspace", back_populates="cash_entry_templates")
+    cash_account = relationship("CashAccount")
+
+    __table_args__ = (
+        CheckConstraint("transaction_type IN ('INCOME', 'EXPENSE')", name="ck_cash_entry_templates_type"),
+        CheckConstraint("amount > 0", name="ck_cash_entry_templates_amount_positive"),
     )
 
 

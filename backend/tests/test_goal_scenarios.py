@@ -85,11 +85,16 @@ def default_scenario_fields(**overrides):
 
 
 def test_goal_scenario_revision_merges_the_repository_heads():
-    """The scenario migration is the single post-milestone Alembic head."""
+    """The repository migration chain has exactly one head (no unmerged branches).
+
+    Updated for each new migration as it becomes the sole head — most
+    recently c1d2e3f4a5b6 (Cash Entry Templates); not specific to the goal
+    scenario migration itself.
+    """
     config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["b6d8f0a2c4e6"]
+    assert script.get_heads() == ["c1d2e3f4a5b6"]
 
 
 # 1. create scenario

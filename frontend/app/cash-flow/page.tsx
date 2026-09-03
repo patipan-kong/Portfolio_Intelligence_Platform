@@ -5,13 +5,18 @@ import Link from "next/link";
 import {
   createCashAccountTransfer,
   createCashAccountTransaction,
+  createCashEntryTemplate,
   createCashInvestmentTransfer,
+  deleteCashEntryTemplate,
   getCashFlowReport,
   getCashFlowSettings,
   updateCashFlowSettings,
+  updateCashEntryTemplate,
   listCashAccounts,
+  listCashEntryTemplates,
   listPortfolios,
   type CashAccount,
+  type CashEntryTemplate,
   type CashFlowEvent,
   type CashFlowSettings,
   type Portfolio,
@@ -92,6 +97,18 @@ export default function CashFlowPage() {
   const [trendWindowSize, setTrendWindowSize] = useState<TrendWindowSize>(DEFAULT_TREND_WINDOW_SIZE);
   const [trend, setTrend] = useState<CashFlowTrendResult | null>(null);
   const [trendLoading, setTrendLoading] = useState(true);
+  const [templates, setTemplates] = useState<CashEntryTemplate[] | null>(null);
+  const [templatesLoading, setTemplatesLoading] = useState(true);
+  const [templatesError, setTemplatesError] = useState("");
+  const [templateFormOpen, setTemplateFormOpen] = useState(false);
+  const [templateEditingId, setTemplateEditingId] = useState<number | null>(null);
+  const [templateName, setTemplateName] = useState("");
+  const [templateType, setTemplateType] = useState<EntryType>("INCOME");
+  const [templateAccountId, setTemplateAccountId] = useState("");
+  const [templateAmount, setTemplateAmount] = useState("");
+  const [templateCategory, setTemplateCategory] = useState("");
+  const [templateNote, setTemplateNote] = useState("");
+  const [templateMutationError, setTemplateMutationError] = useState("");
   const reportRequestId = useRef(0);
   const coverageRequestId = useRef(0);
   const trendRequestId = useRef(0);
@@ -120,6 +137,18 @@ export default function CashFlowPage() {
       setAccountsError(messageFor(error, "Unable to load active cash accounts."));
     } finally {
       setAccountsLoading(false);
+    }
+  }, []);
+
+  const loadTemplates = useCallback(async () => {
+    setTemplatesLoading(true);
+    setTemplatesError("");
+    try {
+      setTemplates(await listCashEntryTemplates());
+    } catch (error) {
+      setTemplatesError(messageFor(error, "Unable to load templates."));
+    } finally {
+      setTemplatesLoading(false);
     }
   }, []);
 
@@ -203,6 +232,7 @@ export default function CashFlowPage() {
 
   useEffect(() => { void loadReport(month); }, [loadReport, month]);
   useEffect(() => { void loadAccounts(); }, [loadAccounts]);
+  useEffect(() => { void loadTemplates(); }, [loadTemplates]);
   useEffect(() => { void loadPortfolios(); }, [loadPortfolios]);
   useEffect(() => { void loadTargetSettings(); }, [loadTargetSettings]);
   useEffect(() => {
@@ -220,6 +250,7 @@ export default function CashFlowPage() {
   );
   const currentMonth = currentMonthKey();
   const trackedAccounts = (accounts ?? []).filter((account) => !account.is_archived && Boolean(account.baseline));
+  const trackedAccountIds = new Set(trackedAccounts.map((account) => account.id));
   const expenseCategories = summary
     ? Object.entries(summary.expenseCategories).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     : [];
@@ -238,6 +269,111 @@ export default function CashFlowPage() {
   function closeEntry() {
     setEntryType(null);
     setMutationError("");
+  }
+
+  // Template invocation: opens the SAME Add income / Add expense form with
+  // stable fields prefilled. No stored date exists on a template, so the date
+  // still uses the current page's fresh default (Section 26) — never a
+  // remembered or scheduled date. The user reviews/edits and submits through
+  // the existing createCashAccountTransaction path; nothing here creates a
+  // transaction by itself.
+  function useTemplateForEntry(template: CashEntryTemplate) {
+    setMutationError("");
+    setEntryType(template.transaction_type);
+    setEntryAccountId(String(template.cash_account_id));
+    setEntryAmount(String(template.amount));
+    setEntryDate(`${month}-01`);
+    setEntryCategory(template.category);
+    setEntryNote(template.note ?? "");
+  }
+
+  function openCreateTemplate() {
+    setTemplateMutationError("");
+    setTemplateEditingId(null);
+    setTemplateName("");
+    setTemplateType("INCOME");
+    setTemplateAccountId(String((accounts ?? [])[0]?.id ?? ""));
+    setTemplateAmount("");
+    setTemplateCategory("");
+    setTemplateNote("");
+    setTemplateFormOpen(true);
+  }
+
+  function openEditTemplate(template: CashEntryTemplate) {
+    setTemplateMutationError("");
+    setTemplateEditingId(template.id);
+    setTemplateName(template.name);
+    setTemplateType(template.transaction_type);
+    // The account selector only lists active accounts (Section 8's editor
+    // pattern). An archived template's cash_account_id has no matching
+    // option, so start it on the "keep current" sentinel ("") rather than an
+    // id the <select> cannot represent — see the "Keep current" option in
+    // TemplatesSection and the keepingArchivedAccount branch below.
+    setTemplateAccountId(template.cash_account_is_archived ? "" : String(template.cash_account_id));
+    setTemplateAmount(String(template.amount));
+    setTemplateCategory(template.category);
+    setTemplateNote(template.note ?? "");
+    setTemplateFormOpen(true);
+  }
+
+  function closeTemplateForm() {
+    setTemplateFormOpen(false);
+    setTemplateEditingId(null);
+    setTemplateMutationError("");
+  }
+
+  async function handleTemplateSubmit(event: FormEvent) {
+    event.preventDefault();
+    setTemplateMutationError("");
+    const amount = Number(templateAmount);
+    // CET-01: editing a template whose account is archived starts the
+    // selector on the "keep current" sentinel (""), meaning the user has not
+    // chosen to repoint. In that case cash_account_id is omitted from the
+    // PATCH entirely (Section 5) so the backend preserves the existing
+    // archived association without running active-account validation.
+    const keepingArchivedAccount = templateEditingId != null && templateAccountId === "";
+    const accountId = keepingArchivedAccount ? null : Number(templateAccountId);
+    if (!templateName.trim() ||
+      (!keepingArchivedAccount && (!Number.isInteger(accountId) || !(accounts ?? []).some((account) => account.id === accountId))) ||
+      !Number.isFinite(amount) || amount <= 0 || !templateCategory.trim()) {
+      setTemplateMutationError("Enter a template name, choose an active cash account, and enter a positive amount and category.");
+      return;
+    }
+    try {
+      if (templateEditingId != null) {
+        await updateCashEntryTemplate(templateEditingId, {
+          name: templateName.trim(),
+          transaction_type: templateType,
+          ...(keepingArchivedAccount ? {} : { cash_account_id: accountId as number }),
+          amount,
+          category: templateCategory.trim(),
+          note: templateNote.trim() || null,
+        });
+      } else {
+        await createCashEntryTemplate({
+          name: templateName.trim(),
+          transaction_type: templateType,
+          cash_account_id: accountId as number,
+          amount,
+          category: templateCategory.trim(),
+          note: templateNote.trim() || null,
+        });
+      }
+      closeTemplateForm();
+      await loadTemplates();
+    } catch (error) {
+      setTemplateMutationError(messageFor(error, "Unable to save template."));
+    }
+  }
+
+  async function handleDeleteTemplate(id: number) {
+    setTemplateMutationError("");
+    try {
+      await deleteCashEntryTemplate(id);
+      await loadTemplates();
+    } catch (error) {
+      setTemplateMutationError(messageFor(error, "Unable to delete template."));
+    }
   }
 
   function openTransfer() {
@@ -477,6 +613,36 @@ export default function CashFlowPage() {
             }}
           />
 
+          <TemplatesSection
+            templates={templates}
+            loading={templatesLoading}
+            error={templatesError}
+            onRetry={() => void loadTemplates()}
+            trackedAccountIds={trackedAccountIds}
+            onUse={useTemplateForEntry}
+            accounts={accounts ?? []}
+            formOpen={templateFormOpen}
+            editingId={templateEditingId}
+            name={templateName}
+            type={templateType}
+            accountId={templateAccountId}
+            amount={templateAmount}
+            category={templateCategory}
+            note={templateNote}
+            mutationError={templateMutationError}
+            onOpenCreate={openCreateTemplate}
+            onOpenEdit={openEditTemplate}
+            onClose={closeTemplateForm}
+            onSubmit={handleTemplateSubmit}
+            onDelete={handleDeleteTemplate}
+            setName={setTemplateName}
+            setType={setTemplateType}
+            setAccountId={setTemplateAccountId}
+            setAmount={setTemplateAmount}
+            setCategory={setTemplateCategory}
+            setNote={setTemplateNote}
+          />
+
           <EntrySection
             accounts={trackedAccounts}
             accountsLoading={accountsLoading}
@@ -708,6 +874,149 @@ function CoverageSection({
       )}
     </section>
   );
+}
+
+function TemplatesSection({
+  templates, loading, error, onRetry, trackedAccountIds, onUse,
+  accounts, formOpen, editingId, name, type, accountId, amount, category, note, mutationError,
+  onOpenCreate, onOpenEdit, onClose, onSubmit, onDelete,
+  setName, setType, setAccountId, setAmount, setCategory, setNote,
+}: {
+  templates: CashEntryTemplate[] | null;
+  loading: boolean;
+  error: string;
+  onRetry: () => void;
+  trackedAccountIds: Set<number>;
+  onUse: (template: CashEntryTemplate) => void;
+  accounts: CashAccount[];
+  formOpen: boolean;
+  editingId: number | null;
+  name: string;
+  type: EntryType;
+  accountId: string;
+  amount: string;
+  category: string;
+  note: string;
+  mutationError: string;
+  onOpenCreate: () => void;
+  onOpenEdit: (template: CashEntryTemplate) => void;
+  onClose: () => void;
+  onSubmit: (event: FormEvent) => void;
+  onDelete: (id: number) => void;
+  setName: (value: string) => void;
+  setType: (value: EntryType) => void;
+  setAccountId: (value: string) => void;
+  setAmount: (value: string) => void;
+  setCategory: (value: string) => void;
+  setNote: (value: string) => void;
+}) {
+  const list = templates ?? [];
+  const editingTemplate = editingId != null ? list.find((template) => template.id === editingId) ?? null : null;
+  const editingArchivedAccount = editingTemplate?.cash_account_is_archived
+    ? { name: editingTemplate.cash_account_name }
+    : null;
+  return (
+    <section aria-label="Cash entry templates" className="bg-white border rounded-xl p-4 shadow-sm space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2 className="font-semibold">Templates</h2>
+          <p className="text-xs text-gray-500 mt-1">Prefill Add income / Add expense with saved defaults. You review and submit every entry yourself.</p>
+        </div>
+        {!formOpen && <button type="button" onClick={onOpenCreate} className="text-sm text-blue-600 hover:underline">Add template</button>}
+      </div>
+
+      {loading && <p className="text-sm text-gray-400">Loading templates…</p>}
+      {!loading && error && (
+        <div role="alert" className="text-sm text-red-600 space-y-1">
+          <p>{error}</p>
+          <button type="button" onClick={onRetry} className="text-blue-600 hover:underline">Try again</button>
+        </div>
+      )}
+
+      {!loading && !error && list.length === 0 && !formOpen && (
+        <p className="text-sm text-gray-500">No templates yet. Save one to skip re-entering the same Income or Expense fields.</p>
+      )}
+
+      {!loading && !error && list.length > 0 && (
+        <ul className="divide-y text-sm">
+          {list.map((template) => {
+            const usable = trackedAccountIds.has(template.cash_account_id);
+            const unusableReason = template.cash_account_is_archived ? "Account archived" : "Account not currently tracked";
+            return (
+              <li key={template.id} className="py-2 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="font-medium truncate">{template.name}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    {template.transaction_type === "INCOME" ? "Income" : "Expense"} · {template.category} · {formatTemplateAmount(template.amount)} · {template.cash_account_name ?? "Unknown account"}
+                    {template.cash_account_is_archived && " (Archived)"}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    disabled={!usable}
+                    onClick={() => onUse(template)}
+                    title={usable ? undefined : unusableReason}
+                    className="text-xs px-2 py-1 rounded border border-blue-600 text-blue-700 hover:bg-blue-50 disabled:opacity-40 disabled:cursor-not-allowed disabled:border-gray-300 disabled:text-gray-400"
+                  >
+                    {usable ? "Use template" : unusableReason}
+                  </button>
+                  <button type="button" onClick={() => onOpenEdit(template)} className="text-xs text-gray-600 hover:underline">Edit</button>
+                  <button type="button" onClick={() => onDelete(template.id)} className="text-xs text-red-600 hover:underline">Delete</button>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {formOpen && (
+        <form onSubmit={onSubmit} className="border-t pt-3 space-y-3">
+          <h3 className="font-medium">{editingId != null ? "Edit template" : "Add template"}</h3>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="text-sm">Name
+              <input aria-label="Template name" value={name} onChange={(event) => setName(event.target.value)} className={inputClass} />
+            </label>
+            <label className="text-sm">Type
+              <select aria-label="Template type" value={type} onChange={(event) => setType(event.target.value as EntryType)} className={inputClass}>
+                <option value="INCOME">Income</option>
+                <option value="EXPENSE">Expense</option>
+              </select>
+            </label>
+            <label className="text-sm">Cash account
+              {editingArchivedAccount && (
+                <p className="text-xs text-gray-600 mt-1 mb-1">
+                  Current account: {editingArchivedAccount.name ?? "Unknown account"} — Archived
+                </p>
+              )}
+              <select aria-label="Template cash account" value={accountId} onChange={(event) => setAccountId(event.target.value)} className={inputClass}>
+                {editingArchivedAccount && <option value="">Keep current (archived) account</option>}
+                {accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+              </select>
+            </label>
+            <label className="text-sm">Amount (THB)
+              <input aria-label="Template amount" type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} className={inputClass} />
+            </label>
+            <label className="text-sm">Category
+              <input aria-label="Template category" value={category} onChange={(event) => setCategory(event.target.value)} className={inputClass} />
+            </label>
+            <label className="text-sm sm:col-span-2">Note (optional)
+              <input aria-label="Template note" value={note} onChange={(event) => setNote(event.target.value)} className={inputClass} />
+            </label>
+          </div>
+          {mutationError && <p role="alert" className="text-sm text-red-600">{mutationError}</p>}
+          <div className="flex gap-2">
+            <button type="submit" className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700">Save template</button>
+            <button type="button" onClick={onClose} className="text-sm text-gray-600">Cancel</button>
+          </div>
+        </form>
+      )}
+    </section>
+  );
+}
+
+function formatTemplateAmount(amount: number): string {
+  return amount.toLocaleString("th-TH", { style: "currency", currency: "THB", minimumFractionDigits: 2 });
 }
 
 function TrendSection({

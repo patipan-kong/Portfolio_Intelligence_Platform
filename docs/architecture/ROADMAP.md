@@ -133,6 +133,20 @@ atomicity, no matching or completeness signal between the two sides. The
 Portfolio-side entry remains a separate, user-initiated act through the
 investment ledger (Phase 1).
 
+- **Cash Entry Templates** — user-authored `INCOME`/`EXPENSE` templates
+  (name, Cash Account, amount, category, optional note) that prefill the
+  existing Add income / Add expense form on `/cash-flow`. A template is
+  workspace-owned convenience metadata, not a financial fact: creating,
+  editing, deleting, or invoking one never touches `CashAccountTransaction`
+  or a Cash Account balance — only the user's explicit submission of the
+  (editable) prefilled form does, through the same ledger endpoint as any
+  other entry. No date is stored on a template (invocation uses the form's
+  own fresh date default); there is no scheduled transaction, recurrence
+  rule, or automatic posting. A template referencing an archived Cash
+  Account remains stored and editable but cannot be invoked until the
+  account is restored or the template is repointed to another active
+  account.
+
 ---
 
 # Phase 4 — Liabilities ✅ COMPLETE
