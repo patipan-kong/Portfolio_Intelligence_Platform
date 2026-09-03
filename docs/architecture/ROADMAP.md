@@ -175,6 +175,21 @@ remains a user-supplied preference compared against recorded expense
 evidence, not a system recommendation, and introduces no `EMERGENCY_FUND`-
 specific Goal math (see Phase 6).
 
+**Net Worth Change Attribution — Level-1 (ADR-013)** — a compact "Why Net
+Worth changed" card beneath Net Worth History, for the latest two complete
+Net Worth History points. `GET /net-worth/change-attribution?start&end`
+decomposes the Net Worth delta into exactly three reconciled components —
+investment assets change, external cash change, and liability impact (a
+liability decline is a positive impact) — reusing the same
+`PortfolioSnapshot.total_value` / `cash_balance_as_of()` /
+`liability_balance_as_of()` authorities Net Worth History already reads, and
+returns `AVAILABLE` or `UNAVAILABLE` (never a partial or zero-substituted
+row). **Level-2 economic-cause attribution remains explicitly deferred** —
+this card does not, and cannot yet, explain market return vs. contribution,
+income vs. spending, or debt repayment vs. re-draw; see ADR-013 for the full
+boundary and why each of those requires stronger evidence than the ledger
+currently provides.
+
 ---
 
 # Phase 6 — Planning, Goals & Scenarios

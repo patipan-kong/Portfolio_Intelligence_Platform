@@ -81,6 +81,7 @@ from services.portfolio_transactions import (
 from services.transaction_canonicalizer import parse_position_conversion_payload
 from services.cash_account_ledger import ADJUSTMENT, EXPENSE, INCOME, TRANSFER, INVESTMENT_TRANSFER, cash_balance_as_of, resulting_balance, signed_amount
 from services.liability_balance import liability_balance_as_of
+from services import net_worth_change_attribution
 from services.portfolio_snapshots import generate_daily_snapshot, SnapshotCoverageError
 from services.snapshot_scheduler import setup_scheduler, shutdown_scheduler
 from services.analytics.system_health import compute_system_health, compute_ai_reliability
@@ -1557,6 +1558,27 @@ async def get_liability_balance_as_of(
         "balance": balance,
         "available": balance is not None,
     }
+
+
+@app.get("/net-worth/change-attribution")
+async def get_net_worth_change_attribution(
+    start: date,
+    end: date,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Derived Level-1 read: why recorded Net Worth changed between two dates,
+    at the balance-sheet component level only (investment assets, external
+    cash, liability impact — ADR-013). Reuses PortfolioSnapshot.total_value,
+    cash_balance_as_of, and liability_balance_as_of exclusively; never
+    reconstructs Portfolio/Cash/Liability history independently and never
+    infers an economic cause (market return, contribution, debt repayment,
+    income, spending). Returns AVAILABLE or UNAVAILABLE — never a partial
+    numeric attribution."""
+    if start >= end:
+        raise HTTPException(status_code=400, detail="start must be before end")
+    return net_worth_change_attribution.get_change_attribution(
+        db, _ws_id(db), start.isoformat(), end.isoformat()
+    )
 
 
 # ─── Wealth Goals (Phase 6, Milestone 1 — Wealth Goals Foundation) ────────────

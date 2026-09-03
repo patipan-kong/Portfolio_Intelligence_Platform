@@ -36,6 +36,7 @@ import CrossPortfolioWealthHistory from "@/components/CrossPortfolioWealthHistor
 import TotalAssetsHistoryCard from "@/components/TotalAssetsHistoryCard";
 import TotalLiabilitiesHistoryCard from "@/components/TotalLiabilitiesHistoryCard";
 import NetWorthHistoryCard from "@/components/NetWorthHistoryCard";
+import NetWorthChangeAttributionCard from "@/components/NetWorthChangeAttributionCard";
 
 // Matches the per-portfolio Income page's cap (backend's hard limit is 500)
 // so cross-portfolio dividend aggregation isn't silently truncated either.
@@ -710,6 +711,8 @@ export default function DashboardPage() {
       <TotalLiabilitiesHistoryCard summary={totalLiabilitiesHistorySummary} loading={totalLiabilitiesHistoryLoading} />
 
       <NetWorthHistoryCard summary={netWorthHistorySummary} loading={netWorthHistoryLoading} />
+
+      <NetWorthChangeAttributionCard summary={netWorthHistorySummary} loading={netWorthHistoryLoading} />
 
       {isLoading ? (
         <p className="text-sm text-gray-400">Loading…</p>

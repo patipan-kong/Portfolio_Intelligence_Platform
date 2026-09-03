@@ -12,6 +12,7 @@ const {
   listLiabilities,
   getCashAccountBalanceAsOf,
   getLiabilityBalanceAsOf,
+  getNetWorthChangeAttribution,
   portfolioState,
 } = vi.hoisted(() => ({
   getHoldings: vi.fn(),
@@ -22,6 +23,7 @@ const {
   listLiabilities: vi.fn(),
   getCashAccountBalanceAsOf: vi.fn(),
   getLiabilityBalanceAsOf: vi.fn(),
+  getNetWorthChangeAttribution: vi.fn(),
   portfolioState: {
     portfolios: [] as Portfolio[],
     loading: false,
@@ -38,6 +40,7 @@ vi.mock("@/lib/api", () => ({
   listLiabilities,
   getCashAccountBalanceAsOf,
   getLiabilityBalanceAsOf,
+  getNetWorthChangeAttribution,
 }));
 
 vi.mock("@/lib/PortfolioContext", () => ({
@@ -255,6 +258,16 @@ beforeEach(() => {
   // Same rationale as getCashAccountBalanceAsOf's default above, for the
   // Liability As-Of fan-out.
   getLiabilityBalanceAsOf.mockResolvedValue(liabilityAsOf(0, "", null, false));
+  getNetWorthChangeAttribution.mockReset();
+  // Default: unavailable. Only exercised when a test's data produces two
+  // complete Net Worth History points (NetWorthChangeAttributionCard's own
+  // fetch trigger) — otherwise this default is simply never called.
+  getNetWorthChangeAttribution.mockResolvedValue({
+    status: "UNAVAILABLE",
+    start_date: "",
+    end_date: "",
+    reason_codes: [],
+  });
   portfolioState.portfolios = [];
   portfolioState.loading = false;
   portfolioState.error = null;

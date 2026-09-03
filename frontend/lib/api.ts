@@ -954,6 +954,53 @@ export const getCashAccountBalanceAsOf = (id: number, date: string) =>
 export const createCashAccountTransfer = (body: CashAccountTransferCreate) =>
   apiFetch<CashAccountTransfer>("/cash-account-transfers", { method: "POST", body: JSON.stringify(body) });
 
+// ── Net Worth Change Attribution (Level-1 balance-sheet component attribution, ADR-013) ──
+//
+// A derived read: never zero-substituted, always AVAILABLE or UNAVAILABLE.
+// The discriminated union on `status` is deliberate — a caller narrowing on
+// `status === "AVAILABLE"` gets `components`/`start`/`end` typed as present,
+// so an UNAVAILABLE result can never be accidentally rendered as zeroes.
+
+export interface NetWorthChangeAttributionEndpoint {
+  investment_assets: number;
+  external_cash: number;
+  total_assets: number;
+  total_liabilities: number;
+  net_worth: number;
+}
+
+export interface NetWorthChangeAttributionComponents {
+  investment_assets_change: number;
+  external_cash_change: number;
+  liability_impact: number;
+}
+
+export interface NetWorthChangeAttributionAvailable {
+  status: "AVAILABLE";
+  start_date: string;
+  end_date: string;
+  start: NetWorthChangeAttributionEndpoint;
+  end: NetWorthChangeAttributionEndpoint;
+  components: NetWorthChangeAttributionComponents;
+  net_worth_change: number;
+  reconciliation_difference: number;
+  new_tracking_scope: boolean;
+}
+
+export interface NetWorthChangeAttributionUnavailable {
+  status: "UNAVAILABLE";
+  start_date: string;
+  end_date: string;
+  reason_codes: string[];
+}
+
+export type NetWorthChangeAttribution = NetWorthChangeAttributionAvailable | NetWorthChangeAttributionUnavailable;
+
+export const getNetWorthChangeAttribution = (start: string, end: string) =>
+  apiFetch<NetWorthChangeAttribution>(
+    `/net-worth/change-attribution?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`
+  );
+
 // ─── Investment Funding Transfer (ADR-012) ────────────────────────────────────
 // Records that money moved between a Cash Account and a Portfolio. Authoritative
 // only for the Cash Account side — it never creates a Portfolio transaction or
