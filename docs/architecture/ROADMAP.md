@@ -248,8 +248,9 @@ Delivered foundation:
   (`GET /wealth-goals/factual-review`) provides DB-only factual valuation
   composition from Cash Account balances and persisted PortfolioSnapshot
   evidence, with explicit as-of/source-quality semantics, designation coverage,
-  and funding-support composition. It performs no provider fetches or advisory
-  inference.
+  and funding-support composition. The Workspace Goals view surfaces its
+  server-owned valuation-completeness state alongside source health. It performs
+  no provider fetches or advisory inference.
 - **7.3B Legacy Goal Profile Evidence** —
   `wealth.legacy-profile-evidence.v1`
   (`GET /wealth-goals/legacy-profile-evidence`) provides allocation-edge

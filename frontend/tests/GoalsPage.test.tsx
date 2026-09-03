@@ -495,6 +495,54 @@ describe("GoalsPage", () => {
     expect(createMock).not.toHaveBeenCalled();
   });
 
+  describe("Factual wealth review", () => {
+    it("renders the server-owned COMPLETE status without recomputing valuation evidence", async () => {
+      listMock.mockResolvedValue([goal]);
+      allocationsMock.mockResolvedValue([cashAllocation]);
+      cashAccountsMock.mockResolvedValue([makeCashAccount(5, 300000)]);
+
+      render(<GoalsPage />);
+
+      expect(await screen.findByText("Valuation evidence is complete for all designated funding sources.")).toBeInTheDocument();
+    });
+
+    it("renders a PARTIAL factual-review status from the server response", async () => {
+      listMock.mockResolvedValue([goal]);
+      allocationsMock.mockResolvedValue([cashAllocation]);
+      contextMock.mockImplementation(async () => ({
+        ...(await configuredFactualReview()),
+        valuation_completeness: "PARTIAL",
+      }));
+
+      render(<GoalsPage />);
+
+      expect(await screen.findByText("Valuation evidence is partial. Review each funding source’s availability and quality below.")).toBeInTheDocument();
+    });
+
+    it("renders an UNAVAILABLE factual-review status without fabricating a value", async () => {
+      listMock.mockResolvedValue([goal]);
+      allocationsMock.mockResolvedValue([cashAllocation]);
+      contextMock.mockImplementation(async () => ({
+        ...(await configuredFactualReview()),
+        valuation_completeness: "UNAVAILABLE",
+      }));
+
+      render(<GoalsPage />);
+
+      expect(await screen.findByText("Valuation evidence is unavailable for the designated funding sources.")).toBeInTheDocument();
+      expect(screen.queryByText("Valuation evidence is complete for all designated funding sources.")).not.toBeInTheDocument();
+    });
+
+    it("states when no designations require valuation evidence", async () => {
+      listMock.mockResolvedValue([goal]);
+      allocationsMock.mockResolvedValue([]);
+
+      render(<GoalsPage />);
+
+      expect(await screen.findByText("No funding sources are designated, so no valuation evidence is required.")).toBeInTheDocument();
+    });
+  });
+
   describe("Funding source health", () => {
     it("uses one workspace Goal Context request and aggregates a Cash Account shared by two active goals", async () => {
       const goalB = makeGoal({ id: 2, name: "House Down Payment", target_amount: 500000 });

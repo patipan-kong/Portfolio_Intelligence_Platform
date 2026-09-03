@@ -311,6 +311,19 @@ export default function GoalsPage() {
         )}
       </section>
 
+      <section className="space-y-3 pt-2 border-t" aria-labelledby="factual-wealth-review-heading">
+        <h2 className="text-lg font-semibold" id="factual-wealth-review-heading">Factual wealth review</h2>
+        {loading || factualReview === undefined ? (
+          <p className="text-sm text-gray-400">Loading factual wealth review…</p>
+        ) : error || contextError || !reviewResponse || !contextMatchesGoals ? (
+          <p role="alert" className="text-sm text-red-600">
+            Factual wealth review is unavailable — Goal Context evidence is incomplete.
+          </p>
+        ) : (
+          <FactualWealthReviewSummary review={reviewResponse} />
+        )}
+      </section>
+
       <section className="space-y-3 pt-2 border-t" aria-labelledby="funding-source-health-heading">
         <h2 id="funding-source-health-heading" className="text-lg font-semibold">Funding source health</h2>
         {loading || factualReview === undefined ? (
@@ -413,6 +426,22 @@ function SourceHealthRow({ row }: { row: SourceFundingOverviewRow }) {
       )}
     </li>
   );
+}
+
+function FactualWealthReviewSummary({ review }: { review: FactualReviewResponse }) {
+  if (review.sources.length === 0) {
+    return <p className="text-sm text-gray-500">No funding sources are designated, so no valuation evidence is required.</p>;
+  }
+
+  if (review.valuation_completeness === "COMPLETE") {
+    return <p className="text-sm text-gray-600">Valuation evidence is complete for all designated funding sources.</p>;
+  }
+
+  if (review.valuation_completeness === "PARTIAL") {
+    return <p className="text-sm text-amber-700">Valuation evidence is partial. Review each funding source’s availability and quality below.</p>;
+  }
+
+  return <p className="text-sm text-red-600">Valuation evidence is unavailable for the designated funding sources.</p>;
 }
 
 function TypeSelect({ ariaLabel, value, onChange }: { ariaLabel: string; value: WealthGoalType; onChange: (value: WealthGoalType) => void }) {
