@@ -613,6 +613,69 @@ describe("GoalDetailPage", () => {
     expect(screen.getByText((_, element) => element?.textContent === "฿700,000.00")).toBeInTheDocument();
   });
 
+  describe("Goal Review Cues", () => {
+    it("places factual review cues after the authoritative summary and before funding", async () => {
+      render(<GoalDetailPage params={{ id: "1" }} />);
+
+      const cues = await screen.findByRole("heading", { name: "Goal review cues" });
+      const summary = screen.getByRole("heading", { name: "Goal Summary" });
+      const funding = screen.getByRole("heading", { name: "Funding" });
+      expect(summary.compareDocumentPosition(cues) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(cues.compareDocumentPosition(funding) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it("links designation and documentary cues to their existing evidence sections", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 1_000_000 }]);
+      allocationsMock.mockResolvedValue([{ ...cashAllocation, allocated_amount: 300_000 }]);
+      planHistoryMock.mockResolvedValue(planHistory);
+      fundingHistoryMock.mockResolvedValue(fundingHistory);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+
+      expect(await screen.findByRole("link", { name: "Designated funding is ฿700,000.00 below the current target." })).toHaveAttribute("href", "#funding-heading");
+      expect(screen.getByRole("link", { name: /Plan terms were previously amended/ })).toHaveAttribute("href", "#plan-history-heading");
+      expect(screen.getByRole("link", { name: /Funding designations were previously amended/ })).toHaveAttribute("href", "#funding-history-heading");
+    });
+
+    it("keeps a documentary cue when current factual review fails", async () => {
+      planHistoryMock.mockResolvedValue(planHistory);
+      contextMock.mockRejectedValue(new Error("factual review offline"));
+      render(<GoalDetailPage params={{ id: "1" }} />);
+
+      expect(await screen.findByRole("link", { name: /Plan terms were previously amended/ })).toBeInTheDocument();
+      expect(screen.getByText("Some review evidence is still loading or unavailable.")).toBeInTheDocument();
+      expect(screen.queryByText(/Designated funding is .* below the current target/)).not.toBeInTheDocument();
+    });
+
+    it("uses a neutral no-cue state only when accepted evidence proves no cue condition", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 300_000 }]);
+      allocationsMock.mockResolvedValue([{ ...cashAllocation, allocated_amount: 300_000 }]);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+
+      expect(await screen.findByText("No review cues from the currently available evidence.")).toBeInTheDocument();
+    });
+
+    it("refreshes designation cues from the existing funding-context refresh", async () => {
+      listMock.mockResolvedValue([{ ...goal, target_amount: 300_000 }]);
+      allocationsMock.mockResolvedValue([]);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      expect(await screen.findByRole("link", { name: "Designated funding is ฿300,000.00 below the current target." })).toBeInTheDocument();
+
+      allocationsMock.mockResolvedValue([{ ...cashAllocation, allocated_amount: 300_000 }]);
+      fireEvent.change(screen.getByLabelText("Funding source"), { target: { value: "5" } });
+      fireEvent.change(screen.getByLabelText("Designated amount"), { target: { value: "300000" } });
+      fireEvent.click(screen.getByRole("button", { name: "Add funding source" }));
+
+      await waitFor(() => expect(contextMock).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(screen.queryByRole("link", { name: "Designated funding is ฿300,000.00 below the current target." })).not.toBeInTheDocument());
+    });
+
+    it("uses no positive verdict or action language in the cue panel", async () => {
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      const panel = (await screen.findByRole("heading", { name: "Goal review cues" })).closest("section") as HTMLElement;
+      expect(within(panel).queryByText(/recommended|best|optimal|safe|unsafe|healthy|unhealthy|good|bad|fix this|you should|must contribute|increase|decrease|move money|rebalance/i)).not.toBeInTheDocument();
+    });
+  });
+
   it("renders allocations and preserves add, edit, and remove semantics", async () => {
     allocationsMock.mockResolvedValue([cashAllocation]);
     render(<GoalDetailPage params={{ id: "1" }} />);

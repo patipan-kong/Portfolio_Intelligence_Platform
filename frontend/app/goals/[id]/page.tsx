@@ -21,7 +21,9 @@ import {
   GoalAffordabilitySection,
   type GoalAffordabilityEvidence,
 } from "@/components/goals/GoalAffordabilitySection";
-import { goalAffordabilityCalendar } from "@/lib/goalAffordability";
+import { GoalReviewCues } from "@/components/goals/GoalReviewCues";
+import { computeGoalAffordability, goalAffordabilityCalendar } from "@/lib/goalAffordability";
+import type { GoalReviewAffordabilityState } from "@/lib/goalReviewCues";
 import type { CashAccountsFetchStatus } from "@/lib/emergencyFund";
 import {
   sourceKey,
@@ -305,6 +307,32 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
       .map(([, source]) => source);
   }, [contextGoal, contextMatchesGoals, factualSourceByKey]);
 
+  // Evaluate the existing affordability bridge once. Both the authoritative
+  // affordability section and the review-only cue layer receive this exact
+  // result; neither owns a second calculation.
+  const affordabilityResult = useMemo<GoalReviewAffordabilityState>(() => {
+    if (selectedGoalContext === undefined || affordabilityEvidence === undefined) return undefined;
+    if ("error" in selectedGoalContext) return selectedGoalContext;
+    return computeGoalAffordability({
+      targetAmount: selectedGoalContext.target_amount,
+      startingValue: selectedGoalContext.designated_total,
+      asOfDate: affordabilityEvidence.calendar.asOfDate,
+      targetDate: selectedGoalContext.target_date,
+      trailingCompletedMonths: affordabilityEvidence.calendar.trailingCompletedMonths,
+      monthlyCashFlowResults: affordabilityEvidence.monthlyCashFlowResults,
+      cashAccountsStatus,
+      cashAccounts,
+    });
+  }, [selectedGoalContext, affordabilityEvidence, cashAccountsStatus, cashAccounts]);
+
+  const factualSourcesForCues = factualReview === undefined
+    ? undefined
+    : factualReview && "error" in factualReview
+      ? factualReview
+      : contextMatchesGoals
+        ? selectedFactualSources
+        : { error: "Funding-source evidence is unavailable because its Goal Context is inconsistent." };
+
   function fundingHealthForSource(kind: GoalFundingSourceKind, id: number): SourceFundingHealth {
     // A missing or mismatched Goal Context means the cross-goal total is not
     // known. Keep the health claim unavailable instead of treating it as 0.
@@ -414,6 +442,14 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
             <GoalSummary item={currentGoal} goalContext={selectedGoalContext} />
           </section>
 
+          <GoalReviewCues input={{
+            goalContext: selectedGoalContext,
+            factualSources: factualSourcesForCues,
+            affordability: affordabilityResult,
+            planHistory,
+            fundingHistory,
+          }} />
+
           <section className="bg-white border rounded-xl p-4 shadow-sm space-y-3" aria-labelledby="funding-heading">
             <h2 id="funding-heading" className="text-lg font-semibold">Funding</h2>
             <FundingSourcesSection
@@ -458,10 +494,7 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
             />
             {!currentGoal.is_archived && (
               <GoalAffordabilitySection
-                goalContext={selectedGoalContext}
-                evidence={affordabilityEvidence}
-                cashAccountsStatus={cashAccountsStatus}
-                cashAccounts={cashAccounts}
+                result={affordabilityResult}
               />
             )}
           </section>

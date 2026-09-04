@@ -228,6 +228,10 @@ currently provides.
   the trailing three completed months; incomplete evidence fails closed and it
   has no optimizer or recommendation authority
 - Goal Detail / Planning UX — summary, funding sources, planning, and scenarios
+- Goal Review Cues — a read-only, deterministic synthesis at the top of Goal
+  Detail that links current plan, designation, source evidence, affordability,
+  and documentary history conditions to the existing evidence. It adds no score,
+  recommendation, advisory authority, freshness policy, or persistence.
 - Goal Funding-Source Drill-Through — Goal Detail's Funding Sources list links
   each designation to its exact existing Cash Account or Portfolio source
   (`/cash?account=<id>` / `/portfolio?portfolio=<id>`) for factual inspection.

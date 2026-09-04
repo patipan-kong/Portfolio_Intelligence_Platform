@@ -1,9 +1,9 @@
 "use client";
 
-import { computeGoalAffordability, type GoalAffordabilityCalendar } from "@/lib/goalAffordability";
-import type { CashAccountsFetchStatus, MonthlyFetchResult } from "@/lib/emergencyFund";
-import type { CashAccount } from "@/lib/api";
-import { formatThb, type GoalContextState } from "./GoalPlanningSections";
+import type { GoalAffordabilityCalendar } from "@/lib/goalAffordability";
+import type { MonthlyFetchResult } from "@/lib/emergencyFund";
+import { formatThb } from "./GoalPlanningSections";
+import type { GoalReviewAffordabilityState } from "@/lib/goalReviewCues";
 
 function monthWord(count: number): string {
   return `${count} completed month${count === 1 ? "" : "s"}`;
@@ -21,41 +21,23 @@ export interface GoalAffordabilityEvidence {
 }
 
 export interface GoalAffordabilitySectionProps {
-  goalContext: GoalContextState;
-  /** undefined while the trailing 3-month Cash Flow fetch is still in flight. */
-  evidence: GoalAffordabilityEvidence | undefined;
-  cashAccountsStatus: CashAccountsFetchStatus;
-  cashAccounts: CashAccount[];
+  /** Evaluated once by Goal Detail from the existing affordability helper. */
+  result: GoalReviewAffordabilityState;
 }
 
 /**
- * Presentational only. All affordability semantics live in
- * computeGoalAffordability (frontend/lib/goalAffordability.ts) — this
- * component renders its result and never derives a number of its own.
+ * Presentational only. Goal Detail supplies the existing affordability result
+ * so this section and Goal Review Cues read the same accepted evaluation.
  */
 export function GoalAffordabilitySection({
-  goalContext,
-  evidence,
-  cashAccountsStatus,
-  cashAccounts,
+  result,
 }: GoalAffordabilitySectionProps) {
-  if (goalContext === undefined || evidence === undefined) {
+  if (result === undefined) {
     return <p className="text-sm text-gray-400">Checking affordability…</p>;
   }
-  if ("error" in goalContext) {
-    return <p className="text-sm text-gray-500">Affordability could not be assessed: {goalContext.error}</p>;
+  if ("error" in result) {
+    return <p className="text-sm text-gray-500">Affordability could not be assessed: {result.error}</p>;
   }
-
-  const result = computeGoalAffordability({
-    targetAmount: goalContext.target_amount,
-    startingValue: goalContext.designated_total,
-    asOfDate: evidence.calendar.asOfDate,
-    targetDate: goalContext.target_date,
-    trailingCompletedMonths: evidence.calendar.trailingCompletedMonths,
-    monthlyCashFlowResults: evidence.monthlyCashFlowResults,
-    cashAccountsStatus,
-    cashAccounts,
-  });
 
   return (
     <div className="space-y-2 pt-3 border-t" aria-label="Goal affordability">
