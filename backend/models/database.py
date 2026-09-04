@@ -71,6 +71,7 @@ class Workspace(Base):
     liability_balance_observations = relationship("LiabilityBalanceObservation", back_populates="workspace", cascade="all, delete-orphan")
     wealth_goals = relationship("WealthGoal", back_populates="workspace", cascade="all, delete-orphan")
     goal_funding_allocations = relationship("GoalFundingAllocation", back_populates="workspace", cascade="all, delete-orphan")
+    goal_funding_allocation_history = relationship("GoalFundingAllocationHistory", back_populates="workspace", cascade="all, delete-orphan")
     portfolio_investment_mandates = relationship("PortfolioInvestmentMandate", back_populates="workspace", cascade="all, delete-orphan")
     goal_scenarios = relationship("GoalScenario", back_populates="workspace", cascade="all, delete-orphan")
     cash_account_transactions = relationship("CashAccountTransaction", back_populates="workspace", cascade="all, delete-orphan")
@@ -263,6 +264,7 @@ class WealthGoal(Base):
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     workspace = relationship("Workspace", back_populates="wealth_goals")
+    funding_allocation_history = relationship("GoalFundingAllocationHistory", back_populates="wealth_goal", cascade="all, delete-orphan")
 
     __table_args__ = (
         CheckConstraint(
@@ -338,6 +340,48 @@ class GoalFundingAllocation(Base):
         UniqueConstraint("wealth_goal_id", "cash_account_id", name="uq_goal_funding_allocations_goal_cash"),
         UniqueConstraint("wealth_goal_id", "portfolio_id", name="uq_goal_funding_allocations_goal_portfolio"),
         Index("ix_goal_funding_allocations_workspace_goal", "workspace_id", "wealth_goal_id"),
+    )
+
+
+class GoalFundingAllocationHistory(Base):
+    """Immutable evidence of a GoalFundingAllocation designation transition.
+
+    This is not a cash movement, contribution, transfer, transaction, or proof
+    that a source held the designated amount.  The live allocation table remains
+    the sole authority for present funding state.  Source identity and name are
+    scalar snapshots rather than live foreign keys so history survives a
+    Portfolio hard-delete and never changes after a source rename.
+    """
+    __tablename__ = "goal_funding_allocation_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    wealth_goal_id = Column(Integer, ForeignKey("wealth_goals.id", ondelete="CASCADE"), nullable=False, index=True)
+    source_kind = Column(String(16), nullable=False)
+    # Historical scalar: intentionally no FK to CashAccount or Portfolio.
+    source_id = Column(Integer, nullable=False)
+    source_name = Column(String, nullable=False)
+    action = Column(String(16), nullable=False)
+    previous_designated_amount = Column(Float, nullable=True)
+    resulting_designated_amount = Column(Float, nullable=True)
+    currency = Column(String(3), nullable=False, default="THB")
+    recorded_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    workspace = relationship("Workspace", back_populates="goal_funding_allocation_history")
+    wealth_goal = relationship("WealthGoal", back_populates="funding_allocation_history")
+
+    __table_args__ = (
+        CheckConstraint("source_kind IN ('CASH_ACCOUNT', 'PORTFOLIO')", name="ck_goal_funding_allocation_history_source_kind"),
+        CheckConstraint("action IN ('CREATE', 'UPDATE', 'REMOVE')", name="ck_goal_funding_allocation_history_action"),
+        CheckConstraint("currency = 'THB'", name="ck_goal_funding_allocation_history_currency_thb"),
+        CheckConstraint(
+            "(action = 'CREATE' AND previous_designated_amount IS NULL AND resulting_designated_amount > 0) "
+            "OR (action = 'UPDATE' AND previous_designated_amount > 0 AND resulting_designated_amount > 0 "
+            "AND previous_designated_amount <> resulting_designated_amount) "
+            "OR (action = 'REMOVE' AND previous_designated_amount > 0 AND resulting_designated_amount IS NULL)",
+            name="ck_goal_funding_allocation_history_transition",
+        ),
+        Index("ix_goal_funding_allocation_history_workspace_goal_recorded", "workspace_id", "wealth_goal_id", "recorded_at"),
     )
 
 

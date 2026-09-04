@@ -11,6 +11,7 @@ import {
   getPortfolioPrices,
   getWealthFactualReview,
   listCashAccounts,
+  listGoalFundingAllocationHistory,
   listGoalFundingAllocations,
   listGoalScenarios,
   listPortfolios,
@@ -22,6 +23,7 @@ import {
   type FactualReviewResponse,
   type GoalContextResponse,
   type GoalFundingAllocation,
+  type GoalFundingAllocationHistory,
   type LegacyGoalProfileEvidenceResponse,
   type GoalScenario,
   type Portfolio,
@@ -40,6 +42,7 @@ vi.mock("@/lib/api", () => ({
   getPortfolioPrices: vi.fn(),
   getWealthFactualReview: vi.fn(),
   listCashAccounts: vi.fn(),
+  listGoalFundingAllocationHistory: vi.fn(),
   listGoalFundingAllocations: vi.fn(),
   listGoalScenarios: vi.fn(),
   listPortfolios: vi.fn(),
@@ -112,6 +115,48 @@ const portfolioAllocation: GoalFundingAllocation = {
   updated_at: "2026-08-26T00:00:00",
 };
 
+const fundingHistory: GoalFundingAllocationHistory[] = [
+  {
+    id: 203,
+    workspace_id: 1,
+    wealth_goal_id: 1,
+    source_kind: "CASH_ACCOUNT",
+    source_id: 5,
+    source_name: "Wedding Savings",
+    action: "REMOVE",
+    previous_designated_amount: 250000,
+    resulting_designated_amount: null,
+    currency: "THB",
+    recorded_at: "2026-09-04T12:00:00",
+  },
+  {
+    id: 202,
+    workspace_id: 1,
+    wealth_goal_id: 1,
+    source_kind: "CASH_ACCOUNT",
+    source_id: 5,
+    source_name: "Wedding Savings",
+    action: "UPDATE",
+    previous_designated_amount: 300000,
+    resulting_designated_amount: 250000,
+    currency: "THB",
+    recorded_at: "2026-09-04T11:00:00",
+  },
+  {
+    id: 201,
+    workspace_id: 1,
+    wealth_goal_id: 1,
+    source_kind: "CASH_ACCOUNT",
+    source_id: 5,
+    source_name: "Wedding Savings",
+    action: "CREATE",
+    previous_designated_amount: null,
+    resulting_designated_amount: 300000,
+    currency: "THB",
+    recorded_at: "2026-09-04T10:00:00",
+  },
+];
+
 const scenario: GoalScenario = {
   id: 500,
   workspace_id: 1,
@@ -183,6 +228,7 @@ function quote(symbol: string, current: number): PriceRefreshItem {
 
 const listMock = vi.mocked(listWealthGoals);
 const allocationsMock = vi.mocked(listGoalFundingAllocations);
+const fundingHistoryMock = vi.mocked(listGoalFundingAllocationHistory);
 const contextMock = vi.mocked(getWealthFactualReview);
 const legacyEvidenceMock = vi.mocked(getLegacyGoalProfileEvidence);
 const cashAccountsMock = vi.mocked(listCashAccounts);
@@ -376,6 +422,7 @@ describe("GoalDetailPage", () => {
     vi.resetAllMocks();
     listMock.mockResolvedValue([goal]);
     allocationsMock.mockResolvedValue([]);
+    fundingHistoryMock.mockResolvedValue([]);
     contextMock.mockImplementation(configuredFactualReview);
     legacyEvidenceMock.mockImplementation(configuredLegacyEvidence);
     cashAccountsMock.mockResolvedValue([cashAccount]);
@@ -573,6 +620,41 @@ describe("GoalDetailPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Remove Wedding Savings as a funding source" }));
     await waitFor(() => expect(allocationsDeleteMock).toHaveBeenCalledWith(1, 100));
     await waitFor(() => expect(contextMock).toHaveBeenCalledTimes(4));
+  });
+
+  describe("Goal Funding Allocation History", () => {
+    it("renders create, changed-designation, and removal evidence with designation-safe wording", async () => {
+      fundingHistoryMock.mockResolvedValue(fundingHistory);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+
+      expect(await screen.findByText("Wedding Savings designated ฿300,000.00.")).toBeInTheDocument();
+      expect(screen.getByText("Wedding Savings designation changed from ฿300,000.00 to ฿250,000.00.")).toBeInTheDocument();
+      expect(screen.getByText("Wedding Savings designation removed (฿250,000.00).")).toBeInTheDocument();
+      expect(screen.getByText(/Designation changes only\. This is not a record of contributions, transfers, or available funds\./)).toBeInTheDocument();
+    });
+
+    it("uses unavailable historical source snapshots without a live-source drill-through", async () => {
+      fundingHistoryMock.mockResolvedValue([{
+        ...fundingHistory[0],
+        source_kind: "PORTFOLIO",
+        source_id: 99,
+        source_name: "Deleted Portfolio",
+      }]);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+
+      expect(await screen.findByText("Deleted Portfolio designation removed (฿250,000.00).")).toBeInTheDocument();
+      expect(screen.getByText(/Historical source: Deleted Portfolio \(Portfolio\)/)).toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "View source Deleted Portfolio" })).not.toBeInTheDocument();
+    });
+
+    it("isolates history loading failure from current Goal Detail", async () => {
+      fundingHistoryMock.mockRejectedValue(new Error("history offline"));
+      render(<GoalDetailPage params={{ id: "1" }} />);
+
+      expect(await screen.findByRole("heading", { name: "Retire by 55" })).toBeInTheDocument();
+      expect(await screen.findByText("history offline")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Funding" })).toBeInTheDocument();
+    });
   });
 
   describe("Goal Funding-Source Drill-Through", () => {

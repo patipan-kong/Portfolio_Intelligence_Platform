@@ -8,6 +8,7 @@ allocation checking against a source's current value is deliberately
 deferred to a future read/composition milestone.
 """
 import asyncio
+from datetime import datetime
 import math
 import os
 import sys
@@ -18,6 +19,7 @@ import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy import create_engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
 from models.database import (
@@ -25,6 +27,7 @@ from models.database import (
     CashAccount,
     CashAccountTransaction,
     GoalFundingAllocation,
+    GoalFundingAllocationHistory,
     Liability,
     Portfolio,
     PortfolioSnapshot,
@@ -93,6 +96,10 @@ def delete_allocation(db, goal_id, allocation_id):
 
 def list_allocations(db, goal_id):
     return asyncio.run(main.list_goal_funding_allocations(goal_id, db))
+
+
+def list_history(db, goal_id):
+    return asyncio.run(main.list_goal_funding_allocation_history(goal_id, db))
 
 
 # 1. create CashAccount allocation
@@ -462,3 +469,133 @@ def test_deleting_portfolio_cascades_its_allocations():
 
     assert list_allocations(db, goal["id"]) == []
     assert db.query(GoalFundingAllocation).count() == 0
+    history = list_history(db, goal["id"])
+    assert len(history) == 2
+    assert history[0] == {
+        "id": history[0]["id"],
+        "workspace_id": main._ws_id(db),
+        "wealth_goal_id": goal["id"],
+        "source_kind": "PORTFOLIO",
+        "source_id": portfolio.id,
+        "source_name": "Funding Portfolio",
+        "action": "REMOVE",
+        "previous_designated_amount": 700_000.0,
+        "resulting_designated_amount": None,
+        "currency": "THB",
+        "recorded_at": history[0]["recorded_at"],
+    }
+
+
+def test_history_records_create_changed_update_and_remove_but_not_unchanged_update():
+    db = make_session()
+    goal = make_goal(db)
+    cash = make_cash_account(db)
+
+    created = create_allocation(db, goal["id"], cash_account_id=cash.id, allocated_amount=300_000.0)
+    update_allocation(db, goal["id"], created["id"], allocated_amount=250_000.0)
+    update_allocation(db, goal["id"], created["id"], allocated_amount=250_000.0)
+    delete_allocation(db, goal["id"], created["id"])
+
+    history = list_history(db, goal["id"])
+    assert [(event["action"], event["previous_designated_amount"], event["resulting_designated_amount"]) for event in history] == [
+        ("REMOVE", 250_000.0, None),
+        ("UPDATE", 300_000.0, 250_000.0),
+        ("CREATE", None, 300_000.0),
+    ]
+    assert all(event["source_kind"] == "CASH_ACCOUNT" for event in history)
+    assert all(event["source_id"] == cash.id for event in history)
+    assert all(event["source_name"] == "Wedding Savings" for event in history)
+
+
+def test_history_snapshots_source_name_before_later_rename():
+    db = make_session()
+    goal = make_goal(db)
+    cash = make_cash_account(db)
+    created = create_allocation(db, goal["id"], cash_account_id=cash.id, allocated_amount=300_000.0)
+
+    asyncio.run(main.update_cash_account(cash.id, main.CashAccountUpdate(name="Renamed Savings"), db))
+    update_allocation(db, goal["id"], created["id"], allocated_amount=250_000.0)
+
+    history = list_history(db, goal["id"])
+    assert [(event["action"], event["source_name"]) for event in history] == [
+        ("UPDATE", "Renamed Savings"),
+        ("CREATE", "Wedding Savings"),
+    ]
+
+
+def test_history_is_workspace_isolated_and_archived_goal_remains_readable():
+    db = make_session()
+    goal = make_goal(db)
+    cash = make_cash_account(db)
+    create_allocation(db, goal["id"], cash_account_id=cash.id, allocated_amount=300_000.0)
+    other_workspace = Workspace(name="Other")
+    db.add(other_workspace)
+    db.commit()
+    db.add(GoalFundingAllocationHistory(
+        workspace_id=other_workspace.id,
+        wealth_goal_id=goal["id"],
+        source_kind="CASH_ACCOUNT",
+        source_id=cash.id,
+        source_name="Foreign evidence",
+        action="CREATE",
+        previous_designated_amount=None,
+        resulting_designated_amount=1.0,
+        currency="THB",
+    ))
+    db.commit()
+
+    asyncio.run(main.update_wealth_goal(goal["id"], main.WealthGoalUpdate(is_archived=True), db))
+    history = list_history(db, goal["id"])
+    assert [event["source_name"] for event in history] == ["Wedding Savings"]
+    allocation = list_allocations(db, goal["id"])[0]
+    with pytest.raises(HTTPException) as error:
+        update_allocation(db, goal["id"], allocation["id"], allocated_amount=250_000.0)
+    assert error.value.status_code == 409
+
+
+def test_history_order_is_deterministic_when_events_share_a_timestamp():
+    db = make_session()
+    goal = make_goal(db)
+    shared_time = datetime(2026, 9, 4, 10, 0, 0)
+    for name, amount in [("First", 100.0), ("Second", 200.0)]:
+        db.add(GoalFundingAllocationHistory(
+            workspace_id=main._ws_id(db),
+            wealth_goal_id=goal["id"],
+            source_kind="CASH_ACCOUNT",
+            source_id=1,
+            source_name=name,
+            action="CREATE",
+            previous_designated_amount=None,
+            resulting_designated_amount=amount,
+            currency="THB",
+            recorded_at=shared_time,
+        ))
+    db.commit()
+
+    assert [event["source_name"] for event in list_history(db, goal["id"])] == ["Second", "First"]
+
+
+def test_failed_history_write_rolls_back_the_allocation_and_event(monkeypatch):
+    db = make_session()
+    goal = make_goal(db)
+    cash = make_cash_account(db)
+
+    def malformed_history_write(session, **kwargs):
+        session.add(GoalFundingAllocationHistory(
+            workspace_id=kwargs["workspace_id"],
+            wealth_goal_id=kwargs["wealth_goal_id"],
+            source_kind=kwargs["source_kind"],
+            source_id=kwargs["source_id"],
+            source_name=kwargs["source_name"],
+            action="CREATE",
+            previous_designated_amount=1.0,
+            resulting_designated_amount=kwargs["resulting_designated_amount"],
+            currency=kwargs["currency"],
+        ))
+
+    monkeypatch.setattr(main, "_append_goal_funding_allocation_history", malformed_history_write)
+    with pytest.raises(IntegrityError):
+        create_allocation(db, goal["id"], cash_account_id=cash.id, allocated_amount=300_000.0)
+
+    assert db.query(GoalFundingAllocation).count() == 0
+    assert db.query(GoalFundingAllocationHistory).count() == 0

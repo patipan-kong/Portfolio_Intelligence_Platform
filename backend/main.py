@@ -40,7 +40,7 @@ import uuid as _uuid
 from models.database import (
     init_db, migrate_legacy_data, get_db, SessionLocal,
     Workspace, get_default_workspace,
-    Portfolio, PortfolioItem, CashAccount, CashAccountBaseline, CashAccountTransfer, CashAccountTransaction, CashEntryTemplate, Liability, LiabilityBalanceObservation, WealthGoal, GoalFundingAllocation, PortfolioInvestmentMandate, GoalScenario, Watchlist,
+    Portfolio, PortfolioItem, CashAccount, CashAccountBaseline, CashAccountTransfer, CashAccountTransaction, CashEntryTemplate, Liability, LiabilityBalanceObservation, WealthGoal, GoalFundingAllocation, GoalFundingAllocationHistory, PortfolioInvestmentMandate, GoalScenario, Watchlist,
     AgentCache, AnalysisCache, AnalysisHistory, OptimizerHistory, SignalHistory,
     Settings, UserUsage, Transaction, PortfolioSnapshot, BenchmarkPrice,
     MarketDataCache,
@@ -2083,6 +2083,89 @@ def _goal_funding_allocation_payload(allocation: GoalFundingAllocation, db: Sess
     }
 
 
+def _goal_funding_allocation_source_snapshot(
+    allocation: GoalFundingAllocation, db: Session, workspace_id: int,
+) -> tuple[str, int, str]:
+    """Return immutable history evidence for a live allocation's source.
+
+    History intentionally snapshots source identity rather than retaining a
+    source FK. A missing live source therefore signals corrupted current
+    allocation evidence and blocks its mutation instead of recording a
+    fabricated label.
+    """
+    if allocation.cash_account_id is not None:
+        source_kind = "CASH_ACCOUNT"
+        source_id = allocation.cash_account_id
+        source = (
+            db.query(CashAccount)
+            .filter(CashAccount.id == source_id, CashAccount.workspace_id == workspace_id)
+            .first()
+        )
+    else:
+        source_kind = "PORTFOLIO"
+        source_id = allocation.portfolio_id
+        source = (
+            db.query(Portfolio)
+            .filter(Portfolio.id == source_id, Portfolio.workspace_id == workspace_id)
+            .first()
+        )
+    if source is None or source_id is None:
+        raise HTTPException(status_code=409, detail="Funding allocation source is unavailable")
+    return source_kind, source_id, source.name
+
+
+def _append_goal_funding_allocation_history(
+    db: Session,
+    *,
+    workspace_id: int,
+    wealth_goal_id: int,
+    source_kind: str,
+    source_id: int,
+    source_name: str,
+    action: str,
+    previous_designated_amount: float | None,
+    resulting_designated_amount: float | None,
+    currency: str,
+) -> None:
+    """Stage one immutable designation transition in the current transaction."""
+    db.add(GoalFundingAllocationHistory(
+        workspace_id=workspace_id,
+        wealth_goal_id=wealth_goal_id,
+        source_kind=source_kind,
+        source_id=source_id,
+        source_name=source_name,
+        action=action,
+        previous_designated_amount=previous_designated_amount,
+        resulting_designated_amount=resulting_designated_amount,
+        currency=currency,
+    ))
+
+
+def _commit_goal_funding_allocation_mutation(db: Session) -> None:
+    """Commit a live designation mutation and its staged history atomically."""
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+
+def _goal_funding_allocation_history_payload(event: GoalFundingAllocationHistory) -> dict:
+    return {
+        "id": event.id,
+        "workspace_id": event.workspace_id,
+        "wealth_goal_id": event.wealth_goal_id,
+        "source_kind": event.source_kind,
+        "source_id": event.source_id,
+        "source_name": event.source_name,
+        "action": event.action,
+        "previous_designated_amount": event.previous_designated_amount,
+        "resulting_designated_amount": event.resulting_designated_amount,
+        "currency": event.currency,
+        "recorded_at": event.recorded_at.isoformat(),
+    }
+
+
 def _goal_funding_allocation_or_404(db: Session, goal_id: int, allocation_id: int, workspace_id: int) -> GoalFundingAllocation:
     allocation = (
         db.query(GoalFundingAllocation)
@@ -2142,6 +2225,23 @@ async def list_goal_funding_allocations(goal_id: int, db: Session = Depends(get_
     return [_goal_funding_allocation_payload(item, db) for item in allocations]
 
 
+@app.get("/wealth-goals/{goal_id}/funding-history")
+async def list_goal_funding_allocation_history(goal_id: int, db: Session = Depends(get_db)) -> list[dict]:
+    """Return immutable funding-designation evidence, newest event first."""
+    ws = _ws_id(db)
+    goal = _wealth_goal_or_404(db, goal_id, ws)
+    events = (
+        db.query(GoalFundingAllocationHistory)
+        .filter(
+            GoalFundingAllocationHistory.workspace_id == ws,
+            GoalFundingAllocationHistory.wealth_goal_id == goal.id,
+        )
+        .order_by(GoalFundingAllocationHistory.recorded_at.desc(), GoalFundingAllocationHistory.id.desc())
+        .all()
+    )
+    return [_goal_funding_allocation_history_payload(event) for event in events]
+
+
 @app.post("/wealth-goals/{goal_id}/funding-allocations", status_code=201)
 async def create_goal_funding_allocation(goal_id: int, body: GoalFundingAllocationCreate, db: Session = Depends(get_db)) -> dict:
     ws = _ws_id(db)
@@ -2178,7 +2278,20 @@ async def create_goal_funding_allocation(goal_id: int, body: GoalFundingAllocati
         currency=body.currency,
     )
     db.add(allocation)
-    db.commit()
+    source_kind = "CASH_ACCOUNT" if body.cash_account_id is not None else "PORTFOLIO"
+    _append_goal_funding_allocation_history(
+        db,
+        workspace_id=ws,
+        wealth_goal_id=goal.id,
+        source_kind=source_kind,
+        source_id=source.id,
+        source_name=source.name,
+        action="CREATE",
+        previous_designated_amount=None,
+        resulting_designated_amount=body.allocated_amount,
+        currency=body.currency,
+    )
+    _commit_goal_funding_allocation_mutation(db)
     db.refresh(allocation)
     return _goal_funding_allocation_payload(allocation, db)
 
@@ -2196,8 +2309,23 @@ async def update_goal_funding_allocation(goal_id: int, allocation_id: int, body:
         if source.is_archived:
             raise HTTPException(status_code=409, detail="Archived cash accounts cannot receive new funding allocations")
 
-    allocation.allocated_amount = body.allocated_amount
-    db.commit()
+    previous_amount = allocation.allocated_amount
+    if previous_amount != body.allocated_amount:
+        source_kind, source_id, source_name = _goal_funding_allocation_source_snapshot(allocation, db, ws)
+        allocation.allocated_amount = body.allocated_amount
+        _append_goal_funding_allocation_history(
+            db,
+            workspace_id=ws,
+            wealth_goal_id=goal.id,
+            source_kind=source_kind,
+            source_id=source_id,
+            source_name=source_name,
+            action="UPDATE",
+            previous_designated_amount=previous_amount,
+            resulting_designated_amount=body.allocated_amount,
+            currency=allocation.currency,
+        )
+    _commit_goal_funding_allocation_mutation(db)
     db.refresh(allocation)
     return _goal_funding_allocation_payload(allocation, db)
 
@@ -2207,8 +2335,21 @@ async def delete_goal_funding_allocation(goal_id: int, allocation_id: int, db: S
     ws = _ws_id(db)
     goal = _wealth_goal_or_404(db, goal_id, ws)
     allocation = _goal_funding_allocation_or_404(db, goal.id, allocation_id, ws)
+    source_kind, source_id, source_name = _goal_funding_allocation_source_snapshot(allocation, db, ws)
+    _append_goal_funding_allocation_history(
+        db,
+        workspace_id=ws,
+        wealth_goal_id=goal.id,
+        source_kind=source_kind,
+        source_id=source_id,
+        source_name=source_name,
+        action="REMOVE",
+        previous_designated_amount=allocation.allocated_amount,
+        resulting_designated_amount=None,
+        currency=allocation.currency,
+    )
     db.delete(allocation)
-    db.commit()
+    _commit_goal_funding_allocation_mutation(db)
     return {"deleted": allocation_id}
 
 
@@ -2474,8 +2615,29 @@ async def delete_portfolio(portfolio_id: int, db: Session = Depends(get_db)) -> 
     p = resolve_portfolio_or_404(db, portfolio_id, ws)
     if db.query(Portfolio).filter(Portfolio.workspace_id == ws).count() <= 1:
         raise HTTPException(status_code=400, detail="Cannot delete the last portfolio")
+    # Portfolio deletion is the one normal source lifecycle that removes live
+    # allocations. Preserve factual designation-removal evidence before its
+    # ORM cascade deletes those current planning rows.
+    allocations = (
+        db.query(GoalFundingAllocation)
+        .filter(GoalFundingAllocation.workspace_id == ws, GoalFundingAllocation.portfolio_id == p.id)
+        .all()
+    )
+    for allocation in allocations:
+        _append_goal_funding_allocation_history(
+            db,
+            workspace_id=ws,
+            wealth_goal_id=allocation.wealth_goal_id,
+            source_kind="PORTFOLIO",
+            source_id=p.id,
+            source_name=p.name,
+            action="REMOVE",
+            previous_designated_amount=allocation.allocated_amount,
+            resulting_designated_amount=None,
+            currency=allocation.currency,
+        )
     db.delete(p)
-    db.commit()
+    _commit_goal_funding_allocation_mutation(db)
     return {"deleted": portfolio_id}
 
 

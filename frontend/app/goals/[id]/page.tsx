@@ -15,6 +15,7 @@ import {
   type ScenariosState,
   messageFor,
 } from "@/components/goals/GoalPlanningSections";
+import { FundingHistorySection, type FundingHistoryState } from "@/components/goals/FundingHistorySection";
 import {
   GoalAffordabilitySection,
   type GoalAffordabilityEvidence,
@@ -35,6 +36,7 @@ import {
   getLegacyGoalProfileEvidence,
   getWealthFactualReview,
   listCashAccounts,
+  listGoalFundingAllocationHistory,
   listGoalScenarios,
   listPortfolios,
   listWealthGoals,
@@ -76,6 +78,7 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
   const [factualReview, setFactualReview] = useState<FactualReviewResponse | { error: string } | undefined>(undefined);
   const [legacyEvidence, setLegacyEvidence] = useState<LegacyGoalProfileEvidenceResponse | { error: string } | undefined>(undefined);
   const [scenarios, setScenarios] = useState<ScenariosState>(undefined);
+  const [fundingHistory, setFundingHistory] = useState<FundingHistoryState>(undefined);
   // Lifted above GoalWhatIfSection so "Load scenario" can populate its
   // transient assumptions from the Saved Scenarios section.
   const [whatIfExpanded, setWhatIfExpanded] = useState(false);
@@ -111,6 +114,7 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
     setCashAccountsStatus("error");
     setSourceLoadError("");
     setScenarios(undefined);
+    setFundingHistory(undefined);
     setWhatIfExpanded(false);
     setWhatIfMode("forward");
     setWhatIfMonthlyContribution("");
@@ -183,6 +187,19 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
       }
 
       setGoal(selectedGoal);
+      // Funding history is supplementary evidence. Its request intentionally
+      // does not participate in the Goal Detail load, so a failure cannot
+      // block current funding, planning, or factual-review state.
+      void Promise.resolve()
+        .then(() => listGoalFundingAllocationHistory(goalId))
+        .then(
+          (result) => {
+            if (isCurrentLoad()) setFundingHistory(result);
+          },
+          (err) => {
+            if (isCurrentLoad()) setFundingHistory({ error: messageFor(err, "Unable to load funding history.") });
+          },
+        );
       setFactualReview(contextResult.status === "fulfilled"
         ? contextResult.value
         : { error: messageFor(contextResult.reason, "Unable to load factual wealth review.") });
@@ -323,6 +340,19 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
     }
   }, [goalId]);
 
+  const reloadFundingHistory = useCallback(async () => {
+    if (!Number.isInteger(goalId) || goalId <= 0) return;
+    setFundingHistory(undefined);
+    try {
+      const result = await listGoalFundingAllocationHistory(goalId);
+      if (activeGoalIdRef.current === goalId) setFundingHistory(result);
+    } catch (err) {
+      if (activeGoalIdRef.current === goalId) {
+        setFundingHistory({ error: messageFor(err, "Unable to load funding history.") });
+      }
+    }
+  }, [goalId]);
+
   const handleLoadScenario = useCallback((scenario: GoalScenario) => {
     setWhatIfExpanded(true);
     setWhatIfMode("forward");
@@ -377,12 +407,17 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
               cashAccounts={cashAccounts}
               portfolios={portfolios}
               goalContext={selectedGoalContext}
-              onReload={reloadGoalContext}
+              onReload={async () => {
+                await reloadGoalContext();
+                void reloadFundingHistory();
+              }}
               fundingHealthForSource={fundingHealthForSource}
             />
             <FactualValuationEvidence sources={selectedFactualSources} />
             <LegacyGoalProfileEvidence state={selectedLegacyEvidence} />
           </section>
+
+          <FundingHistorySection state={fundingHistory} />
 
           <section className="bg-white border rounded-xl p-4 shadow-sm space-y-3" aria-labelledby="planning-heading">
             <h2 id="planning-heading" className="text-lg font-semibold">Planning / What-If</h2>

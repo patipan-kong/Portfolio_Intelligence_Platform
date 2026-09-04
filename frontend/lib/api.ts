@@ -890,6 +890,25 @@ export const updateGoalFundingAllocation = (goalId: number, allocationId: number
 export const deleteGoalFundingAllocation = (goalId: number, allocationId: number) =>
   apiFetch<{ deleted: number }>(`/wealth-goals/${goalId}/funding-allocations/${allocationId}`, { method: "DELETE" });
 
+// Immutable evidence of designation transitions. This is not contribution or
+// transaction data; current Goal Context remains the funding-state authority.
+export interface GoalFundingAllocationHistory {
+  id: number;
+  workspace_id: number;
+  wealth_goal_id: number;
+  source_kind: GoalFundingSourceKind;
+  source_id: number;
+  source_name: string;
+  action: "CREATE" | "UPDATE" | "REMOVE";
+  previous_designated_amount: number | null;
+  resulting_designated_amount: number | null;
+  currency: "THB";
+  recorded_at: string;
+}
+
+export const listGoalFundingAllocationHistory = (goalId: number) =>
+  apiFetch<GoalFundingAllocationHistory[]>(`/wealth-goals/${goalId}/funding-history`);
+
 // ─── Goal Scenarios (Phase 6, Milestone 3 — Named Scenario Foundation) ─────
 // A user-named, persisted set of forward What-If assumptions
 // (monthly_contribution, annual_return_pct) for one WealthGoal. Not a

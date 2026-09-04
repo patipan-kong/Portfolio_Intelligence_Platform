@@ -1,6 +1,6 @@
 # Wealth OS Product Roadmap
 
-> Last Updated: 2026-08 (v3.0 — Wealth OS product rebaseline)
+> Last Updated: 2026-09 (v3.0 — Wealth OS product rebaseline)
 >
 > Current Status:
 >
@@ -87,9 +87,9 @@ observed balance.
   Backlog): Investment Wealth History combined with Cash Account as-of
   evidence.
 - Cash-account-to-cash-account transfers are supported (paired, excluded from
-  income/expense/net-flow aggregation) — see Phase 3. This is distinct from
-  cash ↔ investment portfolio funding, which remains a deferred, separate
-  concept.
+  income/expense/net-flow aggregation) — see Phase 3. Cash-side investment
+  funding is also available as a distinct `INVESTMENT_TRANSFER`; paired,
+  cross-domain reconciliation remains deferred.
 - Asset Foundation is intentionally not the Cash Account ownership or balance
   model for this milestone.
 
@@ -223,12 +223,21 @@ currently provides.
   return assumptions
 - Required Monthly Contribution — the inverse calculation against a saved
   target date
+- Goal Affordability Bridge — a read-only comparison of the deterministic
+  zero-return required monthly contribution against observed net Cash Flow for
+  the trailing three completed months; incomplete evidence fails closed and it
+  has no optimizer or recommendation authority
 - Goal Detail / Planning UX — summary, funding sources, planning, and scenarios
 - Goal Funding-Source Drill-Through — Goal Detail's Funding Sources list links
   each designation to its exact existing Cash Account or Portfolio source
   (`/cash?account=<id>` / `/portfolio?portfolio=<id>`) for factual inspection.
   Navigation only: no new backend endpoint, no scheduled or automatic action,
   and an unresolvable source is never silently replaced by another one.
+- Goal Funding Allocation History — immutable, append-only designation-change
+  evidence on Goal Detail (create, changed amount, removal), with source ID and
+  name snapshots that survive Portfolio deletion. It is not contribution,
+  transfer, transaction, or available-funds evidence; current allocations
+  remain the sole source of current funding state.
 - Named Scenarios — persisted, archivable per-goal assumption sets
 - Scenario Comparison — two scenarios evaluated against one shared live goal
   context, with no ranking and no winner
