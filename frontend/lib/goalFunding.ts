@@ -76,6 +76,16 @@ export function factualReviewMatchesGoalContext(review: FactualReviewResponse): 
   return true;
 }
 
+/**
+ * Goal Funding-Source Drill-Through: the exact existing destination for a
+ * funding source's kind. Navigation/reveal only — IDs are authoritative,
+ * never the source name or list position. See /cash and /portfolio's
+ * `?account=`/`?portfolio=` query handling for the destination side.
+ */
+export function sourceDrillThroughHref(kind: GoalFundingSourceKind, id: number): string {
+  return kind === "CASH_ACCOUNT" ? `/cash?account=${id}` : `/portfolio?portfolio=${id}`;
+}
+
 export function unavailableSourceFundingHealth(): SourceFundingHealth {
   return {
     totalDesignated: 0,

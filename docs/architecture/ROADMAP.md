@@ -224,6 +224,11 @@ currently provides.
 - Required Monthly Contribution — the inverse calculation against a saved
   target date
 - Goal Detail / Planning UX — summary, funding sources, planning, and scenarios
+- Goal Funding-Source Drill-Through — Goal Detail's Funding Sources list links
+  each designation to its exact existing Cash Account or Portfolio source
+  (`/cash?account=<id>` / `/portfolio?portfolio=<id>`) for factual inspection.
+  Navigation only: no new backend endpoint, no scheduled or automatic action,
+  and an unresolvable source is never silently replaced by another one.
 - Named Scenarios — persisted, archivable per-goal assumption sets
 - Scenario Comparison — two scenarios evaluated against one shared live goal
   context, with no ranking and no winner

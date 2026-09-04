@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   buildSourceFundingOverview,
   factualReviewMatchesGoalContext,
+  sourceDrillThroughHref,
   sourceFundingHealth,
   sourceKey,
 } from "./goalFunding.ts";
@@ -98,4 +99,10 @@ test("review and embedded Goal Context scopes must match", () => {
   const value = review([]);
   value.scope = { kind: "WORKSPACE", include_archived: false };
   assert.equal(factualReviewMatchesGoalContext(value), false);
+});
+
+test("sourceDrillThroughHref preserves the exact source kind and id — never inferred from name or position", () => {
+  assert.equal(sourceDrillThroughHref("CASH_ACCOUNT", 5), "/cash?account=5");
+  assert.equal(sourceDrillThroughHref("PORTFOLIO", 9), "/portfolio?portfolio=9");
+  assert.notEqual(sourceDrillThroughHref("CASH_ACCOUNT", 5), sourceDrillThroughHref("CASH_ACCOUNT", 6));
 });

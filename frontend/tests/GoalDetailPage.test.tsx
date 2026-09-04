@@ -575,6 +575,32 @@ describe("GoalDetailPage", () => {
     await waitFor(() => expect(contextMock).toHaveBeenCalledTimes(4));
   });
 
+  describe("Goal Funding-Source Drill-Through", () => {
+    it("exposes source-directed navigation for a Cash Account funding source with the exact source id", async () => {
+      allocationsMock.mockResolvedValue([cashAllocation]);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      const link = await screen.findByRole("link", { name: "View source Wedding Savings" });
+      expect(link).toHaveAttribute("href", "/cash?account=5");
+    });
+
+    it("exposes source-directed navigation for a Portfolio funding source with the exact source id", async () => {
+      allocationsMock.mockResolvedValue([portfolioAllocation]);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      const link = await screen.findByRole("link", { name: "View source Long-term Portfolio" });
+      expect(link).toHaveAttribute("href", "/portfolio?portfolio=9");
+    });
+
+    it("preserves distinct exact source ids for two allocations of the same kind — never a shared or first-item link", async () => {
+      allocationsMock.mockResolvedValue([
+        cashAllocation,
+        { ...cashAllocation, id: 103, cash_account_id: 6, source_name: "Second Cash", allocated_amount: 50000 },
+      ]);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+      expect(await screen.findByRole("link", { name: "View source Wedding Savings" })).toHaveAttribute("href", "/cash?account=5");
+      expect(screen.getByRole("link", { name: "View source Second Cash" })).toHaveAttribute("href", "/cash?account=6");
+    });
+  });
+
   it("removes stale pre-mutation totals when Goal Context refresh fails", async () => {
     allocationsMock.mockResolvedValue([cashAllocation]);
     contextMock

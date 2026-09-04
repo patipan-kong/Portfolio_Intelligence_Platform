@@ -251,6 +251,55 @@ export default function PortfolioPage() {
     router.replace("/portfolio");
   }
 
+  // Goal Funding-Source Drill-Through: ?portfolio=<id> reveals (selects) the
+  // exact Portfolio source Goal Detail identified. Read/navigation only —
+  // reuses PortfolioContext's selectPortfolio, which is already
+  // workspace-scoped (via the existing portfolios list) and validates the id
+  // against that list itself, resolving to NONE rather than another
+  // portfolio if it doesn't. Existence is also checked here so an unresolvable
+  // id never wipes an existing Current Selection — mirrors the ?decision=
+  // deep-link pattern above (deferred while the portfolio list is loading,
+  // guarded against stale/superseded resolution).
+  const [portfolioSourceNotFound, setPortfolioSourceNotFound] = useState(false);
+  const portfolioSourceReqSeqRef = useRef(0);
+  const pendingPortfolioSourceRef = useRef<{ seq: number; id: number } | null>(null);
+
+  const resolvePortfolioSource = useCallback((id: number, seq: number) => {
+    if (portfolioSourceReqSeqRef.current !== seq) return; // superseded
+    if (!portfoliosRef.current.some((p) => p.id === id)) {
+      setPortfolioSourceNotFound(true);
+      return;
+    }
+    setPortfolioSourceNotFound(false);
+    if (currentSelectionRef.current !== id) selectPortfolioRef.current(id);
+  }, []);
+
+  useEffect(() => {
+    const raw = searchParams.get("portfolio");
+    if (raw === null || !/^\d+$/.test(raw)) {
+      pendingPortfolioSourceRef.current = null;
+      setPortfolioSourceNotFound(raw !== null);
+      return;
+    }
+    const id = Number(raw);
+    const seq = ++portfolioSourceReqSeqRef.current;
+    if (ctxLoadingRef.current) {
+      // Portfolio context isn't ready yet — defer resolution, same as a
+      // decision resolving before the portfolio list has loaded.
+      pendingPortfolioSourceRef.current = { seq, id };
+      return;
+    }
+    resolvePortfolioSource(id, seq);
+  }, [searchParams, resolvePortfolioSource]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (ctxLoading) return;
+    const pending = pendingPortfolioSourceRef.current;
+    if (pending == null) return;
+    pendingPortfolioSourceRef.current = null;
+    resolvePortfolioSource(pending.id, pending.seq);
+  }, [ctxLoading, resolvePortfolioSource]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Initial recording-progress fetch whenever an execution decision becomes
   // (in)active — e.g. resolved from ?decision=, or cleared on portfolio switch.
   useEffect(() => {
@@ -659,6 +708,13 @@ export default function PortfolioPage() {
           {showImport ? "Cancel Import" : "Import Existing"}
         </button>
       </div>
+
+      {/* ── Requested funding-source portfolio could not be resolved ── */}
+      {portfolioSourceNotFound && (
+        <div role="alert" className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-800">
+          The requested portfolio could not be found.
+        </div>
+      )}
 
       {/* ── Active execution-decision context ── */}
       {activeDecision != null && (

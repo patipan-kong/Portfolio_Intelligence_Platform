@@ -1,7 +1,8 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import {
   createCashAccount, createCashAccountBaseline, createCashAccountTransaction,
   getCashAccountBalanceAsOf, listCashAccountTransactions, listCashAccounts, reconcileCashAccount, updateCashAccount,
@@ -14,6 +15,21 @@ const messageFor = (error: unknown, fallback: string) => error instanceof Error 
 const inputClass = "mt-1 block w-full border rounded px-3 py-2";
 
 export default function CashAccountsPage() {
+  // Goal Funding-Source Drill-Through: ?account=<id> reveals the exact Cash
+  // Account source Goal Detail identified. Read/navigation only — no new
+  // authority. IDs are authoritative; name/position are never used to guess
+  // the requested source.
+  const searchParams = useSearchParams();
+  const rawAccountParam = searchParams.get("account");
+  const requestedAccountId = rawAccountParam !== null && /^\d+$/.test(rawAccountParam) ? Number(rawAccountParam) : null;
+  const [sourceNotFound, setSourceNotFound] = useState(false);
+  const [highlightedAccountId, setHighlightedAccountId] = useState<number | null>(null);
+  const [resolvedForParam, setResolvedForParam] = useState<string | null | undefined>(undefined);
+  const loadGenerationRef = useRef(0);
+  const focusedForParamRef = useRef<string | null | undefined>(undefined);
+  const archivedRevealIsSourceDirectedRef = useRef(false);
+  const cardRefs = useRef<Record<number, HTMLDivElement | null>>({});
+
   const [accounts, setAccounts] = useState<CashAccount[]>([]);
   const [activity, setActivity] = useState<Record<number, CashAccountTransaction[]>>({});
   const [loading, setLoading] = useState(true);
@@ -29,19 +45,73 @@ export default function CashAccountsPage() {
   const [eventAmount, setEventAmount] = useState(""); const [eventDate, setEventDate] = useState(today()); const [eventCategory, setEventCategory] = useState(""); const [eventNote, setEventNote] = useState("");
   const [observedBalance, setObservedBalance] = useState(""); const [reconcileDate, setReconcileDate] = useState(today()); const [reconcileNote, setReconcileNote] = useState("");
 
-  async function load(includeArchived = showArchived) {
+  async function load(includeArchived = showArchived, queryToResolve?: string | null) {
+    const generation = ++loadGenerationRef.current;
     setLoading(true); setError("");
     try {
       const loaded = await listCashAccounts(includeArchived);
-      setAccounts(loaded);
       const results = await Promise.all(loaded.filter((account) => Boolean(account.baseline)).map(async (account) => [account.id, await listCashAccountTransactions(account.id)] as const));
+      if (generation !== loadGenerationRef.current) return;
+      setAccounts(loaded);
       setActivity(Object.fromEntries(results));
-    } catch (err) { setError(messageFor(err, "Unable to load cash accounts.")); }
-    finally { setLoading(false); }
+      if (queryToResolve === undefined) return;
+      setResolvedForParam(queryToResolve);
+
+      const requestedId = queryToResolve !== null && /^\d+$/.test(queryToResolve) ? Number(queryToResolve) : null;
+      if (requestedId === null) {
+        setSourceNotFound(queryToResolve !== null);
+        setHighlightedAccountId(null);
+        return;
+      }
+      const found = loaded.find((candidate) => candidate.id === requestedId);
+      if (!found) {
+        // Unknown, foreign-workspace, or deleted ids never fall back to a
+        // different account. listCashAccounts is already workspace-scoped.
+        setSourceNotFound(true);
+        setHighlightedAccountId(null);
+        return;
+      }
+      setSourceNotFound(false);
+      setHighlightedAccountId(found.id);
+      if (found.is_archived) {
+        archivedRevealIsSourceDirectedRef.current = true;
+        setShowArchived(true);
+      }
+    } catch (err) {
+      if (generation === loadGenerationRef.current) setError(messageFor(err, "Unable to load cash accounts."));
+    } finally {
+      if (generation === loadGenerationRef.current) setLoading(false);
+    }
   }
-  useEffect(() => { void load(false); /* active accounts only initially */ // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  useEffect(() => {
+    // Each valid source-directed query receives an archived-capable dataset.
+    // This also covers in-place query changes, where Next may retain the page
+    // instance rather than remount it. The load generation makes an earlier
+    // request unable to overwrite a later query's outcome.
+    setSourceNotFound(false);
+    setHighlightedAccountId(null);
+    setResolvedForParam(undefined);
+    focusedForParamRef.current = undefined;
+    if (requestedAccountId === null && archivedRevealIsSourceDirectedRef.current) {
+      archivedRevealIsSourceDirectedRef.current = false;
+      setShowArchived(false);
+    }
+    void load(requestedAccountId !== null, rawAccountParam);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rawAccountParam, requestedAccountId]);
   function closeCashFlowForms() { setBaselineTarget(null); setEventTarget(null); setReconcileTarget(null); setAsOfTarget(null); setAsOfResult(null); }
+
+  useEffect(() => {
+    // An archived target exists only after showArchived commits, so focus and
+    // scroll run after rendering rather than during resolution. tabIndex=-1
+    // keeps the card out of normal keyboard tab order.
+    if (resolvedForParam !== rawAccountParam || highlightedAccountId === null || focusedForParamRef.current === rawAccountParam) return;
+    const target = cardRefs.current[highlightedAccountId];
+    if (!target) return;
+    target.focus();
+    target.scrollIntoView?.({ block: "center" });
+    focusedForParamRef.current = rawAccountParam;
+  }, [highlightedAccountId, showArchived, rawAccountParam, resolvedForParam]);
 
   async function handleCreate(event: FormEvent) {
     event.preventDefault(); setMutationError(""); const parsed = Number(balance);
@@ -62,11 +132,12 @@ export default function CashAccountsPage() {
   function openAsOf(account: CashAccount) { setMutationError(""); setEditing(null); setBalanceTarget(null); setBaselineTarget(null); setEventTarget(null); setReconcileTarget(null); setAsOfResult(null); setAsOfTarget(account); setAsOfDate(today()); }
   async function handleAsOfLookup(event: FormEvent) { event.preventDefault(); if (!asOfTarget) return; setMutationError(""); if (!asOfDate) { setMutationError("Enter a date to look up."); return; } setAsOfLoading(true); try { setAsOfResult(await getCashAccountBalanceAsOf(asOfTarget.id, asOfDate)); } catch (err) { setMutationError(messageFor(err, "Unable to look up historical balance.")); } finally { setAsOfLoading(false); } }
   async function setArchived(account: CashAccount, isArchived: boolean) { setMutationError(""); try { await updateCashAccount(account.id, { is_archived: isArchived }); await load(); } catch (err) { setMutationError(messageFor(err, isArchived ? "Unable to archive cash account." : "Unable to restore cash account.")); } }
-  async function toggleArchived() { const next = !showArchived; setShowArchived(next); await load(next); }
+  async function toggleArchived() { archivedRevealIsSourceDirectedRef.current = false; const next = !showArchived; setShowArchived(next); await load(next); }
   const active = accounts.filter((account) => !account.is_archived); const archived = accounts.filter((account) => account.is_archived);
 
   return <div className="space-y-6 max-w-3xl">
      <div className="flex items-start justify-between gap-4 flex-wrap"><div><h1 className="text-2xl font-bold">Cash Accounts</h1><p className="text-sm text-gray-500 mt-1">Track the current observed balance of external cash accounts.</p></div><Link href="/cash-flow" className="text-sm text-blue-600 hover:underline">View Cash Flow →</Link></div>
+    {sourceNotFound && <div role="alert" className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-800">The requested cash account could not be found.</div>}
     <form onSubmit={handleCreate} className="bg-white border rounded-xl p-4 space-y-3 shadow-sm"><h2 className="font-semibold">Add cash account</h2><div className="grid gap-3 sm:grid-cols-3"><Field label="Account name"><input aria-label="Account name" value={name} onChange={(event) => setName(event.target.value)} className={inputClass} /></Field><Field label="Institution (optional)"><input aria-label="Institution" value={institution} onChange={(event) => setInstitution(event.target.value)} className={inputClass} /></Field><Field label="Current balance"><input aria-label="Initial balance" type="number" step="0.01" value={balance} onChange={(event) => setBalance(event.target.value)} className={inputClass} /></Field></div><p className="text-xs text-gray-500">Currency: <strong>THB</strong> (fixed for Cash Accounts v1)</p><PrimaryButton>Add cash account</PrimaryButton></form>
     {mutationError && <p role="alert" className="text-sm text-red-600">{mutationError}</p>}
     {editing && <form onSubmit={handleEdit} className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-3"><h2 className="font-semibold">Edit {editing.name}</h2><div className="grid gap-3 sm:grid-cols-2 mt-3"><Field label="Account name"><input aria-label="Edit account name" value={editName} onChange={(event) => setEditName(event.target.value)} className={inputClass} /></Field><Field label="Institution"><input aria-label="Edit institution" value={editInstitution} onChange={(event) => setEditInstitution(event.target.value)} className={inputClass} /></Field></div><Actions><PrimaryButton>Save changes</PrimaryButton><Cancel onClick={() => setEditing(null)} /></Actions></form>}
@@ -76,14 +147,14 @@ export default function CashAccountsPage() {
     {reconcileTarget && <form onSubmit={handleReconcile} className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-3"><h2 className="font-semibold">Reconcile balance — {reconcileTarget.name}</h2><p className="text-sm text-gray-600">A difference creates an adjustment; it is not recorded as income or expense.</p><div className="grid gap-3 sm:grid-cols-2"><Field label="Observed balance (THB)"><input aria-label="Observed balance" type="number" min="0" step="0.01" value={observedBalance} onChange={(event) => setObservedBalance(event.target.value)} className={inputClass} /></Field><Field label="Reconciliation date"><input aria-label="Reconciliation date" type="date" value={reconcileDate} onChange={(event) => setReconcileDate(event.target.value)} className={inputClass} /></Field><Field label="Note (optional)"><input aria-label="Reconciliation note" value={reconcileNote} onChange={(event) => setReconcileNote(event.target.value)} className={inputClass} /></Field></div><Actions><PrimaryButton>Save reconciliation</PrimaryButton><Cancel onClick={() => setReconcileTarget(null)} /></Actions></form>}
     {asOfTarget && <form onSubmit={handleAsOfLookup} className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-3"><h2 className="font-semibold">Balance on date — {asOfTarget.name}</h2><p className="text-sm text-gray-600">Reconstructed from the tracking baseline and ledger activity — never the current balance.</p><Field label="Date"><input aria-label="As-of date" type="date" value={asOfDate} onChange={(event) => { setAsOfDate(event.target.value); setAsOfResult(null); }} className={`${inputClass} max-w-xs`} /></Field><Actions><PrimaryButton>{asOfLoading ? "Looking up…" : "Look up"}</PrimaryButton><Cancel onClick={() => { setAsOfTarget(null); setAsOfResult(null); }} /></Actions>{asOfResult && <p className="text-sm mt-2">{asOfResult.available && asOfResult.balance != null ? <span className="font-medium">{formatThb(asOfResult.balance)} <span className="text-xs text-gray-500">THB as of {asOfResult.date}</span></span> : <span className="text-gray-600">Unavailable — before tracking began{asOfResult.baseline_effective_on ? ` (${asOfResult.baseline_effective_on})` : ""}.</span>}</p>}</form>}
     <div className="flex items-center justify-between gap-3"><h2 className="text-lg font-semibold">Active accounts</h2><button type="button" onClick={toggleArchived} className="text-sm text-blue-600 hover:underline">{showArchived ? "Hide archived" : "Show archived"}</button></div>
-    {loading ? <p className="text-sm text-gray-400">Loading cash accounts…</p> : error ? <div className="text-sm text-red-600 space-y-2"><p>{error}</p><button type="button" onClick={() => void load()} className="text-blue-600 hover:underline">Try again</button></div> : active.length === 0 ? <p className="text-sm text-gray-500">No active cash accounts yet. Add your first account above.</p> : <div className="space-y-3">{active.map((account) => <AccountCard key={account.id} account={account} activity={activity[account.id] ?? []} onEdit={openEdit} onBalance={openBalanceUpdate} onBaseline={openBaseline} onEvent={openEvent} onReconcile={openReconcile} onAsOf={openAsOf} onArchive={() => void setArchived(account, true)} />)}</div>}
-    {showArchived && !loading && !error && <section className="space-y-3 pt-2 border-t"><h2 className="text-lg font-semibold text-gray-600">Archived accounts</h2>{archived.length === 0 ? <p className="text-sm text-gray-500">No archived cash accounts.</p> : archived.map((account) => <div key={account.id} className="bg-gray-50 border rounded-xl p-4 flex items-center justify-between gap-4"><div><p className="font-medium text-gray-600">{account.name}</p><p className="text-sm text-gray-500">{formatThb(account.balance)} · THB</p><p className="text-xs text-gray-500">{account.baseline ? "Cash Flow tracking preserved" : "Not tracking Cash Flow"}</p></div><button type="button" onClick={() => void setArchived(account, false)} className="text-sm text-blue-600 hover:underline">Restore</button></div>)}</section>}
+    {loading ? <p className="text-sm text-gray-400">Loading cash accounts…</p> : error ? <div className="text-sm text-red-600 space-y-2"><p>{error}</p><button type="button" onClick={() => void load()} className="text-blue-600 hover:underline">Try again</button></div> : active.length === 0 ? <p className="text-sm text-gray-500">No active cash accounts yet. Add your first account above.</p> : <div className="space-y-3">{active.map((account) => <AccountCard key={account.id} account={account} activity={activity[account.id] ?? []} highlighted={highlightedAccountId === account.id} cardRef={(el) => { cardRefs.current[account.id] = el; }} onEdit={openEdit} onBalance={openBalanceUpdate} onBaseline={openBaseline} onEvent={openEvent} onReconcile={openReconcile} onAsOf={openAsOf} onArchive={() => void setArchived(account, true)} />)}</div>}
+    {showArchived && !loading && !error && <section className="space-y-3 pt-2 border-t"><h2 className="text-lg font-semibold text-gray-600">Archived accounts</h2>{archived.length === 0 ? <p className="text-sm text-gray-500">No archived cash accounts.</p> : archived.map((account) => <div key={account.id} ref={(el) => { cardRefs.current[account.id] = el; }} tabIndex={-1} className={`bg-gray-50 border rounded-xl p-4 flex items-center justify-between gap-4 ${highlightedAccountId === account.id ? "ring-2 ring-blue-500" : ""}`}><div><p className="font-medium text-gray-600">{account.name}</p><p className="text-sm text-gray-500">{formatThb(account.balance)} · THB</p><p className="text-xs text-gray-500">{account.baseline ? "Cash Flow tracking preserved" : "Not tracking Cash Flow"}</p></div><button type="button" onClick={() => void setArchived(account, false)} className="text-sm text-blue-600 hover:underline">Restore</button></div>)}</section>}
   </div>;
 }
 
-function AccountCard({ account, activity, onEdit, onBalance, onBaseline, onEvent, onReconcile, onAsOf, onArchive }: { account: CashAccount; activity: CashAccountTransaction[]; onEdit: (account: CashAccount) => void; onBalance: (account: CashAccount) => void; onBaseline: (account: CashAccount) => void; onEvent: (account: CashAccount, type: "INCOME" | "EXPENSE") => void; onReconcile: (account: CashAccount) => void; onAsOf: (account: CashAccount) => void; onArchive: () => void }) {
+function AccountCard({ account, activity, highlighted = false, cardRef, onEdit, onBalance, onBaseline, onEvent, onReconcile, onAsOf, onArchive }: { account: CashAccount; activity: CashAccountTransaction[]; highlighted?: boolean; cardRef?: (el: HTMLDivElement | null) => void; onEdit: (account: CashAccount) => void; onBalance: (account: CashAccount) => void; onBaseline: (account: CashAccount) => void; onEvent: (account: CashAccount, type: "INCOME" | "EXPENSE") => void; onReconcile: (account: CashAccount) => void; onAsOf: (account: CashAccount) => void; onArchive: () => void }) {
   const tracked = Boolean(account.baseline);
-  return <div className="bg-white border rounded-xl p-4 shadow-sm space-y-3"><div className="flex items-center justify-between gap-4 flex-wrap"><div><p className="font-semibold">{account.name}</p>{account.institution && <p className="text-sm text-gray-500">{account.institution}</p>}<p className="text-lg font-medium mt-1">{formatThb(account.balance)} <span className="text-xs text-gray-500">THB</span></p><p className="text-xs text-gray-500 mt-1">{tracked ? `Cash Flow tracking started ${account.baseline?.effective_on}` : "Cash Flow tracking has not started"}</p></div><div className="flex gap-3 text-sm flex-wrap"><button type="button" onClick={() => onEdit(account)} className="text-blue-600 hover:underline">Edit</button>{tracked ? <><button type="button" onClick={() => onEvent(account, "INCOME")} className="text-blue-600 hover:underline">Add income</button><button type="button" onClick={() => onEvent(account, "EXPENSE")} className="text-blue-600 hover:underline">Add expense</button><button type="button" onClick={() => onReconcile(account)} className="text-blue-600 hover:underline">Reconcile balance</button><button type="button" onClick={() => onAsOf(account)} className="text-blue-600 hover:underline">Balance on date</button></> : <><button type="button" onClick={() => onBaseline(account)} className="text-blue-600 hover:underline">Start tracking</button><button type="button" onClick={() => onBalance(account)} className="text-blue-600 hover:underline">Update balance</button></>}<button type="button" onClick={onArchive} className="text-red-600 hover:underline">Archive</button></div></div>{tracked && <div className="border-t pt-3"><p className="text-sm font-medium">Recent activity</p>{activity.length === 0 ? <p className="text-xs text-gray-500 mt-1">No activity after this tracking baseline yet.</p> : <ul className="mt-1 space-y-1 text-sm">{activity.slice(0, 3).map((item) => <li key={item.id} className="flex justify-between gap-3"><span>{item.occurred_on} · {accountActivityLabel(item)}</span><span className={item.transaction_type === "TRANSFER" ? "text-gray-700" : item.signed_amount >= 0 ? "text-green-700" : "text-red-700"}>{item.signed_amount >= 0 ? "+" : "−"}{formatThb(Math.abs(item.signed_amount))}</span></li>)}</ul>}</div>}</div>;
+  return <div ref={cardRef} tabIndex={-1} className={`bg-white border rounded-xl p-4 shadow-sm space-y-3 ${highlighted ? "ring-2 ring-blue-500" : ""}`}><div className="flex items-center justify-between gap-4 flex-wrap"><div><p className="font-semibold">{account.name}</p>{account.institution && <p className="text-sm text-gray-500">{account.institution}</p>}<p className="text-lg font-medium mt-1">{formatThb(account.balance)} <span className="text-xs text-gray-500">THB</span></p><p className="text-xs text-gray-500 mt-1">{tracked ? `Cash Flow tracking started ${account.baseline?.effective_on}` : "Cash Flow tracking has not started"}</p></div><div className="flex gap-3 text-sm flex-wrap"><button type="button" onClick={() => onEdit(account)} className="text-blue-600 hover:underline">Edit</button>{tracked ? <><button type="button" onClick={() => onEvent(account, "INCOME")} className="text-blue-600 hover:underline">Add income</button><button type="button" onClick={() => onEvent(account, "EXPENSE")} className="text-blue-600 hover:underline">Add expense</button><button type="button" onClick={() => onReconcile(account)} className="text-blue-600 hover:underline">Reconcile balance</button><button type="button" onClick={() => onAsOf(account)} className="text-blue-600 hover:underline">Balance on date</button></> : <><button type="button" onClick={() => onBaseline(account)} className="text-blue-600 hover:underline">Start tracking</button><button type="button" onClick={() => onBalance(account)} className="text-blue-600 hover:underline">Update balance</button></>}<button type="button" onClick={onArchive} className="text-red-600 hover:underline">Archive</button></div></div>{tracked && <div className="border-t pt-3"><p className="text-sm font-medium">Recent activity</p>{activity.length === 0 ? <p className="text-xs text-gray-500 mt-1">No activity after this tracking baseline yet.</p> : <ul className="mt-1 space-y-1 text-sm">{activity.slice(0, 3).map((item) => <li key={item.id} className="flex justify-between gap-3"><span>{item.occurred_on} · {accountActivityLabel(item)}</span><span className={item.transaction_type === "TRANSFER" ? "text-gray-700" : item.signed_amount >= 0 ? "text-green-700" : "text-red-700"}>{item.signed_amount >= 0 ? "+" : "−"}{formatThb(Math.abs(item.signed_amount))}</span></li>)}</ul>}</div>}</div>;
 }
 
 function accountActivityLabel(item: CashAccountTransaction): string {

@@ -559,3 +559,105 @@ describe("Execution Completion Polish (Slice 3) — recording-progress banner", 
     expect(screen.queryByRole("link", { name: "view remaining →" })).not.toBeInTheDocument();
   });
 });
+
+// Goal Funding-Source Drill-Through: /portfolio reads ?portfolio=<id> and
+// reveals (selects) the exact Portfolio funding source Goal Detail
+// identified. Read/navigation only — reuses PortfolioContext's
+// already-workspace-scoped, existence-validated selectPortfolio; a request
+// that doesn't resolve is never silently satisfied by another portfolio.
+describe("Goal Funding-Source Drill-Through", () => {
+  test("no ?portfolio= param: ordinary default behavior preserved, no banner", async () => {
+    render(
+      <PortfolioProvider>
+        <SwitcherProbe />
+        <PortfolioPage />
+      </PortfolioProvider>
+    );
+    await waitFor(() => expect(screen.getByText("ready")).toBeInTheDocument());
+    expect(screen.queryByText("The requested portfolio could not be found.")).not.toBeInTheDocument();
+    expect(getHoldings).not.toHaveBeenCalled();
+  });
+
+  test("valid ?portfolio=<id> reveals (selects) the exact portfolio requested", async () => {
+    mockSearchParams = new URLSearchParams("portfolio=2");
+    render(
+      <PortfolioProvider>
+        <SwitcherProbe />
+        <PortfolioPage />
+      </PortfolioProvider>
+    );
+    await waitFor(() => expect(getHoldings).toHaveBeenCalledWith(2));
+    expect(screen.queryByText("The requested portfolio could not be found.")).not.toBeInTheDocument();
+  });
+
+  test("distinguishes two portfolios — requesting the second never reveals the first", async () => {
+    mockSearchParams = new URLSearchParams("portfolio=2");
+    render(
+      <PortfolioProvider>
+        <SwitcherProbe />
+        <PortfolioPage />
+      </PortfolioProvider>
+    );
+    await waitFor(() => expect(getHoldings).toHaveBeenCalledWith(2));
+    expect(getHoldings).not.toHaveBeenCalledWith(1);
+  });
+
+  test("fails closed for an unknown portfolio id without selecting an existing portfolio", async () => {
+    mockSearchParams = new URLSearchParams("portfolio=999");
+    render(
+      <PortfolioProvider>
+        <SwitcherProbe />
+        <PortfolioPage />
+      </PortfolioProvider>
+    );
+    await waitFor(() => expect(screen.getByText("ready")).toBeInTheDocument());
+    expect(await screen.findByText("The requested portfolio could not be found.")).toBeInTheDocument();
+    expect(getHoldings).not.toHaveBeenCalled();
+  });
+
+  test("fails closed for a malformed portfolio id", async () => {
+    mockSearchParams = new URLSearchParams("portfolio=abc");
+    render(
+      <PortfolioProvider>
+        <SwitcherProbe />
+        <PortfolioPage />
+      </PortfolioProvider>
+    );
+    expect(await screen.findByText("The requested portfolio could not be found.")).toBeInTheDocument();
+    expect(getHoldings).not.toHaveBeenCalled();
+  });
+
+  test("a portfolio requested before the portfolio list loads resolves once it arrives, not before", async () => {
+    mockSearchParams = new URLSearchParams("portfolio=2");
+    let resolvePortfolios!: (v: Portfolio[]) => void;
+    listPortfolios.mockReset();
+    listPortfolios.mockImplementation(() => new Promise((r) => (resolvePortfolios = r)));
+
+    render(
+      <PortfolioProvider>
+        <SwitcherProbe />
+        <PortfolioPage />
+      </PortfolioProvider>
+    );
+    expect(getHoldings).not.toHaveBeenCalled();
+
+    await act(async () => resolvePortfolios([makePortfolio(1), makePortfolio(2)]));
+    await waitFor(() => expect(getHoldings).toHaveBeenCalledWith(2));
+  });
+
+  test("after a deep-link resolves, manually selecting a different portfolio is not continually forced back", async () => {
+    mockSearchParams = new URLSearchParams("portfolio=2");
+    render(
+      <PortfolioProvider>
+        <SwitcherProbe />
+        <PortfolioPage />
+      </PortfolioProvider>
+    );
+    await waitFor(() => expect(getHoldings).toHaveBeenCalledWith(2));
+
+    getHoldings.mockClear();
+    await act(async () => screen.getByText("select-1").click());
+    await waitFor(() => expect(getHoldings).toHaveBeenCalledWith(1));
+    expect(getHoldings).not.toHaveBeenCalledWith(2);
+  });
+});

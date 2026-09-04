@@ -1,7 +1,9 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import Link from "next/link";
 import {
+  sourceDrillThroughHref,
   sourceKey,
   type SourceFundingHealth,
 } from "@/lib/goalFunding";
@@ -247,12 +249,21 @@ export function FundingSourcesSection({
             return (
               <li key={allocation.id} className="text-sm border-b last:border-0 pb-1.5">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <span className="text-gray-700">
-                    {allocation.source_name ?? "Unknown source"}{" "}
-                    <span className="text-xs text-gray-400 ml-1">
-                      ({allocation.source_kind === "CASH_ACCOUNT" ? "Cash Account" : "Portfolio"}
-                      {allocation.source_is_archived ? ", archived" : ""})
+                  <span className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-gray-700">
+                      {allocation.source_name ?? "Unknown source"}{" "}
+                      <span className="text-xs text-gray-400 ml-1">
+                        ({allocation.source_kind === "CASH_ACCOUNT" ? "Cash Account" : "Portfolio"}
+                        {allocation.source_is_archived ? ", archived" : ""})
+                      </span>
                     </span>
+                    <Link
+                      href={sourceDrillThroughHref(allocation.source_kind, allocation.source_id)}
+                      aria-label={`View source ${allocation.source_name ?? "source"}`}
+                      className="text-xs text-blue-600 hover:underline"
+                    >
+                      View source
+                    </Link>
                   </span>
                   {editingId === allocation.id ? (
                     <span className="flex items-center gap-1.5">
