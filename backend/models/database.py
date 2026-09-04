@@ -70,6 +70,7 @@ class Workspace(Base):
     liabilities = relationship("Liability", back_populates="workspace", cascade="all, delete-orphan")
     liability_balance_observations = relationship("LiabilityBalanceObservation", back_populates="workspace", cascade="all, delete-orphan")
     wealth_goals = relationship("WealthGoal", back_populates="workspace", cascade="all, delete-orphan")
+    goal_plan_amendment_history = relationship("GoalPlanAmendmentHistory", back_populates="workspace", cascade="all, delete-orphan")
     goal_funding_allocations = relationship("GoalFundingAllocation", back_populates="workspace", cascade="all, delete-orphan")
     goal_funding_allocation_history = relationship("GoalFundingAllocationHistory", back_populates="workspace", cascade="all, delete-orphan")
     portfolio_investment_mandates = relationship("PortfolioInvestmentMandate", back_populates="workspace", cascade="all, delete-orphan")
@@ -264,6 +265,7 @@ class WealthGoal(Base):
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     workspace = relationship("Workspace", back_populates="wealth_goals")
+    plan_amendment_history = relationship("GoalPlanAmendmentHistory", back_populates="wealth_goal", cascade="all, delete-orphan")
     funding_allocation_history = relationship("GoalFundingAllocationHistory", back_populates="wealth_goal", cascade="all, delete-orphan")
 
     __table_args__ = (
@@ -275,6 +277,48 @@ class WealthGoal(Base):
         CheckConstraint("currency = 'THB'", name="ck_wealth_goals_currency_thb"),
         CheckConstraint("target_amount > 0", name="ck_wealth_goals_target_amount_positive"),
         Index("ix_wealth_goals_workspace_archived", "workspace_id", "is_archived"),
+    )
+
+
+class GoalPlanAmendmentHistory(Base):
+    """Immutable evidence of a user-authored WealthGoal plan amendment.
+
+    Each row captures the complete before/after snapshot of the three current
+    plan fields (target amount, target date, and priority), even when only one
+    changed.  WealthGoal remains the sole authority for current planning state;
+    this is documentary history, not an as-of reconstruction, a restore
+    mechanism, funding evidence, or an input to planning calculations.
+    """
+    __tablename__ = "goal_plan_amendment_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    wealth_goal_id = Column(Integer, ForeignKey("wealth_goals.id", ondelete="CASCADE"), nullable=False, index=True)
+    previous_target_amount = Column(Float, nullable=False)
+    resulting_target_amount = Column(Float, nullable=False)
+    previous_target_date = Column(String, nullable=True)  # YYYY-MM-DD
+    resulting_target_date = Column(String, nullable=True)  # YYYY-MM-DD
+    previous_priority = Column(String(16), nullable=False)
+    resulting_priority = Column(String(16), nullable=False)
+    recorded_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    workspace = relationship("Workspace", back_populates="goal_plan_amendment_history")
+    wealth_goal = relationship("WealthGoal", back_populates="plan_amendment_history")
+
+    __table_args__ = (
+        CheckConstraint("previous_target_amount > 0", name="ck_goal_plan_amendment_history_previous_amount_positive"),
+        CheckConstraint("resulting_target_amount > 0", name="ck_goal_plan_amendment_history_resulting_amount_positive"),
+        CheckConstraint("previous_priority IN ('HIGH', 'MEDIUM', 'LOW')", name="ck_goal_plan_amendment_history_previous_priority"),
+        CheckConstraint("resulting_priority IN ('HIGH', 'MEDIUM', 'LOW')", name="ck_goal_plan_amendment_history_resulting_priority"),
+        CheckConstraint(
+            "previous_target_amount <> resulting_target_amount "
+            "OR (previous_target_date IS NULL AND resulting_target_date IS NOT NULL) "
+            "OR (previous_target_date IS NOT NULL AND resulting_target_date IS NULL) "
+            "OR previous_target_date <> resulting_target_date "
+            "OR previous_priority <> resulting_priority",
+            name="ck_goal_plan_amendment_history_material_change",
+        ),
+        Index("ix_goal_plan_amendment_history_workspace_goal_recorded", "workspace_id", "wealth_goal_id", "recorded_at"),
     )
 
 

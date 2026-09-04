@@ -40,7 +40,7 @@ import uuid as _uuid
 from models.database import (
     init_db, migrate_legacy_data, get_db, SessionLocal,
     Workspace, get_default_workspace,
-    Portfolio, PortfolioItem, CashAccount, CashAccountBaseline, CashAccountTransfer, CashAccountTransaction, CashEntryTemplate, Liability, LiabilityBalanceObservation, WealthGoal, GoalFundingAllocation, GoalFundingAllocationHistory, PortfolioInvestmentMandate, GoalScenario, Watchlist,
+    Portfolio, PortfolioItem, CashAccount, CashAccountBaseline, CashAccountTransfer, CashAccountTransaction, CashEntryTemplate, Liability, LiabilityBalanceObservation, WealthGoal, GoalPlanAmendmentHistory, GoalFundingAllocation, GoalFundingAllocationHistory, PortfolioInvestmentMandate, GoalScenario, Watchlist,
     AgentCache, AnalysisCache, AnalysisHistory, OptimizerHistory, SignalHistory,
     Settings, UserUsage, Transaction, PortfolioSnapshot, BenchmarkPrice,
     MarketDataCache,
@@ -1800,6 +1800,57 @@ def _wealth_goal_or_404(db: Session, goal_id: int, workspace_id: int) -> WealthG
     return goal
 
 
+def _goal_plan_amendment_history_payload(event: GoalPlanAmendmentHistory) -> dict:
+    return {
+        "id": event.id,
+        "workspace_id": event.workspace_id,
+        "wealth_goal_id": event.wealth_goal_id,
+        "previous_target_amount": event.previous_target_amount,
+        "resulting_target_amount": event.resulting_target_amount,
+        "previous_target_date": event.previous_target_date,
+        "resulting_target_date": event.resulting_target_date,
+        "previous_priority": event.previous_priority,
+        "resulting_priority": event.resulting_priority,
+        "recorded_at": event.recorded_at.isoformat(),
+    }
+
+
+def _append_goal_plan_amendment_history(
+    db: Session,
+    *,
+    goal: WealthGoal,
+    previous_target_amount: float,
+    previous_target_date: str | None,
+    previous_priority: str,
+) -> None:
+    """Stage one complete plan snapshot only when its normalized values differ."""
+    if (
+        previous_target_amount == goal.target_amount
+        and previous_target_date == goal.target_date
+        and previous_priority == goal.priority
+    ):
+        return
+    db.add(GoalPlanAmendmentHistory(
+        workspace_id=goal.workspace_id,
+        wealth_goal_id=goal.id,
+        previous_target_amount=previous_target_amount,
+        resulting_target_amount=goal.target_amount,
+        previous_target_date=previous_target_date,
+        resulting_target_date=goal.target_date,
+        previous_priority=previous_priority,
+        resulting_priority=goal.priority,
+    ))
+
+
+def _commit_goal_plan_amendment_mutation(db: Session) -> None:
+    """Commit a Goal mutation and its staged plan evidence atomically."""
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+
 class WealthGoalCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1936,6 +1987,9 @@ async def create_wealth_goal(body: WealthGoalCreate, db: Session = Depends(get_d
 async def update_wealth_goal(goal_id: int, body: WealthGoalUpdate, db: Session = Depends(get_db)) -> dict:
     goal = _wealth_goal_or_404(db, goal_id, _ws_id(db))
     fields = body.model_dump(exclude_unset=True)
+    previous_target_amount = goal.target_amount
+    previous_target_date = goal.target_date
+    previous_priority = goal.priority
     if "name" in fields:
         goal.name = fields["name"].strip()
     if "goal_type" in fields:
@@ -1951,9 +2005,33 @@ async def update_wealth_goal(goal_id: int, body: WealthGoalUpdate, db: Session =
         goal.note = note.strip() or None if note is not None else None
     if "is_archived" in fields:
         goal.is_archived = fields["is_archived"]
-    db.commit()
+    _append_goal_plan_amendment_history(
+        db,
+        goal=goal,
+        previous_target_amount=previous_target_amount,
+        previous_target_date=previous_target_date,
+        previous_priority=previous_priority,
+    )
+    _commit_goal_plan_amendment_mutation(db)
     db.refresh(goal)
     return _wealth_goal_payload(goal)
+
+
+@app.get("/wealth-goals/{goal_id}/plan-history")
+async def list_goal_plan_amendment_history(goal_id: int, db: Session = Depends(get_db)) -> list[dict]:
+    """Return immutable plan-amendment evidence, newest event first."""
+    ws = _ws_id(db)
+    goal = _wealth_goal_or_404(db, goal_id, ws)
+    events = (
+        db.query(GoalPlanAmendmentHistory)
+        .filter(
+            GoalPlanAmendmentHistory.workspace_id == ws,
+            GoalPlanAmendmentHistory.wealth_goal_id == goal.id,
+        )
+        .order_by(GoalPlanAmendmentHistory.recorded_at.desc(), GoalPlanAmendmentHistory.id.desc())
+        .all()
+    )
+    return [_goal_plan_amendment_history_payload(event) for event in events]
 
 
 # ── Portfolio Investment Mandates (Phase 7.6A) ───────────────────────────────

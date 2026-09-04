@@ -641,6 +641,24 @@ export const createWealthGoal = (body: WealthGoalCreate) =>
 export const updateWealthGoal = (id: number, body: WealthGoalUpdate) =>
   apiFetch<WealthGoal>(`/wealth-goals/${id}`, { method: "PATCH", body: JSON.stringify(body) });
 
+// Immutable record of amendments to a goal's current plan. It does not record
+// funding, contributions, transfers, or advice; WealthGoal remains current authority.
+export interface GoalPlanAmendmentHistory {
+  id: number;
+  workspace_id: number;
+  wealth_goal_id: number;
+  previous_target_amount: number;
+  resulting_target_amount: number;
+  previous_target_date: string | null;
+  resulting_target_date: string | null;
+  previous_priority: WealthGoalPriority;
+  resulting_priority: WealthGoalPriority;
+  recorded_at: string;
+}
+
+export const listGoalPlanAmendmentHistory = (goalId: number) =>
+  apiFetch<GoalPlanAmendmentHistory[]>(`/wealth-goals/${goalId}/plan-history`);
+
 export const listPortfolioInvestmentMandates = (portfolioId: number) =>
   apiFetch<PortfolioInvestmentMandate[]>(`/portfolios/${portfolioId}/investment-mandates`);
 

@@ -88,13 +88,13 @@ def test_goal_scenario_revision_merges_the_repository_heads():
     """The repository migration chain has exactly one head (no unmerged branches).
 
     Updated for each new migration as it becomes the sole head — most
-    recently e4f6a8b0c2d4 (Investment Funding Counterparty Evidence); not
+    recently f7a9c1e3b5d7 (Goal Plan Amendment History); not
     specific to the goal scenario migration itself.
     """
     config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["e4f6a8b0c2d4"]
+    assert script.get_heads() == ["f7a9c1e3b5d7"]
 
 
 # 1. create scenario

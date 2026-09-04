@@ -16,6 +16,7 @@ import {
   messageFor,
 } from "@/components/goals/GoalPlanningSections";
 import { FundingHistorySection, type FundingHistoryState } from "@/components/goals/FundingHistorySection";
+import { PlanHistorySection, type PlanHistoryState } from "@/components/goals/PlanHistorySection";
 import {
   GoalAffordabilitySection,
   type GoalAffordabilityEvidence,
@@ -37,6 +38,7 @@ import {
   getWealthFactualReview,
   listCashAccounts,
   listGoalFundingAllocationHistory,
+  listGoalPlanAmendmentHistory,
   listGoalScenarios,
   listPortfolios,
   listWealthGoals,
@@ -79,6 +81,7 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
   const [legacyEvidence, setLegacyEvidence] = useState<LegacyGoalProfileEvidenceResponse | { error: string } | undefined>(undefined);
   const [scenarios, setScenarios] = useState<ScenariosState>(undefined);
   const [fundingHistory, setFundingHistory] = useState<FundingHistoryState>(undefined);
+  const [planHistory, setPlanHistory] = useState<PlanHistoryState>(undefined);
   // Lifted above GoalWhatIfSection so "Load scenario" can populate its
   // transient assumptions from the Saved Scenarios section.
   const [whatIfExpanded, setWhatIfExpanded] = useState(false);
@@ -115,6 +118,7 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
     setSourceLoadError("");
     setScenarios(undefined);
     setFundingHistory(undefined);
+    setPlanHistory(undefined);
     setWhatIfExpanded(false);
     setWhatIfMode("forward");
     setWhatIfMonthlyContribution("");
@@ -198,6 +202,18 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
           },
           (err) => {
             if (isCurrentLoad()) setFundingHistory({ error: messageFor(err, "Unable to load funding history.") });
+          },
+        );
+      // Plan history is documentary evidence only. Like funding history, it
+      // must never block the authoritative current-goal and review surfaces.
+      void Promise.resolve()
+        .then(() => listGoalPlanAmendmentHistory(goalId))
+        .then(
+          (result) => {
+            if (isCurrentLoad()) setPlanHistory(result);
+          },
+          (err) => {
+            if (isCurrentLoad()) setPlanHistory({ error: messageFor(err, "Unable to load plan history.") });
           },
         );
       setFactualReview(contextResult.status === "fulfilled"
@@ -418,6 +434,8 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
           </section>
 
           <FundingHistorySection state={fundingHistory} />
+
+          <PlanHistorySection state={planHistory} />
 
           <section className="bg-white border rounded-xl p-4 shadow-sm space-y-3" aria-labelledby="planning-heading">
             <h2 id="planning-heading" className="text-lg font-semibold">Planning / What-If</h2>

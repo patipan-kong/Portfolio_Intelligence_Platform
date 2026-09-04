@@ -120,11 +120,11 @@ it does not earn or spend it). Delivered:
 investment portfolio funding.
 
 - **Investment Funding Transfer** (ADR-012) — a Cash Account movement to or
-  from an investment Portfolio can be recorded as a distinct, one-sided
-  factual event (`INVESTMENT_TRANSFER`). It moves the Cash Account balance
-  and names the associated Portfolio as user-asserted metadata; it does not
-  count as income, expense, or net cash flow, and does not affect Recorded
-  Expense Coverage.
+   from an investment Portfolio can be recorded as a distinct, one-sided
+   factual event (`INVESTMENT_TRANSFER`). It moves the Cash Account balance
+   and preserves the associated Portfolio's creation-time ID/name evidence;
+   it does not count as income, expense, or net cash flow, and does not affect
+   Recorded Expense Coverage.
 
 **Paired, atomic cross-domain funding remains deferred.** Recording the cash
 side does not create, match, validate, or reconcile the Portfolio's ledger
@@ -234,10 +234,14 @@ currently provides.
   Navigation only: no new backend endpoint, no scheduled or automatic action,
   and an unresolvable source is never silently replaced by another one.
 - Goal Funding Allocation History — immutable, append-only designation-change
-  evidence on Goal Detail (create, changed amount, removal), with source ID and
-  name snapshots that survive Portfolio deletion. It is not contribution,
-  transfer, transaction, or available-funds evidence; current allocations
-  remain the sole source of current funding state.
+   evidence on Goal Detail (create, changed amount, removal), with source ID and
+   name snapshots that survive Portfolio deletion. It is not contribution,
+   transfer, transaction, or available-funds evidence; current allocations
+   remain the sole source of current funding state.
+- Goal Plan Amendment History — immutable, append-only before/after evidence
+  when a Goal's target amount, target date, or priority changes. It is planning
+  history only, not funding, contribution, transfer, recommendation, or an
+  as-of reconstruction; the current Goal remains the sole planning authority.
 - Named Scenarios — persisted, archivable per-goal assumption sets
 - Scenario Comparison — two scenarios evaluated against one shared live goal
   context, with no ranking and no winner

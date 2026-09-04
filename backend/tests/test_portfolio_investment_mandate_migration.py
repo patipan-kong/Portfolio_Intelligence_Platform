@@ -25,11 +25,12 @@ def test_revision_descends_from_sole_predecessor_and_repository_has_one_head():
     script = ScriptDirectory.from_config(Config(str(BACKEND / "alembic.ini")))
     assert module.down_revision == "e5f7a9b1c3d6"
     # The repository's sole head has since advanced through Cash Entry
-    # Templates, Goal Funding Allocation History, and Investment Funding
-    # Counterparty Evidence; this test's original intent —
+    # Templates, Goal Funding Allocation History, Investment Funding
+    # Counterparty Evidence, and Goal Plan Amendment History; this test's
+    # original intent —
     # "the repository has exactly one head" — is preserved by asserting that
     # current head instead.
-    assert script.get_heads() == ["e4f6a8b0c2d4"]
+    assert script.get_heads() == ["f7a9c1e3b5d7"]
 
 
 def test_upgrade_is_empty_no_backfill_and_downgrade_removes_only_new_structure():

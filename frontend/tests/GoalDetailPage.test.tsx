@@ -12,6 +12,7 @@ import {
   getWealthFactualReview,
   listCashAccounts,
   listGoalFundingAllocationHistory,
+  listGoalPlanAmendmentHistory,
   listGoalFundingAllocations,
   listGoalScenarios,
   listPortfolios,
@@ -24,6 +25,7 @@ import {
   type GoalContextResponse,
   type GoalFundingAllocation,
   type GoalFundingAllocationHistory,
+  type GoalPlanAmendmentHistory,
   type LegacyGoalProfileEvidenceResponse,
   type GoalScenario,
   type Portfolio,
@@ -43,6 +45,7 @@ vi.mock("@/lib/api", () => ({
   getWealthFactualReview: vi.fn(),
   listCashAccounts: vi.fn(),
   listGoalFundingAllocationHistory: vi.fn(),
+  listGoalPlanAmendmentHistory: vi.fn(),
   listGoalFundingAllocations: vi.fn(),
   listGoalScenarios: vi.fn(),
   listPortfolios: vi.fn(),
@@ -157,6 +160,19 @@ const fundingHistory: GoalFundingAllocationHistory[] = [
   },
 ];
 
+const planHistory: GoalPlanAmendmentHistory[] = [{
+  id: 301,
+  workspace_id: 1,
+  wealth_goal_id: 1,
+  previous_target_amount: 19_000_000,
+  resulting_target_amount: 20_000_000,
+  previous_target_date: "2054-01-01",
+  resulting_target_date: "2055-01-01",
+  previous_priority: "MEDIUM",
+  resulting_priority: "HIGH",
+  recorded_at: "2026-09-04T12:00:00",
+}];
+
 const scenario: GoalScenario = {
   id: 500,
   workspace_id: 1,
@@ -229,6 +245,7 @@ function quote(symbol: string, current: number): PriceRefreshItem {
 const listMock = vi.mocked(listWealthGoals);
 const allocationsMock = vi.mocked(listGoalFundingAllocations);
 const fundingHistoryMock = vi.mocked(listGoalFundingAllocationHistory);
+const planHistoryMock = vi.mocked(listGoalPlanAmendmentHistory);
 const contextMock = vi.mocked(getWealthFactualReview);
 const legacyEvidenceMock = vi.mocked(getLegacyGoalProfileEvidence);
 const cashAccountsMock = vi.mocked(listCashAccounts);
@@ -423,6 +440,7 @@ describe("GoalDetailPage", () => {
     listMock.mockResolvedValue([goal]);
     allocationsMock.mockResolvedValue([]);
     fundingHistoryMock.mockResolvedValue([]);
+    planHistoryMock.mockResolvedValue([]);
     contextMock.mockImplementation(configuredFactualReview);
     legacyEvidenceMock.mockImplementation(configuredLegacyEvidence);
     cashAccountsMock.mockResolvedValue([cashAccount]);
@@ -654,6 +672,28 @@ describe("GoalDetailPage", () => {
       expect(await screen.findByRole("heading", { name: "Retire by 55" })).toBeInTheDocument();
       expect(await screen.findByText("history offline")).toBeInTheDocument();
       expect(screen.getByRole("heading", { name: "Funding" })).toBeInTheDocument();
+    });
+  });
+
+  describe("Goal Plan Amendment History", () => {
+    it("renders factual plan amendments with no funding or recommendation implication", async () => {
+      planHistoryMock.mockResolvedValue(planHistory);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+
+      expect(await screen.findByText("Target amount changed from ฿19,000,000.00 to ฿20,000,000.00.")).toBeInTheDocument();
+      expect(screen.getByText("Target date changed from 2054-01-01 to 2055-01-01.")).toBeInTheDocument();
+      expect(screen.getByText("Priority changed from Medium priority to High priority.")).toBeInTheDocument();
+      expect(screen.getByText(/Planning amendments only\. This is not funding, contribution, transfer, or recommendation evidence\./)).toBeInTheDocument();
+    });
+
+    it("isolates plan-history loading failure from the existing Goal Detail sections", async () => {
+      planHistoryMock.mockRejectedValue(new Error("plan history offline"));
+      render(<GoalDetailPage params={{ id: "1" }} />);
+
+      expect(await screen.findByRole("heading", { name: "Retire by 55" })).toBeInTheDocument();
+      expect(await screen.findByText("plan history offline")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Funding" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Planning / What-If" })).toBeInTheDocument();
     });
   });
 
