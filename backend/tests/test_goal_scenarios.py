@@ -88,13 +88,13 @@ def test_goal_scenario_revision_merges_the_repository_heads():
     """The repository migration chain has exactly one head (no unmerged branches).
 
     Updated for each new migration as it becomes the sole head — most
-    recently c1d2e3f4a5b6 (Cash Entry Templates); not specific to the goal
-    scenario migration itself.
+    recently e4f6a8b0c2d4 (Investment Funding Counterparty Evidence); not
+    specific to the goal scenario migration itself.
     """
     config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["c1d2e3f4a5b6"]
+    assert script.get_heads() == ["e4f6a8b0c2d4"]
 
 
 # 1. create scenario

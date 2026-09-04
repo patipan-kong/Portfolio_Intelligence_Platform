@@ -200,6 +200,58 @@ describe("CashAccountsPage", () => {
     expect(screen.getByText(/−฿100.00/)).toBeInTheDocument();
   });
 
+  it("drills through to the exact live associated portfolio in recent investment-transfer activity", async () => {
+    const tracked = { ...account, baseline: { id: 1, cash_account_id: 1, effective_on: "2026-08-20", observed_balance: 1250.5, created_at: "2026-08-20T00:00:00Z" } };
+    listMock.mockResolvedValue([tracked]);
+    activityMock.mockResolvedValue([{
+      id: 10,
+      workspace_id: 1,
+      cash_account_id: 1,
+      transaction_type: "INVESTMENT_TRANSFER",
+      amount: -100,
+      signed_amount: -100,
+      occurred_on: "2026-08-25",
+      category: null,
+      note: null,
+      counterparty_portfolio_id: 7,
+      counterparty_portfolio_name: "Growth Portfolio",
+      counterparty_portfolio_id_snapshot: 7,
+      counterparty_portfolio_name_snapshot: "Growth Portfolio",
+      investment_direction: "TO_PORTFOLIO",
+      created_at: "2026-08-25T00:00:00Z",
+    }]);
+    render(<CashAccountsPage />);
+
+    expect(await screen.findByRole("link", { name: "Growth Portfolio" })).toHaveAttribute("href", "/portfolio?portfolio=7");
+    expect(screen.getByText(/associated portfolio/)).toBeInTheDocument();
+  });
+
+  it("shows deleted investment-transfer counterparty snapshots without a live link", async () => {
+    const tracked = { ...account, baseline: { id: 1, cash_account_id: 1, effective_on: "2026-08-20", observed_balance: 1250.5, created_at: "2026-08-20T00:00:00Z" } };
+    listMock.mockResolvedValue([tracked]);
+    activityMock.mockResolvedValue([{
+      id: 11,
+      workspace_id: 1,
+      cash_account_id: 1,
+      transaction_type: "INVESTMENT_TRANSFER",
+      amount: -100,
+      signed_amount: -100,
+      occurred_on: "2026-08-25",
+      category: null,
+      note: null,
+      counterparty_portfolio_id: null,
+      counterparty_portfolio_name: null,
+      counterparty_portfolio_id_snapshot: 7,
+      counterparty_portfolio_name_snapshot: "Deleted Growth Portfolio",
+      investment_direction: "TO_PORTFOLIO",
+      created_at: "2026-08-25T00:00:00Z",
+    }]);
+    render(<CashAccountsPage />);
+
+    expect(await screen.findByText(/Deleted Growth Portfolio/)).toHaveTextContent("historical associated portfolio; no longer available");
+    expect(screen.queryByRole("link", { name: "Deleted Growth Portfolio" })).not.toBeInTheDocument();
+  });
+
   it("looks up a historical balance for a tracked account", async () => {
     const tracked = { ...account, baseline: { id: 1, cash_account_id: 1, effective_on: "2026-08-20", observed_balance: 1250.5, created_at: "2026-08-20T00:00:00" } };
     listMock.mockResolvedValue([tracked]);

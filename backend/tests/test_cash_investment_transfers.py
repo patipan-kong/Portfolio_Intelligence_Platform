@@ -113,9 +113,12 @@ def test_to_portfolio_stores_negative_amount_with_counterparty_and_no_category_o
     assert result["investment_direction"] == "TO_PORTFOLIO"
     assert result["counterparty_portfolio_id"] == portfolio.id
     assert result["counterparty_portfolio_name"] == "Growth Portfolio"
+    assert result["counterparty_portfolio_id_snapshot"] == portfolio.id
+    assert result["counterparty_portfolio_name_snapshot"] == "Growth Portfolio"
     assert result["category"] is None
     assert result["transfer_id"] is None
     assert db.get(CashAccount, account["id"]).balance == 700.0
+    assert db.query(Transaction).count() == 0
 
 
 def test_from_portfolio_stores_positive_amount():
@@ -216,6 +219,21 @@ def test_outbound_overdraft_is_rejected_without_any_row_created():
     assert db.get(CashAccount, account["id"]).balance == 100.0
 
 
+def test_commit_failure_rolls_back_cash_row_and_snapshot_evidence(monkeypatch):
+    db = make_session()
+    account, portfolio = setup_account_and_portfolio(db)
+
+    def fail_commit():
+        raise IntegrityError("COMMIT", {}, RuntimeError("forced commit failure"))
+
+    monkeypatch.setattr(db, "commit", fail_commit)
+    with pytest.raises(IntegrityError):
+        create_investment_transfer(db, account["id"], portfolio.id)
+
+    assert db.query(CashAccountTransaction).count() == 0
+    assert db.get(CashAccount, account["id"]).balance == 1000.0
+
+
 # ── Invalid-state prevention (DB CHECK constraints) ──────────────────────────
 
 
@@ -233,6 +251,40 @@ def test_db_rejects_counterparty_on_any_non_investment_transfer_type(transaction
         counterparty_portfolio_id=portfolio.id,
     )
     db.add(row)
+    with pytest.raises(IntegrityError):
+        db.commit()
+
+
+@pytest.mark.parametrize("transaction_type", ["EXPENSE", "INCOME", "ADJUSTMENT", "TRANSFER"])
+def test_db_rejects_counterparty_snapshot_on_any_non_investment_transfer_type(transaction_type):
+    db = make_session()
+    account, portfolio = setup_account_and_portfolio(db)
+    amount = 10.0 if transaction_type in ("EXPENSE", "INCOME") else -10.0
+    row = CashAccountTransaction(
+        workspace_id=account["workspace_id"],
+        cash_account_id=account["id"],
+        transaction_type=transaction_type,
+        amount=amount,
+        occurred_on="2026-08-15",
+        counterparty_portfolio_id_snapshot=portfolio.id,
+        counterparty_portfolio_name_snapshot=portfolio.name,
+    )
+    db.add(row)
+    with pytest.raises(IntegrityError):
+        db.commit()
+
+
+def test_db_rejects_incomplete_counterparty_snapshot_pair():
+    db = make_session()
+    account, portfolio = setup_account_and_portfolio(db)
+    db.add(CashAccountTransaction(
+        workspace_id=account["workspace_id"],
+        cash_account_id=account["id"],
+        transaction_type="INVESTMENT_TRANSFER",
+        amount=-10.0,
+        occurred_on="2026-08-15",
+        counterparty_portfolio_id_snapshot=portfolio.id,
+    ))
     with pytest.raises(IntegrityError):
         db.commit()
 
@@ -292,11 +344,49 @@ def test_portfolio_delete_nulls_counterparty_and_preserves_the_cash_fact():
 
     row = db.query(CashAccountTransaction).filter(CashAccountTransaction.transaction_type == "INVESTMENT_TRANSFER").one()
     assert row.counterparty_portfolio_id is None
+    assert row.counterparty_portfolio_id_snapshot == portfolio_id
+    assert row.counterparty_portfolio_name_snapshot == "Growth Portfolio"
     assert row.amount == -300.0
     assert db.get(CashAccount, account["id"]).balance == 700.0
     payload = main._cash_account_transaction_payload(row)
     assert payload["counterparty_portfolio_id"] is None
     assert payload["counterparty_portfolio_name"] is None
+    assert payload["counterparty_portfolio_id_snapshot"] == portfolio_id
+    assert payload["counterparty_portfolio_name_snapshot"] == "Growth Portfolio"
+
+
+def test_portfolio_rename_does_not_rewrite_creation_time_counterparty_snapshot():
+    db = make_session()
+    account, portfolio = setup_account_and_portfolio(db)
+    create_investment_transfer(db, account["id"], portfolio.id)
+
+    portfolio.name = "Renamed Growth Portfolio"
+    db.commit()
+    row = db.query(CashAccountTransaction).one()
+    payload = main._cash_account_transaction_payload(row)
+
+    assert payload["counterparty_portfolio_name"] == "Renamed Growth Portfolio"
+    assert payload["counterparty_portfolio_name_snapshot"] == "Growth Portfolio"
+
+
+def test_legacy_investment_transfer_without_snapshots_remains_readable():
+    db = make_session()
+    account, portfolio = setup_account_and_portfolio(db)
+    row = CashAccountTransaction(
+        workspace_id=account["workspace_id"],
+        cash_account_id=account["id"],
+        transaction_type="INVESTMENT_TRANSFER",
+        amount=-10.0,
+        occurred_on="2026-08-15",
+        counterparty_portfolio_id=portfolio.id,
+    )
+    db.add(row)
+    db.commit()
+
+    payload = main._cash_account_transaction_payload(row)
+    assert payload["counterparty_portfolio_id"] == portfolio.id
+    assert payload["counterparty_portfolio_id_snapshot"] is None
+    assert payload["counterparty_portfolio_name_snapshot"] is None
 
 
 # ── Cash Flow aggregation invariant ──────────────────────────────────────────

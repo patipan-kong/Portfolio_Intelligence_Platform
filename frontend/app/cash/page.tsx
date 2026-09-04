@@ -157,15 +157,22 @@ function AccountCard({ account, activity, highlighted = false, cardRef, onEdit, 
   return <div ref={cardRef} tabIndex={-1} className={`bg-white border rounded-xl p-4 shadow-sm space-y-3 ${highlighted ? "ring-2 ring-blue-500" : ""}`}><div className="flex items-center justify-between gap-4 flex-wrap"><div><p className="font-semibold">{account.name}</p>{account.institution && <p className="text-sm text-gray-500">{account.institution}</p>}<p className="text-lg font-medium mt-1">{formatThb(account.balance)} <span className="text-xs text-gray-500">THB</span></p><p className="text-xs text-gray-500 mt-1">{tracked ? `Cash Flow tracking started ${account.baseline?.effective_on}` : "Cash Flow tracking has not started"}</p></div><div className="flex gap-3 text-sm flex-wrap"><button type="button" onClick={() => onEdit(account)} className="text-blue-600 hover:underline">Edit</button>{tracked ? <><button type="button" onClick={() => onEvent(account, "INCOME")} className="text-blue-600 hover:underline">Add income</button><button type="button" onClick={() => onEvent(account, "EXPENSE")} className="text-blue-600 hover:underline">Add expense</button><button type="button" onClick={() => onReconcile(account)} className="text-blue-600 hover:underline">Reconcile balance</button><button type="button" onClick={() => onAsOf(account)} className="text-blue-600 hover:underline">Balance on date</button></> : <><button type="button" onClick={() => onBaseline(account)} className="text-blue-600 hover:underline">Start tracking</button><button type="button" onClick={() => onBalance(account)} className="text-blue-600 hover:underline">Update balance</button></>}<button type="button" onClick={onArchive} className="text-red-600 hover:underline">Archive</button></div></div>{tracked && <div className="border-t pt-3"><p className="text-sm font-medium">Recent activity</p>{activity.length === 0 ? <p className="text-xs text-gray-500 mt-1">No activity after this tracking baseline yet.</p> : <ul className="mt-1 space-y-1 text-sm">{activity.slice(0, 3).map((item) => <li key={item.id} className="flex justify-between gap-3"><span>{item.occurred_on} · {accountActivityLabel(item)}</span><span className={item.transaction_type === "TRANSFER" ? "text-gray-700" : item.signed_amount >= 0 ? "text-green-700" : "text-red-700"}>{item.signed_amount >= 0 ? "+" : "−"}{formatThb(Math.abs(item.signed_amount))}</span></li>)}</ul>}</div>}</div>;
 }
 
-function accountActivityLabel(item: CashAccountTransaction): string {
+function accountActivityLabel(item: CashAccountTransaction) {
   if (item.transaction_type === "TRANSFER") {
     return item.transfer_direction === "OUT"
       ? `Transfer to ${item.transfer_destination_account_name ?? "another account"}`
       : `Transfer from ${item.transfer_source_account_name ?? "another account"}`;
   }
   if (item.transaction_type === "INVESTMENT_TRANSFER") {
-    const portfolio = item.counterparty_portfolio_name ?? "investment portfolio (no longer available)";
-    return item.investment_direction === "FROM_PORTFOLIO" ? `Investment transfer from ${portfolio}` : `Investment transfer to ${portfolio}`;
+    const direction = item.investment_direction === "FROM_PORTFOLIO" ? "Investment transfer from" : "Investment transfer to";
+    if (item.counterparty_portfolio_id != null) {
+      const name = item.counterparty_portfolio_name ?? "associated portfolio";
+      return <>{direction} <Link href={`/portfolio?portfolio=${item.counterparty_portfolio_id}`} className="text-blue-600 hover:underline">{name}</Link> <span className="text-gray-500">(associated portfolio)</span></>;
+    }
+    if (item.counterparty_portfolio_name_snapshot) {
+      return <>{direction} {item.counterparty_portfolio_name_snapshot} <span className="text-gray-500">(historical associated portfolio; no longer available)</span></>;
+    }
+    return `${direction} investment portfolio (no longer available; no historical portfolio identity was recorded)`;
   }
   return item.category ?? item.transaction_type;
 }

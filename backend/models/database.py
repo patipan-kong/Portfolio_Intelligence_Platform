@@ -515,6 +515,13 @@ class CashAccountTransaction(Base):
     # amount/date-matched, or has been reconciled. Legal only when
     # transaction_type = 'INVESTMENT_TRANSFER' (ck_..._counterparty_type).
     counterparty_portfolio_id = Column(Integer, ForeignKey("portfolios.id", ondelete="SET NULL"), nullable=True, index=True)
+    # Creation-time documentary evidence for Investment Funding Transfer only.
+    # These scalar snapshots deliberately have no FK: a Portfolio rename or
+    # hard delete must not rewrite or erase what the user selected when
+    # recording the cash-side movement. They never resolve a Portfolio or
+    # prove a Portfolio-side transaction exists.
+    counterparty_portfolio_id_snapshot = Column(Integer, nullable=True)
+    counterparty_portfolio_name_snapshot = Column(String, nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     workspace = relationship("Workspace", back_populates="cash_account_transactions")
@@ -533,6 +540,16 @@ class CashAccountTransaction(Base):
         CheckConstraint(
             "counterparty_portfolio_id IS NULL OR transaction_type = 'INVESTMENT_TRANSFER'",
             name="ck_cash_account_transactions_counterparty_type",
+        ),
+        CheckConstraint(
+            "(counterparty_portfolio_id_snapshot IS NULL AND counterparty_portfolio_name_snapshot IS NULL) "
+            "OR (counterparty_portfolio_id_snapshot IS NOT NULL AND counterparty_portfolio_name_snapshot IS NOT NULL)",
+            name="ck_cash_account_transactions_counterparty_snapshot_pair",
+        ),
+        CheckConstraint(
+            "(counterparty_portfolio_id_snapshot IS NULL AND counterparty_portfolio_name_snapshot IS NULL) "
+            "OR transaction_type = 'INVESTMENT_TRANSFER'",
+            name="ck_cash_account_transactions_counterparty_snapshot_type",
         ),
         CheckConstraint(
             "transfer_id IS NULL OR transaction_type = 'TRANSFER'",

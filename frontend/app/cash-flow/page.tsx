@@ -1221,7 +1221,7 @@ function EntrySection({
 }
 
 function ActivityList({ events }: { events: CashFlowEvent[] }) {
-  return <ul className="mt-3 divide-y">{events.map((event) => <li key={event.transfer_id ? `transfer-${event.transfer_id}` : `transaction-${event.id}`} className="py-3 flex items-start justify-between gap-4"><div className="min-w-0"><p className="text-sm font-medium">{event.occurred_on} · {eventActivityLabel(event)}</p><p className="text-xs text-gray-500 mt-0.5">{eventTypeLabel(event)}{event.category ? ` · ${event.category}` : ""}</p>{event.note && <p className="text-xs text-gray-600 mt-1 break-words">{event.note}</p>}</div><span className={`text-sm font-medium whitespace-nowrap ${event.transaction_type === "TRANSFER" ? "text-gray-700" : signedPresentationAmount(event) >= 0 ? "text-green-700" : "text-red-700"}`}>{event.transaction_type === "TRANSFER" ? formatThb(event.amount) : formatSigned(signedPresentationAmount(event))}</span></li>)}</ul>;
+  return <ul className="mt-3 divide-y">{events.map((event) => <li key={event.transfer_id ? `transfer-${event.transfer_id}` : `transaction-${event.id}`} className="py-3 flex items-start justify-between gap-4"><div className="min-w-0"><p className="text-sm font-medium">{event.occurred_on} · {eventActivityLabel(event)}</p><p className="text-xs text-gray-500 mt-0.5">{eventTypeLabel(event)}{event.category ? ` · ${event.category}` : ""}</p>{investmentTransferEvidence(event)}{event.note && <p className="text-xs text-gray-600 mt-1 break-words">{event.note}</p>}</div><span className={`text-sm font-medium whitespace-nowrap ${event.transaction_type === "TRANSFER" ? "text-gray-700" : signedPresentationAmount(event) >= 0 ? "text-green-700" : "text-red-700"}`}>{event.transaction_type === "TRANSFER" ? formatThb(event.amount) : formatSigned(signedPresentationAmount(event))}</span></li>)}</ul>;
 }
 
 function eventTypeLabel(event: CashFlowEvent): string {
@@ -1244,6 +1244,18 @@ function eventActivityLabel(event: CashFlowEvent): string {
     return event.investment_direction === "FROM_PORTFOLIO" ? `${portfolio} → ${account}` : `${account} → ${portfolio}`;
   }
   return `${event.account_name}${event.account_is_archived ? " (Archived)" : ""}`;
+}
+
+function investmentTransferEvidence(event: CashFlowEvent) {
+  if (event.transaction_type !== "INVESTMENT_TRANSFER") return null;
+  if (event.counterparty_portfolio_id != null) {
+    const name = event.counterparty_portfolio_name ?? "Associated portfolio";
+    return <p className="text-xs text-gray-500 mt-0.5">Associated portfolio: <Link href={`/portfolio?portfolio=${event.counterparty_portfolio_id}`} className="text-blue-600 hover:underline">{name}</Link></p>;
+  }
+  if (event.counterparty_portfolio_name_snapshot) {
+    return <p className="text-xs text-gray-500 mt-0.5">Historical associated portfolio: {event.counterparty_portfolio_name_snapshot} (no longer available)</p>;
+  }
+  return <p className="text-xs text-gray-500 mt-0.5">Associated portfolio is no longer available; no historical portfolio identity was recorded.</p>;
 }
 
 function formatSigned(value: number): string {

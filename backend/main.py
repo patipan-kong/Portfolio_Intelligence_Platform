@@ -620,6 +620,11 @@ def _cash_account_transaction_payload(transaction: CashAccountTransaction) -> di
             if transaction.counterparty_portfolio_id is not None and transaction.counterparty_portfolio is not None
             else None
         ),
+        # Documentary creation-time evidence only. These fields are allowed
+        # to be absent for pre-IFTE records and must never be used to resolve
+        # a Portfolio or infer a Portfolio-side transaction.
+        "counterparty_portfolio_id_snapshot": transaction.counterparty_portfolio_id_snapshot,
+        "counterparty_portfolio_name_snapshot": transaction.counterparty_portfolio_name_snapshot,
         "investment_direction": (
             ("TO_PORTFOLIO" if transaction.amount < 0 else "FROM_PORTFOLIO")
             if transaction.transaction_type == INVESTMENT_TRANSFER
@@ -1178,6 +1183,8 @@ async def create_cash_investment_transfer(
         db, account, INVESTMENT_TRANSFER, signed_effect, occurred_on, None, body.note,
     )
     transaction.counterparty_portfolio_id = portfolio.id
+    transaction.counterparty_portfolio_id_snapshot = portfolio.id
+    transaction.counterparty_portfolio_name_snapshot = portfolio.name
     _commit_cash_mutation(db)
     db.refresh(transaction)
     return _cash_account_transaction_payload(transaction)

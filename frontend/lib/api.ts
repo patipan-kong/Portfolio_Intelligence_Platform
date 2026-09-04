@@ -152,6 +152,11 @@ export interface CashAccountTransaction {
   // after the referenced Portfolio has been deleted.
   counterparty_portfolio_id?: number | null;
   counterparty_portfolio_name?: string | null;
+  // IFTE-01: immutable creation-time documentary identity for a cash-side
+  // investment transfer. It may be absent on a pre-IFTE record; it never
+  // resolves a deleted Portfolio or proves a Portfolio-side transaction.
+  counterparty_portfolio_id_snapshot?: number | null;
+  counterparty_portfolio_name_snapshot?: string | null;
   investment_direction?: "TO_PORTFOLIO" | "FROM_PORTFOLIO" | null;
   created_at: string;
 }

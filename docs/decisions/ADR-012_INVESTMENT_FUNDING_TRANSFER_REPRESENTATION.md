@@ -109,8 +109,13 @@ redundant, for the same reason ADR-010 §4 already documented for
 `Base.metadata.create_all()` against SQLite, and SQLite does not enforce FK
 `ondelete` actions without a PRAGMA this codebase does not set. The cash
 fact — amount, sign, date, note, balance effect — survives Portfolio
-deletion unchanged; only the counterparty attribution is lost, which is
-truthful, since the referenced Portfolio genuinely no longer exists.
+deletion unchanged. New `INVESTMENT_TRANSFER` records also preserve immutable,
+scalar creation-time `counterparty_portfolio_id_snapshot` and
+`counterparty_portfolio_name_snapshot` values. They are documentary evidence
+of the Portfolio selected by the user when recording the cash fact: they are
+not foreign keys, cannot resolve or restore a deleted Portfolio, and never
+prove that a Portfolio-side transaction exists. Pre-snapshot records retain
+their truthful no-recoverable-counterparty state after deletion.
 
 ### 6. Aggregation exclusion
 

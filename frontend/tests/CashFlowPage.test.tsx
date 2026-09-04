@@ -380,6 +380,27 @@ describe("CashFlowPage", () => {
       expect(screen.getByRole("region", { name: "Monthly summary" })).toHaveTextContent("฿0.00");
     });
 
+    it("renders a live associated-portfolio drill-through without relying on the portfolio catalog", async () => {
+      portfoliosMock.mockRejectedValue(new Error("portfolio catalog offline"));
+      setReport([event({
+        id: 14,
+        transaction_type: "INVESTMENT_TRANSFER",
+        amount: -300,
+        signed_amount: -300,
+        category: null,
+        counterparty_portfolio_id: 8,
+        counterparty_portfolio_name: "Growth Portfolio",
+        counterparty_portfolio_id_snapshot: 8,
+        counterparty_portfolio_name_snapshot: "Growth Portfolio",
+        investment_direction: "TO_PORTFOLIO",
+      })]);
+      render(<CashFlowPage />);
+
+      expect(await screen.findByText("Associated portfolio:")).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Growth Portfolio" })).toHaveAttribute("href", "/portfolio?portfolio=8");
+      expect(screen.getByText("2026-08-15 · Everyday Cash → Growth Portfolio")).toBeInTheDocument();
+    });
+
     it("submits an inbound (Investment → Cash) transfer with the reverse direction", async () => {
       portfoliosMock.mockResolvedValue([portfolio()]);
       let events: CashFlowEvent[] = [];
@@ -413,7 +434,7 @@ describe("CashFlowPage", () => {
       expect(await screen.findByText("2026-08-01 · Growth Portfolio → Everyday Cash")).toBeInTheDocument();
     });
 
-    it("falls back to a neutral label when the counterparty Portfolio has been deleted", async () => {
+    it("shows immutable historical counterparty evidence without a link after Portfolio deletion", async () => {
       portfoliosMock.mockResolvedValue([portfolio()]);
       setReport([event({
         id: 13,
@@ -423,10 +444,31 @@ describe("CashFlowPage", () => {
         category: null,
         counterparty_portfolio_id: null,
         counterparty_portfolio_name: null,
+        counterparty_portfolio_id_snapshot: 1,
+        counterparty_portfolio_name_snapshot: "Deleted Growth Portfolio",
         investment_direction: "TO_PORTFOLIO",
       })]);
       render(<CashFlowPage />);
       expect(await screen.findByText("2026-08-15 · Everyday Cash → Investment portfolio (no longer available)")).toBeInTheDocument();
+      expect(screen.getByText("Historical associated portfolio: Deleted Growth Portfolio (no longer available)")).toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "Deleted Growth Portfolio" })).not.toBeInTheDocument();
+    });
+
+    it("keeps the legacy missing-snapshot fallback truthful", async () => {
+      setReport([event({
+        id: 15,
+        transaction_type: "INVESTMENT_TRANSFER",
+        amount: -300,
+        signed_amount: -300,
+        category: null,
+        counterparty_portfolio_id: null,
+        counterparty_portfolio_name: null,
+        counterparty_portfolio_id_snapshot: null,
+        counterparty_portfolio_name_snapshot: null,
+        investment_direction: "TO_PORTFOLIO",
+      })]);
+      render(<CashFlowPage />);
+      expect(await screen.findByText("Associated portfolio is no longer available; no historical portfolio identity was recorded.")).toBeInTheDocument();
     });
 
     it("shows an inline error and creates nothing on API failure, without claiming automatic pairing anywhere", async () => {
@@ -440,7 +482,7 @@ describe("CashFlowPage", () => {
       expect(await screen.findByRole("alert")).toHaveTextContent("Cash activity cannot make the observed balance negative");
       expect(screen.getByText("No cash flow events in August 2026. Income, Expenses, and Net Cash Flow are all ฿0.00.")).toBeInTheDocument();
       const bodyText = document.body.textContent ?? "";
-      for (const banned of ["Incomplete", "Unmatched", "Missing deposit", "Pending", "Awaiting confirmation"]) {
+      for (const banned of ["Incomplete", "Unmatched", "Matched", "Reconciled", "Missing deposit", "Pending", "Awaiting confirmation"]) {
         expect(bodyText).not.toContain(banned);
       }
     });
