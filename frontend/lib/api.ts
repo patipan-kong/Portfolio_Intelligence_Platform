@@ -1111,6 +1111,20 @@ export const createCashInvestmentTransfer = (cashAccountId: number, body: CashIn
     body: JSON.stringify(body),
   });
 
+// ─── Portfolio Funding Evidence (PFET-01, ADR-012) ────────────────────────────
+// Documentary cash-side Investment Funding Transfer evidence naming a
+// Portfolio. Not a funding ledger and not reconciliation evidence — a row
+// proves only that a CashAccountTransaction was recorded with this Portfolio
+// as its immutable, creation-time counterparty snapshot. See ADR-012.
+
+export interface PortfolioFundingEvidenceEvent extends CashAccountTransaction {
+  account_name: string;
+  account_is_archived: boolean;
+}
+
+export const getPortfolioFundingEvidence = (portfolioId: number) =>
+  apiFetch<PortfolioFundingEvidenceEvent[]>(`/portfolios/${portfolioId}/funding-evidence`);
+
 export const getCashFlowReport = (month: string) =>
   apiFetch<CashFlowReport>(`/cash-flow?month=${encodeURIComponent(month)}`);
 

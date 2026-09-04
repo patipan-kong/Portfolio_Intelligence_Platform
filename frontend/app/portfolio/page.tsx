@@ -8,6 +8,7 @@ import PortfolioTable from "@/components/PortfolioTable";
 import PortfolioTabs from "@/components/PortfolioTabs";
 import PortfolioSummary from "@/components/PortfolioSummary";
 import PortfolioInvestmentMandates from "@/components/PortfolioInvestmentMandates";
+import PortfolioFundingEvidence from "@/components/PortfolioFundingEvidence";
 import { usePortfolio } from "@/lib/PortfolioContext";
 import WorkspaceScopeSwitcher from "@/components/WorkspaceScopeSwitcher";
 import AnalyzeAllButton from "@/components/AnalyzeAllButton";
@@ -803,6 +804,10 @@ export default function PortfolioPage() {
 
           {currentSelection != null && (
             <PortfolioInvestmentMandates portfolioId={currentSelection} />
+          )}
+
+          {currentSelection != null && (
+            <PortfolioFundingEvidence portfolioId={currentSelection} />
           )}
 
           {/* Cash Balance display (read-only; modified via Deposit / Withdraw) */}

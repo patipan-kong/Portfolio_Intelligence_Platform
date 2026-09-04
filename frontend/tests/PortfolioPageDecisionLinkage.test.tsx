@@ -20,6 +20,7 @@ const {
   getExecutionDecision, getExecutionDetail,
   listPortfolioInvestmentMandates, listWealthGoals,
   deletePortfolioInvestmentMandate, putPortfolioInvestmentMandate,
+  getPortfolioFundingEvidence,
 } = vi.hoisted(() => ({
   listPortfolios: vi.fn(),
   getHoldings: vi.fn(),
@@ -41,6 +42,7 @@ const {
   listWealthGoals: vi.fn(),
   deletePortfolioInvestmentMandate: vi.fn(),
   putPortfolioInvestmentMandate: vi.fn(),
+  getPortfolioFundingEvidence: vi.fn(),
 }));
 
 vi.mock("@/lib/api", () => ({
@@ -51,6 +53,7 @@ vi.mock("@/lib/api", () => ({
   getExecutionDecision, getExecutionDetail,
   listPortfolioInvestmentMandates, listWealthGoals,
   deletePortfolioInvestmentMandate, putPortfolioInvestmentMandate,
+  getPortfolioFundingEvidence,
 }));
 
 let mockSearchParams = new URLSearchParams();
@@ -156,6 +159,8 @@ beforeEach(() => {
   listPortfolioInvestmentMandates.mockResolvedValue([]);
   listWealthGoals.mockReset();
   listWealthGoals.mockResolvedValue([]);
+  getPortfolioFundingEvidence.mockReset();
+  getPortfolioFundingEvidence.mockResolvedValue([]);
   buyTransaction.mockReset();
   buyTransaction.mockResolvedValue(txResult());
   sellTransaction.mockReset();

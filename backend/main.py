@@ -2137,6 +2137,39 @@ async def delete_portfolio_investment_mandate(
     return Response(status_code=204)
 
 
+# ── Portfolio Funding Evidence (PFET-01, ADR-012) ────────────────────────────
+# Documentary cash-side Investment Funding Transfer evidence naming this
+# Portfolio. Not a funding ledger and not reconciliation: a row here proves
+# only that a CashAccountTransaction was recorded with this Portfolio as its
+# immutable, creation-time counterparty snapshot. It never implies a
+# Portfolio-side transaction, settlement, matched pair, or portfolio cash
+# change. See ADR-012.
+
+@app.get("/portfolios/{portfolio_id}/funding-evidence")
+async def list_portfolio_funding_evidence(portfolio_id: int, db: Session = Depends(get_db)) -> list[dict]:
+    ws = _ws_id(db)
+    portfolio = resolve_portfolio_or_404(db, portfolio_id, ws)
+    rows = (
+        db.query(CashAccountTransaction, CashAccount)
+        .join(CashAccount, CashAccount.id == CashAccountTransaction.cash_account_id)
+        .filter(
+            CashAccountTransaction.workspace_id == ws,
+            CashAccount.workspace_id == ws,
+            CashAccountTransaction.transaction_type == INVESTMENT_TRANSFER,
+            CashAccountTransaction.counterparty_portfolio_id_snapshot == portfolio.id,
+        )
+        .order_by(CashAccountTransaction.occurred_on.desc(), CashAccountTransaction.id.desc())
+        .all()
+    )
+    events = []
+    for transaction, account in rows:
+        event = _cash_account_transaction_payload(transaction)
+        event["account_name"] = account.name
+        event["account_is_archived"] = bool(account.is_archived)
+        events.append(event)
+    return events
+
+
 # ── Goal Funding Allocations (Phase 6, Milestone 2) ──────────────────────────
 # "This amount from this source is designated toward this goal." Does NOT
 # compute goal progress or a funding percentage. Structural validation only —

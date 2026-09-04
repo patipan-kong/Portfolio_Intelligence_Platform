@@ -133,6 +133,14 @@ atomicity, no matching or completeness signal between the two sides. The
 Portfolio-side entry remains a separate, user-initiated act through the
 investment ledger (Phase 1).
 
+- **Portfolio Funding Evidence Timeline (PFET-01)** — the Portfolio page
+  (`/portfolio`) now surfaces the same `INVESTMENT_TRANSFER` records as a
+  read-only, portfolio-scoped evidence list (`GET
+  /portfolios/{id}/funding-evidence`), filtered by each record's immutable
+  creation-time Portfolio snapshot. This closes the one-sided visibility gap
+  without adding any new fact, table, or column — it remains documentary
+  cash-side evidence only, governed entirely by ADR-012.
+
 - **Cash Entry Templates** — user-authored `INCOME`/`EXPENSE` templates
   (name, Cash Account, amount, category, optional note) that prefill the
   existing Add income / Add expense form on `/cash-flow`. A template is
