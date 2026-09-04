@@ -251,6 +251,12 @@ currently provides.
   context, with no ranking and no winner
 - Workspace Goals view — per-goal funding summaries plus a cross-goal Funding
   source health view on `/goals`
+- Goal Setup Guidance (GGS-01) — contextual, presentation-only field guidance
+  on the existing Goal creation form: per-goal-type wording for the target
+  amount and target date fields, an explicit Retirement/FIRE limitation, and a
+  priority explanation. Every persisted value remains user-entered or
+  user-selected; it adds no calculator, suggested value, or advisory
+  authority.
 
 Every result above is deterministic and factual. Planning math is
 goal-type-agnostic: `RETIREMENT`, `FIRE`, `EMERGENCY_FUND` and the other types

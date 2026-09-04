@@ -45,6 +45,55 @@ const GOAL_TYPES: WealthGoalType[] = [
 
 const PRIORITIES: WealthGoalPriority[] = ["HIGH", "MEDIUM", "LOW"];
 
+// GGS-01: first-use comprehension guidance only. Every value the form
+// persists remains user-entered/selected or an existing client default —
+// this map supplies presentation copy, never a computed or suggested value.
+type GoalTypeGuidance = {
+  amountLabel: string;
+  dateLabel: string;
+  amountLimitation?: string;
+};
+
+const GOAL_TYPE_GUIDANCE: Record<WealthGoalType, GoalTypeGuidance> = {
+  RETIREMENT: {
+    amountLabel: "How much do you want available for this goal? (required)",
+    dateLabel: "When do you want to retire? (optional)",
+    amountLimitation: "This setup does not calculate or recommend a retirement target. Enter the amount you want to plan toward.",
+  },
+  FIRE: {
+    amountLabel: "How much do you want available for this goal? (required)",
+    dateLabel: "When do you want to retire? (optional)",
+    amountLimitation: "This setup does not calculate or recommend a retirement target. Enter the amount you want to plan toward.",
+  },
+  HOUSE: {
+    amountLabel: "How much do you want to set aside for this home goal? (required)",
+    dateLabel: "Intended purchase date (optional)",
+  },
+  WEDDING: {
+    amountLabel: "What total budget are you planning for? (required)",
+    dateLabel: "Wedding or event date (optional)",
+  },
+  EDUCATION: {
+    amountLabel: "How much do you want available for education? (required)",
+    dateLabel: "Expected start date (optional)",
+  },
+  VACATION: {
+    amountLabel: "What is the total budget for this trip? (required)",
+    dateLabel: "Intended trip date (optional)",
+  },
+  EMERGENCY_FUND: {
+    amountLabel: "How much do you want available in your emergency fund? (required)",
+    dateLabel: "Target date (optional)",
+  },
+  OTHER: {
+    amountLabel: "Target amount (required)",
+    dateLabel: "Target date (optional)",
+  },
+};
+
+const PRIORITY_GUIDANCE = "Saved as High, Medium, or Low for this goal — it does not automatically rank goals or change investments.";
+const AMOUNT_PERSISTENT_GUIDANCE = "You choose the total THB amount for this goal — it isn't calculated for you. You can change it later; Plan History keeps a record of amendments.";
+
 function goalRecordMatchesContext(record: WealthGoal, contextGoal: GoalContextGoal): boolean {
   return record.id === contextGoal.id
     && record.name === contextGoal.name
@@ -265,13 +314,25 @@ export default function GoalsPage() {
       <form onSubmit={handleCreate} className="bg-white border rounded-xl p-4 space-y-3 shadow-sm">
         <h2 className="font-semibold">Add goal</h2>
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Name"><input aria-label="Goal name" value={name} onChange={(event) => setName(event.target.value)} className={inputClass} /></Field>
+          <Field label="Name (required)"><input aria-label="Goal name" value={name} onChange={(event) => setName(event.target.value)} className={inputClass} /></Field>
           <Field label="Type"><TypeSelect ariaLabel="Goal type" value={goalType} onChange={setGoalType} /></Field>
-          <Field label="Target amount"><input aria-label="Target amount" type="number" step="0.01" value={targetAmount} onChange={(event) => setTargetAmount(event.target.value)} className={inputClass} /></Field>
-          <Field label="Target date (optional)"><input aria-label="Target date" type="date" value={targetDate} onChange={(event) => setTargetDate(event.target.value)} className={inputClass} /></Field>
-          <Field label="Priority"><PrioritySelect ariaLabel="Goal priority" value={priority} onChange={setPriority} /></Field>
+          <Field label={GOAL_TYPE_GUIDANCE[goalType].amountLabel}>
+            <div className="mt-1 flex items-stretch w-full border rounded overflow-hidden">
+              <span aria-hidden="true" className="px-2 flex items-center bg-gray-50 text-gray-500 text-sm border-r">฿</span>
+              <input aria-label="Target amount" type="number" step="0.01" value={targetAmount} onChange={(event) => setTargetAmount(event.target.value)} className="flex-1 min-w-0 px-3 py-2 text-sm" />
+            </div>
+            {GOAL_TYPE_GUIDANCE[goalType].amountLimitation && (
+              <p className="text-xs text-gray-500 mt-1">{GOAL_TYPE_GUIDANCE[goalType].amountLimitation}</p>
+            )}
+          </Field>
+          <Field label={GOAL_TYPE_GUIDANCE[goalType].dateLabel}><input aria-label="Target date" type="date" value={targetDate} onChange={(event) => setTargetDate(event.target.value)} className={inputClass} /></Field>
+          <Field label="Priority">
+            <PrioritySelect ariaLabel="Goal priority" value={priority} onChange={setPriority} />
+            <p className="text-xs text-gray-500 mt-1">{PRIORITY_GUIDANCE}</p>
+          </Field>
           <Field label="Note (optional)"><input aria-label="Note" value={note} onChange={(event) => setNote(event.target.value)} className={inputClass} /></Field>
         </div>
+        <p className="text-xs text-gray-500">{AMOUNT_PERSISTENT_GUIDANCE}</p>
         <p className="text-xs text-gray-500">Currency: <strong>THB</strong> (fixed for Wealth Goals Foundation v1)</p>
         <PrimaryButton>Add goal</PrimaryButton>
       </form>

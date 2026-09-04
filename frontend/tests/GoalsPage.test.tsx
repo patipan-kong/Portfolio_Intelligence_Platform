@@ -495,6 +495,121 @@ describe("GoalsPage", () => {
     expect(createMock).not.toHaveBeenCalled();
   });
 
+  describe("GGS-01 goal-type guidance", () => {
+    it("shows neutral guidance for OTHER and keeps THB visually attached to the amount input", async () => {
+      render(<GoalsPage />);
+      await screen.findByText("No active goals yet. Add your first goal above.");
+      expect(screen.getByText("Target amount (required)")).toBeInTheDocument();
+      expect(screen.getByText("Target date (optional)")).toBeInTheDocument();
+      expect(screen.getByText("฿")).toBeInTheDocument();
+    });
+
+    it("shows Retirement/FIRE guidance and the honest no-calculation limitation", async () => {
+      render(<GoalsPage />);
+      await screen.findByText("No active goals yet. Add your first goal above.");
+      fireEvent.change(screen.getByLabelText("Goal type"), { target: { value: "RETIREMENT" } });
+      expect(screen.getByText("How much do you want available for this goal? (required)")).toBeInTheDocument();
+      expect(screen.getByText("When do you want to retire? (optional)")).toBeInTheDocument();
+      expect(
+        screen.getByText("This setup does not calculate or recommend a retirement target. Enter the amount you want to plan toward.")
+      ).toBeInTheDocument();
+
+      fireEvent.change(screen.getByLabelText("Goal type"), { target: { value: "FIRE" } });
+      expect(screen.getByText("How much do you want available for this goal? (required)")).toBeInTheDocument();
+      expect(
+        screen.getByText("This setup does not calculate or recommend a retirement target. Enter the amount you want to plan toward.")
+      ).toBeInTheDocument();
+    });
+
+    it("shows Home guidance", async () => {
+      render(<GoalsPage />);
+      await screen.findByText("No active goals yet. Add your first goal above.");
+      fireEvent.change(screen.getByLabelText("Goal type"), { target: { value: "HOUSE" } });
+      expect(screen.getByText("How much do you want to set aside for this home goal? (required)")).toBeInTheDocument();
+      expect(screen.getByText("Intended purchase date (optional)")).toBeInTheDocument();
+    });
+
+    it("shows Wedding guidance", async () => {
+      render(<GoalsPage />);
+      await screen.findByText("No active goals yet. Add your first goal above.");
+      fireEvent.change(screen.getByLabelText("Goal type"), { target: { value: "WEDDING" } });
+      expect(screen.getByText("What total budget are you planning for? (required)")).toBeInTheDocument();
+      expect(screen.getByText("Wedding or event date (optional)")).toBeInTheDocument();
+    });
+
+    it("shows Education guidance", async () => {
+      render(<GoalsPage />);
+      await screen.findByText("No active goals yet. Add your first goal above.");
+      fireEvent.change(screen.getByLabelText("Goal type"), { target: { value: "EDUCATION" } });
+      expect(screen.getByText("How much do you want available for education? (required)")).toBeInTheDocument();
+      expect(screen.getByText("Expected start date (optional)")).toBeInTheDocument();
+    });
+
+    it("shows Vacation guidance", async () => {
+      render(<GoalsPage />);
+      await screen.findByText("No active goals yet. Add your first goal above.");
+      fireEvent.change(screen.getByLabelText("Goal type"), { target: { value: "VACATION" } });
+      expect(screen.getByText("What is the total budget for this trip? (required)")).toBeInTheDocument();
+      expect(screen.getByText("Intended trip date (optional)")).toBeInTheDocument();
+    });
+
+    it("shows Emergency Fund guidance without deriving months of expenses", async () => {
+      render(<GoalsPage />);
+      await screen.findByText("No active goals yet. Add your first goal above.");
+      fireEvent.change(screen.getByLabelText("Goal type"), { target: { value: "EMERGENCY_FUND" } });
+      expect(screen.getByText("How much do you want available in your emergency fund? (required)")).toBeInTheDocument();
+      expect(screen.queryByText(/month/i)).not.toBeInTheDocument();
+    });
+
+    it("shows the priority explanation with no optimizer or ranking authority implied", async () => {
+      render(<GoalsPage />);
+      await screen.findByText("No active goals yet. Add your first goal above.");
+      expect(
+        screen.getByText("Saved as High, Medium, or Low for this goal — it does not automatically rank goals or change investments.")
+      ).toBeInTheDocument();
+    });
+
+    it("changing goal type only changes presentation wording, not amount, date, or priority state", async () => {
+      render(<GoalsPage />);
+      await screen.findByText("No active goals yet. Add your first goal above.");
+      fireEvent.change(screen.getByLabelText("Goal name"), { target: { value: "Some Goal" } });
+      fireEvent.change(screen.getByLabelText("Target amount"), { target: { value: "42000" } });
+      fireEvent.change(screen.getByLabelText("Target date"), { target: { value: "2030-01-01" } });
+      fireEvent.change(screen.getByLabelText("Goal priority"), { target: { value: "HIGH" } });
+
+      fireEvent.change(screen.getByLabelText("Goal type"), { target: { value: "RETIREMENT" } });
+      expect(screen.getByLabelText("Target amount")).toHaveValue(42000);
+      expect(screen.getByLabelText("Target date")).toHaveValue("2030-01-01");
+      expect(screen.getByLabelText("Goal priority")).toHaveValue("HIGH");
+
+      fireEvent.click(screen.getByRole("button", { name: "Add goal" }));
+      await waitFor(() => expect(createMock).toHaveBeenCalledWith({
+        name: "Some Goal",
+        goal_type: "RETIREMENT",
+        target_amount: 42000,
+        currency: "THB",
+        target_date: "2030-01-01",
+        priority: "HIGH",
+        note: null,
+      }));
+    });
+
+    it("preserves entered form state after a failed create request", async () => {
+      createMock.mockRejectedValueOnce(new Error("create offline"));
+      render(<GoalsPage />);
+      await screen.findByText("No active goals yet. Add your first goal above.");
+      fireEvent.change(screen.getByLabelText("Goal name"), { target: { value: "Sticky Goal" } });
+      fireEvent.change(screen.getByLabelText("Target amount"), { target: { value: "5000" } });
+      fireEvent.click(screen.getByRole("button", { name: "Add goal" }));
+
+      expect(await screen.findByText("create offline")).toBeInTheDocument();
+      expect(screen.getByLabelText("Goal name")).toHaveValue("Sticky Goal");
+      expect(screen.getByLabelText("Target amount")).toHaveValue(5000);
+      // Guidance copy for the still-selected type remains present and unchanged after the error.
+      expect(screen.getByText("Target amount (required)")).toBeInTheDocument();
+    });
+  });
+
   describe("Factual wealth review", () => {
     it("renders the server-owned COMPLETE status without recomputing valuation evidence", async () => {
       listMock.mockResolvedValue([goal]);
