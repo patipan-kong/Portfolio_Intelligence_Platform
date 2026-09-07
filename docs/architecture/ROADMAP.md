@@ -456,6 +456,11 @@ tracked here ([ENGINEERING_PRINCIPLES.md](../engineering/ENGINEERING_PRINCIPLES.
   categories now filter the already-loaded Activity records in place. This is
   frontend evidence navigation only; cash-flow aggregation and accounting are
   unchanged.
+- ~~Navigate multi-month Cash Flow evidence to the selected-month workflow~~
+  (CFE-02) — delivered: available Trend months and Recorded Expense Coverage
+  months open the existing selected-month Activity and CFE-01 workflow. This
+  is frontend-only navigation; Cash Flow accounting, Coverage, and Trend
+  semantics are unchanged.
 - Sector BHB attribution
 - Cross-portfolio exposure and allocation analysis
 - ~~Total Assets History after external Cash Accounts have dated balance

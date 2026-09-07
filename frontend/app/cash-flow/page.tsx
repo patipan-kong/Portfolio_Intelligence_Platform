@@ -278,14 +278,18 @@ export default function CashFlowPage() {
     setEvidenceFilter(filter);
   }
 
-  function changeMonth(delta: number) {
+  function selectMonth(selectedMonth: string) {
+    if (selectedMonth > currentMonth) return;
     setEvidenceFilter(null);
-    setMonth((value) => shiftMonth(value, delta));
+    setMonth((value) => value === selectedMonth ? value : selectedMonth);
+  }
+
+  function changeMonth(delta: number) {
+    selectMonth(shiftMonth(month, delta));
   }
 
   function returnToCurrentMonth() {
-    setEvidenceFilter(null);
-    setMonth(currentMonthKey());
+    selectMonth(currentMonth);
   }
 
   function openEntry(type: EntryType) {
@@ -596,6 +600,7 @@ export default function CashFlowPage() {
         onCancelTargetEdit={cancelTargetEdit}
         onSubmitTargetEdit={submitTargetEdit}
         onClearTarget={clearTarget}
+        onSelectMonth={selectMonth}
       />
 
       <section className="bg-white border rounded-xl p-4 shadow-sm flex items-center justify-between gap-3">
@@ -643,6 +648,7 @@ export default function CashFlowPage() {
               if (accountsError) void loadAccounts();
               else void loadTrend(accounts, "success", trendWindowSize);
             }}
+            onSelectMonth={selectMonth}
           />
 
           <TemplatesSection
@@ -759,7 +765,7 @@ function CoverageSection({
   coverage, loading, accountsLoading, onRetry,
   targetSettings, targetLoading, targetLoadError, onRetryTarget,
   targetEditing, targetDraft, setTargetDraft, targetSaving, targetSaveError,
-  onOpenTargetEdit, onCancelTargetEdit, onSubmitTargetEdit, onClearTarget,
+  onOpenTargetEdit, onCancelTargetEdit, onSubmitTargetEdit, onClearTarget, onSelectMonth,
 }: {
   coverage: RecordedExpenseCoverageResult | null;
   loading: boolean;
@@ -778,6 +784,7 @@ function CoverageSection({
   onCancelTargetEdit: () => void;
   onSubmitTargetEdit: (event: FormEvent) => void;
   onClearTarget: () => void;
+  onSelectMonth: (month: string) => void;
 }) {
   const recordedMonthLabels = coverage?.recordedMonths.map(formatMonthLabel) ?? [];
   const monthRangeLabel = recordedMonthLabels.length === 0
@@ -818,6 +825,23 @@ function CoverageSection({
                 ? <p className="text-lg font-semibold mt-0.5">{formatThb(coverage.averageRecordedMonthlyExpense)}</p>
                 : <p className="text-sm text-gray-500 mt-0.5">{coverage.status === "INSUFFICIENT_EVIDENCE" ? "Not enough recorded history" : "Unavailable"}</p>}
               <p className="text-xs text-gray-500 mt-1">{coverage.recordedMonths.length} of 3 months recorded{monthRangeLabel ? ` (${monthRangeLabel})` : ""}</p>
+              {coverage.recordedMonths.length > 0 && (
+                <div className="mt-2">
+                  <p className="text-xs text-gray-500">Review recorded activity:</p>
+                  <div className="flex flex-wrap gap-1.5 mt-1" aria-label="Recorded expense coverage months">
+                    {coverage.recordedMonths.map((recordedMonth) => (
+                      <button
+                        key={recordedMonth}
+                        type="button"
+                        onClick={() => onSelectMonth(recordedMonth)}
+                        className="text-xs px-2 py-1 rounded border border-blue-200 text-blue-700 hover:bg-blue-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+                      >
+                        Open {formatMonthLabel(recordedMonth)} activity
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
@@ -1054,7 +1078,7 @@ function formatTemplateAmount(amount: number): string {
 }
 
 function TrendSection({
-  trend, loading, accountsLoading, windowSize, onWindowSizeChange, onRetry,
+  trend, loading, accountsLoading, windowSize, onWindowSizeChange, onRetry, onSelectMonth,
 }: {
   trend: CashFlowTrendResult | null;
   loading: boolean;
@@ -1062,8 +1086,10 @@ function TrendSection({
   windowSize: TrendWindowSize;
   onWindowSizeChange: (size: TrendWindowSize) => void;
   onRetry: () => void;
+  onSelectMonth: (month: string) => void;
 }) {
   const allUnavailable = trend != null && trend.points.length > 0 && trend.points.every((point) => point.status === "UNAVAILABLE");
+  const availablePoints = trend?.points.filter((point) => point.status === "AVAILABLE") ?? [];
 
   return (
     <section aria-label="Cash flow trend" className="bg-white border rounded-xl p-4 shadow-sm space-y-3">
@@ -1099,6 +1125,24 @@ function TrendSection({
         ) : (
           <>
             <CashFlowTrendChart points={trend.points} />
+            {availablePoints.length > 0 && (
+              <div className="border-t pt-3">
+                <p className="text-xs text-gray-500 mb-2">Available monthly activity</p>
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3" aria-label="Available Cash Flow Trend months">
+                  {availablePoints.map((point) => (
+                    <button
+                      key={point.month}
+                      type="button"
+                      onClick={() => onSelectMonth(point.month)}
+                      className="text-left border rounded-lg p-2 text-xs hover:bg-blue-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+                    >
+                      <span className="block font-medium text-blue-700">Open {formatMonthLabel(point.month)} activity</span>
+                      <span className="block text-gray-500 mt-1">Income {formatThb(point.income!)} · Expenses {formatThb(point.expenses!)} · Net Cash Flow {formatThb(point.netCashFlow!)}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             {trend.summary.availableMonths > 0 && (
               <div className="grid gap-3 sm:grid-cols-4 text-sm border-t pt-3">
                 <TrendSummaryStat label="Avg Income" value={trend.summary.averageIncome} />

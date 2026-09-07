@@ -691,6 +691,36 @@ describe("CashFlowPage", () => {
       expect(screen.getByText(/Tracked cash covers 4\.2 months/)).toBeInTheDocument();
     });
 
+    it("opens an authoritative recorded source month through the normal selected-month Activity workflow", async () => {
+      accountsMock.mockResolvedValue([account({ balance: 42000, baseline: earlyBaseline })]);
+      reportForMonths({
+        "2026-05": [event({ id: 5, transaction_type: "EXPENSE", amount: 10000, signed_amount: -10000, occurred_on: "2026-05-01", category: "May rent" })],
+        "2026-06": [event({ id: 6, transaction_type: "EXPENSE", amount: 10000, signed_amount: -10000, occurred_on: "2026-06-01", category: "June rent" })],
+        "2026-07": [event({ id: 7, transaction_type: "EXPENSE", amount: 10000, signed_amount: -10000, occurred_on: "2026-07-01", category: "July rent" })],
+        "2026-08": [event({ id: 8, transaction_type: "EXPENSE", amount: 100, signed_amount: -100, occurred_on: "2026-08-01", category: "August rent" })],
+      });
+      render(<CashFlowPage />);
+      const coverageSection = await screen.findByRole("region", { name: "Recorded expense coverage" });
+      await within(coverageSection).findByText(/Tracked cash covers 4\.2 months/);
+
+      for (const sourceMonth of ["May 2026", "June 2026", "July 2026"]) {
+        expect(within(coverageSection).getByRole("button", { name: `Open ${sourceMonth} activity` })).toBeEnabled();
+      }
+      fireEvent.click(screen.getByRole("button", { name: "Show events included in Expenses" }));
+      expect(screen.getByText("Showing recorded expense events")).toBeInTheDocument();
+
+      fireEvent.click(within(coverageSection).getByRole("button", { name: "Open June 2026 activity" }));
+      expect(await screen.findByText("June 2026")).toBeInTheDocument();
+      expect(reportMock).toHaveBeenLastCalledWith("2026-06");
+      expect(screen.queryByText("Showing recorded expense events")).not.toBeInTheDocument();
+      expect(screen.getByText("Expense · June rent")).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "Show events included in Expenses" }));
+      expect(screen.getByText("Showing recorded expense events")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: /June rent/ }));
+      expect(screen.getByText("Showing events in June rent")).toBeInTheDocument();
+    });
+
     it("refreshes coverage after a mutation even when the account payload is referentially identical", async () => {
       // Pins the real refresh signal: the accountsLoading true→false toggle,
       // NOT the identity of a freshly-parsed accounts array. A back-dated
@@ -1083,6 +1113,7 @@ describe("CashFlowPage", () => {
       expect(await within(trendSection).findByText("2 of 6 months available.")).toBeInTheDocument();
       expect(within(trendSection).getByText(/4 months before tracking began/)).toBeInTheDocument();
       expect(within(trendSection).queryByText(/could not load/)).not.toBeInTheDocument();
+      expect(within(trendSection).queryByRole("button", { name: "Open February 2026 activity" })).not.toBeInTheDocument();
     });
 
     it("renders a technical fetch failure as a distinct unavailable gap, never as ฿0", async () => {
@@ -1096,6 +1127,40 @@ describe("CashFlowPage", () => {
       expect(await within(trendSection).findByText("5 of 6 months available.")).toBeInTheDocument();
       expect(within(trendSection).getByText(/1 month could not load/)).toBeInTheDocument();
       expect(within(trendSection).queryByText(/before tracking began/)).not.toBeInTheDocument();
+      expect(within(trendSection).queryByRole("button", { name: "Open April 2026 activity" })).not.toBeInTheDocument();
+    });
+
+    it("opens an AVAILABLE trend month by its canonical identity and clears evidence without reloading an already selected month", async () => {
+      accountsMock.mockResolvedValue([account({ baseline: earlyBaseline })]);
+      reportForMonths({
+        "2026-02": [],
+        "2026-03": [],
+        "2026-04": [],
+        "2026-05": [],
+        "2026-06": [event({ id: 6, transaction_type: "EXPENSE", amount: 100, signed_amount: -100, occurred_on: "2026-06-01", category: "June food" })],
+        "2026-07": [event({ id: 7, transaction_type: "EXPENSE", amount: 200, signed_amount: -200, occurred_on: "2026-07-01", category: "July food" })],
+        "2026-08": [event({ id: 8, transaction_type: "EXPENSE", amount: 300, signed_amount: -300, occurred_on: "2026-08-01", category: "August food" })],
+      });
+      render(<CashFlowPage />);
+      const trendSection = await screen.findByRole("region", { name: "Cash flow trend" });
+      await within(trendSection).findByText("6 of 6 months available.");
+      const julyButton = within(trendSection).getByRole("button", { name: /Open July 2026 activity/ });
+      expect(julyButton).toHaveTextContent("Income ฿0.00 · Expenses ฿200.00 · Net Cash Flow -฿200.00");
+
+      fireEvent.click(screen.getByRole("button", { name: "Show events included in Expenses" }));
+      fireEvent.click(julyButton);
+      expect(await screen.findByText("July 2026")).toBeInTheDocument();
+      expect(reportMock).toHaveBeenLastCalledWith("2026-07");
+      expect(screen.queryByText("Showing recorded expense events")).not.toBeInTheDocument();
+      expect(screen.getByText("Expense · July food")).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "Show events included in Expenses" }));
+      const julyCallsBefore = reportMock.mock.calls.filter((call) => call[0] === "2026-07").length;
+      const currentTrendSection = screen.getByRole("region", { name: "Cash flow trend" });
+      fireEvent.click(within(currentTrendSection).getByRole("button", { name: /Open July 2026 activity/ }));
+      expect(screen.queryByText("Showing recorded expense events")).not.toBeInTheDocument();
+      await act(async () => { await Promise.resolve(); });
+      expect(reportMock.mock.calls.filter((call) => call[0] === "2026-07").length).toBe(julyCallsBefore);
     });
 
     it("shows a consolidated error with retry when every trend month fails", async () => {
