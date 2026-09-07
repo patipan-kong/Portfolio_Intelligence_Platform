@@ -444,6 +444,13 @@ tracked here ([ENGINEERING_PRINCIPLES.md](../engineering/ENGINEERING_PRINCIPLES.
 
 ## Analytics
 
+- ~~Navigate divergent decisions to their existing opportunity-cost
+  evaluation~~ (RAE-01) — delivered: REJECTED, PARTIAL_EXECUTION,
+  MANUAL_OVERRIDE, and system-generated EXPIRED decisions now link by stable
+  `decision_id` to their row in the existing portfolio-scoped ledger. The
+  target loads the existing 365-day window and focuses the exact graded or
+  maturing row; an absent row reports only the window limitation. Navigation
+  only — no calculation, attribution, or execution semantics changed.
 - Sector BHB attribution
 - Cross-portfolio exposure and allocation analysis
 - ~~Total Assets History after external Cash Accounts have dated balance

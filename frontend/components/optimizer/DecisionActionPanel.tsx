@@ -22,6 +22,10 @@ import type {
   ShadowPerformanceSummary, ExecutionAnalysis, DecisionGoalContext,
   DecisionGoalContextGoal,
 } from "@/lib/api";
+import {
+  isOpportunityCostEligibleDecision,
+  opportunityCostHref,
+} from "@/lib/opportunityCostNavigation";
 
 export const TZ = "Asia/Bangkok";
 
@@ -308,12 +312,6 @@ export function DecisionActionPanel({
             )}
           </div>
         )}
-        {existing.decision !== "APPROVED" && (
-          <p className="text-xs text-gray-400 mt-1.5">
-            Performance impact tracked. See Attribution panel below.
-          </p>
-        )}
-
         {/* AI Evaluation M7 entry point (UX §2.3): "Track this decision" ->
             the graded execution detail (S4b) for this exact decision. */}
         <div className="mt-2.5 pt-2.5 border-t border-gray-100 flex items-center gap-3 flex-wrap">
@@ -323,6 +321,14 @@ export function DecisionActionPanel({
           >
             Track this decision in AI Evaluation →
           </Link>
+          {isOpportunityCostEligibleDecision(existing.decision) && (
+            <Link
+              href={opportunityCostHref(existing.id)}
+              className="text-xs font-semibold text-blue-600 hover:underline"
+            >
+              Review opportunity-cost evaluation →
+            </Link>
+          )}
           {executionCompletionLabel(linkage) && (
             <span className="text-xs text-gray-400">{executionCompletionLabel(linkage)}</span>
           )}

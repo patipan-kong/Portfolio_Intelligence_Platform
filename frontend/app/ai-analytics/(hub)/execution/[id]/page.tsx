@@ -16,6 +16,10 @@ import AsOfStamp from "@/components/evaluation/AsOfStamp";
 import PortfolioSelectionNotice from "@/components/PortfolioSelectionNotice";
 import { executionCompletionLabel } from "@/components/optimizer/DecisionActionPanel";
 import TransactionEvidenceLinks from "@/components/evaluation/TransactionEvidenceLinks";
+import {
+  isOpportunityCostEligibleDecision,
+  opportunityCostHref,
+} from "@/lib/opportunityCostNavigation";
 
 function pct(n: number | null | undefined, decimals = 1): string {
   if (n == null) return "not measurable";
@@ -225,6 +229,15 @@ export default function ExecutionDetailPage() {
                   </tbody>
                 </table>
               </div>
+            )}
+
+            {isOpportunityCostEligibleDecision(data.decision) && (
+              <Link
+                href={opportunityCostHref(data.decision_id)}
+                className="inline-block text-xs font-semibold text-blue-600 hover:underline"
+              >
+                Review opportunity-cost evaluation →
+              </Link>
             )}
           </div>
         </>

@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useRef } from "react";
+
 // AI Evaluation M5 — EffectWaterfall (EXECUTION_INTELLIGENCE_UX.md §6):
 // shared horizontal-bar decomposition, used by two screens whose numbers
 // have different provenance:
@@ -26,11 +28,13 @@ export default function EffectWaterfall({
   net,
   netLabel = "NET",
   variant = "counterfactual",
+  targetRowKey,
 }: {
   rows: WaterfallRow[];
   net?: number | null;
   netLabel?: string;
   variant?: "counterfactual" | "realized";
+  targetRowKey?: string | number | null;
 }) {
   const isCounterfactual = variant === "counterfactual";
   const suffix = isCounterfactual ? "%*" : "%";
@@ -39,18 +43,32 @@ export default function EffectWaterfall({
     ? "Counterfactual — not realized money."
     : "Realized — already reflected in your actual return.";
   const scale = Math.max(1, ...rows.map((r) => Math.abs(r.value)));
+  const targetRef = useRef<HTMLDivElement>(null);
+  const focusedTargetRef = useRef<string | number | null>(null);
+
+  useEffect(() => {
+    if (targetRowKey == null || focusedTargetRef.current === targetRowKey || !targetRef.current) return;
+    focusedTargetRef.current = targetRowKey;
+    targetRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+    targetRef.current.focus({ preventScroll: true });
+  }, [targetRowKey]);
+
   return (
     <div className="space-y-2.5 sm:space-y-2">
       {rows.map((r) => {
         const widthPct = Math.min(100, (Math.abs(r.value) / scale) * 100);
         const positive = r.value >= 0;
+        const targeted = targetRowKey != null && r.key === targetRowKey;
         return (
           <div
             key={r.key}
-            className={`flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 text-xs ${r.onClick ? "cursor-pointer rounded hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-300" : ""}`}
+            ref={targeted ? targetRef : undefined}
+            className={`flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 text-xs ${r.onClick ? "cursor-pointer rounded hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-300" : ""} ${targeted ? "ring-2 ring-blue-400 ring-offset-2 bg-blue-50" : ""}`}
             onClick={r.onClick}
             role={r.onClick ? "button" : undefined}
-            tabIndex={r.onClick ? 0 : undefined}
+            tabIndex={r.onClick || targeted ? (targeted ? -1 : 0) : undefined}
+            aria-current={targeted ? "true" : undefined}
+            aria-label={targeted ? `Targeted opportunity-cost evaluation: ${r.label}` : undefined}
             onKeyDown={
               r.onClick
                 ? (e) => {
@@ -62,6 +80,7 @@ export default function EffectWaterfall({
                 : undefined
             }
           >
+            {targeted && <span className="sr-only">Targeted opportunity-cost evaluation. </span>}
             <div className="flex items-center justify-between sm:contents">
               <span className="sm:w-40 sm:shrink-0 text-gray-700 truncate" title={r.label}>
                 {r.label}

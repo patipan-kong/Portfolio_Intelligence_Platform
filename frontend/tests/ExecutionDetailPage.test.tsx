@@ -220,6 +220,8 @@ describe("Execution Detail — Record execution CTA eligibility (Slice 4)", () =
     await screen.findByText(/Execution analysis unavailable/);
     expect(screen.queryByText("Record execution →")).not.toBeInTheDocument();
     expect(await screen.findByText("No execution was recorded for this expired recommendation.")).toBeInTheDocument();
+    const link = screen.getByText("Review opportunity-cost evaluation →");
+    expect(link.closest("a")).toHaveAttribute("href", "/ai-analytics/opportunity-cost?decisionId=42");
   });
 
   test("APPROVED with zero linked transactions still offers Record execution (regression)", async () => {
@@ -242,6 +244,41 @@ describe("Execution Detail — Record execution CTA eligibility (Slice 4)", () =
 
     expect(await screen.findByText("decision recorded 2026-08-20")).toBeInTheDocument();
     expect(screen.queryByText(/^executed /)).not.toBeInTheDocument();
+  });
+});
+
+describe("RAE-01: Execution Detail opportunity-cost navigation", () => {
+  test("a REJECTED decision keeps execution evidence distinct and links to its evaluation", async () => {
+    getExecutionDetail.mockResolvedValue(executionDetail({
+      decision: "REJECTED",
+      analysis: { status: "unavailable", reason: "no_linked_transactions", score: null } as ExecutionDetail["analysis"],
+    }));
+
+    render(<ExecutionDetailPage />);
+
+    expect(await screen.findByText("No execution was recorded for this rejected decision.")).toBeInTheDocument();
+    const link = screen.getByText("Review opportunity-cost evaluation →");
+    expect(link.closest("a")).toHaveAttribute("href", "/ai-analytics/opportunity-cost?decisionId=42");
+    expect(screen.queryByText(/counterfactual.*%|opportunity cost.*%/i)).not.toBeInTheDocument();
+  });
+
+  test.each(["PARTIAL_EXECUTION", "MANUAL_OVERRIDE"])("%s preserves execution detail and receives its evaluation link", async (decision) => {
+    getExecutionDetail.mockResolvedValue(executionDetail({ decision }));
+
+    render(<ExecutionDetailPage />);
+
+    expect(await screen.findByText("Execution complete")).toBeInTheDocument();
+    const link = screen.getByText("Review opportunity-cost evaluation →");
+    expect(link.closest("a")).toHaveAttribute("href", "/ai-analytics/opportunity-cost?decisionId=42");
+  });
+
+  test("an APPROVED decision has no divergent-decision evaluation link", async () => {
+    getExecutionDetail.mockResolvedValue(executionDetail({ decision: "APPROVED" }));
+
+    render(<ExecutionDetailPage />);
+
+    await screen.findByText("Execution complete");
+    expect(screen.queryByText("Review opportunity-cost evaluation →")).not.toBeInTheDocument();
   });
 });
 

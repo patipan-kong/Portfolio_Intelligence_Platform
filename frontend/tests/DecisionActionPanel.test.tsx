@@ -465,3 +465,29 @@ describe("DecisionActionPanel execution completion label", () => {
     expect(screen.queryByText(/Partially recorded/)).not.toBeInTheDocument();
   });
 });
+
+describe("RAE-01: DecisionActionPanel opportunity-cost navigation", () => {
+  test("a divergent decision replaces the false Attribution pointer with a decision-targeted evaluation link", async () => {
+    listExecutionDecisions.mockResolvedValue([baseDecision({ id: 73, decision: "REJECTED" })]);
+    getExecutionDecision.mockResolvedValue(decisionDetail({ id: 73, decision: "REJECTED" }));
+
+    render(<DecisionActionPanel snapshotId={5} portfolioId={1} />);
+
+    const link = await screen.findByText("Review opportunity-cost evaluation →");
+    expect(link.closest("a")).toHaveAttribute("href", "/ai-analytics/opportunity-cost?decisionId=73");
+    expect(screen.queryByText(/Performance impact tracked|Attribution panel below/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/counterfactual.*%|opportunity cost.*%/i)).not.toBeInTheDocument();
+  });
+
+  test("an APPROVED decision keeps its shadow-performance path and receives no opportunity-cost CTA", async () => {
+    listExecutionDecisions.mockResolvedValue([baseDecision({ decision: "APPROVED" })]);
+    getExecutionDecision.mockResolvedValue(decisionDetail({ decision: "APPROVED" }));
+    getShadowPerformanceSummary.mockResolvedValue({ has_shadows: false, shadows: [], summary: null });
+    getExecutionDetail.mockResolvedValue(executionDetailFixture(executionAnalysis()));
+
+    render(<DecisionActionPanel snapshotId={5} portfolioId={1} />);
+
+    expect(await screen.findByText("Shadow portfolios are being initialized — data will appear after the next daily valuation.")).toBeInTheDocument();
+    expect(screen.queryByText("Review opportunity-cost evaluation →")).not.toBeInTheDocument();
+  });
+});
