@@ -1,7 +1,7 @@
 import { describe, test, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import ReportCardPage from "@/app/ai-analytics/(hub)/recommendations/[id]/page";
-import type { RecommendationReportCard } from "@/lib/api";
+import type { RecommendationReportCard, ExecutionSymbolDelta } from "@/lib/api";
 
 // Slice 4 (Decision History / Audit UX), Behaviors 3 & 4: the Report Card
 // already receives execution.decision_id but had no link out to the full
@@ -178,5 +178,121 @@ describe("Report Card — historical timestamp semantics (Slice 4 §H)", () => {
 
     expect(await screen.findByText("decision recorded 2026-08-20")).toBeInTheDocument();
     expect(screen.queryByText(/^executed /)).not.toBeInTheDocument();
+  });
+});
+
+// DEM-01: the Report Card already receives the same execution.analysis
+// payload as Execution Detail (including per-symbol linked transactions)
+// but never rendered them. This proves the evidence now surfaces, without
+// implying settlement/success, and that its absence is never presented as
+// execution failure.
+describe("Report Card — recorded execution evidence (DEM-01)", () => {
+  function executionWithSymbols(symbols: Record<string, ExecutionSymbolDelta>) {
+    return {
+      status: "ok" as const,
+      decision_id: 456,
+      decision: "APPROVED",
+      executed_at: "2026-08-20T00:00:00Z",
+      analysis: {
+        status: "ok" as const, score: 80, completeness_pct: 100, funding_fidelity_pct: 95,
+        matched_count: 1, total_planned: 1, is_complete: true,
+        symbols,
+      },
+    };
+  }
+
+  test("renders linked transaction evidence with a correct href when present", async () => {
+    getRecommendationReportCard.mockResolvedValue(reportCard({
+      execution: executionWithSymbols({
+        CENTEL: {
+          action: "BUY", planned_amount: 30_000, executed_amount: 30_000,
+          timing_delta_pct: 0, size_delta_pct: 0, note: null,
+          transactions: [{ id: 501, transaction_date: "2026-08-20T00:00:00Z" }],
+        },
+      }),
+    }));
+
+    render(<ReportCardPage />);
+
+    expect(await screen.findByText(/Recorded execution evidence/)).toBeInTheDocument();
+    const link = await screen.findByText("#501 (20 Aug 26)");
+    expect(link.closest("a")).toHaveAttribute("href", "/history?transactionId=501");
+  });
+
+  test("multiple linked transactions render as independent links", async () => {
+    getRecommendationReportCard.mockResolvedValue(reportCard({
+      execution: executionWithSymbols({
+        CENTEL: {
+          action: "BUY", planned_amount: 30_000, executed_amount: 30_000,
+          timing_delta_pct: 0, size_delta_pct: 0, note: null,
+          transactions: [
+            { id: 501, transaction_date: "2026-08-20T00:00:00Z" },
+            { id: 502, transaction_date: "2026-08-21T00:00:00Z" },
+          ],
+        },
+      }),
+    }));
+
+    render(<ReportCardPage />);
+
+    const first = await screen.findByText("#501 (20 Aug 26)");
+    const second = await screen.findByText("#502 (21 Aug 26)");
+    expect(first.closest("a")).toHaveAttribute("href", "/history?transactionId=501");
+    expect(second.closest("a")).toHaveAttribute("href", "/history?transactionId=502");
+  });
+
+  test("absent transaction evidence omits the row entirely — never implies execution failure", async () => {
+    getRecommendationReportCard.mockResolvedValue(reportCard({
+      execution: executionWithSymbols({
+        ADVANC: {
+          action: "BUY", planned_amount: 20_000, executed_amount: null,
+          timing_delta_pct: null, size_delta_pct: null, note: "no_linked_transaction",
+          transactions: [],
+        },
+      }),
+    }));
+
+    render(<ReportCardPage />);
+
+    await screen.findByText("ADVANC");
+    expect(screen.queryByText(/Recorded execution evidence/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/not executed/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/no execution/i)).not.toBeInTheDocument();
+  });
+
+  test("existing timing and size analysis is unchanged by the added evidence row", async () => {
+    getRecommendationReportCard.mockResolvedValue(reportCard({
+      execution: executionWithSymbols({
+        CENTEL: {
+          action: "BUY", planned_amount: 30_000, executed_amount: 30_000,
+          timing_delta_pct: 2.5, size_delta_pct: -1,
+          note: null,
+          transactions: [{ id: 501, transaction_date: "2026-08-20T00:00:00Z" }],
+        },
+      }),
+    }));
+
+    render(<ReportCardPage />);
+
+    expect(await screen.findByText("Timing: +2.5%")).toBeInTheDocument();
+    expect(await screen.findByText("Size: -1%")).toBeInTheDocument();
+  });
+
+  test("no settlement/success/correctness wording is introduced by the evidence row", async () => {
+    getRecommendationReportCard.mockResolvedValue(reportCard({
+      execution: executionWithSymbols({
+        CENTEL: {
+          action: "BUY", planned_amount: 30_000, executed_amount: 30_000,
+          timing_delta_pct: 0, size_delta_pct: 0, note: null,
+          transactions: [{ id: 501, transaction_date: "2026-08-20T00:00:00Z" }],
+        },
+      }),
+    }));
+
+    render(<ReportCardPage />);
+
+    await screen.findByText("#501 (20 Aug 26)");
+    const bodyText = document.body.textContent ?? "";
+    expect(bodyText).not.toMatch(/settled|verified|matched|executed successfully|right call|wrong call/i);
   });
 });

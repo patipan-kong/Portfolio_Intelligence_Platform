@@ -121,3 +121,25 @@ describe("ExecutionPlanCard structured trade reason", () => {
     expect(screen.getByText(/Mandatory risk reduction/)).toBeInTheDocument();
   });
 });
+
+// DEM-01: the "AI's track record on calls like this" link opened the
+// unfiltered, whole-history Human vs AI scoreboard for this portfolio — not
+// anything scoped to trades like the ones on this plan. Copy corrected to
+// describe the actual destination; navigation target/behavior unchanged.
+describe("ExecutionPlanCard track-record link wording (DEM-01)", () => {
+  test("misleading 'calls like this' copy is gone", () => {
+    render(<ExecutionPlanCard result={resultWithSellTrade()} portfolioId={7} />);
+    expect(screen.queryByText(/calls like this/i)).not.toBeInTheDocument();
+  });
+
+  test("replacement copy truthfully describes the portfolio-level track record and keeps the same destination", () => {
+    render(<ExecutionPlanCard result={resultWithSellTrade()} portfolioId={7} />);
+    const link = screen.getByText(/overall AI vs human track record/i);
+    expect(link.closest("a")).toHaveAttribute("href", "/ai-analytics/human-vs-ai");
+  });
+
+  test("no portfolio selected: the link is absent entirely, not rendered with a broken destination", () => {
+    render(<ExecutionPlanCard result={resultWithSellTrade()} />);
+    expect(screen.queryByText(/track record/i)).not.toBeInTheDocument();
+  });
+});

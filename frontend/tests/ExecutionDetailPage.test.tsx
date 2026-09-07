@@ -244,3 +244,102 @@ describe("Execution Detail — Record execution CTA eligibility (Slice 4)", () =
     expect(screen.queryByText(/^executed /)).not.toBeInTheDocument();
   });
 });
+
+// DEM-01: the "Recorded as" cell already received linked-transaction data
+// (id, transaction_date) but rendered it as inert text. It now drills
+// through to the transaction's row on /history — navigation only, no new
+// claim about success/settlement/completeness.
+describe("Execution Detail — recorded-transaction drill-through (DEM-01)", () => {
+  test("a single linked transaction renders as a link to /history?transactionId=<id>", async () => {
+    getExecutionDetail.mockResolvedValue(executionDetail({
+      analysis: {
+        status: "ok", score: 80, completeness_pct: 100, funding_fidelity_pct: 95,
+        matched_count: 1, total_planned: 1, is_complete: true,
+        symbols: {
+          CENTEL: {
+            action: "BUY", planned_amount: 30_000, executed_amount: 30_000,
+            timing_delta_pct: 0, size_delta_pct: 0, note: null,
+            transactions: [{ id: 501, transaction_date: "2026-08-20T00:00:00Z" }],
+          },
+        },
+      },
+    }));
+
+    render(<ExecutionDetailPage />);
+
+    const link = await screen.findByText("#501 (20 Aug 26)");
+    expect(link.closest("a")).toHaveAttribute("href", "/history?transactionId=501");
+  });
+
+  test("multiple linked transactions render as independent links in payload order", async () => {
+    getExecutionDetail.mockResolvedValue(executionDetail({
+      analysis: {
+        status: "ok", score: 80, completeness_pct: 100, funding_fidelity_pct: 95,
+        matched_count: 1, total_planned: 1, is_complete: true,
+        symbols: {
+          CENTEL: {
+            action: "BUY", planned_amount: 30_000, executed_amount: 30_000,
+            timing_delta_pct: 0, size_delta_pct: 0, note: null,
+            transactions: [
+              { id: 501, transaction_date: "2026-08-20T00:00:00Z" },
+              { id: 502, transaction_date: "2026-08-21T00:00:00Z" },
+            ],
+          },
+        },
+      },
+    }));
+
+    render(<ExecutionDetailPage />);
+
+    const first = await screen.findByText("#501 (20 Aug 26)");
+    const second = await screen.findByText("#502 (21 Aug 26)");
+    expect(first.closest("a")).toHaveAttribute("href", "/history?transactionId=501");
+    expect(second.closest("a")).toHaveAttribute("href", "/history?transactionId=502");
+    // payload order preserved, not re-sorted
+    expect(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  test("zero linked transactions keeps the existing neutral '—', not a link", async () => {
+    getExecutionDetail.mockResolvedValue(executionDetail({
+      analysis: {
+        status: "partial", score: 50, completeness_pct: 50, funding_fidelity_pct: null,
+        matched_count: 0, total_planned: 1, is_complete: false,
+        symbols: {
+          ADVANC: {
+            action: "BUY", planned_amount: 20_000, executed_amount: null,
+            timing_delta_pct: null, size_delta_pct: null, note: "no_linked_transaction",
+            transactions: [],
+          },
+        },
+      },
+    }));
+
+    render(<ExecutionDetailPage />);
+
+    expect(await screen.findAllByText("Not recorded")).not.toHaveLength(0);
+    expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("link", { name: /^#/ })).not.toBeInTheDocument();
+  });
+
+  test("no unsupported success/settlement wording accompanies the evidence link", async () => {
+    getExecutionDetail.mockResolvedValue(executionDetail({
+      analysis: {
+        status: "ok", score: 80, completeness_pct: 100, funding_fidelity_pct: 95,
+        matched_count: 1, total_planned: 1, is_complete: true,
+        symbols: {
+          CENTEL: {
+            action: "BUY", planned_amount: 30_000, executed_amount: 30_000,
+            timing_delta_pct: 0, size_delta_pct: 0, note: null,
+            transactions: [{ id: 501, transaction_date: "2026-08-20T00:00:00Z" }],
+          },
+        },
+      },
+    }));
+
+    render(<ExecutionDetailPage />);
+
+    await screen.findByText("#501 (20 Aug 26)");
+    const bodyText = document.body.textContent ?? "";
+    expect(bodyText).not.toMatch(/settled|verified|matched|executed successfully/i);
+  });
+});

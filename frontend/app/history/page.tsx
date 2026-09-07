@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
+import { useSearchParams } from "next/navigation";
 import { usePortfolio } from "@/lib/PortfolioContext";
 import PortfolioTabs from "@/components/PortfolioTabs";
 import TransactionHistoryTable, { TYPE_STYLE } from "@/components/TransactionHistoryTable";
@@ -19,6 +20,17 @@ const HISTORY_FETCH_LIMIT = 500;
 
 export default function TransactionHistoryPage() {
   const { currentSelection: portfolioId, portfolios, reportUnresolvedPortfolio } = usePortfolio();
+
+  // DEM-01: ?transactionId=<id> highlights a single already-loaded row —
+  // drill-through target from Execution Detail / Report Card evidence links.
+  // Read/navigation only; no new lookup, no backend change. An id outside
+  // the currently loaded history (pagination, another workspace, malformed)
+  // simply never matches — see TransactionHistoryTable's neutral no-match
+  // behavior.
+  const searchParams = useSearchParams();
+  const rawTransactionIdParam = searchParams.get("transactionId");
+  const highlightTransactionId =
+    rawTransactionIdParam !== null && /^\d+$/.test(rawTransactionIdParam) ? Number(rawTransactionIdParam) : null;
 
   // Captures the portfolio a request was issued for, so a response that
   // lands after the user has switched portfolios (or cleared selection) is
@@ -192,7 +204,7 @@ export default function TransactionHistoryPage() {
               No transactions match these filters.
             </p>
           ) : (
-            <TransactionHistoryTable transactions={filtered} />
+            <TransactionHistoryTable transactions={filtered} highlightTransactionId={highlightTransactionId} />
           )}
         </div>
       )}

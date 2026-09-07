@@ -433,6 +433,13 @@ tracked here ([ENGINEERING_PRINCIPLES.md](../engineering/ENGINEERING_PRINCIPLES.
   linking and no unlink/relink, since the ledger has no transaction-edit
   path; historical decisions and imported transactions stay unlinked by
   design, not backfilled.
+- ~~Surface the existing decision↔transaction linkage as drill-through
+  evidence on Execution Detail and the Report Card~~ (DEM-01) — delivered:
+  the already-recorded transactions each surface already carried
+  (`analysis.symbols[*].transactions`) now render as links to a highlighted
+  row on `/history?transactionId=<id>`, on both Execution Detail and the
+  Report Card. Presentation/navigation only, over the existing forward-only
+  linkage above — no new execution, settlement, or completeness semantics.
 - System-deferral pricing
 
 ## Analytics

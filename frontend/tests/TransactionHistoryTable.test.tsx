@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import TransactionHistoryTable from "@/components/TransactionHistoryTable";
 import type { PositionConversionDetail, TransactionRecord } from "@/lib/api";
@@ -337,5 +337,48 @@ describe("POSITION_CONVERSION detail affordance", () => {
     fireEvent.click(screen.getAllByText("Details ▾")[0]);
     expect(document.body.textContent).not.toMatch(/[{}[\]]/);
     expect(document.body.textContent).not.toContain('"schema_version"');
+  });
+});
+
+describe("DEM-01: transactionId highlight target", () => {
+  beforeEach(() => {
+    // jsdom doesn't implement scrollIntoView.
+    window.HTMLElement.prototype.scrollIntoView = vi.fn();
+  });
+
+  test("highlights and focuses the row matching highlightTransactionId", () => {
+    // Both the mobile-card and desktop-table trees render unconditionally
+    // (Tailwind breakpoint classes, not conditional mount) — jsdom applies
+    // no CSS, so both exist in the DOM simultaneously. Assertions below are
+    // written to hold regardless of which tree happens to receive focus.
+    render(
+      <TransactionHistoryTable
+        transactions={[tx({ id: 40, symbol: "PTT.BK" }), tx({ id: 41, symbol: "BANPU.BK" })]}
+        highlightTransactionId={41}
+      />
+    );
+    expect(document.activeElement).toHaveAttribute("aria-current", "true");
+    expect(document.activeElement?.textContent).toContain("BANPU");
+
+    for (const el of screen.getAllByText("PTT")) {
+      expect(el.closest('[tabindex="-1"]')).not.toHaveAttribute("aria-current");
+    }
+  });
+
+  test("no highlightTransactionId leaves every row un-highlighted and unfocused", () => {
+    render(<TransactionHistoryTable transactions={[tx({ id: 42, symbol: "PTT.BK" })]} />);
+    expect(document.activeElement).toBe(document.body);
+    expect(screen.getAllByText("PTT")[0].closest('[tabindex="-1"]')).not.toHaveAttribute("aria-current");
+  });
+
+  test("a highlightTransactionId not present among the rendered rows is a neutral no-op", () => {
+    render(
+      <TransactionHistoryTable
+        transactions={[tx({ id: 43, symbol: "PTT.BK" })]}
+        highlightTransactionId={999}
+      />
+    );
+    expect(document.activeElement).toBe(document.body);
+    expect(screen.getAllByText("PTT")[0].closest('[tabindex="-1"]')).not.toHaveAttribute("aria-current");
   });
 });

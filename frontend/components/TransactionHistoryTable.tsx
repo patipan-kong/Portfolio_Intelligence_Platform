@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { PositionConversionDetail, TransactionRecord, TransactionType } from "@/lib/api";
 
@@ -172,8 +172,33 @@ function DetailsToggle({ expanded, onToggle }: { expanded: boolean; onToggle: ()
   );
 }
 
-export default function TransactionHistoryTable({ transactions }: { transactions: TransactionRecord[] }) {
+export default function TransactionHistoryTable({
+  transactions,
+  highlightTransactionId = null,
+}: {
+  transactions: TransactionRecord[];
+  highlightTransactionId?: number | null;
+}) {
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
+
+  // DEM-01: drill-through target from Execution Detail / Report Card links
+  // (`?transactionId=<id>`). Both the mobile and desktop trees render at all
+  // times (CSS breakpoint toggling, not conditional mount), so each keeps
+  // its own ref map; a hidden tree's row is never actually focusable.
+  // focusedIdRef guards against re-focusing on every re-render.
+  const mobileRowRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  const desktopRowRefs = useRef<Record<number, HTMLTableRowElement | null>>({});
+  const focusedIdRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (highlightTransactionId === null) return;
+    if (focusedIdRef.current === highlightTransactionId) return;
+    const target = desktopRowRefs.current[highlightTransactionId] ?? mobileRowRefs.current[highlightTransactionId];
+    if (!target) return; // not in the currently loaded/filtered set — neutral no-op, no error
+    target.focus();
+    target.scrollIntoView?.({ block: "center" });
+    focusedIdRef.current = highlightTransactionId;
+  }, [highlightTransactionId, transactions]);
 
   function toggle(id: number) {
     setExpandedIds((prev) => {
@@ -199,8 +224,17 @@ export default function TransactionHistoryTable({ transactions }: { transactions
         {transactions.map((tx) => {
           const detail = tx.type === "POSITION_CONVERSION" ? tx.conversion_detail : null;
           const expanded = expandedIds.has(tx.id);
+          const highlighted = tx.id === highlightTransactionId;
           return (
-            <div key={tx.id} className="bg-white border rounded-xl p-4 shadow-sm space-y-2">
+            <div
+              key={tx.id}
+              ref={(el) => { mobileRowRefs.current[tx.id] = el; }}
+              tabIndex={-1}
+              aria-current={highlighted ? "true" : undefined}
+              className={`bg-white border rounded-xl p-4 shadow-sm space-y-2 ${
+                highlighted ? "border-2 border-blue-500 ring-1 ring-blue-200" : ""
+              }`}
+            >
               <div className="flex items-center justify-between">
                 <TypeBadge type={tx.type} />
                 <span className="text-xs text-gray-400">{formatDate(tx.transaction_date)}</span>
@@ -253,10 +287,22 @@ export default function TransactionHistoryTable({ transactions }: { transactions
             {transactions.map((tx) => {
               const detail = tx.type === "POSITION_CONVERSION" ? tx.conversion_detail : null;
               const expanded = expandedIds.has(tx.id);
+              const highlighted = tx.id === highlightTransactionId;
               return (
                 <Fragment key={tx.id}>
-                  <tr className="border-b last:border-0 hover:bg-gray-50">
-                    <td className="py-2 pr-4 text-gray-500 whitespace-nowrap">{formatDate(tx.transaction_date)}</td>
+                  <tr
+                    ref={(el) => { desktopRowRefs.current[tx.id] = el; }}
+                    tabIndex={-1}
+                    aria-current={highlighted ? "true" : undefined}
+                    className={`border-b last:border-0 hover:bg-gray-50 ${highlighted ? "bg-blue-50" : ""}`}
+                  >
+                    <td
+                      className={`py-2 pr-4 text-gray-500 whitespace-nowrap ${
+                        highlighted ? "border-l-4 border-blue-500 pl-2" : ""
+                      }`}
+                    >
+                      {formatDate(tx.transaction_date)}
+                    </td>
                     <td className="py-2 pr-4">
                       <TypeBadge type={tx.type} />
                       {tx.execution_decision_id != null && (

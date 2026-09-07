@@ -17,6 +17,7 @@ import VerdictSentence from "@/components/evaluation/VerdictSentence";
 import DecisionStatusBadge from "@/components/evaluation/DecisionStatusBadge";
 import HorizonStrip from "@/components/evaluation/HorizonStrip";
 import AsOfStamp from "@/components/evaluation/AsOfStamp";
+import TransactionEvidenceLinks from "@/components/evaluation/TransactionEvidenceLinks";
 
 function pct(n: number | null | undefined, decimals = 1): string {
   if (n == null) return "—";
@@ -252,6 +253,11 @@ function ExecutionSection({ execution, decision }: { execution: RecommendationRe
                     <span>Timing: {d.timing_delta_pct != null ? pct(d.timing_delta_pct) : "not measurable"}</span>
                     <span>Size: {d.size_delta_pct != null ? pct(d.size_delta_pct, 0) : "not measurable"}</span>
                     {d.note && <span className="text-gray-400 italic">{d.note}</span>}
+                    {d.transactions.length > 0 && (
+                      <span className="text-gray-500">
+                        Recorded execution evidence: <TransactionEvidenceLinks transactions={d.transactions} />
+                      </span>
+                    )}
                   </div>
                 ))}
               </div>

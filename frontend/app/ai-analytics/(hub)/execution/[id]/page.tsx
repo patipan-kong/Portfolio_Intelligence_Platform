@@ -15,6 +15,7 @@ import DecisionStatusBadge from "@/components/evaluation/DecisionStatusBadge";
 import AsOfStamp from "@/components/evaluation/AsOfStamp";
 import PortfolioSelectionNotice from "@/components/PortfolioSelectionNotice";
 import { executionCompletionLabel } from "@/components/optimizer/DecisionActionPanel";
+import TransactionEvidenceLinks from "@/components/evaluation/TransactionEvidenceLinks";
 
 function pct(n: number | null | undefined, decimals = 1): string {
   if (n == null) return "not measurable";
@@ -29,10 +30,6 @@ function recordedLabel(note: string | null): string {
   if (note === null) return "Recorded";
   if (note === "no_linked_transaction") return "Not recorded";
   return "";
-}
-
-function shortDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "2-digit" });
 }
 
 // Decision → Transaction Linkage Completion (mirrors
@@ -221,9 +218,7 @@ export default function ExecutionDetailPage() {
                         <td className="py-2 px-3 text-right tabular-nums text-gray-600">{pct(d.size_delta_pct, 0)}</td>
                         <td className="py-2 px-3 text-xs text-gray-400 italic">{recordedLabel(d.note)}</td>
                         <td className="py-2 px-3 text-xs text-gray-500">
-                          {d.transactions.length > 0
-                            ? d.transactions.map((t) => `#${t.id} (${shortDate(t.transaction_date)})`).join(", ")
-                            : "—"}
+                          <TransactionEvidenceLinks transactions={d.transactions} emptyFallback="—" />
                         </td>
                       </tr>
                     ))}

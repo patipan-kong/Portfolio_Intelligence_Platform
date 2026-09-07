@@ -270,14 +270,16 @@ export default function ExecutionPlanCard({
             No trades today
           </span>
         )}
-        {/* AI Evaluation M7 entry point (UX §2.3): "AI's track record on
-            calls like this" -> Human vs AI, scoped to this portfolio. */}
+        {/* AI Evaluation M7 entry point (UX §2.3), wording corrected under
+            DEM-01: the destination is the unfiltered, whole-history Human vs
+            AI scoreboard for this portfolio — not a comparison scoped to
+            trades like the ones on this plan. */}
         {portfolioId != null && (
           <Link
             href="/ai-analytics/human-vs-ai"
             className="ml-auto text-xs font-semibold text-blue-700 hover:underline whitespace-nowrap"
           >
-            AI's track record on calls like this →
+            See this portfolio's overall AI vs human track record →
           </Link>
         )}
       </div>

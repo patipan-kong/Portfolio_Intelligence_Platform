@@ -24,8 +24,12 @@ vi.mock("@/lib/api", () => ({
 // PortfolioTabs (rendered by this page) reads the current route via
 // usePathname(), which next/navigation returns as null outside of an actual
 // App Router — this test isn't exercising routing, so a fixed path is enough.
+// useSearchParams backs DEM-01's ?transactionId=<id> highlight target,
+// mocked per the established CashAccountsPage.test.tsx convention.
+let mockSearchParams = new URLSearchParams();
 vi.mock("next/navigation", () => ({
   usePathname: () => "/history",
+  useSearchParams: () => mockSearchParams,
 }));
 
 function makePortfolio(id: number, name = `P${id}`): Portfolio {
@@ -68,6 +72,10 @@ beforeEach(() => {
   localStorage.clear();
   listPortfolios.mockReset();
   getTransactionHistory.mockReset();
+  mockSearchParams = new URLSearchParams();
+  // jsdom doesn't implement scrollIntoView — stub it so the highlight
+  // effect can call it without throwing.
+  window.HTMLElement.prototype.scrollIntoView = vi.fn();
 });
 
 test("no portfolio selected: shows the empty/selection state and issues no request", async () => {
@@ -462,5 +470,91 @@ describe("CSV export", () => {
     expect(text).toContain("BBB.BK");
     expect(text).not.toContain("AAA.BK");
     expect(anchorClicks[0].download).toContain("-B-");
+  });
+});
+
+describe("DEM-01: ?transactionId=<id> drill-through highlight", () => {
+  test("highlights and focuses the row matching a valid transactionId, leaving others untouched", async () => {
+    mockSearchParams = new URLSearchParams("transactionId=2");
+    listPortfolios.mockResolvedValue([makePortfolio(1)]);
+    getTransactionHistory.mockResolvedValue([
+      tx({ id: 1, symbol: "BANPU.BK" }),
+      tx({ id: 2, symbol: "PTT.BK" }),
+    ]);
+
+    render(
+      <PortfolioProvider>
+        <SwitcherProbe />
+        <TransactionHistoryPage />
+      </PortfolioProvider>
+    );
+    await waitFor(() => expect(screen.getByText(/Select a portfolio/)).toBeInTheDocument());
+    await act(async () => screen.getByText("select-A").click());
+    await waitFor(() => expect(screen.getAllByText("PTT").length).toBeGreaterThan(0));
+
+    // Both the mobile-card and desktop-table trees render unconditionally in
+    // jsdom (no CSS breakpoints applied) — assert on the focused element's
+    // own content/attributes rather than assuming which tree receives focus.
+    expect(document.activeElement).toHaveAttribute("aria-current", "true");
+    expect(document.activeElement?.textContent).toContain("PTT");
+
+    for (const el of screen.getAllByText("BANPU")) {
+      expect(el.closest('[tabindex="-1"]')).not.toHaveAttribute("aria-current");
+    }
+  });
+
+  test("no transactionId param leaves normal behavior unaffected and focuses nothing", async () => {
+    listPortfolios.mockResolvedValue([makePortfolio(1)]);
+    getTransactionHistory.mockResolvedValue([tx({ id: 1, symbol: "PTT.BK" })]);
+
+    render(
+      <PortfolioProvider>
+        <SwitcherProbe />
+        <TransactionHistoryPage />
+      </PortfolioProvider>
+    );
+    await waitFor(() => expect(screen.getByText(/Select a portfolio/)).toBeInTheDocument());
+    await act(async () => screen.getByText("select-A").click());
+    await waitFor(() => expect(screen.getAllByText("PTT").length).toBeGreaterThan(0));
+
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  test("a malformed transactionId does not crash the page and reveals nothing", async () => {
+    mockSearchParams = new URLSearchParams("transactionId=not-a-number");
+    listPortfolios.mockResolvedValue([makePortfolio(1)]);
+    getTransactionHistory.mockResolvedValue([tx({ id: 1, symbol: "PTT.BK" })]);
+
+    render(
+      <PortfolioProvider>
+        <SwitcherProbe />
+        <TransactionHistoryPage />
+      </PortfolioProvider>
+    );
+    await waitFor(() => expect(screen.getByText(/Select a portfolio/)).toBeInTheDocument());
+    await act(async () => screen.getByText("select-A").click());
+    await waitFor(() => expect(screen.getAllByText("PTT").length).toBeGreaterThan(0));
+
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  test("a transactionId not present in the currently loaded history is a neutral no-op — no crash, no fabricated error", async () => {
+    mockSearchParams = new URLSearchParams("transactionId=999");
+    listPortfolios.mockResolvedValue([makePortfolio(1)]);
+    getTransactionHistory.mockResolvedValue([tx({ id: 1, symbol: "PTT.BK" })]);
+
+    render(
+      <PortfolioProvider>
+        <SwitcherProbe />
+        <TransactionHistoryPage />
+      </PortfolioProvider>
+    );
+    await waitFor(() => expect(screen.getByText(/Select a portfolio/)).toBeInTheDocument());
+    await act(async () => screen.getByText("select-A").click());
+    await waitFor(() => expect(screen.getAllByText("PTT").length).toBeGreaterThan(0));
+
+    expect(document.activeElement).toBe(document.body);
+    expect(screen.queryByText(/not found/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });
