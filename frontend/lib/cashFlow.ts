@@ -18,6 +18,19 @@ export interface CashFlowSummary {
   incomeCategories: Record<string, number>;
 }
 
+/**
+ * Presentation-only evidence views for the current month's existing activity.
+ * These mirror `classifyCashFlowEvent` below; they do not add accounting
+ * categories or alter the report's aggregate semantics.
+ */
+export type CashFlowEvidenceFilter =
+  | { kind: "income" }
+  | { kind: "expenses" }
+  | { kind: "net-cash-flow" }
+  | { kind: "expense-category"; category: string };
+
+export type CashFlowEventClassification = "income" | "expense" | "adjustment" | "excluded";
+
 function parseMonth(month: string): { year: number; month: number } {
   const match = MONTH_PATTERN.exec(month);
   if (!match) throw new Error("month must use YYYY-MM calendar format");
@@ -49,9 +62,45 @@ function eventSignedAmount(event: CashFlowEvent): number {
   return Number.isFinite(event.signed_amount) ? event.signed_amount : event.amount;
 }
 
-function addCategory(target: Record<string, number>, category: string, amount: number): void {
-  const label = category.trim() || "Uncategorized";
+export function canonicalCashFlowCategory(category: string | null): string {
+  return category?.trim() || "Uncategorized";
+}
+
+function addCategory(target: Record<string, number>, category: string | null, amount: number): void {
+  const label = canonicalCashFlowCategory(category);
   target[label] = roundCurrency((target[label] ?? 0) + amount);
+}
+
+/** The single classification contract used by aggregates and evidence filters. */
+export function classifyCashFlowEvent(event: CashFlowEvent): CashFlowEventClassification {
+  if (event.transaction_type === "INCOME") return "income";
+  if (event.transaction_type === "EXPENSE") return "expense";
+  if (event.transaction_type === "ADJUSTMENT") return "adjustment";
+  return "excluded";
+}
+
+/**
+ * Select existing activity rows that contribute to a displayed Cash Flow
+ * aggregate. `filter` preserves the source order and never mutates its input.
+ */
+export function filterCashFlowEvidence(
+  events: CashFlowEvent[],
+  filter: CashFlowEvidenceFilter,
+): CashFlowEvent[] {
+  return events.filter((event) => {
+    const classification = classifyCashFlowEvent(event);
+    if (filter.kind === "income") return classification === "income";
+    if (filter.kind === "expenses") return classification === "expense";
+    if (filter.kind === "net-cash-flow") return classification === "income" || classification === "expense";
+    return classification === "expense" && canonicalCashFlowCategory(event.category) === filter.category;
+  });
+}
+
+export function cashFlowEvidenceFilterLabel(filter: CashFlowEvidenceFilter): string {
+  if (filter.kind === "income") return "Showing recorded income events";
+  if (filter.kind === "expenses") return "Showing recorded expense events";
+  if (filter.kind === "net-cash-flow") return "Showing recorded events contributing to net cash flow";
+  return `Showing events in ${filter.category}`;
 }
 
 /**
@@ -73,13 +122,14 @@ export function aggregateMonthlyCashFlow(events: CashFlowEvent[], month: string)
   const incomeCategories: Record<string, number> = {};
 
   for (const event of selected) {
-    if (event.transaction_type === "INCOME") {
+    const classification = classifyCashFlowEvent(event);
+    if (classification === "income") {
       income += Math.abs(event.amount);
-      addCategory(incomeCategories, event.category ?? "", Math.abs(event.amount));
-    } else if (event.transaction_type === "EXPENSE") {
+      addCategory(incomeCategories, event.category, Math.abs(event.amount));
+    } else if (classification === "expense") {
       expenses += Math.abs(event.amount);
-      addCategory(expenseCategories, event.category ?? "", Math.abs(event.amount));
-    } else if (event.transaction_type === "ADJUSTMENT") {
+      addCategory(expenseCategories, event.category, Math.abs(event.amount));
+    } else if (classification === "adjustment") {
       adjustments += eventSignedAmount(event);
     }
   }

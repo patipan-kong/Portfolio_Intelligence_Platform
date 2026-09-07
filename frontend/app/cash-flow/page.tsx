@@ -23,10 +23,13 @@ import {
 } from "@/lib/api";
 import {
   aggregateMonthlyCashFlow,
+  cashFlowEvidenceFilterLabel,
   currentMonthKey,
+  filterCashFlowEvidence,
   formatMonthLabel,
   shiftMonth,
   signedPresentationAmount,
+  type CashFlowEvidenceFilter,
 } from "@/lib/cashFlow";
 import {
   computeCoveragePopulation,
@@ -59,6 +62,7 @@ export default function CashFlowPage() {
   const [report, setReport] = useState<{ month: string; events: CashFlowEvent[] } | null>(null);
   const [reportLoading, setReportLoading] = useState(true);
   const [reportError, setReportError] = useState("");
+  const [evidenceFilter, setEvidenceFilter] = useState<CashFlowEvidenceFilter | null>(null);
   const [accounts, setAccounts] = useState<CashAccount[] | null>(null);
   const [accountsLoading, setAccountsLoading] = useState(true);
   const [accountsError, setAccountsError] = useState("");
@@ -112,6 +116,7 @@ export default function CashFlowPage() {
   const reportRequestId = useRef(0);
   const coverageRequestId = useRef(0);
   const trendRequestId = useRef(0);
+  const activitySectionRef = useRef<HTMLElement>(null);
 
   const loadReport = useCallback(async (selectedMonth: string) => {
     const requestId = ++reportRequestId.current;
@@ -255,6 +260,33 @@ export default function CashFlowPage() {
     ? Object.entries(summary.expenseCategories).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     : [];
   const hasAdjustments = summary?.events.some((event) => event.transaction_type === "ADJUSTMENT") ?? false;
+  const evidenceEvents = useMemo(
+    () => summary ? (evidenceFilter ? filterCashFlowEvidence(summary.events, evidenceFilter) : summary.events) : [],
+    [summary, evidenceFilter],
+  );
+
+  useEffect(() => {
+    if (!evidenceFilter) return;
+    const activitySection = activitySectionRef.current;
+    if (typeof activitySection?.scrollIntoView === "function") {
+      activitySection.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+    activitySection?.focus({ preventScroll: true });
+  }, [evidenceFilter]);
+
+  function selectEvidenceFilter(filter: CashFlowEvidenceFilter) {
+    setEvidenceFilter(filter);
+  }
+
+  function changeMonth(delta: number) {
+    setEvidenceFilter(null);
+    setMonth((value) => shiftMonth(value, delta));
+  }
+
+  function returnToCurrentMonth() {
+    setEvidenceFilter(null);
+    setMonth(currentMonthKey());
+  }
 
   function openEntry(type: EntryType) {
     setMutationError("");
@@ -567,14 +599,14 @@ export default function CashFlowPage() {
       />
 
       <section className="bg-white border rounded-xl p-4 shadow-sm flex items-center justify-between gap-3">
-        <button type="button" aria-label="Previous month" onClick={() => setMonth((value) => shiftMonth(value, -1))} className="px-3 py-1.5 border rounded text-sm hover:bg-gray-50">←</button>
+        <button type="button" aria-label="Previous month" onClick={() => changeMonth(-1)} className="px-3 py-1.5 border rounded text-sm hover:bg-gray-50">←</button>
         <div className="text-center">
           <p className="text-xs uppercase tracking-wide text-gray-400">Selected month</p>
           <h2 className="text-lg font-semibold" aria-live="polite">{formatMonthLabel(month)}</h2>
         </div>
         <div className="flex items-center gap-2">
-          <button type="button" aria-label="Next month" disabled={month >= currentMonth} onClick={() => setMonth((value) => shiftMonth(value, 1))} className="px-3 py-1.5 border rounded text-sm hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed">→</button>
-          {month !== currentMonth && <button type="button" onClick={() => setMonth(currentMonth)} className="text-sm text-blue-600 hover:underline">Today</button>}
+          <button type="button" aria-label="Next month" disabled={month >= currentMonth} onClick={() => changeMonth(1)} className="px-3 py-1.5 border rounded text-sm hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed">→</button>
+          {month !== currentMonth && <button type="button" onClick={returnToCurrentMonth} className="text-sm text-blue-600 hover:underline">Today</button>}
         </div>
       </section>
 
@@ -589,9 +621,9 @@ export default function CashFlowPage() {
       {!reportLoading && !reportError && summary && (
         <>
           <section aria-label="Monthly summary" className="grid gap-3 sm:grid-cols-3">
-            <SummaryCard label="Income" value={formatThb(summary.income)} tone="positive" />
-            <SummaryCard label="Expenses" value={formatThb(summary.expenses)} tone="negative" />
-            <SummaryCard label="Net Cash Flow" value={formatThb(summary.netCashFlow)} tone={summary.netCashFlow > 0 ? "positive" : summary.netCashFlow < 0 ? "negative" : "neutral"} />
+            <SummaryCard label="Income" value={formatThb(summary.income)} tone="positive" onSelect={summary.income > 0 ? () => selectEvidenceFilter({ kind: "income" }) : undefined} />
+            <SummaryCard label="Expenses" value={formatThb(summary.expenses)} tone="negative" onSelect={summary.expenses > 0 ? () => selectEvidenceFilter({ kind: "expenses" }) : undefined} />
+            <SummaryCard label="Net Cash Flow" value={formatThb(summary.netCashFlow)} tone={summary.netCashFlow > 0 ? "positive" : summary.netCashFlow < 0 ? "negative" : "neutral"} onSelect={summary.income > 0 || summary.expenses > 0 ? () => selectEvidenceFilter({ kind: "net-cash-flow" }) : undefined} />
           </section>
 
           {hasAdjustments && (
@@ -701,14 +733,15 @@ export default function CashFlowPage() {
             <section className="bg-white border rounded-xl p-4 shadow-sm">
               <h2 className="font-semibold">Expense categories</h2>
               <ul className="mt-3 divide-y text-sm">
-                {expenseCategories.map(([category, amount]) => <li key={category} className="py-2 flex justify-between gap-4"><span>{category}</span><span>{formatThb(amount)}</span></li>)}
+                {expenseCategories.map(([category, amount]) => <li key={category}><button type="button" onClick={() => selectEvidenceFilter({ kind: "expense-category", category })} className="w-full py-2 flex justify-between gap-4 text-left hover:bg-gray-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"><span>{category}</span><span>{formatThb(amount)}</span></button></li>)}
               </ul>
             </section>
           )}
 
-          <section className="bg-white border rounded-xl p-4 shadow-sm">
-            <div className="flex items-center justify-between gap-3"><h2 className="font-semibold">Activity</h2><span className="text-xs text-gray-400">{summary.eventCount} event{summary.eventCount === 1 ? "" : "s"}</span></div>
-            {summary.events.length === 0 ? <p className="text-sm text-gray-500 mt-3">No cash flow events in {formatMonthLabel(month)}. Income, Expenses, and Net Cash Flow are all ฿0.00.</p> : <ActivityList events={summary.events} />}
+          <section ref={activitySectionRef} tabIndex={-1} aria-label="Cash flow activity" className="bg-white border rounded-xl p-4 shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600">
+            <div className="flex items-center justify-between gap-3"><h2 className="font-semibold">Activity</h2><span className="text-xs text-gray-400">{evidenceEvents.length} event{evidenceEvents.length === 1 ? "" : "s"}</span></div>
+            {evidenceFilter && <div className="mt-3 flex flex-wrap items-center justify-between gap-2" role="status"><p className="text-sm text-gray-600">{cashFlowEvidenceFilterLabel(evidenceFilter)}</p><button type="button" onClick={() => setEvidenceFilter(null)} className="text-sm text-blue-600 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600">Clear evidence filter</button></div>}
+            {summary.events.length === 0 ? <p className="text-sm text-gray-500 mt-3">No cash flow events in {formatMonthLabel(month)}. Income, Expenses, and Net Cash Flow are all ฿0.00.</p> : evidenceEvents.length === 0 ? <p className="text-sm text-gray-500 mt-3">No recorded events match this selected evidence view.</p> : <ActivityList events={evidenceEvents} />}
           </section>
         </>
       )}
@@ -716,8 +749,9 @@ export default function CashFlowPage() {
   );
 }
 
-function SummaryCard({ label, value, tone }: { label: string; value: string; tone: "positive" | "negative" | "neutral" }) {
+function SummaryCard({ label, value, tone, onSelect }: { label: string; value: string; tone: "positive" | "negative" | "neutral"; onSelect?: () => void }) {
   const toneClass = tone === "positive" ? "text-green-700" : tone === "negative" ? "text-red-700" : "text-gray-800";
+  if (onSelect) return <button type="button" onClick={onSelect} aria-label={`Show events included in ${label}`} className="bg-white border rounded-xl p-4 shadow-sm text-left hover:bg-gray-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"><p className="text-sm text-gray-500">{label}</p><p className={`text-xl font-semibold mt-1 ${toneClass}`}>{value}</p></button>;
   return <article className="bg-white border rounded-xl p-4 shadow-sm"><p className="text-sm text-gray-500">{label}</p><p className={`text-xl font-semibold mt-1 ${toneClass}`}>{value}</p></article>;
 }
 

@@ -227,6 +227,82 @@ describe("CashFlowPage", () => {
     expect(screen.queryByText("2026-09-01 · Everyday Cash")).not.toBeInTheDocument();
   });
 
+  describe("current-month evidence drill-through", () => {
+    const monthlyEvents = [
+      event({ id: 1, occurred_on: "2026-08-15", transaction_type: "INCOME", amount: 500, category: "Salary" }),
+      event({ id: 2, occurred_on: "2026-08-16", transaction_type: "EXPENSE", amount: 125, signed_amount: -125, category: "Food" }),
+      event({ id: 3, occurred_on: "2026-08-17", transaction_type: "EXPENSE", amount: 300, signed_amount: -300, category: "Rent", account_name: "Archived Cash", account_is_archived: true }),
+      event({ id: 4, occurred_on: "2026-08-18", transaction_type: "TRANSFER", amount: 50, signed_amount: 0, category: null, transfer_id: 4, transfer_source_account_name: "Everyday Cash", transfer_destination_account_name: "Savings" }),
+      event({ id: 5, occurred_on: "2026-08-19", transaction_type: "INVESTMENT_TRANSFER", amount: -75, signed_amount: -75, category: null, counterparty_portfolio_name: "Growth Portfolio", investment_direction: "TO_PORTFOLIO" }),
+      event({ id: 6, occurred_on: "2026-08-20", transaction_type: "ADJUSTMENT", amount: 25, signed_amount: 25, category: "Reconciliation" }),
+    ];
+
+    it("filters Income and Expenses with accessible buttons, then clears back to the complete activity list", async () => {
+      setReport(monthlyEvents);
+      render(<CashFlowPage />);
+      await screen.findByRole("region", { name: "Monthly summary" });
+
+      fireEvent.click(screen.getByRole("button", { name: "Show events included in Income" }));
+      expect(screen.getByText("Showing recorded income events")).toBeInTheDocument();
+      expect(screen.getByText("Income · Salary")).toBeInTheDocument();
+      expect(screen.queryByText("Expense · Food")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Clear evidence filter" })).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "Clear evidence filter" }));
+      expect(screen.getByText("Expense · Food")).toBeInTheDocument();
+      expect(screen.getByText("Transfer")).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "Show events included in Expenses" }));
+      expect(screen.getByText("Showing recorded expense events")).toBeInTheDocument();
+      expect(screen.getByText("Expense · Food")).toBeInTheDocument();
+      expect(screen.getByText("Expense · Rent")).toBeInTheDocument();
+      expect(screen.getByText(/Archived Cash \(Archived\)/)).toBeInTheDocument();
+      expect(screen.queryByText("Investment transfer")).not.toBeInTheDocument();
+    });
+
+    it("shows both income and expense records for Net Cash Flow without inventing a transaction type", async () => {
+      setReport(monthlyEvents);
+      render(<CashFlowPage />);
+      await screen.findByRole("region", { name: "Monthly summary" });
+
+      fireEvent.click(screen.getByRole("button", { name: "Show events included in Net Cash Flow" }));
+      expect(screen.getByText("Showing recorded events contributing to net cash flow")).toBeInTheDocument();
+      expect(screen.getByText("Income · Salary")).toBeInTheDocument();
+      expect(screen.getByText("Expense · Food")).toBeInTheDocument();
+      expect(screen.queryByText("Adjustment · Reconciliation")).not.toBeInTheDocument();
+      expect(screen.queryByText("Investment transfer")).not.toBeInTheDocument();
+    });
+
+    it("filters a displayed expense category using its canonical category and preserves archived activity", async () => {
+      setReport(monthlyEvents);
+      render(<CashFlowPage />);
+      await screen.findByRole("region", { name: "Monthly summary" });
+
+      fireEvent.click(screen.getByRole("button", { name: /Food/ }));
+      expect(screen.getByText("Showing events in Food")).toBeInTheDocument();
+      expect(screen.getByText("Expense · Food")).toBeInTheDocument();
+      expect(screen.queryByText("Expense · Rent")).not.toBeInTheDocument();
+      expect(screen.queryByText("Income · Salary")).not.toBeInTheDocument();
+    });
+
+    it("resets the presentation-only evidence filter when the selected month changes", async () => {
+      reportMock.mockImplementation(async (selectedMonth) => ({
+        month: selectedMonth,
+        events: selectedMonth === "2026-08" ? monthlyEvents : [event({ id: 20, occurred_on: "2026-07-10", amount: 200, category: "July salary" })],
+      }));
+      render(<CashFlowPage />);
+      await screen.findByRole("region", { name: "Monthly summary" });
+
+      fireEvent.click(screen.getByRole("button", { name: "Show events included in Expenses" }));
+      expect(screen.getByText("Showing recorded expense events")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Previous month" }));
+
+      expect(await screen.findByText("July 2026")).toBeInTheDocument();
+      expect(screen.queryByText("Showing recorded expense events")).not.toBeInTheDocument();
+      expect(screen.getByText("Income · July salary")).toBeInTheDocument();
+    });
+  });
+
   it("navigates to the previous month and does not offer a future month", async () => {
     reportMock.mockImplementation(async (selectedMonth) => ({ month: selectedMonth, events: [] }));
     render(<CashFlowPage />);

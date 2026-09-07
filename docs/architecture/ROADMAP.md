@@ -451,6 +451,11 @@ tracked here ([ENGINEERING_PRINCIPLES.md](../engineering/ENGINEERING_PRINCIPLES.
   target loads the existing 365-day window and focuses the exact graded or
   maturing row; an absent row reports only the window limitation. Navigation
   only — no calculation, attribution, or execution semantics changed.
+- ~~Inspect current-month Cash Flow aggregate and category records~~ (CFE-01)
+  — delivered: Income, Expenses, Net Cash Flow, and displayed Expense
+  categories now filter the already-loaded Activity records in place. This is
+  frontend evidence navigation only; cash-flow aggregation and accounting are
+  unchanged.
 - Sector BHB attribution
 - Cross-portfolio exposure and allocation analysis
 - ~~Total Assets History after external Cash Accounts have dated balance
