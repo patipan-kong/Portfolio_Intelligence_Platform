@@ -105,6 +105,7 @@ def _mint_asset(db, canonical_symbol: str, provider_symbol: str | None = None):
 
 def _seed_snapshot_and_decision(
     db, ws, portfolio, decision_type, allocations, with_transaction=False, tx_symbol=None,
+    is_system_generated=False,
 ):
     from models.database import OptimizerHistory, RecommendationSnapshot, Transaction, UserExecutionDecision
 
@@ -132,6 +133,7 @@ def _seed_snapshot_and_decision(
     dec = UserExecutionDecision(
         workspace_id=ws.id, recommendation_snapshot_id=snap.id, portfolio_id=portfolio.id,
         decision=decision_type, executed_at=datetime.utcnow(), created_at=datetime.utcnow(),
+        is_system_generated=is_system_generated,
     )
     db.add(dec)
     db.commit()
@@ -498,3 +500,84 @@ def test_ledger_recording_progress_uses_only_explicit_in_scope_linkage(db, ws_po
     assert row["total_planned"] == 1
     assert row["is_complete"] is False
     assert result["summary"]["incomplete_recording_count"] == 1
+
+
+# Review Workflows Slice 2 (Review Queue / Due Reviews) — `reviewable` and
+# `has_review` are derived purely from UserExecutionDecision.is_system_generated
+# and ExecutionReview presence; no new persistence, no transaction-linkage
+# gate. See docs/DECISION_LOG.md and the Slice 2 reconnaissance report for
+# the frozen predicate this covers.
+
+def test_ledger_row_reviewable_and_unreviewed(db, ws_portfolio):
+    ws, portfolio = ws_portfolio
+    _snap, dec = _seed_snapshot_and_decision(db, ws, portfolio, "APPROVED", _ALLOCS_BUY_ONLY)
+
+    result = list_execution_ledger(db, portfolio.id)
+    row = next(row for row in result["rows"] if row["decision_id"] == dec.id)
+    assert row["reviewable"] is True
+    assert row["has_review"] is False
+
+
+def test_ledger_row_has_review_when_review_exists(db, ws_portfolio):
+    from models.database import ExecutionReview
+
+    ws, portfolio = ws_portfolio
+    _snap, dec = _seed_snapshot_and_decision(db, ws, portfolio, "APPROVED", _ALLOCS_BUY_ONLY)
+    db.add(ExecutionReview(
+        workspace_id=ws.id, execution_decision_id=dec.id,
+        outcome="ON_TRACK", summary="Still on plan.",
+    ))
+    db.commit()
+
+    result = list_execution_ledger(db, portfolio.id)
+    row = next(row for row in result["rows"] if row["decision_id"] == dec.id)
+    assert row["reviewable"] is True
+    assert row["has_review"] is True
+
+
+def test_ledger_row_system_generated_expired_is_not_reviewable(db, ws_portfolio):
+    ws, portfolio = ws_portfolio
+    _snap, dec = _seed_snapshot_and_decision(
+        db, ws, portfolio, "EXPIRED", _ALLOCS_BUY_ONLY, is_system_generated=True,
+    )
+
+    result = list_execution_ledger(db, portfolio.id)
+    row = next(row for row in result["rows"] if row["decision_id"] == dec.id)
+    assert row["reviewable"] is False
+    assert row["has_review"] is False
+
+
+def test_ledger_rejected_decision_with_no_transaction_is_reviewable(db, ws_portfolio):
+    """REJECTED decisions never carry a linked transaction, but a review is
+    still a meaningful retrospective ('was rejecting this the right call?') —
+    reviewability must not be gated on transaction linkage or recording
+    progress, unlike `recording_progress_eligible`."""
+    ws, portfolio = ws_portfolio
+    _snap, dec = _seed_snapshot_and_decision(db, ws, portfolio, "REJECTED", _ALLOCS_BUY_ONLY)
+
+    result = list_execution_ledger(db, portfolio.id)
+    row = next(row for row in result["rows"] if row["decision_id"] == dec.id)
+    assert row["recording_progress_eligible"] is False
+    assert row["reviewable"] is True
+    assert row["has_review"] is False
+
+
+def test_ledger_review_fields_scoped_to_own_portfolio(db, ws_portfolio):
+    """Existing portfolio-scoping (list_execution_ledger filters by
+    portfolio_id) must still hold with the new fields present — a decision
+    belonging to a different portfolio in the same workspace never appears."""
+    from models.database import Portfolio
+
+    ws, portfolio = ws_portfolio
+    other_portfolio = Portfolio(workspace_id=ws.id, name="Other", cash_balance=50_000.0)
+    db.add(other_portfolio)
+    db.commit()
+    db.refresh(other_portfolio)
+
+    _snap, dec = _seed_snapshot_and_decision(db, ws, portfolio, "APPROVED", _ALLOCS_BUY_ONLY)
+    _other_snap, other_dec = _seed_snapshot_and_decision(db, ws, other_portfolio, "APPROVED", _ALLOCS_BUY_ONLY)
+
+    result = list_execution_ledger(db, portfolio.id)
+    decision_ids = {row["decision_id"] for row in result["rows"]}
+    assert dec.id in decision_ids
+    assert other_dec.id not in decision_ids

@@ -292,6 +292,8 @@ def list_execution_ledger(db: Session, portfolio_id: int, period_days: int = 90)
             "completeness_pct": analysis.get("completeness_pct"),
             "funding_fidelity_pct": analysis.get("funding_fidelity_pct"),
             **recording_progress,
+            "reviewable": not dec.is_system_generated,
+            "has_review": dec.review is not None,
             "outcome_delta": {
                 "grade_kind": grade_row.grade_kind,
                 "return_pct": grade_row.return_pct,

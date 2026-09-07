@@ -4421,6 +4421,10 @@ export interface ExecutionLedgerRow {
   matched_count: number | null;
   total_planned: number | null;
   is_complete: boolean | null;
+  /** Review Queue (Slice 2): reviewable = human-authored decision (not system-generated EXPIRED). */
+  reviewable: boolean;
+  /** Whether a canonical ExecutionReview already exists for this decision. */
+  has_review: boolean;
   outcome_delta: { grade_kind: string; return_pct: number | null; alpha: number | null; is_counterfactual: boolean } | null;
 }
 

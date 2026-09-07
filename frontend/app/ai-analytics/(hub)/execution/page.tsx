@@ -39,6 +39,7 @@ export default function ExecutionLedgerPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [needsRecording, setNeedsRecording] = useState(false);
+  const [needsReview, setNeedsReview] = useState(false);
 
   // M36.1 WP4B F04 — captured Portfolio Identity; a response arriving after
   // Current Selection has moved to a different portfolio (or cleared to
@@ -78,9 +79,27 @@ export default function ExecutionLedgerPage() {
     return <PortfolioSelectionNotice label="Execution Intelligence" />;
   }
 
-  const visibleRows = needsRecording
-    ? (data?.rows ?? []).filter((row) => row.recording_progress_eligible && row.is_complete === false)
-    : (data?.rows ?? []);
+  // "Needs recording" and "Needs review" are mutually exclusive (see toggle
+  // handlers below) — an intersection filter of two unrelated action queues
+  // has no clear meaning, so only one is ever active at a time.
+  let visibleRows: ExecutionLedgerRow[];
+  if (needsReview) {
+    // Actionable queue: oldest-waiting decision first. This is a view-level
+    // sort only — the underlying fetched rows and the default/"Needs
+    // recording" ordering (backend executed_at desc) are untouched.
+    visibleRows = (data?.rows ?? [])
+      .filter((row) => row.reviewable && !row.has_review)
+      .slice()
+      .sort((a, b) => {
+        const at = a.date ? new Date(a.date).getTime() : Infinity;
+        const bt = b.date ? new Date(b.date).getTime() : Infinity;
+        return at - bt;
+      });
+  } else if (needsRecording) {
+    visibleRows = (data?.rows ?? []).filter((row) => row.recording_progress_eligible && row.is_complete === false);
+  } else {
+    visibleRows = data?.rows ?? [];
+  }
 
   const columns: EvidenceColumn<ExecutionLedgerRow>[] = [
     { key: "date", header: "Date", render: (r) => <span className="text-gray-500">{r.date?.slice(0, 10) ?? "—"}</span> },
@@ -200,25 +219,53 @@ export default function ExecutionLedgerPage() {
           <div className="bg-white border border-gray-200 rounded-xl p-4">
             <div className="flex items-center justify-between gap-3 mb-3">
               <p className="text-sm text-gray-600">
-                {needsRecording ? "Decisions with incomplete transaction recording" : "All decisions in this window"}
+                {needsReview
+                  ? "Decisions needing a review"
+                  : needsRecording
+                    ? "Decisions with incomplete transaction recording"
+                    : "All decisions in this window"}
               </p>
-              <button
-                type="button"
-                aria-pressed={needsRecording}
-                onClick={() => setNeedsRecording((value) => !value)}
-                className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
-                  needsRecording ? "bg-blue-700 text-white" : "bg-blue-50 text-blue-700 hover:bg-blue-100"
-                }`}
-              >
-                {needsRecording ? "Show all decisions" : "Needs recording"}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  aria-pressed={needsRecording}
+                  onClick={() => {
+                    setNeedsRecording((value) => !value);
+                    setNeedsReview(false);
+                  }}
+                  className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
+                    needsRecording ? "bg-blue-700 text-white" : "bg-blue-50 text-blue-700 hover:bg-blue-100"
+                  }`}
+                >
+                  {needsRecording ? "Show all decisions" : "Needs recording"}
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={needsReview}
+                  onClick={() => {
+                    setNeedsReview((value) => !value);
+                    setNeedsRecording(false);
+                  }}
+                  className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
+                    needsReview ? "bg-blue-700 text-white" : "bg-blue-50 text-blue-700 hover:bg-blue-100"
+                  }`}
+                >
+                  {needsReview ? "Show all decisions" : "Needs review"}
+                </button>
+              </div>
             </div>
             <EvidenceLedger
               columns={columns}
               rows={visibleRows}
               rowKey={(r) => r.decision_id}
               onRowClick={(r) => router.push(`/ai-analytics/execution/${r.decision_id}`)}
-              emptyMessage={needsRecording ? "No decisions with incomplete transaction recording in this view." : "No decisions in this window."}
+              emptyMessage={
+                needsReview
+                  ? "No decisions need review right now."
+                  : needsRecording
+                    ? "No decisions with incomplete transaction recording in this view."
+                    : "No decisions in this window."
+              }
             />
           </div>
         </>
