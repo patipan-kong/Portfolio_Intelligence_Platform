@@ -32,7 +32,7 @@ import logging
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 logger = logging.getLogger(__name__)
 
@@ -216,6 +216,12 @@ def list_execution_ledger(db: Session, portfolio_id: int, period_days: int = 90)
 
     decisions = (
         db.query(UserExecutionDecision)
+        # Review Workflows Slice 4 closure — `dec.review` is read 3x per row
+        # below (reviewable/has_review/review_outcome/reviewed_at); without
+        # this, each access lazy-loads its own SELECT, i.e. one extra query
+        # per decision (real N+1, verified: 8 decisions -> 8 extra SELECTs).
+        # joinedload is correct here since review is a to-one relationship.
+        .options(joinedload(UserExecutionDecision.review))
         .filter(
             UserExecutionDecision.workspace_id == ws,
             UserExecutionDecision.portfolio_id == portfolio_id,

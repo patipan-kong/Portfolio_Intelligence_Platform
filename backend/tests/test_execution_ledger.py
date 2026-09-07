@@ -562,6 +562,41 @@ def test_ledger_rejected_decision_with_no_transaction_is_reviewable(db, ws_portf
     assert row["has_review"] is False
 
 
+def test_ledger_review_access_does_not_n_plus_one(db, ws_portfolio):
+    """Closure audit finding: `dec.review` is read 3x per row for
+    has_review/review_outcome/reviewed_at. Without eager loading this issued
+    one extra `execution_reviews` SELECT per decision (verified: 8 decisions
+    -> 8 extra queries). The decisions query now joinedloads `.review`, so
+    the count must stay flat as row count grows."""
+    from sqlalchemy import event
+    from models.database import ExecutionReview
+
+    ws, portfolio = ws_portfolio
+    for i in range(5):
+        _snap, dec = _seed_snapshot_and_decision(db, ws, portfolio, "APPROVED", _ALLOCS_BUY_ONLY)
+        if i % 2 == 0:
+            db.add(ExecutionReview(workspace_id=ws.id, execution_decision_id=dec.id, outcome="ON_TRACK"))
+            db.commit()
+
+    db.expire_all()  # force fresh loads, matching a real per-request session
+
+    statements = []
+    engine = db.get_bind()
+    def _capture(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+    event.listen(engine, "before_cursor_execute", _capture)
+    try:
+        result = list_execution_ledger(db, portfolio.id)
+    finally:
+        event.remove(engine, "before_cursor_execute", _capture)
+
+    assert len(result["rows"]) == 5
+    review_statements = [s for s in statements if "execution_reviews" in s]
+    assert len(review_statements) <= 1, (
+        f"expected review data folded into the main decisions query, got {len(review_statements)} statements"
+    )
+
+
 def test_ledger_review_fields_scoped_to_own_portfolio(db, ws_portfolio):
     """Existing portfolio-scoping (list_execution_ledger filters by
     portfolio_id) must still hold with the new fields present — a decision

@@ -46,6 +46,12 @@ management and intelligence.
 - Performance and risk analytics
 - Optimizer, recommendation, and execution-intelligence capabilities
 - AI evaluation and trust capabilities within their existing boundaries
+- Review Workflows v1: a canonical human-authored retrospective review per
+  execution decision, a Needs-review queue, review feedback on Execution
+  Intelligence, and read-only review context on the Recommendation Report
+  Card. Review outcomes are human-authored retrospective context — they do
+  not currently influence optimizer recommendations, ranking, or objective
+  performance grading.
 
 ### Multi-portfolio product capability
 
