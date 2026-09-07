@@ -398,3 +398,103 @@ def test_unrelated_symbols_stay_unmatched(db, ws_portfolio):
     detail = get_execution_detail(db, portfolio.id, dec.id)
     assert detail["analysis"]["status"] == "partial"
     assert detail["analysis"]["symbols"]["CENTEL"]["note"] == "no_linked_transaction"
+
+
+# ── Execution recording follow-up (EFR-01) ──────────────────────────────────
+# The list endpoint must carry the same canonical analyzer facts used by
+# Execution Detail. These tests deliberately exercise list rows, not a second
+# matching algorithm.
+
+def test_ledger_row_exposes_complete_recording_progress(db, ws_portfolio):
+    ws, portfolio = ws_portfolio
+    _snap, dec = _seed_snapshot_and_decision(
+        db, ws, portfolio, "APPROVED", _ALLOCS_BUY_ONLY, with_transaction=True,
+    )
+
+    result = list_execution_ledger(db, portfolio.id)
+    row = next(row for row in result["rows"] if row["decision_id"] == dec.id)
+    assert row["recording_progress_eligible"] is True
+    assert row["matched_count"] == 1
+    assert row["total_planned"] == 1
+    assert row["is_complete"] is True
+    assert result["summary"]["incomplete_recording_count"] == 0
+
+
+def test_ledger_row_exposes_incomplete_recording_progress(db, ws_portfolio):
+    ws, portfolio = ws_portfolio
+    _snap, dec = _seed_snapshot_and_decision(
+        db, ws, portfolio, "PARTIAL_EXECUTION", _ALLOCS_WITH_FUNDING, with_transaction=True,
+    )
+
+    result = list_execution_ledger(db, portfolio.id)
+    row = next(row for row in result["rows"] if row["decision_id"] == dec.id)
+    assert row["recording_progress_eligible"] is True
+    assert row["matched_count"] == 1
+    assert row["total_planned"] == 2
+    assert row["is_complete"] is False
+    assert result["summary"]["incomplete_recording_count"] == 1
+
+
+def test_ledger_zero_planned_items_remain_complete(db, ws_portfolio):
+    ws, portfolio = ws_portfolio
+    _snap, dec = _seed_snapshot_and_decision(db, ws, portfolio, "APPROVED", [], with_transaction=False)
+
+    result = list_execution_ledger(db, portfolio.id)
+    row = next(row for row in result["rows"] if row["decision_id"] == dec.id)
+    assert row["recording_progress_eligible"] is True
+    assert row["matched_count"] == 0
+    assert row["total_planned"] == 0
+    assert row["is_complete"] is True
+    assert result["summary"]["incomplete_recording_count"] == 0
+
+
+def test_ledger_rejected_decision_is_not_recording_follow_up(db, ws_portfolio):
+    ws, portfolio = ws_portfolio
+    _snap, dec = _seed_snapshot_and_decision(db, ws, portfolio, "REJECTED", _ALLOCS_BUY_ONLY)
+
+    result = list_execution_ledger(db, portfolio.id)
+    row = next(row for row in result["rows"] if row["decision_id"] == dec.id)
+    assert row["recording_progress_eligible"] is False
+    assert row["matched_count"] is None
+    assert row["total_planned"] is None
+    assert row["is_complete"] is None
+    assert result["summary"]["incomplete_recording_count"] == 0
+
+
+def test_ledger_recording_progress_uses_only_explicit_in_scope_linkage(db, ws_portfolio):
+    """Same-symbol or foreign records cannot satisfy a decision's plan."""
+    from models.database import Portfolio, Transaction, Workspace
+
+    ws, portfolio = ws_portfolio
+    _snap, dec = _seed_snapshot_and_decision(db, ws, portfolio, "APPROVED", _ALLOCS_BUY_ONLY)
+
+    # Same symbol but no execution_decision_id: it is ordinary, unlinked ledger
+    # history and must not be heuristically treated as recording evidence.
+    db.add(Transaction(
+        workspace_id=ws.id, portfolio_id=portfolio.id, symbol="CENTEL",
+        transaction_type="BUY", shares=300, price_per_share=100.0, total_amount=30_000,
+        transaction_date=datetime.utcnow(), execution_decision_id=None,
+    ))
+
+    foreign_ws = Workspace(name="Foreign workspace")
+    db.add(foreign_ws)
+    db.commit()
+    foreign_portfolio = Portfolio(workspace_id=foreign_ws.id, name="Foreign", cash_balance=100_000.0)
+    db.add(foreign_portfolio)
+    db.commit()
+    # This malformed cross-scope link can be inserted directly in a test DB,
+    # but the ledger must still reject it even before the normal write-path
+    # ownership validation is considered.
+    db.add(Transaction(
+        workspace_id=foreign_ws.id, portfolio_id=foreign_portfolio.id, symbol="CENTEL",
+        transaction_type="BUY", shares=300, price_per_share=100.0, total_amount=30_000,
+        transaction_date=datetime.utcnow(), execution_decision_id=dec.id,
+    ))
+    db.commit()
+
+    result = list_execution_ledger(db, portfolio.id)
+    row = next(row for row in result["rows"] if row["decision_id"] == dec.id)
+    assert row["matched_count"] == 0
+    assert row["total_planned"] == 1
+    assert row["is_complete"] is False
+    assert result["summary"]["incomplete_recording_count"] == 1

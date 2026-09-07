@@ -4398,6 +4398,8 @@ export interface AcceptanceByClassEntry {
 export interface ExecutionLedgerSummary {
   total_decisions: number;
   decision_counts: Record<string, number>;
+  /** Eligible decisions with canonical plan-derived recording facts that are incomplete. */
+  incomplete_recording_count: number;
   acceptance_by_class: Record<string, AcceptanceByClassEntry>;
   acceptance_note: string;
   avg_execution_score: number | null;
@@ -4414,6 +4416,12 @@ export interface ExecutionLedgerRow {
   execution_score: number | null;
   completeness_pct: number | null;
   funding_fidelity_pct: number | null;
+  /** Existing decision semantics say transaction-recording progress is meaningful. */
+  recording_progress_eligible: boolean;
+  /** Canonical analyzer facts; null when recording progress is not applicable or unavailable. */
+  matched_count: number | null;
+  total_planned: number | null;
+  is_complete: boolean | null;
   outcome_delta: { grade_kind: string; return_pct: number | null; alpha: number | null; is_counterfactual: boolean } | null;
 }
 

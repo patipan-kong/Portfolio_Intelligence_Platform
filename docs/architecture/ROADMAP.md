@@ -461,6 +461,11 @@ tracked here ([ENGINEERING_PRINCIPLES.md](../engineering/ENGINEERING_PRINCIPLES.
   months open the existing selected-month Activity and CFE-01 workflow. This
   is frontend-only navigation; Cash Flow accounting, Coverage, and Trend
   semantics are unchanged.
+- ~~Surface decisions with incomplete transaction recording in Execution
+  Intelligence~~ (EFR-01) — delivered: the existing execution-plan and
+  explicit decision↔transaction linkage facts now drive a portfolio-scoped
+  cue and filter to the existing detail/recording flow. No new execution,
+  broker-fill, or settlement authority was introduced.
 - Sector BHB attribution
 - Cross-portfolio exposure and allocation analysis
 - ~~Total Assets History after external Cash Accounts have dated balance

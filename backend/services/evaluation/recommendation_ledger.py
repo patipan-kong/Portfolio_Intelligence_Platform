@@ -268,7 +268,7 @@ def get_report_card(db: Session, portfolio_id: int, snapshot_id: int) -> dict[st
             analysis = compute_execution_analysis(
                 inputs["target_allocations"], inputs["cash_available"], inputs["violations"],
                 _recommendation_prices(snap),
-                _linked_transactions(db, decision_row.id, known_symbols=plan_symbols),
+                _linked_transactions(db, decision_row, known_symbols=plan_symbols),
             )
         else:
             # Plan reconstruction unavailable (legacy/malformed snapshot) —
