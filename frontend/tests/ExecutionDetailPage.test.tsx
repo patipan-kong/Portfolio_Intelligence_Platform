@@ -48,6 +48,7 @@ function executionDetail(overrides: Partial<ExecutionDetail> = {}): ExecutionDet
       matched_count: 1, total_planned: 1, is_complete: true, symbols: {},
     },
     partial_warning: null,
+    reviewable: true,
     as_of: "2026-08-21T00:00:00Z",
     ...overrides,
   };
@@ -488,5 +489,43 @@ describe("ERR-01: Post-execution review", () => {
 
     expect(await screen.findByText("Decision #42")).toBeInTheDocument();
     expect(screen.getByText("Execution complete")).toBeInTheDocument();
+  });
+});
+
+// Review Workflows Slice 3 (Decision Feedback Loop) — reviewability is now a
+// real write-boundary invariant (main.py PUT .../review rejects
+// system-generated decisions), not just a queue filter. ExecutionReviewCard
+// gates Add/Edit on the `reviewable` flag carried on ExecutionDetail.
+describe("Review Workflows Slice 3 — reviewability boundary on Execution Detail", () => {
+  test("reviewable human decision retains Add/Edit behavior (regression)", async () => {
+    getExecutionDetail.mockResolvedValue(executionDetail({ reviewable: true }));
+    getExecutionReview.mockResolvedValue(null);
+
+    render(<ExecutionDetailPage />);
+
+    expect(await screen.findByText("Post-execution review")).toBeInTheDocument();
+    expect(screen.getByText("Add review")).toBeInTheDocument();
+  });
+
+  test("non-reviewable system-generated decision with no review renders no review card at all", async () => {
+    getExecutionDetail.mockResolvedValue(executionDetail({ decision: "EXPIRED", reviewable: false }));
+    getExecutionReview.mockResolvedValue(null);
+
+    render(<ExecutionDetailPage />);
+
+    await screen.findByText("Decision #42");
+    expect(screen.queryByText("Post-execution review")).not.toBeInTheDocument();
+    expect(screen.queryByText("Add review")).not.toBeInTheDocument();
+  });
+
+  test("a legacy review on a non-reviewable decision displays read-only, without an Edit action", async () => {
+    getExecutionDetail.mockResolvedValue(executionDetail({ decision: "EXPIRED", reviewable: false }));
+    getExecutionReview.mockResolvedValue(executionReview({ outcome: "OFF_TRACK" }));
+
+    render(<ExecutionDetailPage />);
+
+    expect(await screen.findByText("Post-execution review")).toBeInTheDocument();
+    expect(screen.getByText("Off Track")).toBeInTheDocument();
+    expect(screen.queryByText("Edit review")).not.toBeInTheDocument();
   });
 });

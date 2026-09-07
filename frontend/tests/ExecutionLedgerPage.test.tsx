@@ -31,6 +31,8 @@ function row(overrides: Partial<ExecutionLedgerRow> = {}): ExecutionLedgerRow {
     is_complete: false,
     reviewable: true,
     has_review: false,
+    review_outcome: null,
+    reviewed_at: null,
     outcome_delta: null,
     ...overrides,
   };
@@ -222,5 +224,69 @@ describe("Execution Intelligence — Review Queue (Slice 2)", () => {
 
     const orderedIds = Array.from(new Set(screen.getAllByText(/^#40[12]$/).map((el) => el.textContent)));
     expect(orderedIds).toEqual(["#402", "#401"]);
+  });
+});
+
+describe("Execution Intelligence — Decision Feedback Loop (Slice 3)", () => {
+  test("reviewed human decision shows the Review outcome badge", async () => {
+    const reviewed = row({
+      decision_id: 401, snapshot_id: 501, reviewable: true, has_review: true, review_outcome: "ON_TRACK",
+    });
+    getExecutionLedger.mockResolvedValue(ledger([reviewed]));
+
+    render(<ExecutionLedgerPage />);
+    await screen.findAllByText("#501");
+
+    const badges = Array.from(new Set(screen.getAllByText("On Track").map((el) => el.textContent)));
+    expect(badges).toEqual(["On Track"]);
+  });
+
+  test("reviewable unreviewed decision shows a muted Needs review indicator", async () => {
+    const unreviewed = row({ decision_id: 402, snapshot_id: 502, reviewable: true, has_review: false });
+    getExecutionLedger.mockResolvedValue(ledger([unreviewed]));
+
+    render(<ExecutionLedgerPage />);
+    await screen.findAllByText("#502");
+
+    const chips = Array.from(new Set(screen.getAllByText("Needs review").map((el) => el.textContent)));
+    expect(chips).toEqual(["Needs review"]);
+  });
+
+  test("system-generated unreviewed decision shows neither a badge nor Needs review", async () => {
+    const expired = row({
+      decision_id: 403, snapshot_id: 503, decision: "EXPIRED",
+      recording_progress_eligible: false, matched_count: null, total_planned: null, is_complete: null,
+      reviewable: false, has_review: false,
+    });
+    getExecutionLedger.mockResolvedValue(ledger([expired]));
+
+    render(<ExecutionLedgerPage />);
+    await screen.findAllByText("#503");
+
+    // "Needs review" also names the toggle button — that one instance is
+    // expected; the row itself must contribute no chip of its own.
+    expect(screen.getAllByText("Needs review")).toHaveLength(1);
+    expect(screen.queryByText("On Track")).not.toBeInTheDocument();
+    expect(screen.queryByText("Mixed")).not.toBeInTheDocument();
+    expect(screen.queryByText("Off Track")).not.toBeInTheDocument();
+  });
+
+  test("persisted inconsistent review on a system-generated decision displays read-only and does not become queue-eligible", async () => {
+    const legacy = row({
+      decision_id: 404, snapshot_id: 504, decision: "EXPIRED",
+      recording_progress_eligible: false, matched_count: null, total_planned: null, is_complete: null,
+      reviewable: false, has_review: true, review_outcome: "OFF_TRACK",
+    });
+    getExecutionLedger.mockResolvedValue(ledger([legacy]));
+
+    render(<ExecutionLedgerPage />);
+    await screen.findAllByText("#504");
+    expect(Array.from(new Set(screen.getAllByText("Off Track").map((el) => el.textContent)))).toEqual(["Off Track"]);
+
+    // Still gated on `reviewable`, not `has_review` — a legacy review must
+    // not make a system-generated decision queue-eligible.
+    fireEvent.click(screen.getByRole("button", { name: "Needs review" }));
+    expect(await screen.findByText("No decisions need review right now.")).toBeInTheDocument();
+    expect(screen.queryByText("#504")).not.toBeInTheDocument();
   });
 });

@@ -242,7 +242,7 @@ export default function ExecutionDetailPage() {
             )}
           </div>
 
-          <ExecutionReviewCard portfolioId={portfolioId} decisionId={data.decision_id} />
+          <ExecutionReviewCard portfolioId={portfolioId} decisionId={data.decision_id} reviewable={data.reviewable} />
         </>
       )}
     </div>

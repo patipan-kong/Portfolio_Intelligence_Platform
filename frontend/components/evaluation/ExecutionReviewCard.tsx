@@ -6,6 +6,13 @@
 // recommendation snapshot — read-only with respect to history; the form only
 // ever writes to the review record itself. `reviewed_at` is server-owned
 // (set once at first creation) and is not exposed as editable here.
+//
+// Slice 3 — reviewability is now a real domain invariant, not just a queue
+// filter: a system-generated decision cannot acquire a review through the
+// API (main.py PUT .../review rejects it), so this card never offers
+// Add/Edit when `reviewable` is false. A legacy review recorded before that
+// invariant existed is still displayed, read-only, so persisted history is
+// never hidden.
 
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -14,24 +21,13 @@ import {
   type ExecutionReview,
   type ExecutionReviewOutcome,
 } from "@/lib/api";
+import ReviewOutcomeBadge from "@/components/evaluation/ReviewOutcomeBadge";
 
 const OUTCOMES: { value: ExecutionReviewOutcome; label: string }[] = [
   { value: "ON_TRACK", label: "On Track" },
   { value: "MIXED", label: "Mixed" },
   { value: "OFF_TRACK", label: "Off Track" },
 ];
-
-const OUTCOME_BADGE: Record<ExecutionReviewOutcome, string> = {
-  ON_TRACK: "bg-green-100 text-green-800 border-green-200",
-  MIXED: "bg-amber-100 text-amber-800 border-amber-200",
-  OFF_TRACK: "bg-red-100 text-red-800 border-red-200",
-};
-
-const OUTCOME_LABEL: Record<ExecutionReviewOutcome, string> = {
-  ON_TRACK: "On Track",
-  MIXED: "Mixed",
-  OFF_TRACK: "Off Track",
-};
 
 function formatReviewedAt(iso: string): string {
   const d = new Date(iso);
@@ -42,9 +38,12 @@ function formatReviewedAt(iso: string): string {
 export default function ExecutionReviewCard({
   portfolioId,
   decisionId,
+  reviewable,
 }: {
   portfolioId: number;
   decisionId: number;
+  /** Slice 3 — human-authored decision, not system-generated. Gates Add/Edit. */
+  reviewable: boolean;
 }) {
   const [review, setReview] = useState<ExecutionReview | null | undefined>(undefined);
   const [loading, setLoading] = useState(false);
@@ -109,6 +108,14 @@ export default function ExecutionReviewCard({
     }
   };
 
+  // Non-reviewable (system-generated) with no persisted review: no review
+  // action makes sense here, and there is no historical data to preserve —
+  // render nothing rather than an inert card. A legacy review that already
+  // exists on such a decision is still shown, read-only, below.
+  if (!reviewable && !loading && !loadError && review === null) {
+    return null;
+  }
+
   return (
     <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
       <h2 className="text-sm font-bold text-gray-900">Post-execution review</h2>
@@ -119,7 +126,7 @@ export default function ExecutionReviewCard({
         <div className="p-2.5 bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg">{loadError}</div>
       )}
 
-      {!loading && !loadError && !editing && review === null && (
+      {!loading && !loadError && !editing && review === null && reviewable && (
         <div className="space-y-2">
           <p className="text-sm text-gray-400">No review yet. Record what happened after this decision was executed.</p>
           <button
@@ -135,10 +142,9 @@ export default function ExecutionReviewCard({
       {!editing && review && (
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border whitespace-nowrap ${OUTCOME_BADGE[review.outcome]}`}>
-              {OUTCOME_LABEL[review.outcome]}
-            </span>
+            <ReviewOutcomeBadge outcome={review.outcome} />
             <span className="text-xs text-gray-400">Reviewed {formatReviewedAt(review.reviewed_at)}</span>
+            {!reviewable && <span className="text-xs text-gray-400 italic">(read-only — decision is system-generated)</span>}
           </div>
           {review.summary && <p className="text-sm text-gray-700 whitespace-pre-wrap">{review.summary}</p>}
           {review.changed_context && (
@@ -147,17 +153,19 @@ export default function ExecutionReviewCard({
               <span className="whitespace-pre-wrap">{review.changed_context}</span>
             </div>
           )}
-          <button
-            type="button"
-            onClick={startEdit}
-            className="text-xs font-semibold text-blue-600 hover:underline"
-          >
-            Edit review
-          </button>
+          {reviewable && (
+            <button
+              type="button"
+              onClick={startEdit}
+              className="text-xs font-semibold text-blue-600 hover:underline"
+            >
+              Edit review
+            </button>
+          )}
         </div>
       )}
 
-      {editing && (
+      {editing && reviewable && (
         <div className="space-y-2.5">
           <div>
             <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide block mb-1">

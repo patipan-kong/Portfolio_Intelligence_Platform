@@ -102,7 +102,7 @@ function executionAnalysis(overrides: Partial<ExecutionAnalysis> = {}): Executio
 function executionDetailFixture(overrides: Partial<ExecutionAnalysis> = {}, decisionId = 42, portfolioId = 1): ExecutionDetail {
   return {
     decision_id: decisionId, snapshot_id: 7, portfolio_id: portfolioId, decision: "APPROVED",
-    executed_at: "2026-08-20T00:00:00Z", partial_warning: null, as_of: "2026-08-21T00:00:00Z",
+    executed_at: "2026-08-20T00:00:00Z", partial_warning: null, reviewable: true, as_of: "2026-08-21T00:00:00Z",
     analysis: executionAnalysis(overrides),
   };
 }

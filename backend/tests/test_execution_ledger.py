@@ -581,3 +581,105 @@ def test_ledger_review_fields_scoped_to_own_portfolio(db, ws_portfolio):
     decision_ids = {row["decision_id"] for row in result["rows"]}
     assert dec.id in decision_ids
     assert other_dec.id not in decision_ids
+
+
+# Review Workflows Slice 3 (Decision Feedback Loop) — `review_outcome` and
+# `reviewed_at` are read independently of `reviewable`: a legacy review on a
+# since-reclassified system-generated decision must stay visible in the
+# ledger, never silently hidden. Only the write path (main.py PUT
+# .../review) enforces the reviewability boundary going forward — see
+# test_execution_review.py for that regression coverage.
+
+def test_ledger_row_exposes_review_outcome_and_reviewed_at(db, ws_portfolio):
+    from models.database import ExecutionReview
+
+    ws, portfolio = ws_portfolio
+    _snap, dec = _seed_snapshot_and_decision(db, ws, portfolio, "APPROVED", _ALLOCS_BUY_ONLY)
+    db.add(ExecutionReview(
+        workspace_id=ws.id, execution_decision_id=dec.id,
+        outcome="ON_TRACK", summary="Still on plan.",
+    ))
+    db.commit()
+
+    result = list_execution_ledger(db, portfolio.id)
+    row = next(row for row in result["rows"] if row["decision_id"] == dec.id)
+    assert row["review_outcome"] == "ON_TRACK"
+    assert row["reviewed_at"] is not None
+
+
+def test_ledger_row_unreviewed_human_decision_has_null_review_fields(db, ws_portfolio):
+    ws, portfolio = ws_portfolio
+    _snap, dec = _seed_snapshot_and_decision(db, ws, portfolio, "APPROVED", _ALLOCS_BUY_ONLY)
+
+    result = list_execution_ledger(db, portfolio.id)
+    row = next(row for row in result["rows"] if row["decision_id"] == dec.id)
+    assert row["review_outcome"] is None
+    assert row["reviewed_at"] is None
+
+
+@pytest.mark.parametrize("outcome", ["MIXED", "OFF_TRACK"])
+def test_ledger_row_review_outcome_passes_through_all_values(db, ws_portfolio, outcome):
+    from models.database import ExecutionReview
+
+    ws, portfolio = ws_portfolio
+    _snap, dec = _seed_snapshot_and_decision(db, ws, portfolio, "REJECTED", _ALLOCS_BUY_ONLY)
+    db.add(ExecutionReview(workspace_id=ws.id, execution_decision_id=dec.id, outcome=outcome))
+    db.commit()
+
+    result = list_execution_ledger(db, portfolio.id)
+    row = next(row for row in result["rows"] if row["decision_id"] == dec.id)
+    assert row["review_outcome"] == outcome
+
+
+def test_ledger_row_system_generated_unreviewed_exposes_no_review_feedback(db, ws_portfolio):
+    ws, portfolio = ws_portfolio
+    _snap, dec = _seed_snapshot_and_decision(
+        db, ws, portfolio, "EXPIRED", _ALLOCS_BUY_ONLY, is_system_generated=True,
+    )
+
+    result = list_execution_ledger(db, portfolio.id)
+    row = next(row for row in result["rows"] if row["decision_id"] == dec.id)
+    assert row["review_outcome"] is None
+    assert row["reviewed_at"] is None
+
+
+def test_ledger_row_preserves_inconsistent_review_on_system_generated_decision(db, ws_portfolio):
+    """A legacy row where a review was somehow recorded against a
+    system-generated decision (predates the Slice 3 write-boundary
+    correction, or inserted directly as here) must remain readable — the
+    ledger never silently deletes or hides persisted historical data. Only
+    `reviewable` reflects the corrected invariant; `has_review`/
+    `review_outcome`/`reviewed_at` still report the true stored state."""
+    from models.database import ExecutionReview
+
+    ws, portfolio = ws_portfolio
+    _snap, dec = _seed_snapshot_and_decision(
+        db, ws, portfolio, "EXPIRED", _ALLOCS_BUY_ONLY, is_system_generated=True,
+    )
+    db.add(ExecutionReview(workspace_id=ws.id, execution_decision_id=dec.id, outcome="OFF_TRACK"))
+    db.commit()
+
+    result = list_execution_ledger(db, portfolio.id)
+    row = next(row for row in result["rows"] if row["decision_id"] == dec.id)
+    assert row["reviewable"] is False
+    assert row["has_review"] is True
+    assert row["review_outcome"] == "OFF_TRACK"
+    assert row["reviewed_at"] is not None
+
+
+def test_execution_detail_exposes_reviewable_true_for_human_decision(db, ws_portfolio):
+    ws, portfolio = ws_portfolio
+    _snap, dec = _seed_snapshot_and_decision(db, ws, portfolio, "APPROVED", _ALLOCS_BUY_ONLY, with_transaction=True)
+
+    detail = get_execution_detail(db, portfolio.id, dec.id)
+    assert detail["reviewable"] is True
+
+
+def test_execution_detail_exposes_reviewable_false_for_system_generated_decision(db, ws_portfolio):
+    ws, portfolio = ws_portfolio
+    _snap, dec = _seed_snapshot_and_decision(
+        db, ws, portfolio, "EXPIRED", _ALLOCS_BUY_ONLY, is_system_generated=True,
+    )
+
+    detail = get_execution_detail(db, portfolio.id, dec.id)
+    assert detail["reviewable"] is False

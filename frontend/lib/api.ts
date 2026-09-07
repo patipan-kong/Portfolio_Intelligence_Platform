@@ -4425,6 +4425,11 @@ export interface ExecutionLedgerRow {
   reviewable: boolean;
   /** Whether a canonical ExecutionReview already exists for this decision. */
   has_review: boolean;
+  /** Slice 3 — the human-authored retrospective outcome; read independently
+   *  of `reviewable` so a legacy review on a since-reclassified decision is
+   *  never hidden. Null when has_review is false. */
+  review_outcome: ExecutionReviewOutcome | null;
+  reviewed_at: string | null;
   outcome_delta: { grade_kind: string; return_pct: number | null; alpha: number | null; is_counterfactual: boolean } | null;
 }
 
@@ -4489,6 +4494,8 @@ export interface ExecutionDetail {
   executed_at: string | null;
   analysis: ExecutionAnalysis;
   partial_warning: string | null;
+  /** Slice 3 — human-authored decision, not system-generated; gates Add/Edit on ExecutionReviewCard. */
+  reviewable: boolean;
   as_of: string;
 }
 

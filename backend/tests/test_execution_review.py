@@ -40,6 +40,7 @@ from models.database import (
 )
 from services.execution_review import (
     get_execution_review,
+    is_reviewable,
     upsert_execution_review,
     valid_outcome,
 )
@@ -84,6 +85,29 @@ def ws_portfolio_decision(db):
     decision = UserExecutionDecision(
         workspace_id=ws.id, recommendation_snapshot_id=1, portfolio_id=portfolio.id,
         decision="APPROVED", is_system_generated=False,
+    )
+    db.add(decision)
+    db.commit()
+    db.refresh(decision)
+
+    return ws, portfolio, decision
+
+
+@pytest.fixture()
+def ws_portfolio_system_generated_decision(db):
+    ws = Workspace(name="Test")
+    db.add(ws)
+    db.commit()
+    db.refresh(ws)
+
+    portfolio = Portfolio(workspace_id=ws.id, name="P1", cash_balance=100_000.0)
+    db.add(portfolio)
+    db.commit()
+    db.refresh(portfolio)
+
+    decision = UserExecutionDecision(
+        workspace_id=ws.id, recommendation_snapshot_id=1, portfolio_id=portfolio.id,
+        decision="EXPIRED", is_system_generated=True,
     )
     db.add(decision)
     db.commit()
@@ -332,3 +356,89 @@ def test_put_never_mutates_execution_decision_or_snapshot(db, ws_portfolio_decis
 
     assert decision_after == decision_before
     assert snapshot_after == snapshot_before
+
+
+# ── Review Workflows Slice 3 — reviewability write boundary ────────────────
+# Slice 2 defined `reviewable := not is_system_generated` as a queue-filter
+# rule; Slice 3 freezes it as a real domain invariant enforced on write. A
+# legacy review recorded before this correction existed must remain
+# readable (GET) but the decision must not be able to acquire a *new* or
+# *edited* review through the normal API from here on.
+
+def test_is_reviewable_true_for_human_authored_decision(db, ws_portfolio_decision):
+    _ws, _portfolio, decision = ws_portfolio_decision
+    assert is_reviewable(decision) is True
+
+
+def test_is_reviewable_false_for_system_generated_decision(db, ws_portfolio_system_generated_decision):
+    _ws, _portfolio, decision = ws_portfolio_system_generated_decision
+    assert is_reviewable(decision) is False
+
+
+def test_put_endpoint_rejects_system_generated_decision(db, ws_portfolio_system_generated_decision, monkeypatch):
+    ws, portfolio, decision = ws_portfolio_system_generated_decision
+    monkeypatch.setattr(main, "_ws_id", lambda _db: ws.id)
+    client = _mount(db)
+
+    response = client.put(
+        f"/portfolios/{portfolio.id}/execution-decisions/{decision.id}/review",
+        json={"outcome": "ON_TRACK"},
+    )
+    assert response.status_code == 400
+    assert db.query(ExecutionReview).count() == 0
+
+
+def test_put_endpoint_rejects_edit_of_legacy_review_on_system_generated_decision(
+    db, ws_portfolio_system_generated_decision, monkeypatch,
+):
+    """A legacy inconsistent row (review already exists on a system-generated
+    decision, e.g. inserted before this correction shipped) must not become
+    editable through the normal API — the write boundary applies to update
+    as well as create."""
+    ws, portfolio, decision = ws_portfolio_system_generated_decision
+    db.add(ExecutionReview(workspace_id=ws.id, execution_decision_id=decision.id, outcome="ON_TRACK"))
+    db.commit()
+
+    monkeypatch.setattr(main, "_ws_id", lambda _db: ws.id)
+    client = _mount(db)
+
+    response = client.put(
+        f"/portfolios/{portfolio.id}/execution-decisions/{decision.id}/review",
+        json={"outcome": "OFF_TRACK", "summary": "attempted edit"},
+    )
+    assert response.status_code == 400
+
+    review = db.query(ExecutionReview).filter_by(execution_decision_id=decision.id).one()
+    assert review.outcome == "ON_TRACK"
+    assert review.summary is None
+
+
+def test_get_endpoint_still_returns_legacy_review_on_system_generated_decision(
+    db, ws_portfolio_system_generated_decision, monkeypatch,
+):
+    """Historical data is never hidden: GET remains unaffected by the write
+    boundary, so a pre-existing review stays visible read-only."""
+    ws, portfolio, decision = ws_portfolio_system_generated_decision
+    db.add(ExecutionReview(workspace_id=ws.id, execution_decision_id=decision.id, outcome="MIXED"))
+    db.commit()
+
+    monkeypatch.setattr(main, "_ws_id", lambda _db: ws.id)
+    client = _mount(db)
+
+    response = client.get(f"/portfolios/{portfolio.id}/execution-decisions/{decision.id}/review")
+    assert response.status_code == 200
+    assert response.json()["outcome"] == "MIXED"
+
+
+def test_put_endpoint_still_accepts_human_authored_decision(db, ws_portfolio_decision, monkeypatch):
+    """Regression: the write-boundary correction must not affect the
+    existing human-authored create/edit path."""
+    ws, portfolio, decision = ws_portfolio_decision
+    monkeypatch.setattr(main, "_ws_id", lambda _db: ws.id)
+    client = _mount(db)
+
+    response = client.put(
+        f"/portfolios/{portfolio.id}/execution-decisions/{decision.id}/review",
+        json={"outcome": "ON_TRACK"},
+    )
+    assert response.status_code == 201

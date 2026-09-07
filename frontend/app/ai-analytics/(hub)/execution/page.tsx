@@ -13,6 +13,7 @@ import AsOfStamp from "@/components/evaluation/AsOfStamp";
 import DecisionStatusBadge from "@/components/evaluation/DecisionStatusBadge";
 import CounterfactualValue from "@/components/evaluation/CounterfactualValue";
 import EvidenceLedger, { type EvidenceColumn } from "@/components/evaluation/EvidenceLedger";
+import ReviewOutcomeBadge from "@/components/evaluation/ReviewOutcomeBadge";
 import EvaluationColdStart from "@/components/evaluation/EvaluationColdStart";
 import ClassSegmentBars from "@/components/evaluation/ClassSegmentBars";
 import PortfolioSelectionNotice from "@/components/PortfolioSelectionNotice";
@@ -137,6 +138,24 @@ export default function ExecutionLedgerPage() {
             {pct(r.outcome_delta.alpha ?? r.outcome_delta.return_pct)}
           </span>
         ),
+    },
+    {
+      // Deliberately labeled "Review" — never "Outcome" — to stay distinct
+      // from the objective `outcome_delta` column above (Slice 3 semantics:
+      // a human-authored retrospective note, not a performance grade).
+      key: "review", header: "Review", align: "right",
+      render: (r) => {
+        if (r.has_review && r.review_outcome) {
+          // Gated on has_review, not reviewable: a legacy review recorded
+          // on a since-reclassified system-generated decision must stay
+          // visible, never silently hidden.
+          return <ReviewOutcomeBadge outcome={r.review_outcome} />;
+        }
+        if (r.reviewable) {
+          return <span className="text-xs text-gray-400 italic whitespace-nowrap">Needs review</span>;
+        }
+        return <span className="text-gray-300">—</span>;
+      },
     },
   ];
 

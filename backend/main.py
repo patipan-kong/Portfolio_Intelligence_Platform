@@ -7745,11 +7745,20 @@ async def put_portfolio_execution_review(
     response: Response,
     db: Session = Depends(get_db),
 ) -> dict:
-    """Create the canonical review if absent, else update it in place."""
+    """Create the canonical review if absent, else update it in place.
+
+    Reviewability (Slice 2/3 invariant): only human-authored decisions can
+    acquire a review. System-generated (EXPIRED) decisions are rejected here
+    — never silently accepted — even though a legacy inconsistent row may
+    still exist and remain readable via GET.
+    """
     ws = _ws_id(db)
     decision = resolve_execution_decision_or_404(db, decision_id, ws, portfolio_id)
 
-    from services.execution_review import upsert_execution_review, valid_outcome
+    from services.execution_review import is_reviewable, upsert_execution_review, valid_outcome
+
+    if not is_reviewable(decision):
+        raise HTTPException(status_code=400, detail="This decision is system-generated and cannot be reviewed")
 
     outcome = valid_outcome(body.outcome)
     if outcome is None:

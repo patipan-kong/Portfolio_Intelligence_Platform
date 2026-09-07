@@ -9,6 +9,7 @@ to history: never mutates UserExecutionDecision or RecommendationSnapshot.
 
 Public API:
     valid_outcome(raw) -> str | None
+    is_reviewable(execution_decision) -> bool
     build_execution_review_payload(review) -> dict
     get_execution_review(db, execution_decision) -> dict | None
     upsert_execution_review(db, execution_decision, workspace_id, outcome, summary, changed_context)
@@ -28,6 +29,13 @@ def valid_outcome(raw: str | None) -> str | None:
         return None
     code = raw.strip().upper()
     return code if code in OUTCOMES else None
+
+
+def is_reviewable(execution_decision: UserExecutionDecision) -> bool:
+    """A decision can acquire a review iff it is human-authored (Slice 2/3
+    invariant, frozen). System-generated EXPIRED rows are never reviewable —
+    the same rule the execution ledger uses for its `reviewable` field."""
+    return not execution_decision.is_system_generated
 
 
 def build_execution_review_payload(review: ExecutionReview) -> dict:
