@@ -1,4 +1,4 @@
-import { describe, test, expect, vi, beforeEach } from "vitest";
+import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
 import { PortfolioProvider, usePortfolio } from "@/lib/PortfolioContext";
 import TransactionHistoryPage from "@/app/history/page";
@@ -24,8 +24,12 @@ vi.mock("@/lib/api", () => ({
 // PortfolioTabs (rendered by this page) reads the current route via
 // usePathname(), which next/navigation returns as null outside of an actual
 // App Router — this test isn't exercising routing, so a fixed path is enough.
+// useSearchParams backs DEM-01's ?transactionId=<id> highlight target,
+// mocked per the established CashAccountsPage.test.tsx convention.
+let mockSearchParams = new URLSearchParams();
 vi.mock("next/navigation", () => ({
   usePathname: () => "/history",
+  useSearchParams: () => mockSearchParams,
 }));
 
 function makePortfolio(id: number, name = `P${id}`): Portfolio {
@@ -48,6 +52,7 @@ function tx(overrides: Partial<TransactionRecord> = {}): TransactionRecord {
     transaction_date: "2026-08-10T03:00:00Z",
     notes: null,
     sector: "Energy",
+    execution_decision_id: null,
     created_at: "2026-08-10T03:00:01Z",
     ...overrides,
   };
@@ -67,6 +72,10 @@ beforeEach(() => {
   localStorage.clear();
   listPortfolios.mockReset();
   getTransactionHistory.mockReset();
+  mockSearchParams = new URLSearchParams();
+  // jsdom doesn't implement scrollIntoView — stub it so the highlight
+  // effect can call it without throwing.
+  window.HTMLElement.prototype.scrollIntoView = vi.fn();
 });
 
 test("no portfolio selected: shows the empty/selection state and issues no request", async () => {
@@ -95,7 +104,7 @@ test("selecting a portfolio requests that portfolio's transaction history and re
 
   await act(async () => screen.getByText("select-A").click());
 
-  expect(getTransactionHistory).toHaveBeenCalledWith(1);
+  expect(getTransactionHistory).toHaveBeenCalledWith(1, undefined, 500);
   await waitFor(() => expect(screen.getAllByText("Buy").length).toBeGreaterThan(0));
   expect(screen.getAllByText("PTT").length).toBeGreaterThan(0);
 });
@@ -309,11 +318,243 @@ test("a late response for an abandoned portfolio does not repopulate the page af
   await waitFor(() => expect(screen.getByText(/Select a portfolio/)).toBeInTheDocument());
 
   await act(async () => screen.getByText("select-A").click());
-  await waitFor(() => expect(getTransactionHistory).toHaveBeenCalledWith(1));
+  await waitFor(() => expect(getTransactionHistory).toHaveBeenCalledWith(1, undefined, 500));
 
   await act(async () => screen.getByText("clear").click());
   expect(screen.getByText(/Select a portfolio/)).toBeInTheDocument();
 
   await act(async () => resolve([tx()]));
   expect(screen.getByText(/Select a portfolio/)).toBeInTheDocument();
+});
+
+describe("CSV export", () => {
+  let capturedBlobs: Blob[];
+  let anchorClicks: { href: string; download: string }[];
+  let originalCreateObjectURL: typeof URL.createObjectURL | undefined;
+  let originalRevokeObjectURL: typeof URL.revokeObjectURL | undefined;
+  let clickSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    capturedBlobs = [];
+    anchorClicks = [];
+    originalCreateObjectURL = URL.createObjectURL;
+    originalRevokeObjectURL = URL.revokeObjectURL;
+    URL.createObjectURL = vi.fn((blob: Blob) => {
+      capturedBlobs.push(blob);
+      return `blob:mock-${capturedBlobs.length}`;
+    });
+    URL.revokeObjectURL = vi.fn();
+    // Real anchor.click() triggers jsdom navigation (which isn't
+    // implemented and only logs a warning) — intercepting it here keeps
+    // the test hermetic and avoids depending on an actual file download.
+    clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+      anchorClicks.push({ href: this.href, download: this.download });
+    });
+  });
+
+  afterEach(() => {
+    URL.createObjectURL = originalCreateObjectURL as typeof URL.createObjectURL;
+    URL.revokeObjectURL = originalRevokeObjectURL as typeof URL.revokeObjectURL;
+    clickSpy.mockRestore();
+  });
+
+  test("no records: Export CSV control is absent, not merely disabled", async () => {
+    listPortfolios.mockResolvedValue([makePortfolio(1)]);
+    getTransactionHistory.mockResolvedValue([]);
+
+    render(
+      <PortfolioProvider>
+        <SwitcherProbe />
+        <TransactionHistoryPage />
+      </PortfolioProvider>
+    );
+    await waitFor(() => expect(screen.getByText(/Select a portfolio/)).toBeInTheDocument());
+    await act(async () => screen.getByText("select-A").click());
+
+    await waitFor(() => expect(screen.getByText(/No transactions recorded/)).toBeInTheDocument());
+    expect(screen.queryByText("Export CSV")).not.toBeInTheDocument();
+  });
+
+  test("records loaded: Export CSV control appears alongside honest bounded-export wording", async () => {
+    listPortfolios.mockResolvedValue([makePortfolio(1)]);
+    getTransactionHistory.mockResolvedValue([tx()]);
+
+    render(
+      <PortfolioProvider>
+        <SwitcherProbe />
+        <TransactionHistoryPage />
+      </PortfolioProvider>
+    );
+    await waitFor(() => expect(screen.getByText(/Select a portfolio/)).toBeInTheDocument());
+    await act(async () => screen.getByText("select-A").click());
+
+    await waitFor(() => expect(screen.getByText("Export CSV")).toBeInTheDocument());
+    expect(screen.getByText(/Exports up to the most recent 500 transactions\./)).toBeInTheDocument();
+  });
+
+  test("clicking Export CSV downloads a CSV of the loaded records, unaffected by active filters", async () => {
+    listPortfolios.mockResolvedValue([makePortfolio(1, "Retirement Fund")]);
+    getTransactionHistory.mockResolvedValue([
+      tx({ id: 1, symbol: "BANPU.BK" }),
+      tx({ id: 2, symbol: "PTT.BK" }),
+    ]);
+
+    render(
+      <PortfolioProvider>
+        <SwitcherProbe />
+        <TransactionHistoryPage />
+      </PortfolioProvider>
+    );
+    await waitFor(() => expect(screen.getByText(/Select a portfolio/)).toBeInTheDocument());
+    await act(async () => screen.getByText("select-A").click());
+    await waitFor(() => expect(screen.getAllByText("BANPU").length).toBeGreaterThan(0));
+
+    // Narrow the visible table with a search filter — export must still
+    // reflect the full loaded history (Option A), not this filtered view.
+    await act(async () => {
+      fireEvent.change(screen.getByPlaceholderText("Search symbol or notes"), { target: { value: "banpu" } });
+    });
+    expect(screen.queryByText("PTT")).not.toBeInTheDocument();
+
+    await act(async () => screen.getByText("Export CSV").click());
+
+    expect(anchorClicks.length).toBe(1);
+    expect(anchorClicks[0].download).toMatch(/^wealth-os-transactions-Retirement-Fund-\d{4}-\d{2}-\d{2}\.csv$/);
+    expect(capturedBlobs.length).toBe(1);
+    const text = await capturedBlobs[0].text();
+    expect(text).toContain("BANPU.BK");
+    expect(text).toContain("PTT.BK"); // filtered out on screen, still present in the export
+    expect(text).not.toMatch(/[{}[\]]/); // no raw JSON leaking into the export
+
+    // The UTF-8 BOM bytes are present in the Blob (for Excel/Thai-text
+    // compatibility) even though Blob.text()'s decoder transparently strips
+    // them back out of the decoded string above — check the raw bytes instead.
+    const bytes = new Uint8Array(await capturedBlobs[0].arrayBuffer()).slice(0, 3);
+    expect(Array.from(bytes)).toEqual([0xef, 0xbb, 0xbf]);
+  });
+
+  test("switching portfolios exports the newly selected portfolio's records, never the previous one's", async () => {
+    const portfolios = [makePortfolio(1, "A"), makePortfolio(2, "B")];
+    listPortfolios.mockResolvedValue(portfolios);
+    getTransactionHistory.mockImplementation((portfolioId: number) =>
+      Promise.resolve([tx({ id: portfolioId, symbol: portfolioId === 1 ? "AAA.BK" : "BBB.BK" })])
+    );
+
+    function TwoPortfolioSwitcher() {
+      const { selectPortfolio } = usePortfolio();
+      return (
+        <div>
+          <button onClick={() => selectPortfolio(1)}>select-1</button>
+          <button onClick={() => selectPortfolio(2)}>select-2</button>
+        </div>
+      );
+    }
+
+    render(
+      <PortfolioProvider>
+        <TwoPortfolioSwitcher />
+        <TransactionHistoryPage />
+      </PortfolioProvider>
+    );
+    await waitFor(() => expect(screen.getByText(/Select a portfolio/)).toBeInTheDocument());
+
+    await act(async () => screen.getByText("select-1").click());
+    await waitFor(() => expect(screen.getAllByText("AAA").length).toBeGreaterThan(0));
+
+    await act(async () => screen.getByText("select-2").click());
+    await waitFor(() => expect(screen.getAllByText("BBB").length).toBeGreaterThan(0));
+
+    await act(async () => screen.getByText("Export CSV").click());
+
+    const text = await capturedBlobs[0].text();
+    expect(text).toContain("BBB.BK");
+    expect(text).not.toContain("AAA.BK");
+    expect(anchorClicks[0].download).toContain("-B-");
+  });
+});
+
+describe("DEM-01: ?transactionId=<id> drill-through highlight", () => {
+  test("highlights and focuses the row matching a valid transactionId, leaving others untouched", async () => {
+    mockSearchParams = new URLSearchParams("transactionId=2");
+    listPortfolios.mockResolvedValue([makePortfolio(1)]);
+    getTransactionHistory.mockResolvedValue([
+      tx({ id: 1, symbol: "BANPU.BK" }),
+      tx({ id: 2, symbol: "PTT.BK" }),
+    ]);
+
+    render(
+      <PortfolioProvider>
+        <SwitcherProbe />
+        <TransactionHistoryPage />
+      </PortfolioProvider>
+    );
+    await waitFor(() => expect(screen.getByText(/Select a portfolio/)).toBeInTheDocument());
+    await act(async () => screen.getByText("select-A").click());
+    await waitFor(() => expect(screen.getAllByText("PTT").length).toBeGreaterThan(0));
+
+    // Both the mobile-card and desktop-table trees render unconditionally in
+    // jsdom (no CSS breakpoints applied) — assert on the focused element's
+    // own content/attributes rather than assuming which tree receives focus.
+    expect(document.activeElement).toHaveAttribute("aria-current", "true");
+    expect(document.activeElement?.textContent).toContain("PTT");
+
+    for (const el of screen.getAllByText("BANPU")) {
+      expect(el.closest('[tabindex="-1"]')).not.toHaveAttribute("aria-current");
+    }
+  });
+
+  test("no transactionId param leaves normal behavior unaffected and focuses nothing", async () => {
+    listPortfolios.mockResolvedValue([makePortfolio(1)]);
+    getTransactionHistory.mockResolvedValue([tx({ id: 1, symbol: "PTT.BK" })]);
+
+    render(
+      <PortfolioProvider>
+        <SwitcherProbe />
+        <TransactionHistoryPage />
+      </PortfolioProvider>
+    );
+    await waitFor(() => expect(screen.getByText(/Select a portfolio/)).toBeInTheDocument());
+    await act(async () => screen.getByText("select-A").click());
+    await waitFor(() => expect(screen.getAllByText("PTT").length).toBeGreaterThan(0));
+
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  test("a malformed transactionId does not crash the page and reveals nothing", async () => {
+    mockSearchParams = new URLSearchParams("transactionId=not-a-number");
+    listPortfolios.mockResolvedValue([makePortfolio(1)]);
+    getTransactionHistory.mockResolvedValue([tx({ id: 1, symbol: "PTT.BK" })]);
+
+    render(
+      <PortfolioProvider>
+        <SwitcherProbe />
+        <TransactionHistoryPage />
+      </PortfolioProvider>
+    );
+    await waitFor(() => expect(screen.getByText(/Select a portfolio/)).toBeInTheDocument());
+    await act(async () => screen.getByText("select-A").click());
+    await waitFor(() => expect(screen.getAllByText("PTT").length).toBeGreaterThan(0));
+
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  test("a transactionId not present in the currently loaded history is a neutral no-op — no crash, no fabricated error", async () => {
+    mockSearchParams = new URLSearchParams("transactionId=999");
+    listPortfolios.mockResolvedValue([makePortfolio(1)]);
+    getTransactionHistory.mockResolvedValue([tx({ id: 1, symbol: "PTT.BK" })]);
+
+    render(
+      <PortfolioProvider>
+        <SwitcherProbe />
+        <TransactionHistoryPage />
+      </PortfolioProvider>
+    );
+    await waitFor(() => expect(screen.getByText(/Select a portfolio/)).toBeInTheDocument());
+    await act(async () => screen.getByText("select-A").click());
+    await waitFor(() => expect(screen.getAllByText("PTT").length).toBeGreaterThan(0));
+
+    expect(document.activeElement).toBe(document.body);
+    expect(screen.queryByText(/not found/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
 });

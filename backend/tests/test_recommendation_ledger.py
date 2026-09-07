@@ -222,6 +222,133 @@ def test_report_card_decision_without_linked_transactions_is_unavailable(db, ws_
     assert card["execution"]["analysis"]["score"] is None
 
 
+def test_report_card_execution_section_surfaces_rationale_and_goal_context(db, ws_portfolio):
+    """Slice 4 (Decision History / Audit UX) — override rationale (UX.2D) and
+    frozen goal context (Phase 7.4/ADR-008, CONTEXT_ONLY) are already
+    persisted on UserExecutionDecision/RecommendationSnapshot; the Report
+    Card must surface them rather than continuing to drop them."""
+    from models.database import UserExecutionDecision, WealthGoal
+    from services.decision_goal_context import build_decision_goal_context
+
+    ws, portfolio = ws_portfolio
+    goal = WealthGoal(
+        workspace_id=ws.id, name="House", goal_type="HOUSE",
+        target_amount=500_000.0, currency="THB", priority="HIGH", is_archived=False,
+    )
+    db.add(goal)
+    db.commit()
+    db.refresh(goal)
+
+    context = build_decision_goal_context(db, ws.id, [goal.id])
+    assert context["context_state"] == "COMPLETE"
+
+    snap = _seed_snapshot(db, ws, portfolio, days_ago=2)
+    snap.wealth_goal_context_json = json.dumps(context)
+    db.add(snap)
+    db.add(UserExecutionDecision(
+        workspace_id=ws.id, recommendation_snapshot_id=snap.id, portfolio_id=portfolio.id,
+        decision="MANUAL_OVERRIDE", executed_at=datetime.utcnow(), created_at=datetime.utcnow(),
+        override_type="REPLACE_SYMBOL", original_symbol="KBANK", replacement_symbol="TOA",
+        reason_category="HIGHER_CONVICTION", override_notes="Higher conviction in TOA.",
+    ))
+    db.commit()
+
+    card = get_report_card(db, portfolio.id, snap.id)
+    execution = card["execution"]
+    assert execution["override_type"] == "REPLACE_SYMBOL"
+    assert execution["original_symbol"] == "KBANK"
+    assert execution["replacement_symbol"] == "TOA"
+    assert execution["reason_category"] == "HIGHER_CONVICTION"
+    assert execution["override_notes"] == "Higher conviction in TOA."
+    assert execution["goal_context"]["context_state"] == "COMPLETE"
+    assert execution["goal_context"]["decision_effect"] == "CONTEXT_ONLY"
+    assert execution["goal_context"]["goals"][0]["id"] == goal.id
+
+
+def test_report_card_execution_section_degrades_cleanly_without_rationale_or_goal_context(db, ws_portfolio):
+    """No override fields and no captured goal context (legacy/unscoped run)
+    must degrade to None, never a fabricated value or an empty label."""
+    from models.database import UserExecutionDecision
+
+    ws, portfolio = ws_portfolio
+    snap = _seed_snapshot(db, ws, portfolio, days_ago=2)
+    assert snap.wealth_goal_context_json is None
+    db.add(UserExecutionDecision(
+        workspace_id=ws.id, recommendation_snapshot_id=snap.id, portfolio_id=portfolio.id,
+        decision="APPROVED", executed_at=datetime.utcnow(), created_at=datetime.utcnow(),
+    ))
+    db.commit()
+
+    card = get_report_card(db, portfolio.id, snap.id)
+    execution = card["execution"]
+    assert execution["override_type"] is None
+    assert execution["original_symbol"] is None
+    assert execution["replacement_symbol"] is None
+    assert execution["reason_category"] is None
+    assert execution["override_notes"] is None
+    assert execution["goal_context"] is None
+
+
+def test_report_card_execution_evidence_survives_unavailable_plan_reconstruction(db, ws_portfolio):
+    """Review Correction Pass BLOCKER: a decision, its rationale, and its
+    frozen goal context are independently persisted (UserExecutionDecision,
+    RecommendationSnapshot.wealth_goal_context_json) and do not depend on
+    projected_allocations_json. A legacy/malformed snapshot with a missing
+    plan must not make the Report Card claim "no_decision_recorded" — that
+    is false whenever decision_row exists — nor may it fabricate execution
+    analysis it cannot compute."""
+    from models.database import UserExecutionDecision, WealthGoal
+    from services.decision_goal_context import build_decision_goal_context
+
+    ws, portfolio = ws_portfolio
+    goal = WealthGoal(
+        workspace_id=ws.id, name="House", goal_type="HOUSE",
+        target_amount=500_000.0, currency="THB", priority="HIGH", is_archived=False,
+    )
+    db.add(goal)
+    db.commit()
+    db.refresh(goal)
+    context = build_decision_goal_context(db, ws.id, [goal.id])
+
+    snap = _seed_snapshot(db, ws, portfolio, days_ago=2)
+    snap.projected_allocations_json = None  # plan reconstruction unavailable
+    snap.wealth_goal_context_json = json.dumps(context)
+    db.add(snap)
+    db.add(UserExecutionDecision(
+        workspace_id=ws.id, recommendation_snapshot_id=snap.id, portfolio_id=portfolio.id,
+        decision="MANUAL_OVERRIDE", executed_at=datetime.utcnow(), created_at=datetime.utcnow(),
+        override_type="REPLACE_SYMBOL", original_symbol="KBANK", replacement_symbol="TOA",
+        reason_category="HIGHER_CONVICTION", override_notes="Higher conviction in TOA.",
+    ))
+    db.commit()
+
+    card = get_report_card(db, portfolio.id, snap.id)
+    assert card["plan"]["status"] == "unavailable"  # unrelated, confirms the fixture is real
+
+    execution = card["execution"]
+    assert execution["status"] != "no_decision_recorded"
+    assert execution["status"] == "ok"
+    assert execution["decision_id"] is not None
+    assert execution["decision"] == "MANUAL_OVERRIDE"
+    assert execution["executed_at"] is not None
+
+    assert execution["override_type"] == "REPLACE_SYMBOL"
+    assert execution["original_symbol"] == "KBANK"
+    assert execution["replacement_symbol"] == "TOA"
+    assert execution["reason_category"] == "HIGHER_CONVICTION"
+    assert execution["override_notes"] == "Higher conviction in TOA."
+    assert execution["goal_context"]["context_state"] == "COMPLETE"
+    assert execution["goal_context"]["goals"][0]["id"] == goal.id
+
+    # Execution analysis degrades truthfully — never fabricated completion.
+    assert execution["analysis"]["status"] == "unavailable"
+    assert execution["analysis"]["reason"] == "no_target_allocations"
+    assert execution["analysis"]["score"] is None
+    assert "matched_count" not in execution["analysis"]
+    assert "total_planned" not in execution["analysis"]
+    assert "is_complete" not in execution["analysis"]
+
+
 def test_report_card_bk_variant_transaction_links_via_registry_aware_matching(db, ws_portfolio):
     """Plan says "BH"; the linked Transaction was recorded as "BH.BK". Before
     M6 Phase 4 this call site built its own linked_transactions list inline

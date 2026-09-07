@@ -7,16 +7,243 @@ raw-response → parser → orchestrator without silent loss or status corruptio
 
 import sys
 import os
+import json
+import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from agents.optimizer import (
+    HardPolicyEnforcementError,
+    _enforce_hard_policy,
+    _fallback_prompt,
     _normalize_l1_swaps,
     _normalize_allocations,
+    _reconcile_allocation_actions,
     _snap_neutral_actions,
     _consensus_engine,
     _postprocess_swaps,
 )
+from services.optimizer.constraint_resolver import resolve_constraints
+import agents.optimizer as optimizer_module
+
+
+def _effective_envelope(max_position=20.0):
+    return resolve_constraints(
+        {"max_sector_pct": 40}, {"Technology": 30},
+        {"regime": "SIDEWAYS", "constraints": {
+            "max_single_position_pct": max_position,
+            "min_cash_pct": 10,
+            "turnover_multiplier": 1,
+        }},
+        {"volatility_tolerance": 1, "max_cash_preference": .1, "turnover_tolerance": .4},
+    )
+
+
+def test_shared_hard_enforcement_preserves_buy_hold_reduce_semantics():
+    allocations = [
+        {"symbol": "BUY", "action": "BUY", "current_weight": 5.0, "target_weight": 25.0},
+        {"symbol": "HOLD", "action": "HOLD", "current_weight": 30.0, "target_weight": 30.0},
+        {"symbol": "REDUCE", "action": "REDUCE", "current_weight": 25.0, "target_weight": 23.0},
+    ]
+    for allocation in allocations:
+        allocation["allocation_change_percent"] = allocation["target_weight"] - allocation["current_weight"]
+        allocation["estimated_amount"] = 0
+    envelope = _effective_envelope()
+    policy = {
+        "hard_constraints": {"max_single_position_pct": 20, "min_cash_pct": 10},
+        "emergency_override": False,
+        "deployment_bias": "SELECTIVE",
+    }
+    _enforce_hard_policy(
+        allocations, total_value=1000, policy_context=policy, regime_context=None,
+        effective_envelope=envelope,
+        portfolio_data=[
+            {"symbol": "BUY", "sector": "Technology"},
+            {"symbol": "HOLD", "sector": "Financial"},
+            {"symbol": "REDUCE", "sector": "Energy"},
+        ],
+        watchlist_data=[],
+    )
+    _reconcile_allocation_actions(allocations)
+    by_symbol = {a["symbol"]: a for a in allocations}
+    assert by_symbol["BUY"]["target_weight"] == 20
+    assert by_symbol["HOLD"]["target_weight"] == 30
+    assert by_symbol["HOLD"]["action"] == "HOLD"
+    assert by_symbol["REDUCE"]["target_weight"] == 23
+    assert by_symbol["REDUCE"]["action"] == "REDUCE"
+
+
+def test_shared_hard_enforcement_emergency_cash_sector_and_reconciliation():
+    emergency = [{"symbol": "A", "action": "ACCUMULATE", "current_weight": 5.0,
+                  "target_weight": 25.0, "allocation_change_percent": 20.0, "estimated_amount": 200}]
+    _enforce_hard_policy(
+        emergency, total_value=1000,
+        policy_context={"hard_constraints": {"max_single_position_pct": 20, "min_cash_pct": 10},
+                        "emergency_override": True, "deployment_bias": "DEFENSIVE"},
+        regime_context=None, effective_envelope=_effective_envelope(),
+        portfolio_data=[{"symbol": "A", "sector": "Technology"}], watchlist_data=[],
+    )
+    _reconcile_allocation_actions(emergency)
+    assert emergency[0]["action"] == "HOLD"
+    assert emergency[0]["target_weight"] == 5
+
+    allocations = [
+        {"symbol": "A", "action": "BUY", "current_weight": 25.0,
+         "target_weight": 40.0, "allocation_change_percent": 15.0, "estimated_amount": 150},
+        {"symbol": "B", "action": "ACCUMULATE", "current_weight": 20.0,
+         "target_weight": 35.0, "allocation_change_percent": 15.0, "estimated_amount": 150},
+    ]
+    _enforce_hard_policy(
+        allocations, total_value=1000,
+        policy_context={"hard_constraints": {"max_single_position_pct": 20, "min_cash_pct": 60},
+                        "emergency_override": False, "deployment_bias": "SELECTIVE"},
+        regime_context=None, effective_envelope=_effective_envelope(),
+        portfolio_data=[{"symbol": "A", "sector": "Technology"}, {"symbol": "B", "sector": "Technology"}],
+        watchlist_data=[],
+    )
+    _reconcile_allocation_actions(allocations)
+    assert sum(a["target_weight"] for a in allocations) <= 40
+    assert all(a["action"] in ("HOLD", "REDUCE") for a in allocations)
+
+
+def test_policy_safe_fallback_prompt_projects_limits_without_goal_facts_or_provenance():
+    rules = (
+        "7. Effective maximum single-position weight is 20.0%\n"
+        "8. Effective minimum cash weight is 10.0%\n"
+        "9. Effective sector caps: {\"Technology\": 30.0}\n"
+    )
+    prompt = _fallback_prompt([], [], [], [], 12, 40, 1000, 100, rules)
+    assert "20.0%" in prompt and "10.0%" in prompt and "Technology" in prompt
+    for forbidden in ("goal_constraint_goal_id", "target_date", "days_remaining", "WEALTH_GOAL_POLICY"):
+        assert forbidden not in prompt
+
+
+def test_shared_action_reconciliation_exact_thresholds():
+    allocations = [
+        {"symbol": "N", "action": "BUY", "allocation_change_percent": -2},
+        {"symbol": "Z", "action": "ACCUMULATE", "allocation_change_percent": 0},
+        {"symbol": "P", "action": "REDUCE", "allocation_change_percent": 2},
+    ]
+    _reconcile_allocation_actions(allocations)
+    assert [a["action"] for a in allocations] == ["REDUCE", "HOLD", "ACCUMULATE"]
+
+
+def test_policy_safe_fallback_enforces_cap_and_preserves_marker(monkeypatch):
+    captured = []
+    monkeypatch.setattr(optimizer_module, "call_ai", lambda prompt, *args, **kwargs: (
+        captured.append(prompt) or {
+            "latency_ms": 1,
+            "text": json.dumps({"allocations": [
+                {"s": "BUY", "tw": 25, "sig": "BUY", "r": "buy"},
+                {"s": "HOLD", "tw": 30, "sig": "HOLD", "r": "hold"},
+                {"s": "REDUCE", "tw": 23, "sig": "REDUCE", "r": "reduce"},
+            ]}),
+        }
+    ))
+    envelope = _effective_envelope()
+    result = optimizer_module._run_single_shot_fallback(
+        pc=[
+            {"symbol": "BUY", "sector": "Technology"},
+            {"symbol": "HOLD", "sector": "Financial"},
+            {"symbol": "REDUCE", "sector": "Energy"},
+        ],
+        wc=[], sell_forced=[], locked=[],
+        portfolio_data=[
+            {"symbol": "BUY", "sector": "Technology"},
+            {"symbol": "HOLD", "sector": "Financial"},
+            {"symbol": "REDUCE", "sector": "Energy"},
+        ],
+        current_sector_weights={}, pc_map={"BUY": 5, "HOLD": 30, "REDUCE": 25},
+        max_stocks=12, max_sector_pct=40, sector_limits={}, total_value=1000,
+        cash_balance=100, fallback_provider="test", fallback_model="test",
+        portfolio_name="P", portfolio_count=3, max_reached=False,
+        policy_context={
+            "hard_constraints": {"max_single_position_pct": 20, "min_cash_pct": 0},
+            "emergency_override": False, "deployment_bias": "SELECTIVE",
+        },
+        effective_envelope=envelope, enforce_effective_policy=True,
+    )
+    by_symbol = {a["symbol"]: a for a in result["target_allocations"]}
+    assert by_symbol["BUY"]["target_weight"] == 20
+    assert by_symbol["HOLD"]["target_weight"] == 30
+    assert by_symbol["REDUCE"]["target_weight"] == 23
+    assert result["fallback_mode"] is True
+    assert "20.0%" in captured[0]
+
+
+def test_policy_safe_fallback_enforcement_failure_is_typed_and_has_no_second_fallback(monkeypatch):
+    calls = []
+    monkeypatch.setattr(optimizer_module, "call_ai", lambda *a, **k: (
+        calls.append("provider") or {"latency_ms": 1, "text": '{"allocations": []}'}
+    ))
+    monkeypatch.setattr(
+        optimizer_module, "_enforce_hard_policy",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("enforcement")),
+    )
+    with pytest.raises(HardPolicyEnforcementError):
+        optimizer_module._run_single_shot_fallback(
+            [], [], [], [], [], {}, {}, 12, 40, {}, 1000, 0,
+            "test", "test", "P", 0, False,
+            policy_context={"hard_constraints": {}},
+            effective_envelope=_effective_envelope(), enforce_effective_policy=True,
+        )
+    assert calls == ["provider"]
+
+
+def test_primary_enforcement_failure_bypasses_global_fallback_when_opted_in(monkeypatch):
+    responses = {
+        "layer1": {"swaps": [], "top_buys": [], "sector_flags": [], "priority": ""},
+        "layer2": {"allocations": [{"s": "A", "tw": 25, "sig": "BUY", "r": "buy"}],
+                   "status": "REBALANCE"},
+        "layer3": {"risk_flags": [], "safer_choice": "layer2", "final_risk_level": "low"},
+    }
+    monkeypatch.setattr(optimizer_module, "call_ai", lambda *a, **k: {
+        "latency_ms": 1, "text": json.dumps(responses[k["usage_layer"]]),
+    })
+    monkeypatch.setattr(
+        optimizer_module, "_enforce_hard_policy",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("hard")),
+    )
+    monkeypatch.setattr(
+        optimizer_module, "_run_single_shot_fallback",
+        lambda *a, **k: pytest.fail("typed enforcement failure must bypass fallback"),
+    )
+    with pytest.raises(HardPolicyEnforcementError):
+        optimizer_module.run_layered_optimizer(
+            [{"symbol": "A", "shares": 1, "current_price": 100, "signal": "BUY", "sector": "Technology"}],
+            [], "P", policy_context={
+                "hard_constraints": {"max_single_position_pct": 20, "min_cash_pct": 0,
+                                     "max_sector_pct": 40, "max_turnover_pct": 40},
+                "emergency_override": False,
+            },
+            effective_envelope=_effective_envelope(),
+            enforce_effective_policy_in_fallback=True,
+        )
+
+
+def test_generic_primary_failure_still_enters_policy_safe_fallback(monkeypatch):
+    monkeypatch.setattr(
+        optimizer_module, "call_ai",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("provider")),
+    )
+    fallback_calls = []
+    monkeypatch.setattr(
+        optimizer_module, "_run_single_shot_fallback",
+        lambda *a, **k: fallback_calls.append(k) or {"fallback_mode": True},
+    )
+    result = optimizer_module.run_layered_optimizer(
+        [{"symbol": "A", "shares": 1, "current_price": 100, "signal": "BUY", "sector": "Technology"}],
+        [], "P", policy_context={
+            "hard_constraints": {"max_single_position_pct": 20, "min_cash_pct": 0,
+                                 "max_sector_pct": 40, "max_turnover_pct": 40},
+            "emergency_override": False,
+        },
+        effective_envelope=_effective_envelope(),
+        enforce_effective_policy_in_fallback=True,
+    )
+    assert result["fallback_mode"] is True
+    assert fallback_calls[0]["enforce_effective_policy"] is True
+    assert fallback_calls[0]["policy_context"]["hard_constraints"]["max_single_position_pct"] == 20
 
 
 # ── _normalize_l1_swaps ───────────────────────────────────────────────────────

@@ -1,26 +1,36 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   getDecisionMemoryTimeline,
   getAIvsHumanTimeline,
   type DecisionMemoryEntry,
   type AIvsHumanTimelineEntry,
-  type ExecutionDecisionType,
 } from "@/lib/api";
 
-const DECISION_BADGE: Record<ExecutionDecisionType, string> = {
+// Keyed by string rather than ExecutionDecisionType: the backend's
+// decision-memory endpoint queries every UserExecutionDecision row with no
+// decision-type filter, so a system-generated "EXPIRED" row (expired_writer.py)
+// can reach this table even though it's outside the shared frontend enum
+// (DecisionActionPanel's confirm flow never produces it). Falls back to a
+// neutral style/label rather than mislabeling it as Partial Execution.
+const DECISION_BADGE: Record<string, string> = {
   APPROVED: "bg-green-50 text-green-700 border-green-200",
   REJECTED: "bg-red-50 text-red-700 border-red-200",
   MANUAL_OVERRIDE: "bg-gray-50 text-gray-700 border-gray-200",
   PARTIAL_EXECUTION: "bg-amber-50 text-amber-700 border-amber-200",
+  EXPIRED: "bg-gray-50 text-gray-400 border-gray-200",
 };
 
-function decisionLabel(decision: ExecutionDecisionType): string {
+function decisionLabel(decision: string): string {
   if (decision === "APPROVED") return "Approve Recommendation";
   if (decision === "REJECTED") return "Reject Recommendation";
   if (decision === "MANUAL_OVERRIDE") return "Manual Override";
-  return "Partial Execution";
+  if (decision === "PARTIAL_EXECUTION") return "Partial Execution";
+  if (decision === "EXPIRED") return "Expired";
+  return decision;
 }
 
 function fmtPct(v: number | null | undefined): string {
@@ -46,6 +56,7 @@ export default function DecisionMemoryTimeline({
   portfolioId: number;
   limit?: number;
 }) {
+  const router = useRouter();
   const [entries, setEntries] = useState<DecisionMemoryEntry[]>([]);
   const [aiTimeline, setAiTimeline] = useState<AIvsHumanTimelineEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -121,6 +132,7 @@ export default function DecisionMemoryTimeline({
               <th className="text-left py-2.5 px-4">Regime</th>
               <th className="text-left py-2.5 px-4">Realized Outcome</th>
               <th className="text-left py-2.5 px-4">AI vs Human</th>
+              <th className="text-left py-2.5 px-4">Detail</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
@@ -129,9 +141,34 @@ export default function DecisionMemoryTimeline({
               const confidence = entry.recommendation_snapshot?.consensus?.consensus_strength_score;
               const regime = entry.recommendation_snapshot?.regime?.regime ?? "-";
               const recDate = entry.recommendation_snapshot?.created_at ?? entry.executed_at;
+              const snapshotId = entry.recommendation_snapshot?.id;
+
+              // Slice 4 (Decision History / Audit UX) — primary row navigation
+              // to the canonical historical explanation (Report Card); works
+              // for every decision type (APPROVED/REJECTED/PARTIAL_EXECUTION/
+              // MANUAL_OVERRIDE) since historical discoverability and
+              // execution eligibility are separate concerns. Falls back to no
+              // navigation (not an error state) when a snapshot link is
+              // genuinely absent from the persisted row.
+              const goToReportCard = () => {
+                if (snapshotId != null) router.push(`/ai-analytics/recommendations/${snapshotId}`);
+              };
+              const handleRowKeyDown = (e: KeyboardEvent<HTMLTableRowElement>) => {
+                if (snapshotId == null) return;
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  goToReportCard();
+                }
+              };
 
               return (
-                <tr key={entry.decision_id} className="hover:bg-gray-50">
+                <tr
+                  key={entry.decision_id}
+                  onClick={snapshotId != null ? goToReportCard : undefined}
+                  onKeyDown={handleRowKeyDown}
+                  tabIndex={snapshotId != null ? 0 : undefined}
+                  className={`hover:bg-gray-50 ${snapshotId != null ? "cursor-pointer focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-300" : ""}`}
+                >
                   <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">
                     {new Date(recDate).toLocaleDateString("en-GB", { dateStyle: "medium" })}
                   </td>
@@ -158,6 +195,18 @@ export default function DecisionMemoryTimeline({
                     {ai?.return_delta != null && (
                       <span className="text-gray-400 ml-2">({fmtPct(ai.return_delta)} delta)</span>
                     )}
+                  </td>
+                  <td className="px-4 py-3 text-xs whitespace-nowrap">
+                    {/* Secondary link to Execution/Decision Detail — stops
+                        propagation so it never triggers the row's own
+                        navigation to the Report Card. */}
+                    <Link
+                      href={`/ai-analytics/execution/${entry.decision_id}`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="text-blue-600 hover:underline font-semibold"
+                    >
+                      Execution →
+                    </Link>
                   </td>
                 </tr>
               );

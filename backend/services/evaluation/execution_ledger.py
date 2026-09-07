@@ -38,6 +38,16 @@ logger = logging.getLogger(__name__)
 
 _ACCEPTED_DECISIONS = ("APPROVED", "PARTIAL_EXECUTION")
 
+# These are the existing decision types for which the product offers its
+# decision -> transaction recording flow. REJECTED decisions are evaluated via
+# counterfactual return rather than linked transaction evidence, and system
+# generated decisions have no human execution to record. Keep this separate
+# from _ACCEPTED_DECISIONS: acceptance reporting and recording progress answer
+# different questions.
+_RECORDING_PROGRESS_ELIGIBLE_DECISIONS = frozenset({
+    "APPROVED", "MANUAL_OVERRIDE", "PARTIAL_EXECUTION",
+})
+
 _REASON_LABELS = {
     "MANDATORY_RISK_REDUCTION": "Mandatory Risk Reduction",
     "POLICY_ENFORCEMENT": "Policy Enforcement",
@@ -61,7 +71,7 @@ def _recommendation_prices(snap: Any) -> dict[str, float]:
     return prices
 
 
-def _linked_transactions(db: Session, decision_id: int, known_symbols: list[str] | None = None) -> list[dict]:
+def _linked_transactions(db: Session, decision: Any, known_symbols: list[str] | None = None) -> list[dict]:
     """Transactions linked to one decision, symbol-normalized against the
     decision's own plan symbols where possible.
 
@@ -88,11 +98,25 @@ def _linked_transactions(db: Session, decision_id: int, known_symbols: list[str]
     from models.database import Transaction
     from services import registry_lookup
 
-    rows = db.query(Transaction).filter_by(execution_decision_id=decision_id).all()
+    # execution_decision_id is the only evidence-link authority. Keep its
+    # workspace and portfolio alongside it even though the write path already
+    # validates both: no malformed/imported cross-scope row can satisfy this
+    # decision's recording progress.
+    rows = (
+        db.query(Transaction)
+        .filter(
+            Transaction.execution_decision_id == decision.id,
+            Transaction.workspace_id == decision.workspace_id,
+            Transaction.portfolio_id == decision.portfolio_id,
+        )
+        .all()
+    )
     txs = [
         {
             "symbol": t.symbol, "shares": t.shares, "price_per_share": t.price_per_share,
             "total_amount": t.total_amount, "asset_id": t.asset_id,
+            "id": t.id, "transaction_type": t.transaction_type,
+            "transaction_date": t.transaction_date.isoformat() + "Z" if t.transaction_date else None,
         }
         for t in rows
     ]
@@ -148,8 +172,35 @@ def _decision_analysis(db: Session, decision: Any, snap: Any) -> dict[str, Any]:
 
     return compute_execution_analysis(
         inputs["target_allocations"], inputs["cash_available"], inputs["violations"],
-        _recommendation_prices(snap), _linked_transactions(db, decision.id, known_symbols=plan_symbols),
+        _recommendation_prices(snap), _linked_transactions(db, decision, known_symbols=plan_symbols),
     )
+
+
+def _recording_progress_fields(decision: Any, analysis: dict[str, Any]) -> dict[str, Any]:
+    """Expose existing execution-recording facts for the ledger read model.
+
+    This deliberately does not calculate completion. The execution analyzer
+    remains the sole owner of matched_count/total_planned/is_complete. A
+    decision whose plan cannot be reconstructed stays eligible by decision
+    type but has unavailable facts, so it is never mislabeled incomplete.
+    """
+    eligible = (
+        not decision.is_system_generated
+        and decision.decision in _RECORDING_PROGRESS_ELIGIBLE_DECISIONS
+    )
+    if not eligible:
+        return {
+            "recording_progress_eligible": False,
+            "matched_count": None,
+            "total_planned": None,
+            "is_complete": None,
+        }
+    return {
+        "recording_progress_eligible": True,
+        "matched_count": analysis.get("matched_count"),
+        "total_planned": analysis.get("total_planned"),
+        "is_complete": analysis.get("is_complete"),
+    }
 
 
 def list_execution_ledger(db: Session, portfolio_id: int, period_days: int = 90) -> dict[str, Any]:
@@ -180,6 +231,7 @@ def list_execution_ledger(db: Session, portfolio_id: int, period_days: int = 90)
     scores: list[float] = []
     timing_deltas: list[float] = []
     funding_fidelities: list[float] = []
+    incomplete_recording_count = 0
     rows: list[dict[str, Any]] = []
 
     for dec in decisions:
@@ -211,6 +263,13 @@ def list_execution_ledger(db: Session, portfolio_id: int, period_days: int = 90)
         if analysis.get("funding_fidelity_pct") is not None:
             funding_fidelities.append(analysis["funding_fidelity_pct"])
 
+        recording_progress = _recording_progress_fields(dec, analysis)
+        if (
+            recording_progress["recording_progress_eligible"]
+            and recording_progress["is_complete"] is False
+        ):
+            incomplete_recording_count += 1
+
         # Outcome delta: nearest mature horizon grade, marked counterfactual
         # when the decision wasn't actually followed.
         grade_row = (
@@ -232,6 +291,7 @@ def list_execution_ledger(db: Session, portfolio_id: int, period_days: int = 90)
             "execution_score": analysis.get("score"),
             "completeness_pct": analysis.get("completeness_pct"),
             "funding_fidelity_pct": analysis.get("funding_fidelity_pct"),
+            **recording_progress,
             "outcome_delta": {
                 "grade_kind": grade_row.grade_kind,
                 "return_pct": grade_row.return_pct,
@@ -257,6 +317,7 @@ def list_execution_ledger(db: Session, portfolio_id: int, period_days: int = 90)
         "summary": {
             "total_decisions": len(decisions),
             "decision_counts": decision_counts,
+            "incomplete_recording_count": incomplete_recording_count,
             "acceptance_by_class": acceptance_by_class,
             "acceptance_note": (
                 "Segmented by the three Reasons execution_optimizer.py assigns to "

@@ -1,15 +1,36 @@
 import asyncio
 import logging
+import math
 import random
 import re
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone, timedelta
-from fastapi import FastAPI, HTTPException, Depends, Request, BackgroundTasks
+from datetime import date, datetime, timezone, timedelta
+from typing import Literal
+from fastapi import FastAPI, HTTPException, Depends, Request, BackgroundTasks, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_ as sa_or
+from sqlalchemy.exc import IntegrityError
+from services.goal_context import (
+    GoalContextIntegrityError,
+    build_goal_context,
+    build_workspace_goal_context,
+    integrity_error_detail,
+    normalize_selected_goal_ids,
+    selected_goal_ids_exist,
+)
+from services.wealth_review import (
+    WealthReviewIntegrityError,
+    build_factual_wealth_review,
+    integrity_error_detail as wealth_review_integrity_error_detail,
+)
+from services.legacy_goal_profile_evidence import (
+    LegacyGoalProfileEvidenceIntegrityError,
+    build_legacy_goal_profile_evidence,
+    integrity_error_detail as legacy_goal_profile_evidence_integrity_error_detail,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -19,7 +40,7 @@ import uuid as _uuid
 from models.database import (
     init_db, migrate_legacy_data, get_db, SessionLocal,
     Workspace, get_default_workspace,
-    Portfolio, PortfolioItem, Watchlist,
+    Portfolio, PortfolioItem, CashAccount, CashAccountBaseline, CashAccountTransfer, CashAccountTransaction, CashEntryTemplate, Liability, LiabilityBalanceObservation, WealthGoal, GoalPlanAmendmentHistory, GoalFundingAllocation, GoalFundingAllocationHistory, PortfolioInvestmentMandate, GoalScenario, Watchlist,
     AgentCache, AnalysisCache, AnalysisHistory, OptimizerHistory, SignalHistory,
     Settings, UserUsage, Transaction, PortfolioSnapshot, BenchmarkPrice,
     MarketDataCache,
@@ -49,7 +70,7 @@ from services.sector_taxonomy import (
     dr_prefix as _dr_prefix, normalize_sector, static_sector_lookup,
 )
 from services.json_utils import safe_parse_json
-from services.portfolio_reference import resolve_portfolio_or_404
+from services.portfolio_reference import resolve_portfolio_or_404, resolve_execution_decision_or_404
 from services.portfolio_transactions import (
     execute_buy, execute_sell,
     execute_deposit, execute_withdraw,
@@ -57,6 +78,10 @@ from services.portfolio_transactions import (
     execute_quantity_correction,
     execute_dividend,
 )
+from services.transaction_canonicalizer import parse_position_conversion_payload
+from services.cash_account_ledger import ADJUSTMENT, EXPENSE, INCOME, TRANSFER, INVESTMENT_TRANSFER, cash_balance_as_of, resulting_balance, signed_amount
+from services.liability_balance import liability_balance_as_of
+from services import net_worth_change_attribution
 from services.portfolio_snapshots import generate_daily_snapshot, SnapshotCoverageError
 from services.snapshot_scheduler import setup_scheduler, shutdown_scheduler
 from services.analytics.system_health import compute_system_health, compute_ai_reliability
@@ -548,6 +573,2094 @@ def _enrich_holdings(
     return result
 
 
+# ─── Cash Accounts ────────────────────────────────────────────────────────────
+
+
+def _cash_account_payload(account: CashAccount) -> dict:
+    baseline = account.baseline
+    return {
+        "id": account.id,
+        "workspace_id": account.workspace_id,
+        "name": account.name,
+        "institution": account.institution,
+        "currency": account.currency,
+        "balance": account.balance,
+        "is_archived": account.is_archived,
+        "created_at": account.created_at.isoformat(),
+        "updated_at": account.updated_at.isoformat(),
+        "baseline": _cash_account_baseline_payload(baseline) if baseline is not None else None,
+    }
+
+
+def _cash_account_baseline_payload(baseline: CashAccountBaseline) -> dict:
+    return {
+        "id": baseline.id,
+        "cash_account_id": baseline.cash_account_id,
+        "effective_on": baseline.effective_on,
+        "observed_balance": baseline.observed_balance,
+        "created_at": baseline.created_at.isoformat(),
+    }
+
+
+def _cash_account_transaction_payload(transaction: CashAccountTransaction) -> dict:
+    payload = {
+        "id": transaction.id,
+        "workspace_id": transaction.workspace_id,
+        "cash_account_id": transaction.cash_account_id,
+        "transaction_type": transaction.transaction_type,
+        "amount": transaction.amount,
+        "signed_amount": signed_amount(transaction.transaction_type, transaction.amount),
+        "occurred_on": transaction.occurred_on,
+        "category": transaction.category,
+        "note": transaction.note,
+        "transfer_id": transaction.transfer_id,
+        "counterparty_portfolio_id": transaction.counterparty_portfolio_id,
+        "counterparty_portfolio_name": (
+            transaction.counterparty_portfolio.name
+            if transaction.counterparty_portfolio_id is not None and transaction.counterparty_portfolio is not None
+            else None
+        ),
+        # Documentary creation-time evidence only. These fields are allowed
+        # to be absent for pre-IFTE records and must never be used to resolve
+        # a Portfolio or infer a Portfolio-side transaction.
+        "counterparty_portfolio_id_snapshot": transaction.counterparty_portfolio_id_snapshot,
+        "counterparty_portfolio_name_snapshot": transaction.counterparty_portfolio_name_snapshot,
+        "investment_direction": (
+            ("TO_PORTFOLIO" if transaction.amount < 0 else "FROM_PORTFOLIO")
+            if transaction.transaction_type == INVESTMENT_TRANSFER
+            else None
+        ),
+        "created_at": transaction.created_at.isoformat(),
+    }
+    transfer = transaction.transfer
+    if transfer is not None:
+        source = transfer.source_account
+        destination = transfer.destination_account
+        payload.update({
+            "transfer_source_cash_account_id": source.id,
+            "transfer_destination_cash_account_id": destination.id,
+            "transfer_source_account_name": source.name,
+            "transfer_destination_account_name": destination.name,
+            "transfer_direction": "OUT" if transaction.cash_account_id == source.id else "IN",
+        })
+    return payload
+
+
+def _cash_account_transfer_payload(transfer: CashAccountTransfer) -> dict:
+    return {
+        "id": transfer.id,
+        "workspace_id": transfer.workspace_id,
+        "source_cash_account_id": transfer.source_cash_account_id,
+        "destination_cash_account_id": transfer.destination_cash_account_id,
+        "source_account_name": transfer.source_account.name,
+        "destination_account_name": transfer.destination_account.name,
+        "amount": transfer.amount,
+        "occurred_on": transfer.occurred_on,
+        "note": transfer.note,
+        "created_at": transfer.created_at.isoformat(),
+    }
+
+
+def _cash_account_transfer_activity_payload(transfer: CashAccountTransfer) -> dict:
+    source = transfer.source_account
+    destination = transfer.destination_account
+    return {
+        "id": transfer.id,
+        "workspace_id": transfer.workspace_id,
+        "cash_account_id": source.id,
+        "transaction_type": TRANSFER,
+        "amount": transfer.amount,
+        "signed_amount": 0.0,
+        "occurred_on": transfer.occurred_on,
+        "category": None,
+        "note": transfer.note,
+        "transfer_id": transfer.id,
+        "transfer_source_cash_account_id": source.id,
+        "transfer_destination_cash_account_id": destination.id,
+        "transfer_source_account_name": source.name,
+        "transfer_destination_account_name": destination.name,
+        "transfer_direction": "OUT",
+        "account_name": source.name,
+        "account_is_archived": bool(source.is_archived),
+        "source_account_is_archived": bool(source.is_archived),
+        "destination_account_is_archived": bool(destination.is_archived),
+        "created_at": transfer.created_at.isoformat(),
+    }
+
+
+def _cash_account_or_404(db: Session, cash_account_id: int, workspace_id: int) -> CashAccount:
+    account = (
+        db.query(CashAccount)
+        .filter(CashAccount.id == cash_account_id, CashAccount.workspace_id == workspace_id)
+        .first()
+    )
+    if account is None:
+        raise HTTPException(status_code=404, detail="Cash account not found")
+    return account
+
+
+class CashAccountCreate(BaseModel):
+    name: str
+    currency: str
+    institution: str | None = None
+    balance: float = 0.0
+
+    @model_validator(mode="after")
+    def validate_cash_account(self):
+        if not self.name.strip():
+            raise ValueError("name must not be blank")
+        if self.currency != "THB":
+            raise ValueError("currency must be THB")
+        if not math.isfinite(self.balance) or self.balance < 0:
+            raise ValueError("balance must be finite and non-negative")
+        return self
+
+
+class CashAccountUpdate(BaseModel):
+    name: str | None = None
+    institution: str | None = None
+    balance: float | None = None
+    is_archived: bool | None = None
+
+    @model_validator(mode="after")
+    def validate_cash_account_update(self):
+        if not self.model_fields_set:
+            raise ValueError("at least one field is required")
+        if "name" in self.model_fields_set:
+            if self.name is None or not self.name.strip():
+                raise ValueError("name must not be blank")
+        if "balance" in self.model_fields_set:
+            if self.balance is None or not math.isfinite(self.balance) or self.balance < 0:
+                raise ValueError("balance must be finite and non-negative")
+        return self
+
+
+class CashAccountBaselineCreate(BaseModel):
+    effective_on: date
+    observed_balance: float
+
+    @model_validator(mode="after")
+    def validate_baseline(self):
+        if not math.isfinite(self.observed_balance) or self.observed_balance < 0:
+            raise ValueError("observed_balance must be finite and non-negative")
+        return self
+
+
+class CashAccountTransactionCreate(BaseModel):
+    transaction_type: Literal["INCOME", "EXPENSE"]
+    amount: float
+    occurred_on: date
+    category: str
+    note: str | None = None
+
+    @model_validator(mode="after")
+    def validate_cash_transaction(self):
+        if not math.isfinite(self.amount) or self.amount <= 0:
+            raise ValueError("amount must be finite and greater than zero")
+        if not self.category.strip():
+            raise ValueError("category must not be blank")
+        return self
+
+
+class CashAccountTransferCreate(BaseModel):
+    source_cash_account_id: int
+    destination_cash_account_id: int
+    amount: float
+    occurred_on: date
+    note: str | None = None
+
+    @model_validator(mode="after")
+    def validate_transfer(self):
+        if self.source_cash_account_id == self.destination_cash_account_id:
+            raise ValueError("source and destination cash accounts must differ")
+        if not math.isfinite(self.amount) or self.amount <= 0:
+            raise ValueError("amount must be finite and greater than zero")
+        return self
+
+
+class CashInvestmentTransferCreate(BaseModel):
+    """Investment Funding Transfer (ADR-012) — a Cash Account fact only.
+
+    `portfolio_id` records that the user associates this cash movement with
+    a Portfolio; it never writes, matches, or reconciles the Portfolio
+    ledger. `amount` is always a positive magnitude — the server derives the
+    stored signed effect from `direction`.
+    """
+    portfolio_id: int
+    direction: Literal["TO_PORTFOLIO", "FROM_PORTFOLIO"]
+    amount: float
+    occurred_on: date
+    note: str | None = None
+
+    @model_validator(mode="after")
+    def validate_investment_transfer(self):
+        if not math.isfinite(self.amount) or self.amount <= 0:
+            raise ValueError("amount must be finite and greater than zero")
+        return self
+
+
+class CashAccountReconcile(BaseModel):
+    observed_balance: float
+    occurred_on: date
+    note: str | None = None
+
+    @model_validator(mode="after")
+    def validate_reconciliation(self):
+        if not math.isfinite(self.observed_balance) or self.observed_balance < 0:
+            raise ValueError("observed_balance must be finite and non-negative")
+        return self
+
+
+def _require_cash_tracking(account: CashAccount) -> CashAccountBaseline:
+    if account.baseline is None:
+        raise HTTPException(status_code=409, detail="Start cash flow tracking before adding activity")
+    return account.baseline
+
+
+def _require_active_cash_account(account: CashAccount) -> None:
+    if account.is_archived:
+        raise HTTPException(status_code=409, detail="Archived cash accounts cannot receive new activity")
+
+
+def _require_on_or_after_baseline(occurred_on: date, baseline: CashAccountBaseline) -> str:
+    date_value = occurred_on.isoformat()
+    if date_value < baseline.effective_on:
+        raise HTTPException(status_code=422, detail="Cash activity cannot predate the tracking baseline")
+    return date_value
+
+
+def _cash_flow_month_bounds(month: str) -> tuple[str, str]:
+    """Return inclusive ISO calendar-date bounds for a selected YYYY-MM month."""
+    if not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month):
+        raise HTTPException(status_code=422, detail="month must use YYYY-MM calendar format")
+    try:
+        first_day = date.fromisoformat(f"{month}-01")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="month must be a valid calendar month") from exc
+    if first_day.month == 12:
+        next_month = date(first_day.year + 1, 1, 1)
+    else:
+        next_month = date(first_day.year, first_day.month + 1, 1)
+    return first_day.isoformat(), (next_month - timedelta(days=1)).isoformat()
+
+
+def _record_cash_account_transaction(
+    db: Session,
+    account: CashAccount,
+    transaction_type: str,
+    amount: float,
+    occurred_on: str,
+    category: str,
+    note: str | None,
+) -> CashAccountTransaction:
+    next_balance = resulting_balance(account.balance, transaction_type, amount)
+    if next_balance < 0:
+        raise HTTPException(status_code=422, detail="Cash activity cannot make the observed balance negative")
+    transaction = CashAccountTransaction(
+        workspace_id=account.workspace_id,
+        cash_account_id=account.id,
+        transaction_type=transaction_type,
+        amount=amount,
+        occurred_on=occurred_on,
+        category=category,
+        note=note.strip() or None if note is not None else None,
+    )
+    db.add(transaction)
+    account.balance = next_balance
+    return transaction
+
+
+def _record_cash_account_transfer_leg(
+    db: Session,
+    transfer: CashAccountTransfer,
+    account: CashAccount,
+    signed_effect: float,
+) -> CashAccountTransaction:
+    next_balance = resulting_balance(account.balance, TRANSFER, signed_effect)
+    if next_balance < 0:
+        raise HTTPException(status_code=422, detail="Cash transfer cannot make the source balance negative")
+    transaction = CashAccountTransaction(
+        workspace_id=transfer.workspace_id,
+        cash_account_id=account.id,
+        transaction_type=TRANSFER,
+        amount=signed_effect,
+        occurred_on=transfer.occurred_on,
+        category=None,
+        note=None,
+        transfer_id=transfer.id,
+    )
+    db.add(transaction)
+    account.balance = next_balance
+    return transaction
+
+
+def _commit_cash_mutation(db: Session) -> None:
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+
+@app.get("/cash-accounts")
+async def list_cash_accounts(include_archived: bool = False, db: Session = Depends(get_db)) -> list[dict]:
+    ws = _ws_id(db)
+    query = db.query(CashAccount).filter(CashAccount.workspace_id == ws)
+    if not include_archived:
+        query = query.filter(CashAccount.is_archived.is_(False))
+    return [_cash_account_payload(account) for account in query.order_by(CashAccount.name, CashAccount.id).all()]
+
+
+@app.post("/cash-accounts", status_code=201)
+async def create_cash_account(body: CashAccountCreate, db: Session = Depends(get_db)) -> dict:
+    account = CashAccount(
+        workspace_id=_ws_id(db),
+        name=body.name.strip(),
+        institution=body.institution.strip() or None if body.institution is not None else None,
+        currency=body.currency,
+        balance=body.balance,
+    )
+    db.add(account)
+    db.commit()
+    db.refresh(account)
+    return _cash_account_payload(account)
+
+
+@app.patch("/cash-accounts/{cash_account_id}")
+async def update_cash_account(cash_account_id: int, body: CashAccountUpdate, db: Session = Depends(get_db)) -> dict:
+    account = _cash_account_or_404(db, cash_account_id, _ws_id(db))
+    fields = body.model_dump(exclude_unset=True)
+    if "name" in fields:
+        account.name = fields["name"].strip()
+    if "institution" in fields:
+        institution = fields["institution"]
+        account.institution = institution.strip() or None if institution is not None else None
+    if "balance" in fields:
+        # Once tracking exists, preserve the immutable ledger by making a
+        # requested observed-balance replacement an explicit reconciliation.
+        if account.baseline is None:
+            account.balance = fields["balance"]
+        else:
+            _require_active_cash_account(account)
+            difference = fields["balance"] - account.balance
+            if difference:
+                _record_cash_account_transaction(
+                    db, account, ADJUSTMENT, difference, datetime.utcnow().date().isoformat(), "Reconciliation",
+                    "Observed balance updated through Cash Accounts",
+                )
+    if "is_archived" in fields:
+        account.is_archived = fields["is_archived"]
+    _commit_cash_mutation(db)
+    db.refresh(account)
+    return _cash_account_payload(account)
+
+
+@app.post("/cash-accounts/{cash_account_id}/baseline", status_code=201)
+async def create_cash_account_baseline(
+    cash_account_id: int,
+    body: CashAccountBaselineCreate,
+    db: Session = Depends(get_db),
+) -> dict:
+    account = _cash_account_or_404(db, cash_account_id, _ws_id(db))
+    _require_active_cash_account(account)
+    if account.baseline is not None:
+        raise HTTPException(status_code=409, detail="Cash flow tracking has already started for this account")
+    baseline = CashAccountBaseline(
+        cash_account_id=account.id,
+        effective_on=body.effective_on.isoformat(),
+        observed_balance=body.observed_balance,
+    )
+    # The baseline is an explicit observation, so it becomes the account's
+    # current observed balance without inventing any earlier cash activity.
+    account.balance = body.observed_balance
+    db.add(baseline)
+    _commit_cash_mutation(db)
+    db.refresh(baseline)
+    return _cash_account_baseline_payload(baseline)
+
+
+@app.get("/cash-accounts/{cash_account_id}/transactions")
+async def list_cash_account_transactions(cash_account_id: int, db: Session = Depends(get_db)) -> list[dict]:
+    account = _cash_account_or_404(db, cash_account_id, _ws_id(db))
+    return [
+        _cash_account_transaction_payload(transaction)
+        for transaction in (
+            db.query(CashAccountTransaction)
+            .filter(
+                CashAccountTransaction.cash_account_id == account.id,
+                CashAccountTransaction.workspace_id == account.workspace_id,
+            )
+            .order_by(CashAccountTransaction.occurred_on.desc(), CashAccountTransaction.id.desc())
+            .all()
+        )
+    ]
+
+
+@app.get("/cash-flow")
+async def get_cash_flow_report(month: str, db: Session = Depends(get_db)) -> dict:
+    """Return one complete, workspace-scoped calendar-month cash-flow slice.
+
+    This is deliberately read-only and transaction-only: a CashAccount baseline
+    is an observation, not a cash-flow event. The account join keeps archived
+    history visible while the workspace predicates prevent cross-tenant rows.
+    """
+    start_on, end_on = _cash_flow_month_bounds(month)
+    workspace_id = _ws_id(db)
+    rows = (
+        db.query(CashAccountTransaction, CashAccount)
+        .join(CashAccount, CashAccount.id == CashAccountTransaction.cash_account_id)
+        .join(CashAccountBaseline, CashAccountBaseline.cash_account_id == CashAccount.id)
+        .filter(
+            CashAccountTransaction.workspace_id == workspace_id,
+            CashAccount.workspace_id == workspace_id,
+            CashAccountTransaction.transaction_type != TRANSFER,
+            CashAccountTransaction.occurred_on >= start_on,
+            CashAccountTransaction.occurred_on <= end_on,
+            CashAccountTransaction.occurred_on >= CashAccountBaseline.effective_on,
+        )
+        .order_by(CashAccountTransaction.occurred_on.desc(), CashAccountTransaction.id.desc())
+        .all()
+    )
+    events = []
+    for transaction, account in rows:
+        event = _cash_account_transaction_payload(transaction)
+        event["account_name"] = account.name
+        event["account_is_archived"] = bool(account.is_archived)
+        events.append(event)
+    transfer_ids: set[int] = set()
+    transfer_rows = (
+        db.query(CashAccountTransaction)
+        .filter(
+            CashAccountTransaction.workspace_id == workspace_id,
+            CashAccountTransaction.transaction_type == TRANSFER,
+            CashAccountTransaction.occurred_on >= start_on,
+            CashAccountTransaction.occurred_on <= end_on,
+        )
+        .order_by(CashAccountTransaction.occurred_on.desc(), CashAccountTransaction.id.desc())
+        .all()
+    )
+    for leg in transfer_rows:
+        transfer = leg.transfer
+        if transfer is None or transfer.id in transfer_ids or transfer.workspace_id != workspace_id:
+            continue
+        source = transfer.source_account
+        destination = transfer.destination_account
+        if (
+            source.workspace_id != workspace_id
+            or destination.workspace_id != workspace_id
+            or source.baseline is None
+            or destination.baseline is None
+            or transfer.occurred_on < source.baseline.effective_on
+            or transfer.occurred_on < destination.baseline.effective_on
+        ):
+            continue
+        transfer_ids.add(transfer.id)
+        events.append(_cash_account_transfer_activity_payload(transfer))
+    events.sort(key=lambda event: (event["occurred_on"], event["id"]), reverse=True)
+    return {"month": month, "events": events}
+
+
+def _get_cash_flow_settings(db: Session, ws: int) -> dict:
+    row = db.query(Settings).filter(
+        Settings.workspace_id == ws,
+        Settings.key == "cash_flow_target_coverage_months",
+    ).first()
+    if not row:
+        return {"target_coverage_months": None}
+    try:
+        return {"target_coverage_months": float(row.value)}
+    except (TypeError, ValueError):
+        return {"target_coverage_months": None}
+
+
+@app.get("/settings/cash-flow")
+async def get_cash_flow_settings(db: Session = Depends(get_db)) -> dict:
+    """User-supplied Recorded Expense Coverage target, in months.
+
+    Purely a stored preference — the system never computes or suggests this
+    value (Recorded Expense Coverage itself is deliberately factual, not
+    advisory; see emergencyFund.ts). No row means no target is configured,
+    which is a normal product state, not an error.
+    """
+    return _get_cash_flow_settings(db, _ws_id(db))
+
+
+class CashFlowSettingsBody(BaseModel):
+    target_coverage_months: float | None = None
+
+    @model_validator(mode="after")
+    def validate_target_coverage_months(self):
+        if self.target_coverage_months is not None and (
+            not math.isfinite(self.target_coverage_months) or self.target_coverage_months <= 0
+        ):
+            raise ValueError("target_coverage_months must be finite and greater than zero")
+        return self
+
+
+@app.patch("/settings/cash-flow")
+async def update_cash_flow_settings(body: CashFlowSettingsBody, db: Session = Depends(get_db)) -> dict:
+    ws = _ws_id(db)
+    if body.target_coverage_months is None:
+        db.query(Settings).filter(
+            Settings.workspace_id == ws,
+            Settings.key == "cash_flow_target_coverage_months",
+        ).delete()
+    else:
+        _upsert_setting(db, ws, "cash_flow_target_coverage_months", str(body.target_coverage_months))
+    db.commit()
+    return _get_cash_flow_settings(db, ws)
+
+
+@app.post("/cash-account-transfers", status_code=201)
+async def create_cash_account_transfer(body: CashAccountTransferCreate, db: Session = Depends(get_db)) -> dict:
+    workspace_id = _ws_id(db)
+    accounts = (
+        db.query(CashAccount)
+        .filter(
+            CashAccount.workspace_id == workspace_id,
+            CashAccount.id.in_([body.source_cash_account_id, body.destination_cash_account_id]),
+        )
+        .all()
+    )
+    accounts_by_id = {account.id: account for account in accounts}
+    if len(accounts_by_id) != 2:
+        raise HTTPException(status_code=404, detail="Cash accounts not found")
+    source = accounts_by_id[body.source_cash_account_id]
+    destination = accounts_by_id[body.destination_cash_account_id]
+    _require_active_cash_account(source)
+    _require_active_cash_account(destination)
+    if source.currency != "THB" or destination.currency != "THB":
+        raise HTTPException(status_code=422, detail="Cash transfers require THB accounts")
+    source_baseline = _require_cash_tracking(source)
+    destination_baseline = _require_cash_tracking(destination)
+    occurred_on = body.occurred_on.isoformat()
+    if occurred_on < source_baseline.effective_on or occurred_on < destination_baseline.effective_on:
+        raise HTTPException(status_code=422, detail="Cash transfer cannot predate either tracking baseline")
+    if source.balance < body.amount:
+        raise HTTPException(status_code=422, detail="Insufficient funds in source cash account")
+
+    transfer = CashAccountTransfer(
+        workspace_id=workspace_id,
+        source_cash_account_id=source.id,
+        destination_cash_account_id=destination.id,
+        amount=body.amount,
+        occurred_on=occurred_on,
+        note=body.note.strip() or None if body.note is not None else None,
+    )
+    db.add(transfer)
+    # Flush obtains the logical identity; no commit occurs until both legs and
+    # both authoritative current balances have been written.
+    db.flush()
+    _record_cash_account_transfer_leg(db, transfer, source, -body.amount)
+    _record_cash_account_transfer_leg(db, transfer, destination, body.amount)
+    _commit_cash_mutation(db)
+    db.refresh(transfer)
+    return _cash_account_transfer_payload(transfer)
+
+
+@app.post("/cash-accounts/{cash_account_id}/investment-transfers", status_code=201)
+async def create_cash_investment_transfer(
+    cash_account_id: int,
+    body: CashInvestmentTransferCreate,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Record that money moved between a Cash Account and a Portfolio (ADR-012).
+
+    This is authoritative only for the Cash Account side. It never creates a
+    Portfolio Transaction, changes Portfolio.cash_balance, or asserts that a
+    matching Portfolio-side deposit/withdrawal exists — see ADR-012.
+    """
+    ws = _ws_id(db)
+    account = _cash_account_or_404(db, cash_account_id, ws)
+    portfolio = resolve_portfolio_or_404(db, body.portfolio_id, ws)
+    _require_active_cash_account(account)
+    if account.currency != "THB":
+        raise HTTPException(status_code=422, detail="Investment transfers require a THB cash account")
+    baseline = _require_cash_tracking(account)
+    occurred_on = _require_on_or_after_baseline(body.occurred_on, baseline)
+    signed_effect = -body.amount if body.direction == "TO_PORTFOLIO" else body.amount
+    transaction = _record_cash_account_transaction(
+        db, account, INVESTMENT_TRANSFER, signed_effect, occurred_on, None, body.note,
+    )
+    transaction.counterparty_portfolio_id = portfolio.id
+    transaction.counterparty_portfolio_id_snapshot = portfolio.id
+    transaction.counterparty_portfolio_name_snapshot = portfolio.name
+    _commit_cash_mutation(db)
+    db.refresh(transaction)
+    return _cash_account_transaction_payload(transaction)
+
+
+@app.post("/cash-accounts/{cash_account_id}/transactions", status_code=201)
+async def create_cash_account_transaction(
+    cash_account_id: int,
+    body: CashAccountTransactionCreate,
+    db: Session = Depends(get_db),
+) -> dict:
+    account = _cash_account_or_404(db, cash_account_id, _ws_id(db))
+    _require_active_cash_account(account)
+    baseline = _require_cash_tracking(account)
+    transaction = _record_cash_account_transaction(
+        db,
+        account,
+        body.transaction_type,
+        body.amount,
+        _require_on_or_after_baseline(body.occurred_on, baseline),
+        body.category.strip(),
+        body.note,
+    )
+    _commit_cash_mutation(db)
+    db.refresh(transaction)
+    return _cash_account_transaction_payload(transaction)
+
+
+@app.post("/cash-accounts/{cash_account_id}/reconcile", status_code=201)
+async def reconcile_cash_account(
+    cash_account_id: int,
+    body: CashAccountReconcile,
+    db: Session = Depends(get_db),
+) -> dict:
+    account = _cash_account_or_404(db, cash_account_id, _ws_id(db))
+    _require_active_cash_account(account)
+    baseline = _require_cash_tracking(account)
+    occurred_on = _require_on_or_after_baseline(body.occurred_on, baseline)
+    difference = body.observed_balance - account.balance
+    if difference == 0:
+        return {"account": _cash_account_payload(account), "adjustment": None}
+    transaction = _record_cash_account_transaction(
+        db, account, ADJUSTMENT, difference, occurred_on, "Reconciliation", body.note
+    )
+    _commit_cash_mutation(db)
+    db.refresh(account)
+    db.refresh(transaction)
+    return {"account": _cash_account_payload(account), "adjustment": _cash_account_transaction_payload(transaction)}
+
+
+@app.get("/cash-accounts/{cash_account_id}/as-of")
+async def get_cash_account_balance_as_of(
+    cash_account_id: int,
+    date: date,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Read-only historical CashAccount balance reconstruction.
+
+    Derives exclusively from the account's baseline and its immutable ledger
+    events (services.cash_account_ledger.cash_balance_as_of) — never from the
+    account's current `balance`, so an archived account's history remains
+    readable and a date before tracking began is reported as unavailable, not
+    zero. Current-state fields (balance, is_archived) are untouched.
+    """
+    account = _cash_account_or_404(db, cash_account_id, _ws_id(db))
+    as_of_date = date.isoformat()
+    baseline = account.baseline
+    events = (
+        (tx.transaction_type, tx.amount, tx.occurred_on)
+        for tx in (
+            db.query(CashAccountTransaction)
+            .filter(
+                CashAccountTransaction.cash_account_id == account.id,
+                CashAccountTransaction.workspace_id == account.workspace_id,
+            )
+            .all()
+        )
+    ) if baseline is not None else ()
+    balance = cash_balance_as_of(
+        baseline.effective_on if baseline is not None else None,
+        baseline.observed_balance if baseline is not None else None,
+        events,
+        as_of_date,
+    )
+    return {
+        "cash_account_id": account.id,
+        "date": as_of_date,
+        "currency": account.currency,
+        "balance": balance,
+        "available": balance is not None,
+        "baseline_effective_on": baseline.effective_on if baseline is not None else None,
+    }
+
+
+# ─── Cash Entry Templates ───────────────────────────────────────────────────────
+# User-triggered recurring cash-entry templates: workspace-owned convenience
+# metadata that prefills the existing Add income / Add expense form. A
+# template is never a financial fact — creating, editing, deleting, or
+# invoking one never writes to CashAccountTransaction or changes
+# CashAccount.balance. Only explicit submission of the existing entry form
+# (createCashAccountTransaction) does that. Deliberately carries no date,
+# frequency, or recurrence field — see docs/architecture/ROADMAP.md.
+
+def _cash_entry_template_payload(template: CashEntryTemplate) -> dict:
+    account = template.cash_account
+    return {
+        "id": template.id,
+        "workspace_id": template.workspace_id,
+        "name": template.name,
+        "transaction_type": template.transaction_type,
+        "cash_account_id": template.cash_account_id,
+        "cash_account_name": account.name if account is not None else None,
+        "cash_account_is_archived": bool(account.is_archived) if account is not None else None,
+        "amount": template.amount,
+        "category": template.category,
+        "note": template.note,
+        "created_at": template.created_at.isoformat(),
+        "updated_at": template.updated_at.isoformat(),
+    }
+
+
+def _cash_entry_template_or_404(db: Session, template_id: int, workspace_id: int) -> CashEntryTemplate:
+    template = (
+        db.query(CashEntryTemplate)
+        .filter(CashEntryTemplate.id == template_id, CashEntryTemplate.workspace_id == workspace_id)
+        .first()
+    )
+    if template is None:
+        raise HTTPException(status_code=404, detail="Cash entry template not found")
+    return template
+
+
+class CashEntryTemplateCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    transaction_type: Literal["INCOME", "EXPENSE"]
+    cash_account_id: int
+    amount: float
+    category: str
+    note: str | None = None
+
+    @model_validator(mode="after")
+    def validate_cash_entry_template(self):
+        if not self.name.strip():
+            raise ValueError("name must not be blank")
+        if not math.isfinite(self.amount) or self.amount <= 0:
+            raise ValueError("amount must be finite and greater than zero")
+        if not self.category.strip():
+            raise ValueError("category must not be blank")
+        return self
+
+
+class CashEntryTemplateUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = None
+    transaction_type: Literal["INCOME", "EXPENSE"] | None = None
+    cash_account_id: int | None = None
+    amount: float | None = None
+    category: str | None = None
+    note: str | None = None
+
+    @model_validator(mode="after")
+    def validate_cash_entry_template_update(self):
+        if not self.model_fields_set:
+            raise ValueError("at least one field is required")
+        if "name" in self.model_fields_set and (self.name is None or not self.name.strip()):
+            raise ValueError("name must not be blank")
+        if "transaction_type" in self.model_fields_set and self.transaction_type is None:
+            raise ValueError("transaction_type must be supplied when updating it")
+        if "cash_account_id" in self.model_fields_set and self.cash_account_id is None:
+            raise ValueError("cash_account_id must be supplied when updating it")
+        if "amount" in self.model_fields_set:
+            if self.amount is None or not math.isfinite(self.amount) or self.amount <= 0:
+                raise ValueError("amount must be finite and greater than zero")
+        if "category" in self.model_fields_set and (self.category is None or not self.category.strip()):
+            raise ValueError("category must not be blank")
+        return self
+
+
+@app.get("/cash-entry-templates")
+async def list_cash_entry_templates(db: Session = Depends(get_db)) -> list[dict]:
+    ws = _ws_id(db)
+    templates = (
+        db.query(CashEntryTemplate)
+        .filter(CashEntryTemplate.workspace_id == ws)
+        .order_by(CashEntryTemplate.name, CashEntryTemplate.id)
+        .all()
+    )
+    return [_cash_entry_template_payload(template) for template in templates]
+
+
+@app.post("/cash-entry-templates", status_code=201)
+async def create_cash_entry_template(body: CashEntryTemplateCreate, db: Session = Depends(get_db)) -> dict:
+    ws = _ws_id(db)
+    account = _cash_account_or_404(db, body.cash_account_id, ws)
+    # Bounded rule: a template may only be created against an active account —
+    # there is little value in deliberately creating one that is already
+    # unusable. An existing template may still survive later account archival
+    # (see PATCH below).
+    _require_active_cash_account(account)
+    template = CashEntryTemplate(
+        workspace_id=ws,
+        name=body.name.strip(),
+        transaction_type=body.transaction_type,
+        cash_account_id=account.id,
+        amount=body.amount,
+        category=body.category.strip(),
+        note=body.note.strip() or None if body.note is not None else None,
+    )
+    db.add(template)
+    db.commit()
+    db.refresh(template)
+    return _cash_entry_template_payload(template)
+
+
+@app.patch("/cash-entry-templates/{template_id}")
+async def update_cash_entry_template(
+    template_id: int, body: CashEntryTemplateUpdate, db: Session = Depends(get_db)
+) -> dict:
+    ws = _ws_id(db)
+    template = _cash_entry_template_or_404(db, template_id, ws)
+    fields = body.model_dump(exclude_unset=True)
+    if "cash_account_id" in fields:
+        # Repointing requires an active account for the same reason create
+        # does; an existing template whose account is later archived is left
+        # alone below (§10 — remains stored/visible/editable, not repointed).
+        account = _cash_account_or_404(db, fields["cash_account_id"], ws)
+        _require_active_cash_account(account)
+        template.cash_account_id = account.id
+    if "name" in fields:
+        template.name = fields["name"].strip()
+    if "transaction_type" in fields:
+        template.transaction_type = fields["transaction_type"]
+    if "amount" in fields:
+        template.amount = fields["amount"]
+    if "category" in fields:
+        template.category = fields["category"].strip()
+    if "note" in fields:
+        note = fields["note"]
+        template.note = note.strip() or None if note is not None else None
+    db.commit()
+    db.refresh(template)
+    return _cash_entry_template_payload(template)
+
+
+@app.delete("/cash-entry-templates/{template_id}")
+async def delete_cash_entry_template(template_id: int, db: Session = Depends(get_db)) -> dict:
+    ws = _ws_id(db)
+    template = _cash_entry_template_or_404(db, template_id, ws)
+    db.delete(template)
+    db.commit()
+    return {"deleted": template_id}
+
+
+# ─── Liabilities ──────────────────────────────────────────────────────────────
+
+LiabilityType = Literal[
+    "MORTGAGE",
+    "AUTO_LOAN",
+    "PERSONAL_LOAN",
+    "CREDIT_CARD",
+    "STUDENT_LOAN",
+    "OTHER",
+]
+
+
+def _liability_payload(
+    liability: Liability,
+    *,
+    first_observation_on: str | None = None,
+    latest_observation_on: str | None = None,
+) -> dict:
+    return {
+        "id": liability.id,
+        "workspace_id": liability.workspace_id,
+        "name": liability.name,
+        "liability_type": liability.liability_type,
+        "lender": liability.lender,
+        "balance": liability.balance,
+        "currency": liability.currency,
+        "note": liability.note,
+        "is_archived": liability.is_archived,
+        "created_at": liability.created_at.isoformat(),
+        "updated_at": liability.updated_at.isoformat(),
+        # These are explicit-observation dates only, never substitutes for the
+        # As-Of read or inferred from the current balance/timestamps.
+        "first_observation_on": first_observation_on,
+        "latest_observation_on": latest_observation_on,
+    }
+
+
+def _liability_payload_with_observation_dates(liability: Liability) -> dict:
+    """Payload for single-record writes; list reads use the scoped aggregate."""
+    observation_dates = [observation.observed_on for observation in liability.observations]
+    return _liability_payload(
+        liability,
+        first_observation_on=min(observation_dates, default=None),
+        latest_observation_on=max(observation_dates, default=None),
+    )
+
+
+def _liability_or_404(db: Session, liability_id: int, workspace_id: int) -> Liability:
+    liability = (
+        db.query(Liability)
+        .filter(Liability.id == liability_id, Liability.workspace_id == workspace_id)
+        .first()
+    )
+    if liability is None:
+        raise HTTPException(status_code=404, detail="Liability not found")
+    return liability
+
+
+class LiabilityCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    liability_type: LiabilityType
+    lender: str | None = None
+    balance: float
+    currency: str
+    note: str | None = None
+
+    @model_validator(mode="after")
+    def validate_liability(self):
+        if not self.name.strip():
+            raise ValueError("name must not be blank")
+        if self.currency != "THB":
+            raise ValueError("currency must be THB")
+        if not math.isfinite(self.balance) or self.balance < 0:
+            raise ValueError("balance must be finite and non-negative")
+        return self
+
+
+class LiabilityUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = None
+    liability_type: LiabilityType | None = None
+    lender: str | None = None
+    balance: float | None = None
+    note: str | None = None
+    is_archived: bool | None = None
+
+    @model_validator(mode="after")
+    def validate_liability_update(self):
+        if not self.model_fields_set:
+            raise ValueError("at least one field is required")
+        if "name" in self.model_fields_set and (self.name is None or not self.name.strip()):
+            raise ValueError("name must not be blank")
+        if "liability_type" in self.model_fields_set and self.liability_type is None:
+            raise ValueError("liability_type must be supplied when updating it")
+        if "balance" in self.model_fields_set:
+            if self.balance is None or not math.isfinite(self.balance) or self.balance < 0:
+                raise ValueError("balance must be finite and non-negative")
+        if "is_archived" in self.model_fields_set and self.is_archived is None:
+            raise ValueError("is_archived must be supplied when updating it")
+        return self
+
+
+@app.get("/liabilities")
+async def list_liabilities(include_archived: bool = False, db: Session = Depends(get_db)) -> list[dict]:
+    ws = _ws_id(db)
+    observation_dates = (
+        db.query(
+            LiabilityBalanceObservation.liability_id.label("liability_id"),
+            func.min(LiabilityBalanceObservation.observed_on).label("first_observation_on"),
+            func.max(LiabilityBalanceObservation.observed_on).label("latest_observation_on"),
+        )
+        .filter(LiabilityBalanceObservation.workspace_id == ws)
+        .group_by(LiabilityBalanceObservation.liability_id)
+        .subquery()
+    )
+    query = (
+        db.query(
+            Liability,
+            observation_dates.c.first_observation_on,
+            observation_dates.c.latest_observation_on,
+        )
+        .outerjoin(observation_dates, observation_dates.c.liability_id == Liability.id)
+        .filter(Liability.workspace_id == ws)
+    )
+    if not include_archived:
+        query = query.filter(Liability.is_archived.is_(False))
+    return [
+        _liability_payload(
+            item,
+            first_observation_on=first_observation_on,
+            latest_observation_on=latest_observation_on,
+        )
+        for item, first_observation_on, latest_observation_on in query.order_by(Liability.name, Liability.id).all()
+    ]
+
+
+@app.post("/liabilities", status_code=201)
+async def create_liability(body: LiabilityCreate, db: Session = Depends(get_db)) -> dict:
+    liability = Liability(
+        workspace_id=_ws_id(db),
+        name=body.name.strip(),
+        liability_type=body.liability_type,
+        lender=body.lender.strip() or None if body.lender is not None else None,
+        balance=body.balance,
+        currency=body.currency,
+        note=body.note.strip() or None if body.note is not None else None,
+    )
+    db.add(liability)
+    db.commit()
+    db.refresh(liability)
+    return _liability_payload_with_observation_dates(liability)
+
+
+@app.patch("/liabilities/{liability_id}")
+async def update_liability(liability_id: int, body: LiabilityUpdate, db: Session = Depends(get_db)) -> dict:
+    liability = _liability_or_404(db, liability_id, _ws_id(db))
+    fields = body.model_dump(exclude_unset=True)
+    if "name" in fields:
+        liability.name = fields["name"].strip()
+    if "liability_type" in fields:
+        liability.liability_type = fields["liability_type"]
+    if "lender" in fields:
+        lender = fields["lender"]
+        liability.lender = lender.strip() or None if lender is not None else None
+    if "balance" in fields:
+        # A Liability with dated observations already has an auditable
+        # history; a bare balance PATCH must not silently bypass it, so it is
+        # routed through the same canonical observation-writing function,
+        # dated today. A Liability with no observations yet keeps the
+        # original unaudited direct-replacement behavior.
+        has_history = (
+            db.query(LiabilityBalanceObservation.id)
+            .filter(LiabilityBalanceObservation.liability_id == liability.id)
+            .first()
+            is not None
+        )
+        if has_history:
+            _write_liability_observation(db, liability, fields["balance"], date.today().isoformat())
+        else:
+            liability.balance = fields["balance"]
+    if "note" in fields:
+        note = fields["note"]
+        liability.note = note.strip() or None if note is not None else None
+    if "is_archived" in fields:
+        liability.is_archived = fields["is_archived"]
+    db.commit()
+    db.refresh(liability)
+    return _liability_payload_with_observation_dates(liability)
+
+
+def _write_liability_observation(
+    db: Session, liability: Liability, balance: float, observed_on: str
+) -> LiabilityBalanceObservation:
+    """Record (or same-day replace) a dated observed-balance fact.
+
+    A second observation for a date that already has one is an atomic
+    in-place correction, never a duplicate row. Liability.balance is updated
+    only when this observation is the newest by observed_on across all of the
+    liability's observations — a backdated correction enriches history
+    without overwriting a later-known current balance. Does not commit; the
+    caller commits once so the observation write and the current-balance
+    update land in a single transaction.
+    """
+    existing = (
+        db.query(LiabilityBalanceObservation)
+        .filter(
+            LiabilityBalanceObservation.liability_id == liability.id,
+            LiabilityBalanceObservation.observed_on == observed_on,
+        )
+        .first()
+    )
+    if existing is not None:
+        existing.balance = balance
+        observation = existing
+    else:
+        observation = LiabilityBalanceObservation(
+            workspace_id=liability.workspace_id,
+            liability_id=liability.id,
+            balance=balance,
+            observed_on=observed_on,
+        )
+        db.add(observation)
+    db.flush()
+
+    latest_date = (
+        db.query(func.max(LiabilityBalanceObservation.observed_on))
+        .filter(LiabilityBalanceObservation.liability_id == liability.id)
+        .scalar()
+    )
+    if latest_date == observed_on:
+        liability.balance = balance
+
+    return observation
+
+
+def _liability_observation_payload(observation: LiabilityBalanceObservation) -> dict:
+    return {
+        "id": observation.id,
+        "workspace_id": observation.workspace_id,
+        "liability_id": observation.liability_id,
+        "balance": observation.balance,
+        "observed_on": observation.observed_on,
+        "created_at": observation.created_at.isoformat(),
+    }
+
+
+class LiabilityBalanceObservationCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    balance: float
+    observed_on: date
+
+    @model_validator(mode="after")
+    def validate_observation(self):
+        if not math.isfinite(self.balance) or self.balance < 0:
+            raise ValueError("balance must be finite and non-negative")
+        return self
+
+
+@app.post("/liabilities/{liability_id}/observations", status_code=201)
+async def create_liability_balance_observation(
+    liability_id: int,
+    body: LiabilityBalanceObservationCreate,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Record an explicit dated observed-balance fact for a Liability.
+
+    Never fabricates history: this is the only way historical coverage comes
+    into existence for a Liability, and only from this call forward — no
+    observation is ever created implicitly from Liability.created_at or a
+    migration. Rejected on an archived Liability, matching the CashAccount
+    precedent of archived rows keeping their history but not receiving new
+    activity.
+    """
+    liability = _liability_or_404(db, liability_id, _ws_id(db))
+    if liability.is_archived:
+        raise HTTPException(status_code=409, detail="Archived liabilities cannot receive new balance observations")
+    observation = _write_liability_observation(db, liability, body.balance, body.observed_on.isoformat())
+    db.commit()
+    db.refresh(observation)
+    db.refresh(liability)
+    return _liability_observation_payload(observation)
+
+
+@app.get("/liabilities/{liability_id}/observations")
+async def list_liability_balance_observations(liability_id: int, db: Session = Depends(get_db)) -> list[dict]:
+    """Read-only, always available regardless of archive status — archiving is
+    a current/management-only flag and never erases history."""
+    liability = _liability_or_404(db, liability_id, _ws_id(db))
+    rows = (
+        db.query(LiabilityBalanceObservation)
+        .filter(LiabilityBalanceObservation.liability_id == liability.id)
+        .order_by(LiabilityBalanceObservation.observed_on.desc(), LiabilityBalanceObservation.id.desc())
+        .all()
+    )
+    return [_liability_observation_payload(row) for row in rows]
+
+
+@app.get("/liabilities/{liability_id}/as-of")
+async def get_liability_balance_as_of(
+    liability_id: int,
+    date: date,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Read-only historical Liability balance via the effective-state rule
+    (services.liability_balance.liability_balance_as_of): the latest
+    observation with observed_on <= date, never Liability.balance,
+    created_at, or updated_at. Available for archived Liabilities."""
+    liability = _liability_or_404(db, liability_id, _ws_id(db))
+    as_of_date = date.isoformat()
+    observations = (
+        (row.observed_on, row.balance)
+        for row in db.query(LiabilityBalanceObservation)
+        .filter(LiabilityBalanceObservation.liability_id == liability.id)
+        .all()
+    )
+    balance = liability_balance_as_of(observations, as_of_date)
+    return {
+        "liability_id": liability.id,
+        "date": as_of_date,
+        "currency": liability.currency,
+        "balance": balance,
+        "available": balance is not None,
+    }
+
+
+@app.get("/net-worth/change-attribution")
+async def get_net_worth_change_attribution(
+    start: date,
+    end: date,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Derived Level-1 read: why recorded Net Worth changed between two dates,
+    at the balance-sheet component level only (investment assets, external
+    cash, liability impact — ADR-013). Reuses PortfolioSnapshot.total_value,
+    cash_balance_as_of, and liability_balance_as_of exclusively; never
+    reconstructs Portfolio/Cash/Liability history independently and never
+    infers an economic cause (market return, contribution, debt repayment,
+    income, spending). Returns AVAILABLE or UNAVAILABLE — never a partial
+    numeric attribution."""
+    if start >= end:
+        raise HTTPException(status_code=400, detail="start must be before end")
+    return net_worth_change_attribution.get_change_attribution(
+        db, _ws_id(db), start.isoformat(), end.isoformat()
+    )
+
+
+# ─── Wealth Goals (Phase 6, Milestone 1 — Wealth Goals Foundation) ────────────
+#
+# A workspace-owned whole-life financial goal, independent of any Portfolio.
+# Deliberately boring: persistence and management only. No funding linkage,
+# no progress calculation, no projection — those are later Phase 6 milestones.
+# Distinct from, and never synchronized with, Portfolio.goal_* (the Phase
+# 4C.3 Goal Discovery Wizard's portfolio-scoped recommendation-input fields).
+
+WealthGoalType = Literal[
+    "RETIREMENT",
+    "HOUSE",
+    "WEDDING",
+    "EDUCATION",
+    "VACATION",
+    "EMERGENCY_FUND",
+    "FIRE",
+    "OTHER",
+]
+
+WealthGoalPriority = Literal["HIGH", "MEDIUM", "LOW"]
+
+
+def _wealth_goal_payload(goal: WealthGoal) -> dict:
+    return {
+        "id": goal.id,
+        "workspace_id": goal.workspace_id,
+        "name": goal.name,
+        "goal_type": goal.goal_type,
+        "target_amount": goal.target_amount,
+        "currency": goal.currency,
+        "target_date": goal.target_date,
+        "priority": goal.priority,
+        "note": goal.note,
+        "is_archived": goal.is_archived,
+        "created_at": goal.created_at.isoformat(),
+        "updated_at": goal.updated_at.isoformat(),
+    }
+
+
+def _wealth_goal_or_404(db: Session, goal_id: int, workspace_id: int) -> WealthGoal:
+    goal = (
+        db.query(WealthGoal)
+        .filter(WealthGoal.id == goal_id, WealthGoal.workspace_id == workspace_id)
+        .first()
+    )
+    if goal is None:
+        raise HTTPException(status_code=404, detail="Wealth goal not found")
+    return goal
+
+
+def _goal_plan_amendment_history_payload(event: GoalPlanAmendmentHistory) -> dict:
+    return {
+        "id": event.id,
+        "workspace_id": event.workspace_id,
+        "wealth_goal_id": event.wealth_goal_id,
+        "previous_target_amount": event.previous_target_amount,
+        "resulting_target_amount": event.resulting_target_amount,
+        "previous_target_date": event.previous_target_date,
+        "resulting_target_date": event.resulting_target_date,
+        "previous_priority": event.previous_priority,
+        "resulting_priority": event.resulting_priority,
+        "recorded_at": event.recorded_at.isoformat(),
+    }
+
+
+def _append_goal_plan_amendment_history(
+    db: Session,
+    *,
+    goal: WealthGoal,
+    previous_target_amount: float,
+    previous_target_date: str | None,
+    previous_priority: str,
+) -> None:
+    """Stage one complete plan snapshot only when its normalized values differ."""
+    if (
+        previous_target_amount == goal.target_amount
+        and previous_target_date == goal.target_date
+        and previous_priority == goal.priority
+    ):
+        return
+    db.add(GoalPlanAmendmentHistory(
+        workspace_id=goal.workspace_id,
+        wealth_goal_id=goal.id,
+        previous_target_amount=previous_target_amount,
+        resulting_target_amount=goal.target_amount,
+        previous_target_date=previous_target_date,
+        resulting_target_date=goal.target_date,
+        previous_priority=previous_priority,
+        resulting_priority=goal.priority,
+    ))
+
+
+def _commit_goal_plan_amendment_mutation(db: Session) -> None:
+    """Commit a Goal mutation and its staged plan evidence atomically."""
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+
+class WealthGoalCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    goal_type: WealthGoalType
+    target_amount: float
+    currency: str = "THB"
+    target_date: date | None = None
+    priority: WealthGoalPriority
+    note: str | None = None
+
+    @model_validator(mode="after")
+    def validate_wealth_goal(self):
+        if not self.name.strip():
+            raise ValueError("name must not be blank")
+        if self.currency != "THB":
+            raise ValueError("currency must be THB")
+        if not math.isfinite(self.target_amount) or self.target_amount <= 0:
+            raise ValueError("target_amount must be finite and positive")
+        return self
+
+
+class WealthGoalUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = None
+    goal_type: WealthGoalType | None = None
+    target_amount: float | None = None
+    target_date: date | None = None  # explicit null clears it; omitted leaves it unchanged
+    priority: WealthGoalPriority | None = None
+    note: str | None = None
+    is_archived: bool | None = None
+
+    @model_validator(mode="after")
+    def validate_wealth_goal_update(self):
+        if not self.model_fields_set:
+            raise ValueError("at least one field is required")
+        if "name" in self.model_fields_set and (self.name is None or not self.name.strip()):
+            raise ValueError("name must not be blank")
+        if "goal_type" in self.model_fields_set and self.goal_type is None:
+            raise ValueError("goal_type must be supplied when updating it")
+        if "target_amount" in self.model_fields_set:
+            if (
+                self.target_amount is None
+                or not math.isfinite(self.target_amount)
+                or self.target_amount <= 0
+            ):
+                raise ValueError("target_amount must be finite and positive")
+        if "priority" in self.model_fields_set and self.priority is None:
+            raise ValueError("priority must be supplied when updating it")
+        if "is_archived" in self.model_fields_set and self.is_archived is None:
+            raise ValueError("is_archived must be supplied when updating it")
+        return self
+
+
+@app.get("/wealth-goals")
+async def list_wealth_goals(include_archived: bool = False, db: Session = Depends(get_db)) -> list[dict]:
+    ws = _ws_id(db)
+    query = db.query(WealthGoal).filter(WealthGoal.workspace_id == ws)
+    if not include_archived:
+        query = query.filter(WealthGoal.is_archived.is_(False))
+    return [_wealth_goal_payload(item) for item in query.order_by(WealthGoal.name, WealthGoal.id).all()]
+
+
+@app.get("/wealth-goals/context")
+async def get_workspace_goal_context(include_archived: bool = False, db: Session = Depends(get_db)) -> dict:
+    """Return the complete, valuation-free factual context for this workspace."""
+    try:
+        return build_workspace_goal_context(db, _ws_id(db), include_archived=include_archived)
+    except GoalContextIntegrityError:
+        raise HTTPException(status_code=409, detail=integrity_error_detail())
+
+
+@app.get("/wealth-goals/factual-review")
+async def get_factual_wealth_review(include_archived: bool = False, db: Session = Depends(get_db)) -> dict:
+    """Return DB-only as-of valuation evidence for selected goal designations."""
+    try:
+        return build_factual_wealth_review(db, _ws_id(db), include_archived=include_archived)
+    except GoalContextIntegrityError:
+        raise HTTPException(status_code=409, detail=integrity_error_detail())
+    except WealthReviewIntegrityError:
+        raise HTTPException(status_code=409, detail=wealth_review_integrity_error_detail())
+
+
+@app.get("/wealth-goals/legacy-profile-evidence")
+async def get_legacy_goal_profile_evidence(
+    include_archived: bool = False, db: Session = Depends(get_db)
+) -> dict:
+    """Return coexistence evidence for designated Portfolio legacy metadata."""
+    try:
+        return build_legacy_goal_profile_evidence(
+            db, _ws_id(db), include_archived=include_archived
+        )
+    except GoalContextIntegrityError:
+        raise HTTPException(status_code=409, detail=integrity_error_detail())
+    except LegacyGoalProfileEvidenceIntegrityError:
+        raise HTTPException(
+            status_code=409,
+            detail=legacy_goal_profile_evidence_integrity_error_detail(),
+        )
+
+
+@app.get("/wealth-goals/{goal_id}/context")
+async def get_goal_context(goal_id: int, db: Session = Depends(get_db)) -> dict:
+    """Return the complete, valuation-free factual context for one owned goal."""
+    try:
+        context = build_goal_context(db, _ws_id(db), goal_id)
+    except GoalContextIntegrityError:
+        raise HTTPException(status_code=409, detail=integrity_error_detail())
+    if context is None:
+        raise HTTPException(status_code=404, detail="Wealth goal not found")
+    return context
+
+
+@app.post("/wealth-goals", status_code=201)
+async def create_wealth_goal(body: WealthGoalCreate, db: Session = Depends(get_db)) -> dict:
+    goal = WealthGoal(
+        workspace_id=_ws_id(db),
+        name=body.name.strip(),
+        goal_type=body.goal_type,
+        target_amount=body.target_amount,
+        currency=body.currency,
+        target_date=body.target_date.isoformat() if body.target_date else None,
+        priority=body.priority,
+        note=body.note.strip() or None if body.note is not None else None,
+    )
+    db.add(goal)
+    db.commit()
+    db.refresh(goal)
+    return _wealth_goal_payload(goal)
+
+
+@app.patch("/wealth-goals/{goal_id}")
+async def update_wealth_goal(goal_id: int, body: WealthGoalUpdate, db: Session = Depends(get_db)) -> dict:
+    goal = _wealth_goal_or_404(db, goal_id, _ws_id(db))
+    fields = body.model_dump(exclude_unset=True)
+    previous_target_amount = goal.target_amount
+    previous_target_date = goal.target_date
+    previous_priority = goal.priority
+    if "name" in fields:
+        goal.name = fields["name"].strip()
+    if "goal_type" in fields:
+        goal.goal_type = fields["goal_type"]
+    if "target_amount" in fields:
+        goal.target_amount = fields["target_amount"]
+    if "target_date" in fields:
+        goal.target_date = body.target_date.isoformat() if body.target_date else None
+    if "priority" in fields:
+        goal.priority = fields["priority"]
+    if "note" in fields:
+        note = fields["note"]
+        goal.note = note.strip() or None if note is not None else None
+    if "is_archived" in fields:
+        goal.is_archived = fields["is_archived"]
+    _append_goal_plan_amendment_history(
+        db,
+        goal=goal,
+        previous_target_amount=previous_target_amount,
+        previous_target_date=previous_target_date,
+        previous_priority=previous_priority,
+    )
+    _commit_goal_plan_amendment_mutation(db)
+    db.refresh(goal)
+    return _wealth_goal_payload(goal)
+
+
+@app.get("/wealth-goals/{goal_id}/plan-history")
+async def list_goal_plan_amendment_history(goal_id: int, db: Session = Depends(get_db)) -> list[dict]:
+    """Return immutable plan-amendment evidence, newest event first."""
+    ws = _ws_id(db)
+    goal = _wealth_goal_or_404(db, goal_id, ws)
+    events = (
+        db.query(GoalPlanAmendmentHistory)
+        .filter(
+            GoalPlanAmendmentHistory.workspace_id == ws,
+            GoalPlanAmendmentHistory.wealth_goal_id == goal.id,
+        )
+        .order_by(GoalPlanAmendmentHistory.recorded_at.desc(), GoalPlanAmendmentHistory.id.desc())
+        .all()
+    )
+    return [_goal_plan_amendment_history_payload(event) for event in events]
+
+
+# ── Portfolio Investment Mandates (Phase 7.6A) ───────────────────────────────
+# A mandate is only an explicitly authored Portfolio-to-Goal fact. It carries
+# no optimizer, allocation, priority, or policy meaning.
+
+def _portfolio_investment_mandate_payload(mandate: PortfolioInvestmentMandate) -> dict:
+    return {
+        "id": mandate.id,
+        "workspace_id": mandate.workspace_id,
+        "portfolio_id": mandate.portfolio_id,
+        "wealth_goal_id": mandate.wealth_goal_id,
+        "created_at": mandate.created_at.isoformat(),
+    }
+
+
+def _portfolio_investment_mandate_pair(
+    db: Session, portfolio_id: int, wealth_goal_id: int, workspace_id: int
+) -> PortfolioInvestmentMandate | None:
+    return (
+        db.query(PortfolioInvestmentMandate)
+        .filter(
+            PortfolioInvestmentMandate.workspace_id == workspace_id,
+            PortfolioInvestmentMandate.portfolio_id == portfolio_id,
+            PortfolioInvestmentMandate.wealth_goal_id == wealth_goal_id,
+        )
+        .first()
+    )
+
+
+@app.get("/portfolios/{portfolio_id}/investment-mandates")
+async def list_portfolio_investment_mandates(
+    portfolio_id: int, db: Session = Depends(get_db)
+) -> list[dict]:
+    ws = _ws_id(db)
+    portfolio = resolve_portfolio_or_404(db, portfolio_id, ws)
+    mandates = (
+        db.query(PortfolioInvestmentMandate)
+        .filter(
+            PortfolioInvestmentMandate.workspace_id == ws,
+            PortfolioInvestmentMandate.portfolio_id == portfolio.id,
+        )
+        .order_by(PortfolioInvestmentMandate.id)
+        .all()
+    )
+    return [_portfolio_investment_mandate_payload(item) for item in mandates]
+
+
+@app.put("/portfolios/{portfolio_id}/investment-mandates/{wealth_goal_id}")
+async def put_portfolio_investment_mandate(
+    portfolio_id: int,
+    wealth_goal_id: int,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> dict:
+    ws = _ws_id(db)
+    portfolio = resolve_portfolio_or_404(db, portfolio_id, ws)
+    goal = _wealth_goal_or_404(db, wealth_goal_id, ws)
+    existing = _portfolio_investment_mandate_pair(db, portfolio.id, goal.id, ws)
+    if existing is not None:
+        response.status_code = 200
+        return _portfolio_investment_mandate_payload(existing)
+    if goal.is_archived:
+        raise HTTPException(
+            status_code=409,
+            detail="Archived wealth goals cannot receive new portfolio investment mandates",
+        )
+
+    mandate = PortfolioInvestmentMandate(
+        workspace_id=ws,
+        portfolio_id=portfolio.id,
+        wealth_goal_id=goal.id,
+    )
+    db.add(mandate)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        existing = _portfolio_investment_mandate_pair(db, portfolio.id, goal.id, ws)
+        if existing is None:
+            raise
+        response.status_code = 200
+        return _portfolio_investment_mandate_payload(existing)
+    db.refresh(mandate)
+    response.status_code = 201
+    return _portfolio_investment_mandate_payload(mandate)
+
+
+@app.delete(
+    "/portfolios/{portfolio_id}/investment-mandates/{wealth_goal_id}",
+    status_code=204,
+)
+async def delete_portfolio_investment_mandate(
+    portfolio_id: int, wealth_goal_id: int, db: Session = Depends(get_db)
+) -> Response:
+    ws = _ws_id(db)
+    portfolio = resolve_portfolio_or_404(db, portfolio_id, ws)
+    goal = _wealth_goal_or_404(db, wealth_goal_id, ws)
+    mandate = _portfolio_investment_mandate_pair(db, portfolio.id, goal.id, ws)
+    if mandate is not None:
+        db.delete(mandate)
+        db.commit()
+    return Response(status_code=204)
+
+
+# ── Portfolio Funding Evidence (PFET-01, ADR-012) ────────────────────────────
+# Documentary cash-side Investment Funding Transfer evidence naming this
+# Portfolio. Not a funding ledger and not reconciliation: a row here proves
+# only that a CashAccountTransaction was recorded with this Portfolio as its
+# immutable, creation-time counterparty snapshot. It never implies a
+# Portfolio-side transaction, settlement, matched pair, or portfolio cash
+# change. See ADR-012.
+
+@app.get("/portfolios/{portfolio_id}/funding-evidence")
+async def list_portfolio_funding_evidence(portfolio_id: int, db: Session = Depends(get_db)) -> list[dict]:
+    ws = _ws_id(db)
+    portfolio = resolve_portfolio_or_404(db, portfolio_id, ws)
+    rows = (
+        db.query(CashAccountTransaction, CashAccount)
+        .join(CashAccount, CashAccount.id == CashAccountTransaction.cash_account_id)
+        .filter(
+            CashAccountTransaction.workspace_id == ws,
+            CashAccount.workspace_id == ws,
+            CashAccountTransaction.transaction_type == INVESTMENT_TRANSFER,
+            CashAccountTransaction.counterparty_portfolio_id_snapshot == portfolio.id,
+        )
+        .order_by(CashAccountTransaction.occurred_on.desc(), CashAccountTransaction.id.desc())
+        .all()
+    )
+    events = []
+    for transaction, account in rows:
+        event = _cash_account_transaction_payload(transaction)
+        event["account_name"] = account.name
+        event["account_is_archived"] = bool(account.is_archived)
+        events.append(event)
+    return events
+
+
+# ── Goal Funding Allocations (Phase 6, Milestone 2) ──────────────────────────
+# "This amount from this source is designated toward this goal." Does NOT
+# compute goal progress or a funding percentage. Structural validation only —
+# see models.database.GoalFundingAllocation for why capacity/over-allocation
+# checking against the source's current value is deliberately deferred.
+
+def _goal_funding_allocation_payload(allocation: GoalFundingAllocation, db: Session) -> dict:
+    if allocation.cash_account_id is not None:
+        source_kind = "CASH_ACCOUNT"
+        source = db.query(CashAccount).filter(CashAccount.id == allocation.cash_account_id).first()
+    else:
+        source_kind = "PORTFOLIO"
+        source = db.query(Portfolio).filter(Portfolio.id == allocation.portfolio_id).first()
+    return {
+        "id": allocation.id,
+        "workspace_id": allocation.workspace_id,
+        "wealth_goal_id": allocation.wealth_goal_id,
+        "source_kind": source_kind,
+        "cash_account_id": allocation.cash_account_id,
+        "portfolio_id": allocation.portfolio_id,
+        "source_name": source.name if source is not None else None,
+        # Portfolio has no archive lifecycle, so this is always False for a
+        # PORTFOLIO source — never fabricated as True or omitted.
+        "source_is_archived": bool(source.is_archived) if source_kind == "CASH_ACCOUNT" and source is not None else False,
+        "allocated_amount": allocation.allocated_amount,
+        "currency": allocation.currency,
+        "created_at": allocation.created_at.isoformat(),
+        "updated_at": allocation.updated_at.isoformat(),
+    }
+
+
+def _goal_funding_allocation_source_snapshot(
+    allocation: GoalFundingAllocation, db: Session, workspace_id: int,
+) -> tuple[str, int, str]:
+    """Return immutable history evidence for a live allocation's source.
+
+    History intentionally snapshots source identity rather than retaining a
+    source FK. A missing live source therefore signals corrupted current
+    allocation evidence and blocks its mutation instead of recording a
+    fabricated label.
+    """
+    if allocation.cash_account_id is not None:
+        source_kind = "CASH_ACCOUNT"
+        source_id = allocation.cash_account_id
+        source = (
+            db.query(CashAccount)
+            .filter(CashAccount.id == source_id, CashAccount.workspace_id == workspace_id)
+            .first()
+        )
+    else:
+        source_kind = "PORTFOLIO"
+        source_id = allocation.portfolio_id
+        source = (
+            db.query(Portfolio)
+            .filter(Portfolio.id == source_id, Portfolio.workspace_id == workspace_id)
+            .first()
+        )
+    if source is None or source_id is None:
+        raise HTTPException(status_code=409, detail="Funding allocation source is unavailable")
+    return source_kind, source_id, source.name
+
+
+def _append_goal_funding_allocation_history(
+    db: Session,
+    *,
+    workspace_id: int,
+    wealth_goal_id: int,
+    source_kind: str,
+    source_id: int,
+    source_name: str,
+    action: str,
+    previous_designated_amount: float | None,
+    resulting_designated_amount: float | None,
+    currency: str,
+) -> None:
+    """Stage one immutable designation transition in the current transaction."""
+    db.add(GoalFundingAllocationHistory(
+        workspace_id=workspace_id,
+        wealth_goal_id=wealth_goal_id,
+        source_kind=source_kind,
+        source_id=source_id,
+        source_name=source_name,
+        action=action,
+        previous_designated_amount=previous_designated_amount,
+        resulting_designated_amount=resulting_designated_amount,
+        currency=currency,
+    ))
+
+
+def _commit_goal_funding_allocation_mutation(db: Session) -> None:
+    """Commit a live designation mutation and its staged history atomically."""
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+
+def _goal_funding_allocation_history_payload(event: GoalFundingAllocationHistory) -> dict:
+    return {
+        "id": event.id,
+        "workspace_id": event.workspace_id,
+        "wealth_goal_id": event.wealth_goal_id,
+        "source_kind": event.source_kind,
+        "source_id": event.source_id,
+        "source_name": event.source_name,
+        "action": event.action,
+        "previous_designated_amount": event.previous_designated_amount,
+        "resulting_designated_amount": event.resulting_designated_amount,
+        "currency": event.currency,
+        "recorded_at": event.recorded_at.isoformat(),
+    }
+
+
+def _goal_funding_allocation_or_404(db: Session, goal_id: int, allocation_id: int, workspace_id: int) -> GoalFundingAllocation:
+    allocation = (
+        db.query(GoalFundingAllocation)
+        .filter(
+            GoalFundingAllocation.id == allocation_id,
+            GoalFundingAllocation.wealth_goal_id == goal_id,
+            GoalFundingAllocation.workspace_id == workspace_id,
+        )
+        .first()
+    )
+    if allocation is None:
+        raise HTTPException(status_code=404, detail="Funding allocation not found")
+    return allocation
+
+
+class GoalFundingAllocationCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    cash_account_id: int | None = None
+    portfolio_id: int | None = None
+    allocated_amount: float
+    currency: str = "THB"
+
+    @model_validator(mode="after")
+    def validate_allocation(self):
+        if (self.cash_account_id is None) == (self.portfolio_id is None):
+            raise ValueError("exactly one of cash_account_id or portfolio_id is required")
+        if self.currency != "THB":
+            raise ValueError("currency must be THB")
+        if not math.isfinite(self.allocated_amount) or self.allocated_amount <= 0:
+            raise ValueError("allocated_amount must be finite and positive")
+        return self
+
+
+class GoalFundingAllocationUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    allocated_amount: float
+
+    @model_validator(mode="after")
+    def validate_allocation_update(self):
+        if not math.isfinite(self.allocated_amount) or self.allocated_amount <= 0:
+            raise ValueError("allocated_amount must be finite and positive")
+        return self
+
+
+@app.get("/wealth-goals/{goal_id}/funding-allocations")
+async def list_goal_funding_allocations(goal_id: int, db: Session = Depends(get_db)) -> list[dict]:
+    ws = _ws_id(db)
+    goal = _wealth_goal_or_404(db, goal_id, ws)
+    allocations = (
+        db.query(GoalFundingAllocation)
+        .filter(GoalFundingAllocation.workspace_id == ws, GoalFundingAllocation.wealth_goal_id == goal.id)
+        .order_by(GoalFundingAllocation.id)
+        .all()
+    )
+    return [_goal_funding_allocation_payload(item, db) for item in allocations]
+
+
+@app.get("/wealth-goals/{goal_id}/funding-history")
+async def list_goal_funding_allocation_history(goal_id: int, db: Session = Depends(get_db)) -> list[dict]:
+    """Return immutable funding-designation evidence, newest event first."""
+    ws = _ws_id(db)
+    goal = _wealth_goal_or_404(db, goal_id, ws)
+    events = (
+        db.query(GoalFundingAllocationHistory)
+        .filter(
+            GoalFundingAllocationHistory.workspace_id == ws,
+            GoalFundingAllocationHistory.wealth_goal_id == goal.id,
+        )
+        .order_by(GoalFundingAllocationHistory.recorded_at.desc(), GoalFundingAllocationHistory.id.desc())
+        .all()
+    )
+    return [_goal_funding_allocation_history_payload(event) for event in events]
+
+
+@app.post("/wealth-goals/{goal_id}/funding-allocations", status_code=201)
+async def create_goal_funding_allocation(goal_id: int, body: GoalFundingAllocationCreate, db: Session = Depends(get_db)) -> dict:
+    ws = _ws_id(db)
+    goal = _wealth_goal_or_404(db, goal_id, ws)
+    if goal.is_archived:
+        raise HTTPException(status_code=409, detail="Archived wealth goals cannot receive new funding allocations")
+
+    if body.cash_account_id is not None:
+        source = _cash_account_or_404(db, body.cash_account_id, ws)
+        if source.is_archived:
+            raise HTTPException(status_code=409, detail="Archived cash accounts cannot receive new funding allocations")
+        existing = (
+            db.query(GoalFundingAllocation)
+            .filter(GoalFundingAllocation.wealth_goal_id == goal.id, GoalFundingAllocation.cash_account_id == source.id)
+            .first()
+        )
+    else:
+        source = resolve_portfolio_or_404(db, body.portfolio_id, ws)
+        existing = (
+            db.query(GoalFundingAllocation)
+            .filter(GoalFundingAllocation.wealth_goal_id == goal.id, GoalFundingAllocation.portfolio_id == source.id)
+            .first()
+        )
+
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="An allocation for this goal and source already exists; update it instead")
+
+    allocation = GoalFundingAllocation(
+        workspace_id=ws,
+        wealth_goal_id=goal.id,
+        cash_account_id=body.cash_account_id,
+        portfolio_id=body.portfolio_id,
+        allocated_amount=body.allocated_amount,
+        currency=body.currency,
+    )
+    db.add(allocation)
+    source_kind = "CASH_ACCOUNT" if body.cash_account_id is not None else "PORTFOLIO"
+    _append_goal_funding_allocation_history(
+        db,
+        workspace_id=ws,
+        wealth_goal_id=goal.id,
+        source_kind=source_kind,
+        source_id=source.id,
+        source_name=source.name,
+        action="CREATE",
+        previous_designated_amount=None,
+        resulting_designated_amount=body.allocated_amount,
+        currency=body.currency,
+    )
+    _commit_goal_funding_allocation_mutation(db)
+    db.refresh(allocation)
+    return _goal_funding_allocation_payload(allocation, db)
+
+
+@app.patch("/wealth-goals/{goal_id}/funding-allocations/{allocation_id}")
+async def update_goal_funding_allocation(goal_id: int, allocation_id: int, body: GoalFundingAllocationUpdate, db: Session = Depends(get_db)) -> dict:
+    ws = _ws_id(db)
+    goal = _wealth_goal_or_404(db, goal_id, ws)
+    allocation = _goal_funding_allocation_or_404(db, goal.id, allocation_id, ws)
+
+    if goal.is_archived:
+        raise HTTPException(status_code=409, detail="Archived wealth goals cannot receive new funding allocations")
+    if allocation.cash_account_id is not None:
+        source = _cash_account_or_404(db, allocation.cash_account_id, ws)
+        if source.is_archived:
+            raise HTTPException(status_code=409, detail="Archived cash accounts cannot receive new funding allocations")
+
+    previous_amount = allocation.allocated_amount
+    if previous_amount != body.allocated_amount:
+        source_kind, source_id, source_name = _goal_funding_allocation_source_snapshot(allocation, db, ws)
+        allocation.allocated_amount = body.allocated_amount
+        _append_goal_funding_allocation_history(
+            db,
+            workspace_id=ws,
+            wealth_goal_id=goal.id,
+            source_kind=source_kind,
+            source_id=source_id,
+            source_name=source_name,
+            action="UPDATE",
+            previous_designated_amount=previous_amount,
+            resulting_designated_amount=body.allocated_amount,
+            currency=allocation.currency,
+        )
+    _commit_goal_funding_allocation_mutation(db)
+    db.refresh(allocation)
+    return _goal_funding_allocation_payload(allocation, db)
+
+
+@app.delete("/wealth-goals/{goal_id}/funding-allocations/{allocation_id}")
+async def delete_goal_funding_allocation(goal_id: int, allocation_id: int, db: Session = Depends(get_db)) -> dict:
+    ws = _ws_id(db)
+    goal = _wealth_goal_or_404(db, goal_id, ws)
+    allocation = _goal_funding_allocation_or_404(db, goal.id, allocation_id, ws)
+    source_kind, source_id, source_name = _goal_funding_allocation_source_snapshot(allocation, db, ws)
+    _append_goal_funding_allocation_history(
+        db,
+        workspace_id=ws,
+        wealth_goal_id=goal.id,
+        source_kind=source_kind,
+        source_id=source_id,
+        source_name=source_name,
+        action="REMOVE",
+        previous_designated_amount=allocation.allocated_amount,
+        resulting_designated_amount=None,
+        currency=allocation.currency,
+    )
+    db.delete(allocation)
+    _commit_goal_funding_allocation_mutation(db)
+    return {"deleted": allocation_id}
+
+
+# ── Goal Scenarios (Phase 6, Milestone 3 — Named Scenario Foundation) ───────
+# A user-named, persisted set of hypothetical forward What-If assumptions
+# (monthly_contribution, annual_return_pct) for exactly one WealthGoal. NOT a
+# forecast, probability, recommendation, optimizer input, or a saved snapshot
+# of the goal/funding state — every other planning input (target amount,
+# target date, designated funding) is read live from the current goal state
+# whenever a scenario is loaded, never persisted or restored here. No DELETE:
+# archive/restore only, matching WealthGoal/CashAccount/Liability precedent.
+
+def _goal_scenario_payload(scenario: GoalScenario) -> dict:
+    return {
+        "id": scenario.id,
+        "workspace_id": scenario.workspace_id,
+        "wealth_goal_id": scenario.wealth_goal_id,
+        "name": scenario.name,
+        "monthly_contribution": scenario.monthly_contribution,
+        "annual_return_pct": scenario.annual_return_pct,
+        "is_archived": scenario.is_archived,
+        "created_at": scenario.created_at.isoformat(),
+        "updated_at": scenario.updated_at.isoformat(),
+    }
+
+
+def _goal_scenario_or_404(db: Session, goal_id: int, scenario_id: int, workspace_id: int) -> GoalScenario:
+    scenario = (
+        db.query(GoalScenario)
+        .filter(
+            GoalScenario.id == scenario_id,
+            GoalScenario.wealth_goal_id == goal_id,
+            GoalScenario.workspace_id == workspace_id,
+        )
+        .first()
+    )
+    if scenario is None:
+        raise HTTPException(status_code=404, detail="Goal scenario not found")
+    return scenario
+
+
+class GoalScenarioCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    monthly_contribution: float
+    annual_return_pct: float
+
+    @model_validator(mode="after")
+    def validate_goal_scenario(self):
+        if not self.name.strip():
+            raise ValueError("name must not be blank")
+        if not math.isfinite(self.monthly_contribution) or self.monthly_contribution < 0:
+            raise ValueError("monthly_contribution must be finite and non-negative")
+        if not math.isfinite(self.annual_return_pct) or self.annual_return_pct <= -100:
+            raise ValueError("annual_return_pct must be finite and greater than -100")
+        return self
+
+
+class GoalScenarioUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = None
+    monthly_contribution: float | None = None
+    annual_return_pct: float | None = None
+    is_archived: bool | None = None
+
+    @model_validator(mode="after")
+    def validate_goal_scenario_update(self):
+        if not self.model_fields_set:
+            raise ValueError("at least one field is required")
+        if "name" in self.model_fields_set and (self.name is None or not self.name.strip()):
+            raise ValueError("name must not be blank")
+        if "monthly_contribution" in self.model_fields_set:
+            if (
+                self.monthly_contribution is None
+                or not math.isfinite(self.monthly_contribution)
+                or self.monthly_contribution < 0
+            ):
+                raise ValueError("monthly_contribution must be finite and non-negative")
+        if "annual_return_pct" in self.model_fields_set:
+            if (
+                self.annual_return_pct is None
+                or not math.isfinite(self.annual_return_pct)
+                or self.annual_return_pct <= -100
+            ):
+                raise ValueError("annual_return_pct must be finite and greater than -100")
+        if "is_archived" in self.model_fields_set and self.is_archived is None:
+            raise ValueError("is_archived must be supplied when updating it")
+        return self
+
+
+@app.get("/wealth-goals/{goal_id}/scenarios")
+async def list_goal_scenarios(goal_id: int, include_archived: bool = False, db: Session = Depends(get_db)) -> list[dict]:
+    ws = _ws_id(db)
+    goal = _wealth_goal_or_404(db, goal_id, ws)
+    query = db.query(GoalScenario).filter(GoalScenario.workspace_id == ws, GoalScenario.wealth_goal_id == goal.id)
+    if not include_archived:
+        query = query.filter(GoalScenario.is_archived.is_(False))
+    return [_goal_scenario_payload(item) for item in query.order_by(GoalScenario.id).all()]
+
+
+@app.post("/wealth-goals/{goal_id}/scenarios", status_code=201)
+async def create_goal_scenario(goal_id: int, body: GoalScenarioCreate, db: Session = Depends(get_db)) -> dict:
+    ws = _ws_id(db)
+    goal = _wealth_goal_or_404(db, goal_id, ws)
+    if goal.is_archived:
+        raise HTTPException(status_code=409, detail="Archived wealth goals cannot receive new scenarios")
+
+    scenario = GoalScenario(
+        workspace_id=ws,
+        wealth_goal_id=goal.id,
+        name=body.name.strip(),
+        monthly_contribution=body.monthly_contribution,
+        annual_return_pct=body.annual_return_pct,
+    )
+    db.add(scenario)
+    db.commit()
+    db.refresh(scenario)
+    return _goal_scenario_payload(scenario)
+
+
+@app.patch("/wealth-goals/{goal_id}/scenarios/{scenario_id}")
+async def update_goal_scenario(goal_id: int, scenario_id: int, body: GoalScenarioUpdate, db: Session = Depends(get_db)) -> dict:
+    ws = _ws_id(db)
+    goal = _wealth_goal_or_404(db, goal_id, ws)
+    scenario = _goal_scenario_or_404(db, goal.id, scenario_id, ws)
+
+    if goal.is_archived:
+        raise HTTPException(status_code=409, detail="Scenarios cannot be modified while their wealth goal is archived")
+
+    fields = body.model_dump(exclude_unset=True)
+    if scenario.is_archived:
+        # Archived scenarios are readable and loadable but otherwise immutable
+        # — the only permitted mutation is restoring them.
+        mutating_other_fields = bool(set(fields) - {"is_archived"})
+        if mutating_other_fields or fields.get("is_archived") is not False:
+            raise HTTPException(status_code=409, detail="Archived scenarios are read-only; restore before editing")
+
+    if "name" in fields:
+        scenario.name = fields["name"].strip()
+    if "monthly_contribution" in fields:
+        scenario.monthly_contribution = fields["monthly_contribution"]
+    if "annual_return_pct" in fields:
+        scenario.annual_return_pct = fields["annual_return_pct"]
+    if "is_archived" in fields:
+        scenario.is_archived = fields["is_archived"]
+    db.commit()
+    db.refresh(scenario)
+    return _goal_scenario_payload(scenario)
+
+
 # ─── Portfolios ───────────────────────────────────────────────────────────────
 
 class PortfolioCreate(BaseModel):
@@ -661,8 +2774,29 @@ async def delete_portfolio(portfolio_id: int, db: Session = Depends(get_db)) -> 
     p = resolve_portfolio_or_404(db, portfolio_id, ws)
     if db.query(Portfolio).filter(Portfolio.workspace_id == ws).count() <= 1:
         raise HTTPException(status_code=400, detail="Cannot delete the last portfolio")
+    # Portfolio deletion is the one normal source lifecycle that removes live
+    # allocations. Preserve factual designation-removal evidence before its
+    # ORM cascade deletes those current planning rows.
+    allocations = (
+        db.query(GoalFundingAllocation)
+        .filter(GoalFundingAllocation.workspace_id == ws, GoalFundingAllocation.portfolio_id == p.id)
+        .all()
+    )
+    for allocation in allocations:
+        _append_goal_funding_allocation_history(
+            db,
+            workspace_id=ws,
+            wealth_goal_id=allocation.wealth_goal_id,
+            source_kind="PORTFOLIO",
+            source_id=p.id,
+            source_name=p.name,
+            action="REMOVE",
+            previous_designated_amount=allocation.allocated_amount,
+            resulting_designated_amount=None,
+            currency=allocation.currency,
+        )
     db.delete(p)
-    db.commit()
+    _commit_goal_funding_allocation_mutation(db)
     return {"deleted": portfolio_id}
 
 
@@ -1973,6 +4107,15 @@ class OptimizerRequest(BaseModel):
     provider: str | None = None
     model: str | None = None
     force_rebalance: bool = False   # bypass all stabilization filters when True
+    # Phase 7.4 (ADR-008): explicit Wealth Goal selection for context-only
+    # capture on the resulting RecommendationSnapshot. None = no capture
+    # attempted; [] = explicit empty selection; populated = normalized
+    # (deduplicated, ascending-sorted) before use. Never consulted by the
+    # recommendation pipeline itself — see analyze_optimizer.
+    goal_ids: list[int] | None = None
+    # Phase 7.5 (ADR-009): independent explicit activation of at most one
+    # deterministic Goal recommendation constraint.
+    goal_constraint_goal_id: StrictInt | None = Field(default=None, gt=0)
 
 
 @app.post("/analyze/optimizer")
@@ -1984,6 +4127,80 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
     """
     ws = _ws_id(db)
     portfolio = resolve_portfolio_or_404(db, body.portfolio_id, ws)
+
+    # ── Phase 7.4 (ADR-008) — pre-run Wealth Goal selection validation ───────
+    # Cheap existence/workspace-membership check only, before any holdings,
+    # watchlist, provider, or AI work, and before any OptimizerHistory row
+    # exists — mirroring the resolve_portfolio_or_404 fail-fast pattern
+    # immediately above. Inspects no Goal fact beyond id/workspace_id, so it
+    # cannot influence the recommendation. Missing and foreign ids are
+    # indistinguishable by construction; the full factual context is built
+    # only after the recommendation completes (see the decision-memory block
+    # below), never here.
+    selected_goal_ids: list[int] | None = None
+    if body.goal_ids is not None:
+        selected_goal_ids = normalize_selected_goal_ids(body.goal_ids)
+        if selected_goal_ids and not selected_goal_ids_exist(db, ws, selected_goal_ids):
+            raise HTTPException(status_code=404, detail="Wealth goal not found")
+
+    # ── Phase 7.5 (ADR-009) — explicit pre-decision Goal policy admission ────
+    # This path is independent from Phase 7.4 goal_ids and reads only the three
+    # facts authorized for deterministic policy derivation.
+    goal_constraint_evaluation = None
+    goal_constraint_candidate = None
+    goal_constraint_evidence: dict | None = None
+    if body.goal_constraint_goal_id is not None:
+        from services.goal_recommendation_constraints import (
+            GoalRecommendationConstraintIntegrityError,
+            build_goal_constraint_evidence,
+            evaluate_goal_recommendation_constraint,
+            load_goal_constraint_admission,
+        )
+        try:
+            _goal_admission = load_goal_constraint_admission(
+                db, ws, body.goal_constraint_goal_id,
+            )
+        except GoalRecommendationConstraintIntegrityError:
+            raise HTTPException(status_code=409, detail={
+                "code": "GOAL_RECOMMENDATION_CONSTRAINT_DATA_INTEGRITY",
+                "message": "Goal recommendation constraint data is invalid",
+            })
+        if _goal_admission is None:
+            raise HTTPException(status_code=404, detail="Wealth goal not found")
+        if _goal_admission.is_archived:
+            raise HTTPException(status_code=409, detail={
+                "code": "GOAL_CONSTRAINT_GOAL_ARCHIVED",
+                "message": "Archived goal cannot drive recommendation constraints",
+            })
+        if _goal_admission.target_date is None:
+            raise HTTPException(status_code=409, detail={
+                "code": "GOAL_CONSTRAINT_TARGET_DATE_REQUIRED",
+                "message": "Goal target date is required for recommendation constraints",
+            })
+        _goal_as_of_date = datetime.now(timezone.utc).date()
+        if _goal_admission.target_date < _goal_as_of_date:
+            raise HTTPException(status_code=409, detail={
+                "code": "GOAL_CONSTRAINT_TARGET_DATE_PAST",
+                "message": "Past goal target date cannot drive recommendation constraints",
+            })
+        try:
+            goal_constraint_evaluation = evaluate_goal_recommendation_constraint(
+                _goal_admission, _goal_as_of_date,
+            )
+            goal_constraint_candidate = goal_constraint_evaluation.candidate
+            if goal_constraint_candidate is None:
+                goal_constraint_evidence = build_goal_constraint_evidence(
+                    goal_constraint_evaluation,
+                )
+        except Exception as _goal_derivation_exc:
+            _log.exception(
+                "analyze_optimizer: activated Goal constraint derivation failed",
+                exc_info=_goal_derivation_exc,
+            )
+            raise HTTPException(status_code=500, detail={
+                "code": "GOAL_RECOMMENDATION_CONSTRAINT_INTERNAL_ERROR",
+                "message": "Unable to apply goal recommendation constraints",
+            })
 
     holdings = db.query(PortfolioItem).filter(PortfolioItem.portfolio_id == body.portfolio_id).all()
     watchlist_items = db.query(Watchlist).filter(Watchlist.workspace_id == ws).all()
@@ -2003,6 +4220,29 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
     from functools import partial
     from services.run_progress import start_run, mark_stage, finish_run
     start_run(body.portfolio_id)  # stage: PREPARING_DATA
+
+    def _finish_failed_goal_run() -> None:
+        try:
+            finish_run(body.portfolio_id, ok=False)
+        except Exception as _finish_exc:
+            _log.error(
+                "analyze_optimizer: failed to finalize activated Goal run progress: %s",
+                _finish_exc,
+                exc_info=True,
+            )
+
+    def _raise_goal_internal(stage: str, exc: Exception) -> None:
+        _log.error(
+            "analyze_optimizer: activated Goal constraint failed at %s: %s",
+            stage,
+            exc,
+            exc_info=True,
+        )
+        _finish_failed_goal_run()
+        raise HTTPException(status_code=500, detail={
+            "code": "GOAL_RECOMMENDATION_CONSTRAINT_INTERNAL_ERROR",
+            "message": "Unable to apply goal recommendation constraints",
+        }) from exc
 
     all_symbols = [h.symbol for h in holdings] + [w.symbol for w in watchlist_items]
 
@@ -2192,16 +4432,27 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
     effective_env_dict: dict | None = None
     try:
         from services.optimizer.constraint_resolver import (
+            apply_single_position_upper_bound as _apply_single_position_upper_bound,
             resolve_constraints as _resolve_constraints,
             envelope_to_dict as _eff_env_to_dict,
         )
         effective_env = _resolve_constraints(ps, sector_limits, regime_ctx, persona_ctx)
+        if goal_constraint_candidate is not None:
+            effective_env, _goal_composition_outcome = _apply_single_position_upper_bound(
+                effective_env, goal_constraint_candidate,
+            )
+            from services.goal_recommendation_constraints import build_goal_constraint_evidence
+            goal_constraint_evidence = build_goal_constraint_evidence(
+                goal_constraint_evaluation, _goal_composition_outcome,
+            )
         effective_env_dict = _eff_env_to_dict(effective_env)
         _log.info(
             "analyze_optimizer: constraint_resolver ran — %d adjustment(s), emergency=%s",
             len(effective_env.resolver_notes), effective_env.emergency_active,
         )
     except Exception as _cre:
+        if goal_constraint_candidate is not None:
+            _raise_goal_internal("constraint composition", _cre)
         _log.warning("analyze_optimizer: constraint_resolver failed — continuing without: %s", _cre)
 
     # ── Phase 3B.4 — Build unified Policy Envelope ────────────────────────────
@@ -2218,21 +4469,32 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
         )
         policy_ctx = _env_to_dict(_policy_env)
     except Exception as _pe:
+        if goal_constraint_candidate is not None:
+            _raise_goal_internal("PolicyEngine propagation", _pe)
         _log.error(
             "[POLICY_ENGINE] compute_policy failed — falling back to regime-only mode: %s", _pe,
             exc_info=True,
         )
 
-    result = await asyncio.to_thread(
-        run_layered_optimizer, portfolio_data, watchlist_data, portfolio.name,
-        portfolio_count, max_reached, layers, max_stocks, max_sector_pct, sector_limits,
-        portfolio.cash_balance or 0.0,
-        fallback_cfg["provider"], fallback_cfg["model"],
-        persona_ctx, regime_ctx, policy_ctx,
-        effective_env,
-        execution_ctx,
-        on_stage=partial(mark_stage, body.portfolio_id),
-    )
+    try:
+        result = await asyncio.to_thread(
+            run_layered_optimizer, portfolio_data, watchlist_data, portfolio.name,
+            portfolio_count, max_reached, layers, max_stocks, max_sector_pct, sector_limits,
+            portfolio.cash_balance or 0.0,
+            fallback_cfg["provider"], fallback_cfg["model"],
+            persona_ctx, regime_ctx, policy_ctx,
+            effective_env,
+            execution_ctx,
+            on_stage=partial(mark_stage, body.portfolio_id),
+            enforce_effective_policy_in_fallback=goal_constraint_candidate is not None,
+        )
+    except Exception as _optimizer_exc:
+        from agents.optimizer import HardPolicyEnforcementError
+        if isinstance(_optimizer_exc, HardPolicyEnforcementError):
+            _raise_goal_internal("deterministic hard-policy enforcement", _optimizer_exc)
+        if goal_constraint_candidate is not None:
+            _finish_failed_goal_run()
+        raise
 
     # Surface regime in optimizer result for frontend display
     if regime_ctx:
@@ -2254,6 +4516,10 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
     result.setdefault("max_reached", max_reached)
     if execution_ctx:
         result["execution_context"] = execution_ctx
+    if goal_constraint_evidence is not None:
+        # Canonical evidence is attached before stabilization and therefore
+        # serialized into unconditional OptimizerHistory on every success.
+        result["goal_recommendation_constraints"] = goal_constraint_evidence
 
     # ── Phase 4C.6H.5 — Enrich target_allocations with timing data ───────────
     if timing_ctx_map:
@@ -2419,6 +4685,24 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
             (h.get("shares") or 0) * (h.get("current_price") or h.get("avg_cost") or 0)
             for h in portfolio_data
         )
+
+        # ── Phase 7.4 (ADR-008) — post-run Wealth Goal context capture ────
+        # Constructed only now, strictly after the recommendation result
+        # already exists (L1/L2/L3, policy, constraints, scoring, consensus,
+        # and stabilization have all completed above). If selected_goal_ids
+        # is None, no capture was requested and this stays None (persisted
+        # as SQL NULL). If construction fails for a requested selection
+        # (persisted-data integrity issue discovered only at full-context
+        # time), the exception propagates to this block's except-clause
+        # below: no snapshot is written for this run at all, OptimizerHistory
+        # is preserved, and the optimizer response still succeeds — this is
+        # ordinary best-effort snapshot-capture failure, not a client-visible
+        # error, and never a post-commit 404/409.
+        wealth_goal_context = None
+        if selected_goal_ids is not None:
+            from services.decision_goal_context import build_decision_goal_context
+            wealth_goal_context = build_decision_goal_context(db, ws, selected_goal_ids)
+
         _snap_id = write_recommendation_snapshot(
             db,
             workspace_id=ws,
@@ -2428,6 +4712,7 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
             persona=persona,
             total_portfolio_value=total_mv,
             scores_map=enrich_scores_map_for_snapshot(db, scores_map),
+            wealth_goal_context=wealth_goal_context,
         )
         if _snap_id:
             result["recommendation_snapshot_id"] = _snap_id
@@ -3725,6 +6010,43 @@ def _parse_tx_date(raw: str | None) -> datetime | None:
         return None
 
 
+def _conversion_detail(tx: Transaction) -> dict | None:
+    """Structured, display-ready POSITION_CONVERSION detail.
+
+    Parses tx.conversion_payload through the canonical parser (the single
+    authoritative contract in transaction_canonicalizer.py) rather than
+    exposing the raw JSON. Returns None for non-POSITION_CONVERSION rows and
+    for legacy/malformed payloads that fail validation — callers must never
+    treat None as "no cash impact" or otherwise fabricate detail from it.
+    """
+    if tx.transaction_type != "POSITION_CONVERSION":
+        return None
+    result = parse_position_conversion_payload(tx.conversion_payload)
+    if not result.is_valid or result.value is None:
+        return None
+    c = result.value
+    cash_in_lieu = None
+    if c.cash_in_lieu is not None:
+        cash_in_lieu = {
+            "fractional_entitlement_shares": float(c.cash_in_lieu.fractional_entitlement_shares),
+            "net_cash": float(c.cash_in_lieu.net_cash),
+            "realized_pnl": float(c.cash_in_lieu.realized_pnl),
+        }
+    return {
+        "predecessor_symbol": c.predecessor.symbol,
+        "successor_symbol": c.successor.symbol,
+        "conversion_ratio": float(c.conversion_ratio),
+        "shares_surrendered": float(c.predecessor.shares_surrendered),
+        "shares_entitled": float(c.successor.shares_entitled),
+        "shares_received": float(c.successor.shares_received),
+        "legal_effective_date": c.dates.legal_effective_date.isoformat(),
+        "valuation_transition_date": c.dates.valuation_transition_date.isoformat(),
+        "cost_basis_before": float(c.basis.before),
+        "cost_basis_carried": float(c.basis.carried_to_successor),
+        "cash_in_lieu": cash_in_lieu,
+    }
+
+
 def _tx_row(tx: Transaction) -> dict:
     return {
         "id": tx.id,
@@ -3743,6 +6065,7 @@ def _tx_row(tx: Transaction) -> dict:
         "sector": tx.sector,
         "execution_decision_id": tx.execution_decision_id,
         "created_at": tx.created_at.isoformat() + "Z" if tx.created_at else None,
+        "conversion_detail": _conversion_detail(tx),
     }
 
 
@@ -3754,6 +6077,8 @@ async def transaction_buy(
 ) -> dict:
     ws = _ws_id(db)
     p = resolve_portfolio_or_404(db, portfolio_id, ws)
+    if body.execution_decision_id is not None:
+        resolve_execution_decision_or_404(db, body.execution_decision_id, ws, portfolio_id)
 
     symbol = _normalize_transaction_symbol(body.symbol)
 
@@ -3793,6 +6118,8 @@ async def transaction_sell(
 ) -> dict:
     ws = _ws_id(db)
     p = resolve_portfolio_or_404(db, portfolio_id, ws)
+    if body.execution_decision_id is not None:
+        resolve_execution_decision_or_404(db, body.execution_decision_id, ws, portfolio_id)
 
     symbol = _normalize_transaction_symbol(body.symbol)
 
@@ -5320,6 +7647,7 @@ async def list_execution_decisions(
             "original_symbol": r.original_symbol,
             "replacement_symbol": r.replacement_symbol,
             "reason_category": r.reason_category,
+            "is_system_generated": r.is_system_generated,
             "executed_at": r.executed_at.isoformat() + "Z" if r.executed_at else None,
             "created_at": r.created_at.isoformat() + "Z" if r.created_at else None,
         }
@@ -5339,6 +7667,22 @@ async def get_execution_decision(decision_id: int, db: Session = Depends(get_db)
         id=row.recommendation_snapshot_id
     ).first()
 
+    # Phase 7.4 (ADR-008) — same fail-closed decision-context load as
+    # GET /optimizer/snapshots/{id}. NULL means no capture was attempted
+    # (legacy or unscoped run); a malformed/unsupported-version payload
+    # fails closed rather than surfacing a fabricated goal.
+    decision_context = None
+    if snap is not None:
+        from services.decision_goal_context import (
+            DecisionGoalContextIntegrityError,
+            load_persisted_decision_context,
+            integrity_error_detail as decision_context_integrity_error_detail,
+        )
+        try:
+            decision_context = load_persisted_decision_context(snap.wealth_goal_context_json)
+        except DecisionGoalContextIntegrityError:
+            raise HTTPException(status_code=409, detail=decision_context_integrity_error_detail())
+
     return {
         "id": row.id,
         "portfolio_id": row.portfolio_id,
@@ -5348,6 +7692,7 @@ async def get_execution_decision(decision_id: int, db: Session = Depends(get_db)
         "original_symbol": row.original_symbol,
         "replacement_symbol": row.replacement_symbol,
         "reason_category": row.reason_category,
+        "is_system_generated": row.is_system_generated,
         "approved_allocations": _json.loads(row.approved_allocations_json) if row.approved_allocations_json else None,
         "rejected_symbols": _json.loads(row.rejected_symbols_json) if row.rejected_symbols_json else None,
         "executed_at": row.executed_at.isoformat() + "Z" if row.executed_at else None,
@@ -5359,6 +7704,7 @@ async def get_execution_decision(decision_id: int, db: Session = Depends(get_db)
             "regime": _json.loads(snap.regime_snapshot_json) if snap.regime_snapshot_json else None,
             "consensus": _json.loads(snap.consensus_json) if snap.consensus_json else None,
             "projected_allocations": _json.loads(snap.projected_allocations_json) if snap.projected_allocations_json else None,
+            "decision_context": decision_context,
         } if snap else None,
     }
 
@@ -5370,6 +7716,21 @@ async def get_recommendation_snapshot(snapshot_id: int, db: Session = Depends(ge
     snap = db.query(RecommendationSnapshot).filter_by(id=snapshot_id, workspace_id=ws).first()
     if not snap:
         raise HTTPException(status_code=404, detail="Snapshot not found")
+
+    # Phase 7.4 (ADR-008) — isolated, self-contained historical read. Never
+    # flattened alongside policy/consensus/recommendation fields, never
+    # enriched from live WealthGoal/GoalFundingAllocation state. NULL means
+    # no capture was attempted (legacy or unscoped run); a malformed,
+    # unsupported-version, or malformed-shape persisted payload fails closed.
+    from services.decision_goal_context import (
+        DecisionGoalContextIntegrityError,
+        load_persisted_decision_context,
+        integrity_error_detail as decision_context_integrity_error_detail,
+    )
+    try:
+        decision_context = load_persisted_decision_context(snap.wealth_goal_context_json)
+    except DecisionGoalContextIntegrityError:
+        raise HTTPException(status_code=409, detail=decision_context_integrity_error_detail())
 
     return {
         "id": snap.id,
@@ -5388,6 +7749,7 @@ async def get_recommendation_snapshot(snapshot_id: int, db: Session = Depends(ge
         "style_drift": _json.loads(snap.style_drift_json) if snap.style_drift_json else None,
         "projected_allocations": _json.loads(snap.projected_allocations_json) if snap.projected_allocations_json else None,
         "created_at": snap.created_at.isoformat() + "Z" if snap.created_at else None,
+        "decision_context": decision_context,
     }
 
 
@@ -6471,9 +8833,16 @@ async def get_evaluation_report_card(
     reality arrives.
     """
     _ws_id(db)
+    from services.decision_goal_context import (
+        DecisionGoalContextIntegrityError,
+        integrity_error_detail as decision_context_integrity_error_detail,
+    )
     from services.evaluation.recommendation_ledger import get_report_card
 
-    result = await asyncio.to_thread(get_report_card, db, portfolio_id, snapshot_id)
+    try:
+        result = await asyncio.to_thread(get_report_card, db, portfolio_id, snapshot_id)
+    except DecisionGoalContextIntegrityError:
+        raise HTTPException(status_code=409, detail=decision_context_integrity_error_detail())
     if result is None:
         raise HTTPException(status_code=404, detail="Recommendation snapshot not found")
     return result

@@ -7,16 +7,60 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
+import Link from "next/link";
 import { usePortfolio } from "@/lib/PortfolioContext";
 import { getExecutionDetail, isUnresolvedPortfolioError, type ExecutionDetail } from "@/lib/api";
 import BackBreadcrumb from "@/components/BackBreadcrumb";
 import DecisionStatusBadge from "@/components/evaluation/DecisionStatusBadge";
 import AsOfStamp from "@/components/evaluation/AsOfStamp";
 import PortfolioSelectionNotice from "@/components/PortfolioSelectionNotice";
+import { executionCompletionLabel } from "@/components/optimizer/DecisionActionPanel";
+import TransactionEvidenceLinks from "@/components/evaluation/TransactionEvidenceLinks";
+import {
+  isOpportunityCostEligibleDecision,
+  opportunityCostHref,
+} from "@/lib/opportunityCostNavigation";
 
 function pct(n: number | null | undefined, decimals = 1): string {
   if (n == null) return "not measurable";
   return `${n >= 0 ? "+" : ""}${n.toFixed(decimals)}%`;
+}
+
+// Execution Completion Polish (Slice 3): humanize the analyzer's internal
+// per-symbol note — never expose the raw enum-like string. Degrades safely
+// (renders nothing) for a note value not in this known, evidenced set,
+// rather than fabricating a label for it.
+function recordedLabel(note: string | null): string {
+  if (note === null) return "Recorded";
+  if (note === "no_linked_transaction") return "Not recorded";
+  return "";
+}
+
+// Decision → Transaction Linkage Completion (mirrors
+// DecisionActionPanel.tsx's RECORD_EXECUTION_ELIGIBLE, kept as a local,
+// identical set rather than exported/imported — DecisionActionPanel is an
+// optimizer-page component and out of scope for this slice). REJECTED
+// decisions are evaluated via whole-portfolio counterfactual return, never
+// linked-transaction analysis, so they never get a "Record execution" entry
+// point. Every system-generated row in this codebase (verified against
+// every UserExecutionDecision write site) is decision="EXPIRED", so
+// excluding it by decision value alone already implements the
+// is_system_generated exclusion — no separate flag needed here.
+const RECORD_EXECUTION_ELIGIBLE = new Set(["APPROVED", "MANUAL_OVERRIDE", "PARTIAL_EXECUTION"]);
+
+// Historical timestamp semantics (Slice 3 finding, reconfirmed Slice 4 §H):
+// UserExecutionDecision.executed_at is the decision-row creation timestamp,
+// not a trade-fill time — never label it "executed". For EXPIRED rows this
+// is when the daily scheduler wrote the row, not necessarily the exact
+// moment the recommendation went stale.
+function decisionRecordedLabel(iso: string): string {
+  return `decision recorded ${iso.slice(0, 10)}`;
+}
+
+function noExecutionCopy(decision: string): string {
+  if (decision === "REJECTED") return "No execution was recorded for this rejected decision.";
+  if (decision === "EXPIRED") return "No execution was recorded for this expired recommendation.";
+  return "No execution was recorded for this decision.";
 }
 
 export default function ExecutionDetailPage() {
@@ -83,10 +127,20 @@ export default function ExecutionDetailPage() {
             <div className="flex items-center gap-3">
               <h1 className="text-xl font-bold text-gray-900">Decision #{data.decision_id}</h1>
               <DecisionStatusBadge decision={data.decision} />
-              {data.executed_at && <span className="text-xs text-gray-400">executed {data.executed_at.slice(0, 10)}</span>}
+              {data.executed_at && <span className="text-xs text-gray-400">{decisionRecordedLabel(data.executed_at)}</span>}
             </div>
             <AsOfStamp asOf={data.as_of} />
           </div>
+
+          {/* Explanation bridge to the historical Recommendation Report Card
+              (S3) — the deterministic, frozen source of "why" for this
+              decision. Navigation only; no rationale is duplicated here. */}
+          <Link
+            href={`/ai-analytics/recommendations/${data.snapshot_id}`}
+            className="inline-block text-xs font-semibold text-blue-600 hover:underline"
+          >
+            See why this was recommended →
+          </Link>
 
           {data.partial_warning && (
             <div className="p-3 bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg">
@@ -96,21 +150,45 @@ export default function ExecutionDetailPage() {
 
           <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
             {data.analysis.status === "unavailable" ? (
-              <p className="text-sm text-gray-400 italic">
-                Execution analysis unavailable — {data.analysis.reason ?? "no linked transactions"}.
-              </p>
+              <div className="space-y-1.5">
+                <p className="text-sm text-gray-400 italic">
+                  Execution analysis unavailable — {data.analysis.reason ?? "no linked transactions"}.
+                </p>
+                {RECORD_EXECUTION_ELIGIBLE.has(data.decision) ? (
+                  <Link
+                    href={`/portfolio?decision=${data.decision_id}`}
+                    className="text-xs font-semibold text-green-700 hover:underline"
+                  >
+                    Record execution →
+                  </Link>
+                ) : (
+                  <p className="text-xs text-gray-400">{noExecutionCopy(data.decision)}</p>
+                )}
+              </div>
             ) : (
               <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
                 <span className="text-gray-500">
                   Execution score: <strong className="text-gray-800">{data.analysis.score != null ? data.analysis.score.toFixed(0) : "—"}</strong>
                 </span>
                 <span className="text-gray-500">
-                  Completeness: <strong className="text-gray-800">{data.analysis.completeness_pct.toFixed(0)}%</strong>
+                  Completeness: <strong className="text-gray-800">{data.analysis.completeness_pct != null ? `${data.analysis.completeness_pct.toFixed(0)}%` : "—"}</strong>
                 </span>
                 <span className="text-gray-500">
                   Funding fidelity: <strong className="text-gray-800">{data.analysis.funding_fidelity_pct != null ? `${data.analysis.funding_fidelity_pct.toFixed(0)}%` : "n/a"}</strong>
                 </span>
-                {data.analysis.status === "partial" && <span className="text-amber-600 font-semibold">⚠ partial</span>}
+                {executionCompletionLabel(data.analysis) && (
+                  <span
+                    className={`font-semibold ${
+                      data.analysis.is_complete === true
+                        ? "text-green-600"
+                        : data.analysis.is_complete === false
+                          ? "text-amber-600"
+                          : "text-gray-400"
+                    }`}
+                  >
+                    {executionCompletionLabel(data.analysis)}
+                  </span>
+                )}
               </div>
             )}
 
@@ -125,11 +203,12 @@ export default function ExecutionDetailPage() {
                       <th className="py-2 px-3 font-medium text-right">Executed</th>
                       <th className="py-2 px-3 font-medium text-right">Timing Δ</th>
                       <th className="py-2 px-3 font-medium text-right">Size Δ</th>
-                      <th className="py-2 px-3 font-medium">Note</th>
+                      <th className="py-2 px-3 font-medium">Status</th>
+                      <th className="py-2 px-3 font-medium">Recorded as</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {Object.entries(data.analysis.symbols).map(([sym, d]) => (
+                    {Object.entries(data.analysis.symbols ?? {}).map(([sym, d]) => (
                       <tr key={sym} className="border-b last:border-0">
                         <td className="py-2 px-3 font-semibold text-gray-800">{sym.replace(".BK", "")}</td>
                         <td className="py-2 px-3 text-gray-500">{d.action}</td>
@@ -141,12 +220,24 @@ export default function ExecutionDetailPage() {
                         </td>
                         <td className="py-2 px-3 text-right tabular-nums text-gray-600">{pct(d.timing_delta_pct)}</td>
                         <td className="py-2 px-3 text-right tabular-nums text-gray-600">{pct(d.size_delta_pct, 0)}</td>
-                        <td className="py-2 px-3 text-xs text-gray-400 italic">{d.note ?? ""}</td>
+                        <td className="py-2 px-3 text-xs text-gray-400 italic">{recordedLabel(d.note)}</td>
+                        <td className="py-2 px-3 text-xs text-gray-500">
+                          <TransactionEvidenceLinks transactions={d.transactions} emptyFallback="—" />
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
+            )}
+
+            {isOpportunityCostEligibleDecision(data.decision) && (
+              <Link
+                href={opportunityCostHref(data.decision_id)}
+                className="inline-block text-xs font-semibold text-blue-600 hover:underline"
+              >
+                Review opportunity-cost evaluation →
+              </Link>
             )}
           </div>
         </>

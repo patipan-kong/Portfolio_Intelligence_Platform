@@ -552,7 +552,7 @@ def _timing_and_fee_effects(
         plan_symbols = [a.get("symbol") for a in (inputs["target_allocations"] or []) if a.get("symbol")]
         analysis = compute_execution_analysis(
             inputs["target_allocations"], inputs["cash_available"], inputs["violations"],
-            _recommendation_prices(snap), _linked_transactions(db, dec.id, known_symbols=plan_symbols),
+            _recommendation_prices(snap), _linked_transactions(db, dec, known_symbols=plan_symbols),
         )
         for sym_data in (analysis.get("symbols") or {}).values():
             td = sym_data.get("timing_delta_pct")

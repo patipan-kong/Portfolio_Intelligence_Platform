@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { parseCsv, validateRow, validateRows, buildImportPayload, type ImportRowInput } from "./csvImport.ts";
+import { parseCsv, validateRow, validateRows, buildImportPayload, buildExampleCsv, type ImportRowInput } from "./csvImport.ts";
 
 const HEADER = "date,type,symbol,shares,price,amount,notes";
 
@@ -180,4 +180,32 @@ test("validateRows maps validateRow over every row independently", () => {
 test("buildImportPayload throws for an invalid row", () => {
   const result = validateRow(row({ symbol: "" }));
   assert.throws(() => buildImportPayload(result));
+});
+
+test("buildExampleCsv uses the exact header the parser requires", () => {
+  const csv = buildExampleCsv();
+  const firstLine = csv.split("\n")[0];
+  assert.equal(firstLine, HEADER);
+});
+
+test("buildExampleCsv round-trips through parseCsv and every row validates", () => {
+  const parsed = parseCsv(buildExampleCsv());
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+  assert.ok(parsed.rows.length > 0);
+
+  const results = validateRows(parsed.rows);
+  for (const r of results) {
+    assert.equal(r.status, "VALID", `row ${r.rowNumber} (${r.type}) should be valid: ${r.errors.join("; ")}`);
+  }
+});
+
+test("buildExampleCsv includes representative BUY, DEPOSIT, and DIVIDEND rows", () => {
+  const parsed = parseCsv(buildExampleCsv());
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+  const types = new Set(parsed.rows.map((r) => r.type.trim().toUpperCase()));
+  assert.ok(types.has("BUY"));
+  assert.ok(types.has("DEPOSIT"));
+  assert.ok(types.has("DIVIDEND"));
 });

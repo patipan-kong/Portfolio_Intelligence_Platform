@@ -13,7 +13,7 @@
 // backend-authored — never a client-synthesized narrative.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import BackBreadcrumb from "@/components/BackBreadcrumb";
 import { usePortfolio } from "@/lib/PortfolioContext";
 import { getOpportunityCost, isUnresolvedPortfolioError, type OpportunityCostLedger } from "@/lib/api";
@@ -21,6 +21,10 @@ import AsOfStamp from "@/components/evaluation/AsOfStamp";
 import EffectWaterfall from "@/components/evaluation/EffectWaterfall";
 import EvaluationColdStart from "@/components/evaluation/EvaluationColdStart";
 import PortfolioSelectionNotice from "@/components/PortfolioSelectionNotice";
+import {
+  OPPORTUNITY_COST_TARGET_PERIOD_DAYS,
+  parseOpportunityCostDecisionId,
+} from "@/lib/opportunityCostNavigation";
 
 const PERIODS = [
   { label: "30D", days: 30 },
@@ -40,8 +44,12 @@ export default function OpportunityCostPage() {
   const { currentSelection, reportUnresolvedPortfolio } = usePortfolio();
   const portfolioId = currentSelection;
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const targetDecisionId = parseOpportunityCostDecisionId(searchParams.get("decisionId"));
 
-  const [periodDays, setPeriodDays] = useState(90);
+  const [periodDays, setPeriodDays] = useState(
+    targetDecisionId == null ? 90 : OPPORTUNITY_COST_TARGET_PERIOD_DAYS,
+  );
   const [data, setData] = useState<OpportunityCostLedger | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -50,6 +58,12 @@ export default function OpportunityCostPage() {
   // Current Selection has moved to a different portfolio (or cleared to
   // NONE) is discarded instead of repopulating the page.
   const requestIdRef = useRef<number | null>(null);
+  const maturingTargetRef = useRef<HTMLDivElement>(null);
+  const focusedMaturingDecisionRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (targetDecisionId != null) setPeriodDays(OPPORTUNITY_COST_TARGET_PERIOD_DAYS);
+  }, [targetDecisionId]);
 
   const load = useCallback(async () => {
     if (portfolioId == null) return;
@@ -79,6 +93,21 @@ export default function OpportunityCostPage() {
     }
     load();
   }, [portfolioId, load]);
+
+  const targetRow = targetDecisionId == null
+    ? null
+    : data?.rows.find((row) => row.decision_id === targetDecisionId) ?? null;
+
+  useEffect(() => {
+    if (
+      targetRow?.status !== "maturing"
+      || focusedMaturingDecisionRef.current === targetRow.decision_id
+      || !maturingTargetRef.current
+    ) return;
+    focusedMaturingDecisionRef.current = targetRow.decision_id;
+    maturingTargetRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+    maturingTargetRef.current.focus({ preventScroll: true });
+  }, [targetRow]);
 
   if (portfolioId == null) {
     return <PortfolioSelectionNotice label="Opportunity Cost" />;
@@ -117,6 +146,12 @@ export default function OpportunityCostPage() {
         <div className="space-y-3">
           <div className="h-20 animate-pulse bg-gray-100 rounded-xl" />
           <div className="h-56 animate-pulse bg-gray-100 rounded-xl" />
+        </div>
+      )}
+
+      {!loading && data && targetDecisionId != null && targetRow == null && (
+        <div className="p-3 bg-gray-50 border border-gray-200 text-gray-600 text-sm rounded-lg" role="status">
+          This decision is not present in the current {data.period_days}-day opportunity-cost evaluation window.
         </div>
       )}
 
@@ -168,14 +203,26 @@ export default function OpportunityCostPage() {
                     note: r.note,
                     onClick: () => router.push(`/ai-analytics/recommendations/${r.snapshot_id}`),
                   }))}
+                targetRowKey={targetRow?.status === "graded" ? targetRow.decision_id : null}
               />
               {data.rows.some((r) => r.status === "maturing") && (
                 <div className="mt-3 pt-3 border-t space-y-1">
-                  {data.rows.filter((r) => r.status === "maturing").map((r) => (
-                    <p key={r.decision_id} className="text-xs text-gray-400">
-                      ◐ {DIVERGENCE_LABEL[r.divergence_type] ?? r.divergence_type} · Rec #{r.snapshot_id} — {r.note}
-                    </p>
-                  ))}
+                  {data.rows.filter((r) => r.status === "maturing").map((r) => {
+                    const targeted = targetRow?.decision_id === r.decision_id;
+                    return (
+                      <div
+                        key={r.decision_id}
+                        ref={targeted ? maturingTargetRef : undefined}
+                        tabIndex={targeted ? -1 : undefined}
+                        aria-current={targeted ? "true" : undefined}
+                        aria-label={targeted ? "Targeted opportunity-cost evaluation, still maturing" : undefined}
+                        className={`text-xs text-gray-400 rounded ${targeted ? "ring-2 ring-blue-400 ring-offset-2 bg-blue-50 px-1 py-0.5" : ""}`}
+                      >
+                        {targeted && <span className="sr-only">Targeted opportunity-cost evaluation. </span>}
+                        ◐ {DIVERGENCE_LABEL[r.divergence_type] ?? r.divergence_type} · Rec #{r.snapshot_id} — {r.note}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>

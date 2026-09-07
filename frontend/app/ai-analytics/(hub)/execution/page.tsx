@@ -38,6 +38,7 @@ export default function ExecutionLedgerPage() {
   const [data, setData] = useState<ExecutionLedger | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [needsRecording, setNeedsRecording] = useState(false);
 
   // M36.1 WP4B F04 — captured Portfolio Identity; a response arriving after
   // Current Selection has moved to a different portfolio (or cleared to
@@ -77,6 +78,10 @@ export default function ExecutionLedgerPage() {
     return <PortfolioSelectionNotice label="Execution Intelligence" />;
   }
 
+  const visibleRows = needsRecording
+    ? (data?.rows ?? []).filter((row) => row.recording_progress_eligible && row.is_complete === false)
+    : (data?.rows ?? []);
+
   const columns: EvidenceColumn<ExecutionLedgerRow>[] = [
     { key: "date", header: "Date", render: (r) => <span className="text-gray-500">{r.date?.slice(0, 10) ?? "—"}</span> },
     { key: "snapshot", header: "Rec", render: (r) => <span className="font-medium text-gray-700">#{r.snapshot_id}</span> },
@@ -88,6 +93,14 @@ export default function ExecutionLedgerPage() {
     {
       key: "completeness", header: "Completeness", align: "right",
       render: (r) => <span className="tabular-nums text-gray-500">{r.completeness_pct != null ? `${r.completeness_pct.toFixed(0)}%` : "—"}</span>,
+    },
+    {
+      key: "recording", header: "Recording", align: "right",
+      render: (r) => (
+        r.recording_progress_eligible && r.matched_count != null && r.total_planned != null
+          ? <span className="tabular-nums text-gray-500">{r.matched_count} / {r.total_planned} recorded</span>
+          : <span className="text-gray-300">—</span>
+      ),
     },
     {
       key: "funding", header: "Funding", align: "right",
@@ -156,6 +169,9 @@ export default function ExecutionLedgerPage() {
               <span className="text-gray-500">
                 Decisions: <strong className="text-gray-800">{data.summary.total_decisions}</strong>
               </span>
+              <span className="text-gray-500">
+                {data.summary.incomplete_recording_count} {data.summary.incomplete_recording_count === 1 ? "decision has" : "decisions have"} incomplete transaction recording.
+              </span>
               {Object.entries(data.summary.decision_counts).map(([k, v]) => (
                 <span key={k} className="text-gray-400">
                   {k} <strong className="text-gray-600">{v}</strong>
@@ -182,12 +198,27 @@ export default function ExecutionLedgerPage() {
           </div>
 
           <div className="bg-white border border-gray-200 rounded-xl p-4">
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <p className="text-sm text-gray-600">
+                {needsRecording ? "Decisions with incomplete transaction recording" : "All decisions in this window"}
+              </p>
+              <button
+                type="button"
+                aria-pressed={needsRecording}
+                onClick={() => setNeedsRecording((value) => !value)}
+                className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
+                  needsRecording ? "bg-blue-700 text-white" : "bg-blue-50 text-blue-700 hover:bg-blue-100"
+                }`}
+              >
+                {needsRecording ? "Show all decisions" : "Needs recording"}
+              </button>
+            </div>
             <EvidenceLedger
               columns={columns}
-              rows={data.rows}
+              rows={visibleRows}
               rowKey={(r) => r.decision_id}
               onRowClick={(r) => router.push(`/ai-analytics/execution/${r.decision_id}`)}
-              emptyMessage="No decisions in this window."
+              emptyMessage={needsRecording ? "No decisions with incomplete transaction recording in this view." : "No decisions in this window."}
             />
           </div>
         </>

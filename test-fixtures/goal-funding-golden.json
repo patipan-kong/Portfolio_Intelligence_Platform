@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "contract_version": "wealth.goal-context.v1",
+  "goal_funding_cases": [
+    {"id": "empty-allocation-evidence", "target_amount": 500000, "allocations": [], "expected": {"designated_total": 0, "progress_ratio": 0, "progress_percent": 0, "funding_gap": 500000, "fully_designated": false}},
+    {"id": "zero-designation", "target_amount": 500000, "allocations": [{"id": 1, "source_kind": "CASH_ACCOUNT", "source_id": 1, "amount": 0}], "expected": {"designated_total": 0, "progress_ratio": 0, "progress_percent": 0, "funding_gap": 500000, "fully_designated": false}},
+    {"id": "under-designation-one-allocation", "target_amount": 500000, "allocations": [{"id": 1, "source_kind": "CASH_ACCOUNT", "source_id": 1, "amount": 100000}], "expected": {"designated_total": 100000, "progress_ratio": 0.2, "progress_percent": 20, "funding_gap": 400000, "fully_designated": false}},
+    {"id": "under-designation-multiple-allocations", "target_amount": 500000, "allocations": [{"id": 1, "source_kind": "CASH_ACCOUNT", "source_id": 1, "amount": 100000}, {"id": 2, "source_kind": "PORTFOLIO", "source_id": 2, "amount": 150000}], "expected": {"designated_total": 250000, "progress_ratio": 0.5, "progress_percent": 50, "funding_gap": 250000, "fully_designated": false}},
+    {"id": "exact-designation", "target_amount": 500000, "allocations": [{"id": 1, "source_kind": "CASH_ACCOUNT", "source_id": 1, "amount": 500000}], "expected": {"designated_total": 500000, "progress_ratio": 1, "progress_percent": 100, "funding_gap": 0, "fully_designated": true}},
+    {"id": "over-designation-unclamped", "target_amount": 500000, "allocations": [{"id": 1, "source_kind": "CASH_ACCOUNT", "source_id": 1, "amount": 600000}], "expected": {"designated_total": 600000, "progress_ratio": 1.2, "progress_percent": 120, "funding_gap": 0, "fully_designated": true}},
+    {"id": "invalid-target-historical-pure-helper", "target_amount": 0, "allocations": [], "expected": {"designated_total": null, "progress_ratio": null, "progress_percent": null, "funding_gap": null, "fully_designated": null}},
+    {"id": "tagged-non-finite-historical-pure-helper", "target_amount": {"non_finite": "NaN"}, "allocations": [], "expected": {"designated_total": null, "progress_ratio": null, "progress_percent": null, "funding_gap": null, "fully_designated": null}},
+    {"id": "historical-invalid-allocation-nan", "target_amount": 500000, "allocations": [{"id": 1, "source_kind": "CASH_ACCOUNT", "source_id": 1, "amount": {"non_finite": "NaN"}}], "expected": {"designated_total": {"non_finite": "NaN"}, "progress_ratio": {"non_finite": "NaN"}, "progress_percent": {"non_finite": "NaN"}, "funding_gap": {"non_finite": "NaN"}, "fully_designated": false}},
+    {"id": "historical-invalid-allocation-infinity", "target_amount": 500000, "allocations": [{"id": 1, "source_kind": "CASH_ACCOUNT", "source_id": 1, "amount": {"non_finite": "Infinity"}}], "expected": {"designated_total": {"non_finite": "Infinity"}, "progress_ratio": {"non_finite": "Infinity"}, "progress_percent": {"non_finite": "Infinity"}, "funding_gap": 0, "fully_designated": true}},
+    {"id": "historical-invalid-allocation-negative-infinity", "target_amount": 500000, "allocations": [{"id": 1, "source_kind": "CASH_ACCOUNT", "source_id": 1, "amount": {"non_finite": "-Infinity"}}], "expected": {"designated_total": {"non_finite": "-Infinity"}, "progress_ratio": {"non_finite": "-Infinity"}, "progress_percent": {"non_finite": "-Infinity"}, "funding_gap": {"non_finite": "Infinity"}, "fully_designated": false}}
+  ],
+  "source_aggregation_cases": [
+    {"id": "cash-and-portfolio-same-numeric-id", "allocations": [{"id": 2, "goal_id": 1, "source_kind": "PORTFOLIO", "source_id": 1, "amount": 200000}, {"id": 1, "goal_id": 1, "source_kind": "CASH_ACCOUNT", "source_id": 1, "amount": 100000}], "expected": [{"source_kind": "CASH_ACCOUNT", "source_id": 1, "designated_total": 100000}, {"source_kind": "PORTFOLIO", "source_id": 1, "designated_total": 200000}]},
+    {"id": "one-source-across-multiple-goals", "allocations": [{"id": 1, "goal_id": 1, "source_kind": "CASH_ACCOUNT", "source_id": 5, "amount": 600000}, {"id": 2, "goal_id": 2, "source_kind": "CASH_ACCOUNT", "source_id": 5, "amount": 500000}], "expected": [{"source_kind": "CASH_ACCOUNT", "source_id": 5, "designated_total": 1100000}]},
+    {"id": "repeated-source-references-and-archived-metadata", "metadata": {"source_kind": "CASH_ACCOUNT", "source_id": 7, "source_name": "Archived savings", "source_is_archived": true}, "allocations": [{"id": 1, "goal_id": 1, "source_kind": "CASH_ACCOUNT", "source_id": 7, "amount": 10000}, {"id": 2, "goal_id": 2, "source_kind": "CASH_ACCOUNT", "source_id": 7, "amount": 5000}], "expected": [{"source_kind": "CASH_ACCOUNT", "source_id": 7, "designated_total": 15000}]},
+    {"id": "deterministic-permuted-input-order", "allocations": [{"id": 3, "goal_id": 2, "source_kind": "PORTFOLIO", "source_id": 4, "amount": 300}, {"id": 1, "goal_id": 1, "source_kind": "CASH_ACCOUNT", "source_id": 3, "amount": 100}, {"id": 2, "goal_id": 2, "source_kind": "CASH_ACCOUNT", "source_id": 3, "amount": 200}], "expected": [{"source_kind": "CASH_ACCOUNT", "source_id": 3, "designated_total": 300}, {"source_kind": "PORTFOLIO", "source_id": 4, "designated_total": 300}]}
+  ],
+  "integrity_cases": [
+    {"id": "invalid-persisted-target", "field": "target_amount", "value": {"non_finite": "Infinity"}},
+    {"id": "invalid-allocation-amount", "field": "allocated_amount", "value": {"non_finite": "-Infinity"}},
+    {"id": "malformed-source-shape", "cash_account_id": 1, "portfolio_id": 1},
+    {"id": "duplicate-same-goal-source-corruption"},
+    {"id": "workspace-source-mismatch"}
+  ]
+}

@@ -617,6 +617,22 @@ It excludes Goal Target, Decision Policy, and accounting truth.
 Governed by `M34-D-0002` and `M34-D-0007`.
 
 
+## Portfolio Investment Mandate
+
+A future user-facing conceptual description of why and how one Portfolio is
+managed. It is a composition of references, not a broad authority object:
+Portfolio Strategy Metadata remains owned by Portfolio Intelligence,
+enforceable Decision Policy remains owned by Decision Intelligence, and any
+life-goal facts remain owned by Wealth Intelligence.
+
+It is not an alias or wholesale rename for the Legacy Portfolio Goal Profile.
+No persisted mandate object, advisory Portfolio-to-Wealth-Goal association,
+association cardinality, or runtime behavior is authorized by this term.
+
+Governed by
+[ADR-007](decisions/ADR-007_WEALTH_GOAL_AUTHORITY_AND_LEGACY_PORTFOLIO_GOAL_PROFILE_BOUNDARY.md).
+
+
 ## Investment Universe
 
 The inert, portfolio-scoped declaration of the intended scope of holdings for
@@ -675,6 +691,39 @@ Governed by the
 [M42-WP1 Portfolio Canonical Vocabulary and Ownership Register](implementation/M42_WP1_PORTFOLIO_CANONICAL_VOCABULARY_AND_OWNERSHIP_REGISTER.md).
 
 
+## Wealth Goal
+
+The canonical workspace-level durable life or financial objective, such as
+retirement, FIRE, a house, a wedding, or education. It is the sole canonical
+owner-object for its goal type, target amount, optional target date, priority,
+and lifecycle.
+
+Owned by Wealth Intelligence. It is not Portfolio Strategy Metadata, Decision
+Policy, an optimizer objective, or a claim that any Portfolio is managed for
+the goal. It may be funded by factual Goal Funding Allocations.
+
+Governed by
+[ADR-007](decisions/ADR-007_WEALTH_GOAL_AUTHORITY_AND_LEGACY_PORTFOLIO_GOAL_PROFILE_BOUNDARY.md).
+
+
+## Legacy Portfolio Goal Profile
+
+The existing portfolio-scoped compatibility contract comprising
+`goal_type`, `goal_priority`, `goal_target_date`, `goal_target_value`, and
+`risk_personality`. It has mixed historical semantics: the first four fields
+duplicate life-goal concepts, while `risk_personality` remains unresolved.
+
+It is semantically frozen. Existing storage, APIs, validation, presentation,
+and legacy runtime behavior may continue, but the contract has no canonical
+authority for new Wealth Intelligence or Decision Intelligence semantics. It
+is not a Wealth Goal, Portfolio Investment Mandate, Decision Policy, or
+optimizer input. It may disagree with a Wealth Goal without synchronization or
+automatic resolution.
+
+Governed by
+[ADR-007](decisions/ADR-007_WEALTH_GOAL_AUTHORITY_AND_LEGACY_PORTFOLIO_GOAL_PROFILE_BOUNDARY.md).
+
+
 ## Goal Target
 
 The desired investment objective, financial objective, or intended outcome.
@@ -682,6 +731,10 @@ The desired investment objective, financial objective, or intended outcome.
 Owned by Wealth Intelligence.
 
 Strategy and policy may reference it but do not own it.
+
+For a persisted whole-life objective, Wealth Goal is the canonical concrete
+owner-object for these facts. The Legacy Portfolio Goal Profile does not become
+a second Goal Target authority.
 
 Governed by `M34-D-0002` and `M34-D-0007`.
 

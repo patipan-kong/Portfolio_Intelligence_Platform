@@ -83,15 +83,15 @@
       }
     },  
     {
-      "id": "gemini-3.5-flash",
-      "label": "Gemini 3.5 Flash",
+      "id": "gemini-3.8-flash",
+      "label": "Gemini 3.8 Flash",
       "provider": "gemini",
       "memo":"คู่หูจัดการportfolio: Context ใหญ่จุใจ เหมาะทำ Challenger",
       "cost": {
         "token_1m": {
-          "input": 1.5,
-          "output": 9,
-          "caching": 0.15
+          "input": 0.75,
+          "output": 3.75,
+          "caching": 0.0075
         }
       }
     },  

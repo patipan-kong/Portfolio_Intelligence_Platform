@@ -22,7 +22,7 @@ from __future__ import annotations
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from models.database import Portfolio
+from models.database import Portfolio, UserExecutionDecision
 
 
 def resolve_portfolio_reference(db: Session, portfolio_id: int, workspace_id: int) -> Portfolio | None:
@@ -40,3 +40,28 @@ def resolve_portfolio_or_404(db: Session, portfolio_id: int, workspace_id: int) 
     if portfolio is None:
         raise HTTPException(status_code=404, detail="Portfolio not found")
     return portfolio
+
+
+def resolve_execution_decision_reference(
+    db: Session, execution_decision_id: int, workspace_id: int, portfolio_id: int
+) -> UserExecutionDecision | None:
+    """Return the UserExecutionDecision if it exists and belongs to this workspace+portfolio, else None."""
+    return (
+        db.query(UserExecutionDecision)
+        .filter(
+            UserExecutionDecision.id == execution_decision_id,
+            UserExecutionDecision.workspace_id == workspace_id,
+            UserExecutionDecision.portfolio_id == portfolio_id,
+        )
+        .first()
+    )
+
+
+def resolve_execution_decision_or_404(
+    db: Session, execution_decision_id: int, workspace_id: int, portfolio_id: int
+) -> UserExecutionDecision:
+    """Return the UserExecutionDecision, or raise the standard 404 (never reveals cross-tenant existence)."""
+    decision = resolve_execution_decision_reference(db, execution_decision_id, workspace_id, portfolio_id)
+    if decision is None:
+        raise HTTPException(status_code=404, detail="Execution decision not found")
+    return decision

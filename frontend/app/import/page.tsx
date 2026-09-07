@@ -8,6 +8,7 @@ import {
   parseCsv,
   validateRows,
   buildImportPayload,
+  buildExampleCsv,
   type ParsedImportRow,
 } from "@/lib/csvImport";
 import {
@@ -61,6 +62,7 @@ export default function CsvImportPage() {
   const [rows, setRows] = useState<ParsedImportRow[]>([]);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [outcomes, setOutcomes] = useState<ImportOutcome[]>([]);
+  const [isRetrying, setIsRetrying] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Switching portfolios mid-flow could otherwise let a preview/import that
@@ -71,6 +73,7 @@ export default function CsvImportPage() {
     setParseError(null);
     setRows([]);
     setOutcomes([]);
+    setIsRetrying(false);
   }, [portfolioId]);
 
   // Tracks the *current* portfolio selection so an in-flight import (which
@@ -105,7 +108,18 @@ export default function CsvImportPage() {
     setParseError(null);
     setRows([]);
     setOutcomes([]);
+    setIsRetrying(false);
     if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  function downloadExampleCsv() {
+    const blob = new Blob([buildExampleCsv()], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "example-transactions.csv";
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   async function handleImport() {
@@ -115,6 +129,7 @@ export default function CsvImportPage() {
     const importPortfolioId = portfolioId;
     const validRows = rows.filter((r) => r.status === "VALID");
     if (validRows.length === 0) return;
+    setIsRetrying(false);
     setPhase("importing");
     setProgress({ done: 0, total: validRows.length });
 
@@ -127,6 +142,35 @@ export default function CsvImportPage() {
     }
     if (portfolioIdRef.current !== importPortfolioId) return;
     setOutcomes(results);
+    setPhase("summary");
+  }
+
+  async function handleRetryFailed() {
+    if (portfolioId == null) return;
+    // Same capture-once pattern as handleImport: a retry must always land on
+    // the portfolio it was started for, even across a mid-run switch.
+    const importPortfolioId = portfolioId;
+    const failedRows = outcomes.filter((o) => !o.ok).map((o) => o.row);
+    if (failedRows.length === 0) return;
+    setIsRetrying(true);
+    setPhase("importing");
+    setProgress({ done: 0, total: failedRows.length });
+
+    const retried: ImportOutcome[] = [];
+    for (const row of failedRows) {
+      const outcome = await executeRow(importPortfolioId, row);
+      retried.push(outcome);
+      if (portfolioIdRef.current !== importPortfolioId) continue;
+      setProgress((p) => ({ ...p, done: p.done + 1 }));
+    }
+    if (portfolioIdRef.current !== importPortfolioId) return;
+
+    // Merge by row number: retried rows get their new outcome, everything
+    // else (already-successful rows) is left untouched and never resubmitted.
+    setOutcomes((prev) => {
+      const retriedByRow = new Map(retried.map((o) => [o.row.rowNumber, o]));
+      return prev.map((o) => retriedByRow.get(o.row.rowNumber) ?? o);
+    });
     setPhase("summary");
   }
 
@@ -161,6 +205,13 @@ export default function CsvImportPage() {
                 <p className="text-xs text-gray-400">
                   Supported types: BUY, SELL, DIVIDEND, DEPOSIT, WITHDRAW. Dates use YYYY-MM-DD.
                 </p>
+                <button
+                  type="button"
+                  onClick={downloadExampleCsv}
+                  className="text-xs text-blue-700 underline hover:no-underline"
+                >
+                  Download example CSV
+                </button>
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -271,7 +322,7 @@ export default function CsvImportPage() {
           {phase === "importing" && (
             <div className="space-y-3 py-8 text-center">
               <p className="text-sm text-gray-600">
-                Importing {progress.done} of {progress.total}…
+                {isRetrying ? "Retrying" : "Importing"} {progress.done} of {progress.total}…
               </p>
               <div className="max-w-sm mx-auto h-2 bg-gray-100 rounded-full overflow-hidden">
                 <div
@@ -321,12 +372,22 @@ export default function CsvImportPage() {
                 </div>
               )}
 
-              <button
-                onClick={reset}
-                className="text-sm font-semibold text-white bg-blue-700 px-4 py-1.5 rounded-lg hover:opacity-90 transition-opacity"
-              >
-                Import another file
-              </button>
+              <div className="flex gap-2">
+                {failureCount > 0 && (
+                  <button
+                    onClick={handleRetryFailed}
+                    className="text-sm font-semibold text-blue-700 bg-white border border-blue-700 px-4 py-1.5 rounded-lg hover:bg-blue-50 transition-colors"
+                  >
+                    Retry failed rows
+                  </button>
+                )}
+                <button
+                  onClick={reset}
+                  className="text-sm font-semibold text-white bg-blue-700 px-4 py-1.5 rounded-lg hover:opacity-90 transition-opacity"
+                >
+                  Import another file
+                </button>
+              </div>
             </div>
           )}
         </>

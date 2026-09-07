@@ -52,6 +52,7 @@ const SOURCE_BADGE: Record<ConstraintSource, { label: string; color: string }> =
   USER_PREFERENCE:    { label: "User",      color: "text-gray-600  bg-gray-50   border-gray-200" },
   REGIME_POLICY:      { label: "Regime",    color: "text-blue-700  bg-blue-50   border-blue-200" },
   EMERGENCY_OVERRIDE: { label: "Emergency", color: "text-red-700   bg-red-50    border-red-200" },
+  WEALTH_GOAL_POLICY: { label: "Goal",      color: "text-emerald-700 bg-emerald-50 border-emerald-200" },
   SYSTEM_SAFETY:      { label: "System",    color: "text-purple-700 bg-purple-50 border-purple-200" },
 };
 

@@ -8,8 +8,8 @@ import { usePortfolio } from "@/lib/PortfolioContext";
 import {
   runOptimizer, listOptimizerHistory, getOptimizerHistory,
   listStrategyProfiles, getPortfolioPersona, updatePortfolioPersona,
-  recordDecisionBySnapshot, listExecutionDecisions,
-  getDecisionMemoryTimeline, getShadowPerformanceSummary, getOperationsStatus,
+  listWealthGoals,
+  getDecisionMemoryTimeline, getOperationsStatus,
   isUnresolvedPortfolioError,
 } from "@/lib/api";
 import SignalBadge from "@/components/SignalBadge";
@@ -19,6 +19,8 @@ import ActivePolicyEnvelopeCard from "@/components/ActivePolicyEnvelopeCard";
 import AttributionPanel from "@/components/AttributionPanel";
 import OperationsTimeline from "@/components/operations-center/quant/OperationsTimeline";
 import ExecutionPlanCard from "@/components/optimizer/ExecutionPlanCard";
+import GoalConstraintDisclosure from "@/components/optimizer/GoalConstraintDisclosure";
+import { DecisionActionPanel, TZ, DECISION_CFG, DECISION_BADGE } from "@/components/optimizer/DecisionActionPanel";
 import { isDeferred, NO_ACTION_REASON_LABELS } from "@/lib/executionPlan";
 import PersonaMatchCard from "@/components/PersonaMatchCard";
 import WorkspaceScopeSwitcher from "@/components/WorkspaceScopeSwitcher";
@@ -29,13 +31,12 @@ import type {
   WatchlistRanking, Layer2Result, Layer3Result, OptimizerConsensus, RiskFlag, SectorWarning,
   BlockedOpportunity, SwapSuggestion, ConsensusType,
   StrategyPersona, StrategyProfile, PortfolioDNA, MarketRegime,
-  ActivePolicy, ExecutionDecision, ExecutionDecisionType, OverrideCategoryType,
-  DecisionMemoryEntry, ShadowPerformanceSummary, ExecutionRisk, OperationsCenterStatus,
-  StabilizationMeta, OptimizerStatus,
+  ActivePolicy,
+  DecisionMemoryEntry, ExecutionRisk, OperationsCenterStatus,
+  StabilizationMeta, OptimizerStatus, WealthGoal,
 } from "@/lib/api";
 import { marketDataFreshnessTh, optimizerLastAnalysisBadgeTh } from "@/components/operations-center/freshness";
 
-const TZ = "Asia/Bangkok";
 const SELECTED_HISTORY_MAP_KEY = "optimizer_selected_history_map";
 
 function readSelectedHistoryMap(): Record<string, number> {
@@ -1467,333 +1468,6 @@ function PortfolioMetricsBar({ result }: { result: OptimizerResult }) {
   );
 }
 
-// ─── Decision Action Panel ────────────────────────────────────────────────────
-
-const DECISION_CFG: Record<ExecutionDecisionType, { label: string; cls: string; icon: string }> = {
-  APPROVED:         { label: "Approve Recommendation", icon: "✓", cls: "bg-green-600 text-white hover:bg-green-700" },
-  REJECTED:         { label: "Reject Recommendation", icon: "✗", cls: "border border-red-300 text-red-700 hover:bg-red-50" },
-  MANUAL_OVERRIDE:  { label: "Manual Override",  icon: "✎", cls: "border border-gray-300 text-gray-600 hover:bg-gray-50" },
-  PARTIAL_EXECUTION:{ label: "Partial",          icon: "½", cls: "border border-amber-300 text-amber-700 hover:bg-amber-50" },
-};
-
-const DECISION_BADGE: Record<ExecutionDecisionType, string> = {
-  APPROVED:          "bg-green-100 text-green-800 border-green-200",
-  REJECTED:          "bg-red-100 text-red-800 border-red-200",
-  MANUAL_OVERRIDE:   "bg-gray-100 text-gray-700 border-gray-200",
-  PARTIAL_EXECUTION: "bg-amber-100 text-amber-800 border-amber-200",
-};
-
-function ShadowReturnChip({ label, value }: { label: string; value: number | null }) {
-  if (value === null) return null;
-  const positive = value >= 0;
-  return (
-    <div className="text-xs">
-      <span className="text-gray-400">{label}: </span>
-      <span className={`font-semibold ${positive ? "text-green-600" : "text-red-600"}`}>
-        {positive ? "+" : ""}{value.toFixed(2)}%
-      </span>
-    </div>
-  );
-}
-
-function DecisionActionPanel({
-  snapshotId,
-  portfolioId,
-}: {
-  snapshotId: number;
-  portfolioId: number;
-}) {
-  const [existing, setExisting] = useState<ExecutionDecision | null | undefined>(undefined);
-  const [confirming, setConfirming] = useState<ExecutionDecisionType | null>(null);
-  const [notes, setNotes] = useState("");
-  const [overrideType, setOverrideType] = useState<OverrideCategoryType | "">("");
-  const [originalSymbol, setOriginalSymbol] = useState("");
-  const [replacementSymbol, setReplacementSymbol] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [shadowPerf, setShadowPerf] = useState<ShadowPerformanceSummary | null>(null);
-
-  useEffect(() => {
-    listExecutionDecisions(portfolioId, undefined, 50)
-      .then((ds) => {
-        const match = ds.find((d) => d.recommendation_snapshot_id === snapshotId);
-        setExisting(match ?? null);
-      })
-      .catch(() => setExisting(null));
-  }, [snapshotId, portfolioId]);
-
-  // Fetch shadow performance once we know an APPROVED decision exists
-  useEffect(() => {
-    if (existing?.decision === "APPROVED") {
-      getShadowPerformanceSummary(portfolioId)
-        .then(setShadowPerf)
-        .catch(() => setShadowPerf(null));
-    }
-  }, [existing, portfolioId]);
-
-  if (existing === undefined) return null; // still loading
-
-  const handleConfirm = async () => {
-    if (!confirming) return;
-    setSubmitting(true);
-    setError(null);
-    try {
-      await recordDecisionBySnapshot(snapshotId, {
-        portfolio_id: portfolioId,
-        recommendation_snapshot_id: snapshotId,
-        decision: confirming,
-        override_notes: notes.trim() || undefined,
-        create_static_shadow: confirming !== "APPROVED",
-        override_type: (confirming === "MANUAL_OVERRIDE" && overrideType) ? overrideType : undefined,
-        original_symbol: (confirming === "MANUAL_OVERRIDE" && originalSymbol.trim()) ? originalSymbol.trim() : undefined,
-        replacement_symbol: (confirming === "MANUAL_OVERRIDE" && replacementSymbol.trim()) ? replacementSymbol.trim() : undefined,
-      });
-      const ds = await listExecutionDecisions(portfolioId, undefined, 50);
-      const match = ds.find((d) => d.recommendation_snapshot_id === snapshotId);
-      setExisting(match ?? null);
-      window.dispatchEvent(new CustomEvent("execution-decision-recorded", {
-        detail: { portfolioId, snapshotId, decision: confirming },
-      }));
-      setConfirming(null);
-      setNotes("");
-      setOverrideType("");
-      setOriginalSymbol("");
-      setReplacementSymbol("");
-    } catch {
-      setError("Failed to record decision. Please try again.");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  if (existing) {
-    const cfg = DECISION_CFG[existing.decision] ?? DECISION_CFG.MANUAL_OVERRIDE;
-    const badgeCls = DECISION_BADGE[existing.decision] ?? DECISION_BADGE.MANUAL_OVERRIDE;
-    const staticShadow = shadowPerf?.summary?.static_frozen ?? null;
-    const activeShadow = shadowPerf?.summary?.active_model ?? null;
-    const trackingActive = shadowPerf?.has_shadows && shadowPerf.shadows.length > 0;
-
-    return (
-      <section className="bg-white border rounded-xl p-4 shadow-sm">
-        <div className="flex items-center gap-3 flex-wrap">
-          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Decision Recorded</span>
-          <span className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${badgeCls}`}>
-            {cfg.icon} {cfg.label}
-          </span>
-          {existing.override_type && (
-            <span className="text-xs px-2 py-0.5 rounded-full border border-gray-200 bg-gray-50 text-gray-600 font-medium">
-              {existing.override_type.replace(/_/g, " ")}
-            </span>
-          )}
-          {existing.original_symbol && (
-            <span className="text-xs text-gray-500 font-mono">
-              {existing.original_symbol}
-              {existing.replacement_symbol && ` → ${existing.replacement_symbol}`}
-            </span>
-          )}
-          {existing.override_notes && (
-            <span className="text-xs text-gray-500 italic">"{existing.override_notes}"</span>
-          )}
-          <span className="text-xs text-gray-400 ml-auto">
-            {new Date(existing.executed_at).toLocaleString("en-GB", { dateStyle: "short", timeStyle: "short", timeZone: TZ })}
-          </span>
-        </div>
-
-        {/* Shadow tracking status */}
-        {existing.decision === "APPROVED" && (
-          <div className="mt-2.5 pt-2.5 border-t border-gray-100">
-            {trackingActive ? (
-              <div className="space-y-1.5">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="inline-flex items-center gap-1 text-xs font-medium text-teal-700 bg-teal-50 border border-teal-200 px-2 py-0.5 rounded-full">
-                    <span className="w-1.5 h-1.5 rounded-full bg-teal-500 animate-pulse" />
-                    Shadow Tracking Active
-                  </span>
-                  {shadowPerf?.summary?.tracking_since && (
-                    <span className="text-xs text-gray-400">
-                      since {shadowPerf.summary.tracking_since}
-                    </span>
-                  )}
-                </div>
-                {(staticShadow?.inception_return_pct !== undefined || activeShadow?.inception_return_pct !== undefined) && (
-                  <div className="flex gap-4 flex-wrap">
-                    <ShadowReturnChip label="Frozen" value={staticShadow?.inception_return_pct ?? null} />
-                    <ShadowReturnChip label="AI Model" value={activeShadow?.inception_return_pct ?? null} />
-                    {(staticShadow?.latest_alpha !== undefined || activeShadow?.latest_alpha !== undefined) && (
-                      <div className="text-xs text-gray-400">
-                        α {(activeShadow?.latest_alpha ?? staticShadow?.latest_alpha ?? 0) >= 0 ? "+" : ""}
-                        {((activeShadow?.latest_alpha ?? staticShadow?.latest_alpha) ?? 0).toFixed(2)}% vs benchmark
-                      </div>
-                    )}
-                  </div>
-                )}
-                {!staticShadow?.inception_return_pct && !activeShadow?.inception_return_pct && (
-                  <p className="text-xs text-gray-400">Performance data available after first daily valuation (17:45 ICT).</p>
-                )}
-              </div>
-            ) : (
-              <p className="text-xs text-gray-400">
-                Shadow portfolios are being initialized — data will appear after the next daily valuation.
-              </p>
-            )}
-          </div>
-        )}
-        {existing.decision !== "APPROVED" && (
-          <p className="text-xs text-gray-400 mt-1.5">
-            Performance impact tracked. See Attribution panel below.
-          </p>
-        )}
-
-        {/* AI Evaluation M7 entry point (UX §2.3): "Track this decision" ->
-            the graded execution detail (S4b) for this exact decision. */}
-        <div className="mt-2.5 pt-2.5 border-t border-gray-100">
-          <Link
-            href={`/ai-analytics/execution/${existing.id}`}
-            className="text-xs font-semibold text-blue-600 hover:underline"
-          >
-            Track this decision in AI Evaluation →
-          </Link>
-        </div>
-      </section>
-    );
-  }
-
-  return (
-    <section className="bg-white border rounded-xl p-4 shadow-sm">
-      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
-        Record Execution Decision
-      </p>
-
-      {confirming ? (
-        <div className="space-y-3">
-          <p className="text-sm text-gray-700">
-            You are recording{" "}
-            <span className={`font-semibold ${confirming === "APPROVED" ? "text-green-700" : confirming === "REJECTED" ? "text-red-700" : "text-gray-700"}`}>
-              {DECISION_CFG[confirming]?.label}
-            </span>{" "}
-            for this optimizer recommendation.
-            {confirming === "APPROVED" && (
-              <span className="text-gray-500"> Two shadow portfolios will be created automatically to track performance over time.</span>
-            )}
-          </p>
-
-          {confirming === "MANUAL_OVERRIDE" && (
-            <div className="space-y-3 border border-gray-200 rounded-lg p-3 bg-gray-50">
-              {/* Override Type */}
-              <div>
-                <p className="text-xs font-semibold text-gray-600 mb-1.5">Override Type</p>
-                <div className="flex flex-wrap gap-2">
-                  {([
-                    { value: "REJECT_SWAP",        label: "Reject Swap" },
-                    { value: "REPLACE_SYMBOL",     label: "Replace Symbol" },
-                    { value: "INCREASE_CONVICTION",label: "Increase Conviction" },
-                    { value: "REDUCE_CONVICTION",  label: "Reduce Conviction" },
-                    { value: "HOLD_POSITION",      label: "Hold Position" },
-                    { value: "CUSTOM",             label: "Custom" },
-                  ] as { value: OverrideCategoryType; label: string }[]).map(({ value, label }) => (
-                    <button
-                      key={value}
-                      type="button"
-                      onClick={() => setOverrideType(v => v === value ? "" : value)}
-                      className={`px-2.5 py-1 text-xs rounded-full border transition-colors ${
-                        overrideType === value
-                          ? "bg-gray-800 text-white border-gray-800"
-                          : "border-gray-300 text-gray-600 hover:bg-gray-100"
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Symbol fields */}
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide block mb-1">
-                    Symbol Affected
-                  </label>
-                  <input
-                    type="text"
-                    value={originalSymbol}
-                    onChange={(e) => setOriginalSymbol(e.target.value.toUpperCase())}
-                    placeholder="e.g. KBANK"
-                    className="w-full border border-gray-200 rounded-md px-2.5 py-1.5 text-xs font-mono bg-white focus:outline-none focus:ring-1 focus:ring-gray-400"
-                  />
-                </div>
-                <div>
-                  <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide block mb-1">
-                    Replacement Symbol
-                  </label>
-                  <input
-                    type="text"
-                    value={replacementSymbol}
-                    onChange={(e) => setReplacementSymbol(e.target.value.toUpperCase())}
-                    placeholder="e.g. TOA (optional)"
-                    className="w-full border border-gray-200 rounded-md px-2.5 py-1.5 text-xs font-mono bg-white focus:outline-none focus:ring-1 focus:ring-gray-400"
-                  />
-                </div>
-              </div>
-            </div>
-          )}
-
-          {(confirming === "MANUAL_OVERRIDE" || confirming === "APPROVED" || confirming === "PARTIAL_EXECUTION") && (
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder={confirming === "MANUAL_OVERRIDE" ? "Reason (required) — e.g. Higher conviction in TOA vs GUNKUL" : "Notes (optional) — e.g. partial fill, adjusted sizing…"}
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-blue-400"
-              rows={2}
-            />
-          )}
-
-          {error && <p className="text-xs text-red-500">{error}</p>}
-
-          <div className="flex gap-2">
-            <button
-              onClick={handleConfirm}
-              disabled={submitting}
-              className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
-                confirming === "APPROVED"
-                  ? "bg-green-600 text-white hover:bg-green-700"
-                  : confirming === "REJECTED"
-                  ? "bg-red-600 text-white hover:bg-red-700"
-                  : "bg-blue-600 text-white hover:bg-blue-700"
-              } disabled:opacity-50`}
-            >
-              {submitting ? "Saving…" : "Confirm"}
-            </button>
-            <button
-              onClick={() => { setConfirming(null); setNotes(""); setOverrideType(""); setOriginalSymbol(""); setReplacementSymbol(""); setError(null); }}
-              className="px-4 py-2 text-sm border rounded-lg text-gray-600 hover:bg-gray-50 transition-colors"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div className="flex gap-2 flex-wrap items-center">
-          {(["APPROVED", "REJECTED", "MANUAL_OVERRIDE"] as ExecutionDecisionType[]).map((d) => {
-            const cfg = DECISION_CFG[d];
-            return (
-              <button
-                key={d}
-                onClick={() => setConfirming(d)}
-                className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${cfg.cls}`}
-              >
-                {cfg.icon} {cfg.label}
-              </button>
-            );
-          })}
-          <p className="text-xs text-gray-400 ml-1">
-            Recording a decision activates shadow portfolio tracking.
-          </p>
-        </div>
-      )}
-    </section>
-  );
-}
-
 // ─── Decision Memory Timeline ─────────────────────────────────────────────────
 
 function DecisionMemoryTimeline({ portfolioId }: { portfolioId: number }) {
@@ -2191,7 +1865,7 @@ function sectorImpactSummary(warnings: SectorWarning[]): string {
 
 // ─── Result Panel ─────────────────────────────────────────────────────────────
 
-function ResultPanel({ result, loading, profiles, portfolioId, onForceRebalance, forceRunning, onSendToWorkspace }: {
+function ResultPanel({ result, loading, profiles, portfolioId, onForceRebalance, forceRunning, onSendToWorkspace, currentGoalName, expectedGoalEvidence }: {
   result: OptimizerResult | null;
   loading: boolean;
   onForceRebalance?: () => void;
@@ -2199,6 +1873,8 @@ function ResultPanel({ result, loading, profiles, portfolioId, onForceRebalance,
   profiles: StrategyProfile[];
   portfolioId: number | null;
   onSendToWorkspace: (symbols: string[]) => void;
+  currentGoalName?: string | null;
+  expectedGoalEvidence?: boolean;
 }) {
   if (loading) {
     return (
@@ -2298,6 +1974,12 @@ function ResultPanel({ result, loading, profiles, portfolioId, onForceRebalance,
           </CollapsibleSection>
         </div>
       )}
+
+      <GoalConstraintDisclosure
+        evidence={result.goal_recommendation_constraints}
+        currentGoalName={currentGoalName}
+        expectedEvidence={expectedGoalEvidence}
+      />
 
       {/* ── Execution ────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -2579,6 +2261,11 @@ export default function OptimizerPage() {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [error, setError] = useState("");
   const [opsStatus, setOpsStatus] = useState<OperationsCenterStatus | null>(null);
+  const [goals, setGoals] = useState<WealthGoal[]>([]);
+  const [goalsLoading, setGoalsLoading] = useState(true);
+  const [goalsError, setGoalsError] = useState("");
+  const [selectedGoalId, setSelectedGoalId] = useState<number | null>(null);
+  const [liveExpectedGoalId, setLiveExpectedGoalId] = useState<number | null>(null);
 
   const [profiles, setProfiles] = useState<StrategyProfile[]>([]);
   const [persona, setPersona] = useState<StrategyPersona>("BALANCED");
@@ -2594,6 +2281,25 @@ export default function OptimizerPage() {
   // were issued for.
   const selectionRef = useRef<number | null>(portfolioId);
   selectionRef.current = portfolioId;
+  const goalsRequestRef = useRef(0);
+
+  const loadGoals = useCallback(async () => {
+    const requestId = ++goalsRequestRef.current;
+    setGoalsLoading(true);
+    setGoalsError("");
+    try {
+      const items = await listWealthGoals(true);
+      if (goalsRequestRef.current !== requestId) return;
+      setGoals(items);
+    } catch {
+      if (goalsRequestRef.current !== requestId) return;
+      setGoals([]);
+      setSelectedGoalId(null);
+      setGoalsError("Goal constraints are unavailable.");
+    } finally {
+      if (goalsRequestRef.current === requestId) setGoalsLoading(false);
+    }
+  }, []);
 
   const loadHistory = useCallback(async (pid: number): Promise<OptimizerHistoryItem[]> => {
     setLoadingHistory(true);
@@ -2639,8 +2345,14 @@ export default function OptimizerPage() {
     listStrategyProfiles().then((d) => setProfiles(d.profiles)).catch(() => {});
   }, []);
 
+  useEffect(() => {
+    void loadGoals();
+  }, [loadGoals]);
+
   // Load portfolio persona when portfolio changes
   useEffect(() => {
+    setSelectedGoalId(null);
+    setLiveExpectedGoalId(null);
     if (portfolioId == null) {
       // M36.1 WP4B F04 — Current Selection is NONE: don't leave a previous
       // portfolio's persona choice visible/authoritative.
@@ -2716,6 +2428,7 @@ export default function OptimizerPage() {
         const detail = await getOptimizerHistory(target.id);
         if (!cancelled) {
           setResult(detail);
+          setLiveExpectedGoalId(null);
           setHistoryDetails((prev) => ({ ...prev, [target.id]: detail }));
           rememberSelectedHistory(portfolioId, target.id);
         }
@@ -2752,6 +2465,7 @@ export default function OptimizerPage() {
   async function handleRun(forceRebalance = false) {
     if (portfolioId == null) return;
     const pid = portfolioId;
+    const runGoalId = selectedGoalId;
     if (forceRebalance) {
       setForceRunning(true);
     } else {
@@ -2759,12 +2473,13 @@ export default function OptimizerPage() {
     }
     setError("");
     try {
-      const data = await runOptimizer(pid, undefined, undefined, forceRebalance || undefined);
+      const data = await runOptimizer(pid, undefined, undefined, forceRebalance || undefined, runGoalId);
       // M36.1 WP4C F04 — discard a run's completion if the user has since
       // switched Current Selection away from the portfolio this run was
       // issued for; never let it repopulate a different portfolio's page.
       if (selectionRef.current !== pid) return;
       setResult(data);
+      setLiveExpectedGoalId(runGoalId);
       setSelectedHistoryId(data.history_id ?? null);
       if (data.history_id != null) {
         setHistoryDetails((prev) => ({ ...prev, [data.history_id as number]: data }));
@@ -2809,6 +2524,7 @@ export default function OptimizerPage() {
       const detail = await getOptimizerHistory(item.id);
       if (selectionRef.current !== pid) return;
       setResult(detail);
+      setLiveExpectedGoalId(null);
       setHistoryDetails((prev) => ({ ...prev, [item.id]: detail }));
     } catch {
       if (selectionRef.current === pid) setError("Failed to load history");
@@ -2825,6 +2541,15 @@ export default function OptimizerPage() {
   const deepLinkedHistoryId = deepLinkedHistoryIdRaw ? Number(deepLinkedHistoryIdRaw) : Number.NaN;
   const hasDeepLinkedHistory = Number.isFinite(deepLinkedHistoryId);
   const isViewingDeepLinkedHistory = hasDeepLinkedHistory && selectedHistoryId === deepLinkedHistoryId;
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const activeGoals = goals.filter((goal) => !goal.is_archived);
+  const eligibleGoals = activeGoals.filter((goal) => goal.target_date != null && goal.target_date >= todayIso);
+  const missingTargetCount = activeGoals.filter((goal) => goal.target_date == null).length;
+  const pastTargetCount = activeGoals.filter((goal) => goal.target_date != null && goal.target_date < todayIso).length;
+  const evidenceGoalId = result?.goal_recommendation_constraints?.activated_goal_id;
+  const currentGoalName = evidenceGoalId == null
+    ? null
+    : goals.find((goal) => goal.id === evidenceGoalId)?.name ?? null;
 
   return (
     <div className="space-y-6">
@@ -2874,6 +2599,40 @@ export default function OptimizerPage() {
           saving={savingPersona}
           onSave={handlePersonaSave}
         />
+
+        <div className="min-w-[260px]">
+          <label htmlFor="goal-constraint" className="block text-xs text-gray-500 mb-1">Goal constraint</label>
+          <select
+            id="goal-constraint"
+            value={selectedGoalId ?? ""}
+            disabled={running || forceRunning || goalsLoading || Boolean(goalsError) || portfolioId == null}
+            onChange={(event) => setSelectedGoalId(event.target.value ? Number(event.target.value) : null)}
+            className="border rounded px-2 py-1.5 text-sm bg-white w-full disabled:opacity-60"
+          >
+            <option value="">{goalsLoading ? "Loading Goals…" : goalsError ? "Goals unavailable" : "None"}</option>
+            {eligibleGoals.map((goal) => (
+              <option key={goal.id} value={goal.id}>{goal.name} — target {goal.target_date}</option>
+            ))}
+          </select>
+          <p className="mt-1 text-[11px] text-gray-500">Optionally use one Goal to tighten recommendation concentration limits.</p>
+          {!goalsLoading && !goalsError && eligibleGoals.length === 0 && (
+            <p className="mt-1 text-[11px] text-gray-500">No eligible Goals are available.</p>
+          )}
+          {!goalsLoading && !goalsError && (missingTargetCount > 0 || pastTargetCount > 0) && (
+            <p className="mt-1 text-[11px] text-amber-700">
+              {[
+                missingTargetCount > 0 ? `${missingTargetCount} missing a target date` : null,
+                pastTargetCount > 0 ? `${pastTargetCount} with a past target date` : null,
+              ].filter(Boolean).join("; ")} — unavailable for optimizer constraints.
+            </p>
+          )}
+          {goalsError && (
+            <div className="mt-1 flex items-center gap-2 text-[11px] text-red-600">
+              <span>{goalsError}</span>
+              <button type="button" onClick={() => void loadGoals()} className="font-semibold underline">Retry</button>
+            </div>
+          )}
+        </div>
 
         {activePortfolio && (
           <div>
@@ -2933,6 +2692,8 @@ export default function OptimizerPage() {
                     onForceRebalance={() => handleRun(true)}
                     forceRunning={forceRunning}
                     onSendToWorkspace={handleSendToWorkspace}
+                    currentGoalName={currentGoalName}
+                    expectedGoalEvidence={liveExpectedGoalId != null}
                   />
                 </div>
               )}

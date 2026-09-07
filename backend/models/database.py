@@ -66,6 +66,18 @@ class Workspace(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     portfolios = relationship("Portfolio", back_populates="workspace", cascade="all, delete-orphan")
+    cash_accounts = relationship("CashAccount", back_populates="workspace", cascade="all, delete-orphan")
+    liabilities = relationship("Liability", back_populates="workspace", cascade="all, delete-orphan")
+    liability_balance_observations = relationship("LiabilityBalanceObservation", back_populates="workspace", cascade="all, delete-orphan")
+    wealth_goals = relationship("WealthGoal", back_populates="workspace", cascade="all, delete-orphan")
+    goal_plan_amendment_history = relationship("GoalPlanAmendmentHistory", back_populates="workspace", cascade="all, delete-orphan")
+    goal_funding_allocations = relationship("GoalFundingAllocation", back_populates="workspace", cascade="all, delete-orphan")
+    goal_funding_allocation_history = relationship("GoalFundingAllocationHistory", back_populates="workspace", cascade="all, delete-orphan")
+    portfolio_investment_mandates = relationship("PortfolioInvestmentMandate", back_populates="workspace", cascade="all, delete-orphan")
+    goal_scenarios = relationship("GoalScenario", back_populates="workspace", cascade="all, delete-orphan")
+    cash_account_transactions = relationship("CashAccountTransaction", back_populates="workspace", cascade="all, delete-orphan")
+    cash_account_transfers = relationship("CashAccountTransfer", back_populates="workspace", cascade="all, delete-orphan")
+    cash_entry_templates = relationship("CashEntryTemplate", back_populates="workspace", cascade="all, delete-orphan")
     watchlist_items = relationship("Watchlist", back_populates="workspace", cascade="all, delete-orphan")
     settings = relationship("Settings", back_populates="workspace", cascade="all, delete-orphan")
     analysis_cache_items = relationship("AnalysisCache", back_populates="workspace", cascade="all, delete-orphan")
@@ -110,6 +122,516 @@ class Portfolio(Base):
     items = relationship("PortfolioItem", back_populates="portfolio", cascade="all, delete-orphan")
     transactions = relationship("Transaction", back_populates="portfolio", cascade="all, delete-orphan")
     snapshots = relationship("PortfolioSnapshot", back_populates="portfolio", cascade="all, delete-orphan")
+    # ORM-level cascade (not just the FK's ondelete=CASCADE) because SQLite —
+    # this app's default DATABASE_URL — does not enforce FK actions without an
+    # explicit PRAGMA this codebase does not set; matches how items/
+    # transactions/snapshots above already cascade at the ORM layer.
+    goal_funding_allocations = relationship("GoalFundingAllocation", cascade="all, delete-orphan")
+    investment_mandates = relationship("PortfolioInvestmentMandate", cascade="all, delete-orphan")
+    # Investment Funding Transfer (ADR-012): deliberately NOT cascade="delete"
+    # — a cash-side funding record is a Cash Account fact and must survive
+    # Portfolio deletion. This relationship exists so the ORM disassociates
+    # (sets counterparty_portfolio_id to NULL) instead of leaving a dangling
+    # reference: SQLite (this app's default DATABASE_URL) does not enforce FK
+    # ondelete actions without a PRAGMA this codebase does not set, so the
+    # column's ondelete="SET NULL" alone would not fire here — same reasoning
+    # as ADR-010 §4's ORM-level cascade for goal_funding_allocations.
+    cash_investment_transfer_references = relationship(
+        "CashAccountTransaction",
+        foreign_keys="CashAccountTransaction.counterparty_portfolio_id",
+        back_populates="counterparty_portfolio",
+    )
+
+
+class CashAccount(Base):
+    """A workspace-owned external cash balance, independent from portfolios."""
+    __tablename__ = "cash_accounts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    institution = Column(String, nullable=True)
+    currency = Column(String(3), nullable=False, default="THB")
+    balance = Column(Float, nullable=False, default=0.0)
+    is_archived = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    workspace = relationship("Workspace", back_populates="cash_accounts")
+    baseline = relationship("CashAccountBaseline", back_populates="cash_account", uselist=False, cascade="all, delete-orphan")
+    transactions = relationship("CashAccountTransaction", back_populates="cash_account", cascade="all, delete-orphan")
+    outgoing_transfers = relationship(
+        "CashAccountTransfer",
+        foreign_keys="CashAccountTransfer.source_cash_account_id",
+        back_populates="source_account",
+    )
+    incoming_transfers = relationship(
+        "CashAccountTransfer",
+        foreign_keys="CashAccountTransfer.destination_cash_account_id",
+        back_populates="destination_account",
+    )
+
+    __table_args__ = (
+        CheckConstraint("currency = 'THB'", name="ck_cash_accounts_currency_thb"),
+        CheckConstraint("balance >= 0", name="ck_cash_accounts_balance_nonnegative"),
+        Index("ix_cash_accounts_workspace_archived", "workspace_id", "is_archived"),
+    )
+
+
+class Liability(Base):
+    """A workspace-owned current observed outstanding liability balance."""
+    __tablename__ = "liabilities"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    liability_type = Column(String(32), nullable=False)
+    lender = Column(String, nullable=True)
+    balance = Column(Float, nullable=False, default=0.0)
+    currency = Column(String(3), nullable=False, default="THB")
+    note = Column(Text, nullable=True)
+    is_archived = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    workspace = relationship("Workspace", back_populates="liabilities")
+    observations = relationship("LiabilityBalanceObservation", back_populates="liability", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        CheckConstraint(
+            "liability_type IN ('MORTGAGE', 'AUTO_LOAN', 'PERSONAL_LOAN', 'CREDIT_CARD', 'STUDENT_LOAN', 'OTHER')",
+            name="ck_liabilities_type",
+        ),
+        CheckConstraint("currency = 'THB'", name="ck_liabilities_currency_thb"),
+        CheckConstraint("balance >= 0", name="ck_liabilities_balance_nonnegative"),
+        Index("ix_liabilities_workspace_archived", "workspace_id", "is_archived"),
+    )
+
+
+class LiabilityBalanceObservation(Base):
+    """A dated, explicitly recorded observed-balance fact for a Liability.
+
+    Effective-state model: an observation's balance is the liability's
+    effective (last-known-true) balance from its observed_on date onward,
+    until a later observation supersedes it — not a payment, ledger event,
+    amortization step, or system-generated snapshot. Never derived from
+    Liability.balance, created_at, or updated_at.
+    """
+    __tablename__ = "liability_balance_observations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    liability_id = Column(Integer, ForeignKey("liabilities.id", ondelete="CASCADE"), nullable=False, index=True)
+    balance = Column(Float, nullable=False)
+    observed_on = Column(String(10), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    workspace = relationship("Workspace", back_populates="liability_balance_observations")
+    liability = relationship("Liability", back_populates="observations")
+
+    __table_args__ = (
+        UniqueConstraint("liability_id", "observed_on", name="uq_liability_balance_observations_liability_date"),
+        CheckConstraint("balance >= 0", name="ck_liability_balance_observations_balance_nonnegative"),
+    )
+
+
+class WealthGoal(Base):
+    """A workspace-owned whole-life financial goal, independent of any Portfolio.
+
+    Phase 6 Milestone 1 — Wealth Goals Foundation. Distinct from
+    Portfolio.goal_* (the Phase 4C.3 Goal Discovery Wizard's portfolio-scoped
+    recommendation-input fields): a WealthGoal requires no Portfolio and is
+    not read by the optimizer or any recommendation logic. This milestone is
+    persistence and management only — no funding linkage, progress
+    calculation, or projection exists yet. Archiving preserves goal identity
+    for future planning work; there is no hard-delete.
+    """
+    __tablename__ = "wealth_goals"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    goal_type = Column(String(32), nullable=False)
+    target_amount = Column(Float, nullable=False)
+    currency = Column(String(3), nullable=False, default="THB")
+    # Nullable: not every whole-life goal has a fixed deadline yet (e.g. an
+    # undated FIRE or house goal) — forcing a date would push users to invent
+    # one, which this codebase's history/evidence handling never does.
+    target_date = Column(String, nullable=True)  # YYYY-MM-DD
+    priority = Column(String(16), nullable=False)
+    note = Column(Text, nullable=True)
+    is_archived = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    workspace = relationship("Workspace", back_populates="wealth_goals")
+    plan_amendment_history = relationship("GoalPlanAmendmentHistory", back_populates="wealth_goal", cascade="all, delete-orphan")
+    funding_allocation_history = relationship("GoalFundingAllocationHistory", back_populates="wealth_goal", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        CheckConstraint(
+            "goal_type IN ('RETIREMENT', 'HOUSE', 'WEDDING', 'EDUCATION', 'VACATION', 'EMERGENCY_FUND', 'FIRE', 'OTHER')",
+            name="ck_wealth_goals_type",
+        ),
+        CheckConstraint("priority IN ('HIGH', 'MEDIUM', 'LOW')", name="ck_wealth_goals_priority"),
+        CheckConstraint("currency = 'THB'", name="ck_wealth_goals_currency_thb"),
+        CheckConstraint("target_amount > 0", name="ck_wealth_goals_target_amount_positive"),
+        Index("ix_wealth_goals_workspace_archived", "workspace_id", "is_archived"),
+    )
+
+
+class GoalPlanAmendmentHistory(Base):
+    """Immutable evidence of a user-authored WealthGoal plan amendment.
+
+    Each row captures the complete before/after snapshot of the three current
+    plan fields (target amount, target date, and priority), even when only one
+    changed.  WealthGoal remains the sole authority for current planning state;
+    this is documentary history, not an as-of reconstruction, a restore
+    mechanism, funding evidence, or an input to planning calculations.
+    """
+    __tablename__ = "goal_plan_amendment_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    wealth_goal_id = Column(Integer, ForeignKey("wealth_goals.id", ondelete="CASCADE"), nullable=False, index=True)
+    previous_target_amount = Column(Float, nullable=False)
+    resulting_target_amount = Column(Float, nullable=False)
+    previous_target_date = Column(String, nullable=True)  # YYYY-MM-DD
+    resulting_target_date = Column(String, nullable=True)  # YYYY-MM-DD
+    previous_priority = Column(String(16), nullable=False)
+    resulting_priority = Column(String(16), nullable=False)
+    recorded_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    workspace = relationship("Workspace", back_populates="goal_plan_amendment_history")
+    wealth_goal = relationship("WealthGoal", back_populates="plan_amendment_history")
+
+    __table_args__ = (
+        CheckConstraint("previous_target_amount > 0", name="ck_goal_plan_amendment_history_previous_amount_positive"),
+        CheckConstraint("resulting_target_amount > 0", name="ck_goal_plan_amendment_history_resulting_amount_positive"),
+        CheckConstraint("previous_priority IN ('HIGH', 'MEDIUM', 'LOW')", name="ck_goal_plan_amendment_history_previous_priority"),
+        CheckConstraint("resulting_priority IN ('HIGH', 'MEDIUM', 'LOW')", name="ck_goal_plan_amendment_history_resulting_priority"),
+        CheckConstraint(
+            "previous_target_amount <> resulting_target_amount "
+            "OR (previous_target_date IS NULL AND resulting_target_date IS NOT NULL) "
+            "OR (previous_target_date IS NOT NULL AND resulting_target_date IS NULL) "
+            "OR previous_target_date <> resulting_target_date "
+            "OR previous_priority <> resulting_priority",
+            name="ck_goal_plan_amendment_history_material_change",
+        ),
+        Index("ix_goal_plan_amendment_history_workspace_goal_recorded", "workspace_id", "wealth_goal_id", "recorded_at"),
+    )
+
+
+class GoalFundingAllocation(Base):
+    """A workspace-owned designation: a fixed amount from one Cash Account or
+    Portfolio toward one WealthGoal.
+
+    Phase 6 Milestone 2 — Goal Funding Allocation Foundation. States only
+    "this amount from this source is designated toward this goal" — it does
+    NOT compute or imply goal progress, a funding percentage, or that the
+    source currently contains enough value forever. Exactly one of
+    cash_account_id / portfolio_id is set (never both, never neither); this
+    is intentionally an explicit FK pair, not a generic Account abstraction
+    or polymorphic source_type/source_id column, matching
+    CashAccountTransfer's existing source/destination FK convention.
+
+    A source MAY fund multiple goals, and a goal MAY have multiple sources —
+    at most one allocation row per (goal, source) pair; updating the amount
+    changes that row rather than creating a duplicate. Foundation validates
+    structural correctness only (workspace match, active goal/source,
+    exactly-one-source, positive finite THB amount, goal x source
+    uniqueness) — it does NOT validate that allocated amounts stay within a
+    source's current value. Cash Account balance is a stored column while
+    Portfolio value is derived live from holdings and prices, so enforcing
+    a capacity check for one source type and not the other would create an
+    inconsistent, misleading guarantee; that comparison is deferred to a
+    future read/composition milestone that can treat both source types the
+    same way. Removal is a hard delete: allocation history is not part of
+    v1, and archiving the referenced goal or source does not delete the
+    allocation — it remains readable, just no longer eligible for new
+    allocations.
+    """
+    __tablename__ = "goal_funding_allocations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    wealth_goal_id = Column(Integer, ForeignKey("wealth_goals.id", ondelete="CASCADE"), nullable=False, index=True)
+    cash_account_id = Column(Integer, ForeignKey("cash_accounts.id", ondelete="RESTRICT"), nullable=True, index=True)
+    # CASCADE (not RESTRICT): unlike CashAccount, Portfolio has no archive
+    # lifecycle — DELETE /portfolios/{id} is a real, reachable hard delete
+    # (main.py delete_portfolio) that already cascades Transactions/Snapshots/
+    # Items. RESTRICT here would turn that into an unhandled IntegrityError
+    # for any portfolio with a funding allocation; CASCADE keeps it consistent
+    # with Portfolio's existing delete behavior and with the "no allocation
+    # history" v1 scope — the allocation is planning metadata, not a ledger
+    # record, so it is honest for it to disappear when its source does.
+    portfolio_id = Column(Integer, ForeignKey("portfolios.id", ondelete="CASCADE"), nullable=True, index=True)
+    allocated_amount = Column(Float, nullable=False)
+    currency = Column(String(3), nullable=False, default="THB")
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    workspace = relationship("Workspace", back_populates="goal_funding_allocations")
+
+    __table_args__ = (
+        CheckConstraint(
+            "(cash_account_id IS NOT NULL AND portfolio_id IS NULL) "
+            "OR (cash_account_id IS NULL AND portfolio_id IS NOT NULL)",
+            name="ck_goal_funding_allocations_exactly_one_source",
+        ),
+        CheckConstraint("allocated_amount > 0", name="ck_goal_funding_allocations_amount_positive"),
+        CheckConstraint("currency = 'THB'", name="ck_goal_funding_allocations_currency_thb"),
+        UniqueConstraint("wealth_goal_id", "cash_account_id", name="uq_goal_funding_allocations_goal_cash"),
+        UniqueConstraint("wealth_goal_id", "portfolio_id", name="uq_goal_funding_allocations_goal_portfolio"),
+        Index("ix_goal_funding_allocations_workspace_goal", "workspace_id", "wealth_goal_id"),
+    )
+
+
+class GoalFundingAllocationHistory(Base):
+    """Immutable evidence of a GoalFundingAllocation designation transition.
+
+    This is not a cash movement, contribution, transfer, transaction, or proof
+    that a source held the designated amount.  The live allocation table remains
+    the sole authority for present funding state.  Source identity and name are
+    scalar snapshots rather than live foreign keys so history survives a
+    Portfolio hard-delete and never changes after a source rename.
+    """
+    __tablename__ = "goal_funding_allocation_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    wealth_goal_id = Column(Integer, ForeignKey("wealth_goals.id", ondelete="CASCADE"), nullable=False, index=True)
+    source_kind = Column(String(16), nullable=False)
+    # Historical scalar: intentionally no FK to CashAccount or Portfolio.
+    source_id = Column(Integer, nullable=False)
+    source_name = Column(String, nullable=False)
+    action = Column(String(16), nullable=False)
+    previous_designated_amount = Column(Float, nullable=True)
+    resulting_designated_amount = Column(Float, nullable=True)
+    currency = Column(String(3), nullable=False, default="THB")
+    recorded_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    workspace = relationship("Workspace", back_populates="goal_funding_allocation_history")
+    wealth_goal = relationship("WealthGoal", back_populates="funding_allocation_history")
+
+    __table_args__ = (
+        CheckConstraint("source_kind IN ('CASH_ACCOUNT', 'PORTFOLIO')", name="ck_goal_funding_allocation_history_source_kind"),
+        CheckConstraint("action IN ('CREATE', 'UPDATE', 'REMOVE')", name="ck_goal_funding_allocation_history_action"),
+        CheckConstraint("currency = 'THB'", name="ck_goal_funding_allocation_history_currency_thb"),
+        CheckConstraint(
+            "(action = 'CREATE' AND previous_designated_amount IS NULL AND resulting_designated_amount > 0) "
+            "OR (action = 'UPDATE' AND previous_designated_amount > 0 AND resulting_designated_amount > 0 "
+            "AND previous_designated_amount <> resulting_designated_amount) "
+            "OR (action = 'REMOVE' AND previous_designated_amount > 0 AND resulting_designated_amount IS NULL)",
+            name="ck_goal_funding_allocation_history_transition",
+        ),
+        Index("ix_goal_funding_allocation_history_workspace_goal_recorded", "workspace_id", "wealth_goal_id", "recorded_at"),
+    )
+
+
+class PortfolioInvestmentMandate(Base):
+    """An explicitly authored fact that a Portfolio is managed for a Goal."""
+    __tablename__ = "portfolio_investment_mandates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    portfolio_id = Column(Integer, ForeignKey("portfolios.id", ondelete="CASCADE"), nullable=False, index=True)
+    wealth_goal_id = Column(Integer, ForeignKey("wealth_goals.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    workspace = relationship("Workspace", back_populates="portfolio_investment_mandates")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "portfolio_id",
+            "wealth_goal_id",
+            name="uq_portfolio_investment_mandates_portfolio_goal",
+        ),
+    )
+
+
+class GoalScenario(Base):
+    """A workspace-owned, user-named set of hypothetical planning assumptions
+    for exactly one WealthGoal.
+
+    Phase 6 Milestone 3 — Named Scenario Foundation. A GoalScenario is NOT a
+    forecast, a probability, a recommendation, an optimizer input, or a saved
+    snapshot of the goal/funding state it was created from — it persists only
+    the two forward What-If assumptions (monthly_contribution,
+    annual_return_pct) plus a name. Every other input to the deterministic
+    planning math (target amount, target date, designated funding) is read
+    live from the current WealthGoal/GoalFundingAllocation state whenever a
+    scenario is loaded — "apply these saved assumptions to this goal now,"
+    never "recreate the goal as it was." Archiving hides a scenario from the
+    default list without erasing it; there is no hard-delete, matching
+    WealthGoal/CashAccount/Liability precedent. Duplicate names or duplicate
+    assumption sets are allowed — a scenario's only uniqueness is its id.
+    """
+    __tablename__ = "goal_scenarios"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    wealth_goal_id = Column(Integer, ForeignKey("wealth_goals.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    monthly_contribution = Column(Float, nullable=False)
+    annual_return_pct = Column(Float, nullable=False)
+    is_archived = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    workspace = relationship("Workspace", back_populates="goal_scenarios")
+
+    __table_args__ = (
+        CheckConstraint("monthly_contribution >= 0", name="ck_goal_scenarios_contribution_nonnegative"),
+        CheckConstraint("annual_return_pct > -100", name="ck_goal_scenarios_return_above_negative_100"),
+        Index("ix_goal_scenarios_workspace_goal_archived", "workspace_id", "wealth_goal_id", "is_archived"),
+    )
+
+
+class CashAccountBaseline(Base):
+    """The explicit observation from which a CashAccount's prospective ledger starts."""
+    __tablename__ = "cash_account_baselines"
+
+    id = Column(Integer, primary_key=True, index=True)
+    cash_account_id = Column(Integer, ForeignKey("cash_accounts.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    effective_on = Column(String(10), nullable=False)
+    observed_balance = Column(Float, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    cash_account = relationship("CashAccount", back_populates="baseline")
+
+    __table_args__ = (
+        CheckConstraint("observed_balance >= 0", name="ck_cash_account_baselines_balance_nonnegative"),
+    )
+
+
+class CashAccountTransfer(Base):
+    """A logical internal movement between two workspace-owned cash accounts."""
+    __tablename__ = "cash_account_transfers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    source_cash_account_id = Column(Integer, ForeignKey("cash_accounts.id", ondelete="RESTRICT"), nullable=False, index=True)
+    destination_cash_account_id = Column(Integer, ForeignKey("cash_accounts.id", ondelete="RESTRICT"), nullable=False, index=True)
+    amount = Column(Float, nullable=False)
+    occurred_on = Column(String(10), nullable=False)
+    note = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    workspace = relationship("Workspace", back_populates="cash_account_transfers")
+    source_account = relationship(
+        "CashAccount",
+        foreign_keys=[source_cash_account_id],
+        back_populates="outgoing_transfers",
+    )
+    destination_account = relationship(
+        "CashAccount",
+        foreign_keys=[destination_cash_account_id],
+        back_populates="incoming_transfers",
+    )
+    legs = relationship("CashAccountTransaction", back_populates="transfer")
+
+    __table_args__ = (
+        CheckConstraint("source_cash_account_id <> destination_cash_account_id", name="ck_cash_account_transfers_distinct_accounts"),
+        CheckConstraint("amount > 0", name="ck_cash_account_transfers_amount_positive"),
+        Index("ix_cash_account_transfers_workspace_occurred", "workspace_id", "occurred_on"),
+    )
+
+
+class CashAccountTransaction(Base):
+    """An immutable prospective cash-flow fact, separate from investment transactions."""
+    __tablename__ = "cash_account_transactions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    cash_account_id = Column(Integer, ForeignKey("cash_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    # String(32): repository convention for enum-like type columns (matches
+    # liability_type/goal_type). Widened from String(16) — the prior width
+    # was too narrow for 'INVESTMENT_TRANSFER' (19 chars); see IFT-001.
+    transaction_type = Column(String(32), nullable=False)
+    amount = Column(Float, nullable=False)
+    occurred_on = Column(String(10), nullable=False)
+    category = Column(String, nullable=True)
+    note = Column(Text, nullable=True)
+    transfer_id = Column(Integer, ForeignKey("cash_account_transfers.id", ondelete="SET NULL"), nullable=True, index=True)
+    # Investment Funding Transfer (ADR-012): user-asserted association only —
+    # never evidence that a matching Portfolio-side transaction exists, was
+    # amount/date-matched, or has been reconciled. Legal only when
+    # transaction_type = 'INVESTMENT_TRANSFER' (ck_..._counterparty_type).
+    counterparty_portfolio_id = Column(Integer, ForeignKey("portfolios.id", ondelete="SET NULL"), nullable=True, index=True)
+    # Creation-time documentary evidence for Investment Funding Transfer only.
+    # These scalar snapshots deliberately have no FK: a Portfolio rename or
+    # hard delete must not rewrite or erase what the user selected when
+    # recording the cash-side movement. They never resolve a Portfolio or
+    # prove a Portfolio-side transaction exists.
+    counterparty_portfolio_id_snapshot = Column(Integer, nullable=True)
+    counterparty_portfolio_name_snapshot = Column(String, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    workspace = relationship("Workspace", back_populates="cash_account_transactions")
+    cash_account = relationship("CashAccount", back_populates="transactions")
+    transfer = relationship("CashAccountTransfer", back_populates="legs")
+    counterparty_portfolio = relationship(
+        "Portfolio", foreign_keys=[counterparty_portfolio_id], back_populates="cash_investment_transfer_references"
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "(transaction_type IN ('INCOME', 'EXPENSE') AND amount > 0) "
+            "OR (transaction_type IN ('ADJUSTMENT', 'TRANSFER', 'INVESTMENT_TRANSFER') AND amount <> 0)",
+            name="ck_cash_account_transactions_type_amount",
+        ),
+        CheckConstraint(
+            "counterparty_portfolio_id IS NULL OR transaction_type = 'INVESTMENT_TRANSFER'",
+            name="ck_cash_account_transactions_counterparty_type",
+        ),
+        CheckConstraint(
+            "(counterparty_portfolio_id_snapshot IS NULL AND counterparty_portfolio_name_snapshot IS NULL) "
+            "OR (counterparty_portfolio_id_snapshot IS NOT NULL AND counterparty_portfolio_name_snapshot IS NOT NULL)",
+            name="ck_cash_account_transactions_counterparty_snapshot_pair",
+        ),
+        CheckConstraint(
+            "(counterparty_portfolio_id_snapshot IS NULL AND counterparty_portfolio_name_snapshot IS NULL) "
+            "OR transaction_type = 'INVESTMENT_TRANSFER'",
+            name="ck_cash_account_transactions_counterparty_snapshot_type",
+        ),
+        CheckConstraint(
+            "transfer_id IS NULL OR transaction_type = 'TRANSFER'",
+            name="ck_cash_account_transactions_transfer_leg_type",
+        ),
+        Index("ix_cash_account_transactions_account_occurred", "cash_account_id", "occurred_on"),
+    )
+
+
+class CashEntryTemplate(Base):
+    """Workspace-owned convenience metadata that prefills the ordinary Cash
+    Flow Add Income / Add Expense form — never a financial fact.
+
+    Creating, editing, deleting, or invoking a template must never write to
+    CashAccountTransaction or change CashAccount.balance; only explicit
+    submission of the existing entry form does that. Deliberately carries no
+    date, schedule, or recurrence field — see docs/architecture/ROADMAP.md.
+    """
+    __tablename__ = "cash_entry_templates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    transaction_type = Column(String(16), nullable=False)
+    cash_account_id = Column(Integer, ForeignKey("cash_accounts.id", ondelete="RESTRICT"), nullable=False, index=True)
+    amount = Column(Float, nullable=False)
+    category = Column(String, nullable=False)
+    note = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    workspace = relationship("Workspace", back_populates="cash_entry_templates")
+    cash_account = relationship("CashAccount")
+
+    __table_args__ = (
+        CheckConstraint("transaction_type IN ('INCOME', 'EXPENSE')", name="ck_cash_entry_templates_type"),
+        CheckConstraint("amount > 0", name="ck_cash_entry_templates_amount_positive"),
+    )
 
 
 class PortfolioItem(Base):
@@ -465,6 +987,13 @@ class RecommendationSnapshot(Base):
     style_drift_json = Column(Text, nullable=True)                 # StyleDrift metrics at snapshot time
     scores_map_json = Column(Text, nullable=True)                  # per-symbol scores used by optimizer
     projected_allocations_json = Column(Text, nullable=True)       # L2 target allocations list
+    # Phase 7.4 — frozen wealth.decision-goal-context.v1 envelope for
+    # explicitly selected Wealth Goals. NULL = no capture attempted (goal_ids
+    # omitted, or capture failed); JSON with context_state=EMPTY = an
+    # explicit empty selection was captured; COMPLETE = a populated selection
+    # was captured. Constructed strictly after the recommendation exists —
+    # see ADR-008 — and never duplicated onto OptimizerHistory.
+    wealth_goal_context_json = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     workspace = relationship("Workspace", back_populates="recommendation_snapshots")

@@ -212,6 +212,25 @@ def test_execution_detail_no_transactions_is_unavailable_not_partial(db, ws_port
     assert detail["partial_warning"] is None
 
 
+def test_manual_override_with_swapped_symbol_degrades_gracefully(db, ws_portfolio):
+    """Decision -> Transaction Linkage Completion (J): MANUAL_OVERRIDE
+    decisions must accept linkage exactly like APPROVED. When the user
+    actually traded a different symbol than the plan (a swap override), the
+    analyzer must not crash or fabricate a match — the planned symbol reads
+    as unmatched (honest), never silently scored as executed."""
+    ws, portfolio = ws_portfolio
+    _snap, dec = _seed_snapshot_and_decision(
+        db, ws, portfolio, "MANUAL_OVERRIDE", _ALLOCS_BUY_ONLY,
+        with_transaction=True, tx_symbol="ADVANC",
+    )
+
+    detail = get_execution_detail(db, portfolio.id, dec.id)
+    assert detail is not None
+    assert detail["decision"] == "MANUAL_OVERRIDE"
+    assert detail["analysis"]["status"] == "partial"
+    assert detail["analysis"]["symbols"]["CENTEL"]["note"] == "no_linked_transaction"
+
+
 def test_execution_detail_partial_execution_has_warning(db, ws_portfolio):
     ws, portfolio = ws_portfolio
     allocations = _ALLOCS_BUY_ONLY + [
@@ -304,6 +323,68 @@ def test_native_asset_id_links_transaction_with_no_bk_relationship(db, ws_portfo
     assert detail["analysis"]["symbols"]["BH"]["note"] is None
 
 
+# ── Linked transaction provenance (Decision Continuity UX Slice 1) ──────────
+# _linked_transactions() already loads the full Transaction row; id/
+# transaction_date must now reach get_execution_detail's per-symbol result
+# without perturbing status/score/completeness/funding-fidelity, which the
+# tests above already pin.
+
+def test_execution_detail_includes_linked_transaction_provenance(db, ws_portfolio):
+    ws, portfolio = ws_portfolio
+    _snap, dec = _seed_snapshot_and_decision(db, ws, portfolio, "APPROVED", _ALLOCS_BUY_ONLY, with_transaction=True)
+
+    from models.database import Transaction
+    tx = db.query(Transaction).filter_by(execution_decision_id=dec.id).one()
+
+    detail = get_execution_detail(db, portfolio.id, dec.id)
+    provenance = detail["analysis"]["symbols"]["CENTEL"]["transactions"]
+    assert provenance == [{"id": tx.id, "transaction_date": tx.transaction_date.isoformat() + "Z"}]
+
+
+def test_execution_detail_multiple_linked_transactions_all_represented(db, ws_portfolio):
+    ws, portfolio = ws_portfolio
+    _snap, dec = _seed_snapshot_and_decision(db, ws, portfolio, "APPROVED", _ALLOCS_BUY_ONLY, with_transaction=True)
+
+    from models.database import Transaction
+    db.add(Transaction(
+        workspace_id=ws.id, portfolio_id=portfolio.id, symbol="CENTEL",
+        transaction_type="BUY", shares=100, price_per_share=100.0, total_amount=10_000,
+        transaction_date=datetime.utcnow(), execution_decision_id=dec.id,
+    ))
+    db.commit()
+    all_ids = {t.id for t in db.query(Transaction).filter_by(execution_decision_id=dec.id).all()}
+    assert len(all_ids) == 2  # sanity: two rows actually exist
+
+    detail = get_execution_detail(db, portfolio.id, dec.id)
+    provenance_ids = {t["id"] for t in detail["analysis"]["symbols"]["CENTEL"]["transactions"]}
+    assert provenance_ids == all_ids
+
+
+def test_execution_detail_unmatched_symbol_has_empty_transactions(db, ws_portfolio):
+    ws, portfolio = ws_portfolio
+    _snap, dec = _seed_snapshot_and_decision(
+        db, ws, portfolio, "MANUAL_OVERRIDE", _ALLOCS_BUY_ONLY,
+        with_transaction=True, tx_symbol="ADVANC",
+    )
+    detail = get_execution_detail(db, portfolio.id, dec.id)
+    assert detail["analysis"]["symbols"]["CENTEL"]["transactions"] == []
+
+
+def test_execution_detail_provenance_addition_leaves_existing_fields_unchanged(db, ws_portfolio):
+    """Regression pin: adding provenance must not change any value already
+    asserted by test_approved_decision_with_transaction_is_scored (ledger
+    level) for the identical fixture, read here at the detail level."""
+    ws, portfolio = ws_portfolio
+    _snap, dec = _seed_snapshot_and_decision(db, ws, portfolio, "APPROVED", _ALLOCS_WITH_FUNDING, with_transaction=True)
+
+    detail = get_execution_detail(db, portfolio.id, dec.id)
+    analysis = detail["analysis"]
+    assert analysis["symbols"]["CENTEL"]["executed_amount"] == 30_000.0
+    assert analysis["symbols"]["CENTEL"]["note"] is None
+    assert analysis["symbols"]["XYZ"]["note"] == "no_linked_transaction"
+    assert analysis["completeness_pct"] == 50.0
+
+
 def test_unrelated_symbols_stay_unmatched(db, ws_portfolio):
     """A transaction recorded under a wholly unrelated symbol (not a .BK
     variant, no Registry data at all) must not be linked — regression
@@ -317,3 +398,103 @@ def test_unrelated_symbols_stay_unmatched(db, ws_portfolio):
     detail = get_execution_detail(db, portfolio.id, dec.id)
     assert detail["analysis"]["status"] == "partial"
     assert detail["analysis"]["symbols"]["CENTEL"]["note"] == "no_linked_transaction"
+
+
+# ── Execution recording follow-up (EFR-01) ──────────────────────────────────
+# The list endpoint must carry the same canonical analyzer facts used by
+# Execution Detail. These tests deliberately exercise list rows, not a second
+# matching algorithm.
+
+def test_ledger_row_exposes_complete_recording_progress(db, ws_portfolio):
+    ws, portfolio = ws_portfolio
+    _snap, dec = _seed_snapshot_and_decision(
+        db, ws, portfolio, "APPROVED", _ALLOCS_BUY_ONLY, with_transaction=True,
+    )
+
+    result = list_execution_ledger(db, portfolio.id)
+    row = next(row for row in result["rows"] if row["decision_id"] == dec.id)
+    assert row["recording_progress_eligible"] is True
+    assert row["matched_count"] == 1
+    assert row["total_planned"] == 1
+    assert row["is_complete"] is True
+    assert result["summary"]["incomplete_recording_count"] == 0
+
+
+def test_ledger_row_exposes_incomplete_recording_progress(db, ws_portfolio):
+    ws, portfolio = ws_portfolio
+    _snap, dec = _seed_snapshot_and_decision(
+        db, ws, portfolio, "PARTIAL_EXECUTION", _ALLOCS_WITH_FUNDING, with_transaction=True,
+    )
+
+    result = list_execution_ledger(db, portfolio.id)
+    row = next(row for row in result["rows"] if row["decision_id"] == dec.id)
+    assert row["recording_progress_eligible"] is True
+    assert row["matched_count"] == 1
+    assert row["total_planned"] == 2
+    assert row["is_complete"] is False
+    assert result["summary"]["incomplete_recording_count"] == 1
+
+
+def test_ledger_zero_planned_items_remain_complete(db, ws_portfolio):
+    ws, portfolio = ws_portfolio
+    _snap, dec = _seed_snapshot_and_decision(db, ws, portfolio, "APPROVED", [], with_transaction=False)
+
+    result = list_execution_ledger(db, portfolio.id)
+    row = next(row for row in result["rows"] if row["decision_id"] == dec.id)
+    assert row["recording_progress_eligible"] is True
+    assert row["matched_count"] == 0
+    assert row["total_planned"] == 0
+    assert row["is_complete"] is True
+    assert result["summary"]["incomplete_recording_count"] == 0
+
+
+def test_ledger_rejected_decision_is_not_recording_follow_up(db, ws_portfolio):
+    ws, portfolio = ws_portfolio
+    _snap, dec = _seed_snapshot_and_decision(db, ws, portfolio, "REJECTED", _ALLOCS_BUY_ONLY)
+
+    result = list_execution_ledger(db, portfolio.id)
+    row = next(row for row in result["rows"] if row["decision_id"] == dec.id)
+    assert row["recording_progress_eligible"] is False
+    assert row["matched_count"] is None
+    assert row["total_planned"] is None
+    assert row["is_complete"] is None
+    assert result["summary"]["incomplete_recording_count"] == 0
+
+
+def test_ledger_recording_progress_uses_only_explicit_in_scope_linkage(db, ws_portfolio):
+    """Same-symbol or foreign records cannot satisfy a decision's plan."""
+    from models.database import Portfolio, Transaction, Workspace
+
+    ws, portfolio = ws_portfolio
+    _snap, dec = _seed_snapshot_and_decision(db, ws, portfolio, "APPROVED", _ALLOCS_BUY_ONLY)
+
+    # Same symbol but no execution_decision_id: it is ordinary, unlinked ledger
+    # history and must not be heuristically treated as recording evidence.
+    db.add(Transaction(
+        workspace_id=ws.id, portfolio_id=portfolio.id, symbol="CENTEL",
+        transaction_type="BUY", shares=300, price_per_share=100.0, total_amount=30_000,
+        transaction_date=datetime.utcnow(), execution_decision_id=None,
+    ))
+
+    foreign_ws = Workspace(name="Foreign workspace")
+    db.add(foreign_ws)
+    db.commit()
+    foreign_portfolio = Portfolio(workspace_id=foreign_ws.id, name="Foreign", cash_balance=100_000.0)
+    db.add(foreign_portfolio)
+    db.commit()
+    # This malformed cross-scope link can be inserted directly in a test DB,
+    # but the ledger must still reject it even before the normal write-path
+    # ownership validation is considered.
+    db.add(Transaction(
+        workspace_id=foreign_ws.id, portfolio_id=foreign_portfolio.id, symbol="CENTEL",
+        transaction_type="BUY", shares=300, price_per_share=100.0, total_amount=30_000,
+        transaction_date=datetime.utcnow(), execution_decision_id=dec.id,
+    ))
+    db.commit()
+
+    result = list_execution_ledger(db, portfolio.id)
+    row = next(row for row in result["rows"] if row["decision_id"] == dec.id)
+    assert row["matched_count"] == 0
+    assert row["total_planned"] == 1
+    assert row["is_complete"] is False
+    assert result["summary"]["incomplete_recording_count"] == 1

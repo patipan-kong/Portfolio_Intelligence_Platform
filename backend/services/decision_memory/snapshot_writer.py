@@ -41,8 +41,17 @@ def write_recommendation_snapshot(
     persona: str | None = None,
     total_portfolio_value: float | None = None,
     scores_map: dict | None = None,
+    wealth_goal_context: dict | None = None,
 ) -> int | None:
     """Persist a RecommendationSnapshot from the raw optimizer result dict.
+
+    ``wealth_goal_context`` (Phase 7.4, ADR-008) is the already-constructed
+    wealth.decision-goal-context.v1 envelope, or None if no capture was
+    attempted for this run — that distinction is preserved as SQL NULL vs a
+    JSON payload. Unlike every other field below, its serialization is not
+    swallowed per-field: if it fails, the whole write aborts (falls through
+    to this function's own except-clause) rather than persisting a row with
+    misleading NULL context for an explicit selection.
 
     Returns the new snapshot id, or None on failure.
     """
@@ -57,6 +66,12 @@ def write_recommendation_snapshot(
             return None
 
     try:
+        wealth_goal_context_json = (
+            json.dumps(wealth_goal_context, default=str)
+            if wealth_goal_context is not None
+            else None
+        )
+
         # Check idempotency — skip if already written for this run
         existing = (
             db.query(RecommendationSnapshot)
@@ -91,6 +106,7 @@ def write_recommendation_snapshot(
             }),
             scores_map_json=_j(scores_map),
             projected_allocations_json=_j(r.get("target_allocations")),
+            wealth_goal_context_json=wealth_goal_context_json,
             created_at=datetime.utcnow(),
         )
         db.add(snap)

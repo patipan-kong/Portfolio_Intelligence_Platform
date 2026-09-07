@@ -23,6 +23,7 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     const text = await res.text();
     throw new Error(`API ${res.status}: ${text}`);
   }
+  if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }
 
@@ -46,6 +47,179 @@ export interface Portfolio {
   goal_target_value?: number | null;
   created_at: string;
 }
+
+export interface CashAccount {
+  id: number;
+  workspace_id: number;
+  name: string;
+  institution: string | null;
+  currency: "THB";
+  balance: number;
+  is_archived: boolean;
+  created_at: string;
+  updated_at: string;
+  baseline?: CashAccountBaseline | null;
+}
+
+export type LiabilityType =
+  | "MORTGAGE"
+  | "AUTO_LOAN"
+  | "PERSONAL_LOAN"
+  | "CREDIT_CARD"
+  | "STUDENT_LOAN"
+  | "OTHER";
+
+export interface Liability {
+  id: number;
+  workspace_id: number;
+  name: string;
+  liability_type: LiabilityType;
+  lender: string | null;
+  balance: number;
+  currency: "THB";
+  note: string | null;
+  is_archived: boolean;
+  created_at: string;
+  updated_at: string;
+  // Explicit-observation dates only; neither is a substitute for the As-Of read.
+  first_observation_on?: string | null;
+  latest_observation_on?: string | null;
+}
+
+export type WealthGoalType =
+  | "RETIREMENT"
+  | "HOUSE"
+  | "WEDDING"
+  | "EDUCATION"
+  | "VACATION"
+  | "EMERGENCY_FUND"
+  | "FIRE"
+  | "OTHER";
+
+export type WealthGoalPriority = "HIGH" | "MEDIUM" | "LOW";
+
+export interface WealthGoal {
+  id: number;
+  workspace_id: number;
+  name: string;
+  goal_type: WealthGoalType;
+  target_amount: number;
+  currency: "THB";
+  target_date: string | null;
+  priority: WealthGoalPriority;
+  note: string | null;
+  is_archived: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PortfolioInvestmentMandate {
+  id: number;
+  workspace_id: number;
+  portfolio_id: number;
+  wealth_goal_id: number;
+  created_at: string;
+}
+
+export interface CashAccountBaseline {
+  id: number;
+  cash_account_id: number;
+  effective_on: string;
+  observed_balance: number;
+  created_at: string;
+}
+
+export interface CashAccountTransaction {
+  id: number;
+  workspace_id: number;
+  cash_account_id: number;
+  transaction_type: "INCOME" | "EXPENSE" | "ADJUSTMENT" | "TRANSFER" | "INVESTMENT_TRANSFER";
+  amount: number;
+  signed_amount: number;
+  occurred_on: string;
+  category: string | null;
+  note: string | null;
+  transfer_id?: number | null;
+  transfer_source_cash_account_id?: number;
+  transfer_destination_cash_account_id?: number;
+  transfer_source_account_name?: string;
+  transfer_destination_account_name?: string;
+  transfer_direction?: "OUT" | "IN";
+  // Investment Funding Transfer (ADR-012) — counterparty_portfolio_id is a
+  // user-asserted association only, never evidence of a matching Portfolio-
+  // side transaction. null for every other transaction_type, and also null
+  // after the referenced Portfolio has been deleted.
+  counterparty_portfolio_id?: number | null;
+  counterparty_portfolio_name?: string | null;
+  // IFTE-01: immutable creation-time documentary identity for a cash-side
+  // investment transfer. It may be absent on a pre-IFTE record; it never
+  // resolves a deleted Portfolio or proves a Portfolio-side transaction.
+  counterparty_portfolio_id_snapshot?: number | null;
+  counterparty_portfolio_name_snapshot?: string | null;
+  investment_direction?: "TO_PORTFOLIO" | "FROM_PORTFOLIO" | null;
+  created_at: string;
+}
+
+export interface CashFlowEvent extends CashAccountTransaction {
+  account_name: string;
+  account_is_archived: boolean;
+  source_account_is_archived?: boolean;
+  destination_account_is_archived?: boolean;
+}
+
+export interface CashFlowReport {
+  month: string;
+  events: CashFlowEvent[];
+}
+
+// ─── Cash Entry Templates ────────────────────────────────────────────────────
+// Workspace-owned convenience metadata that prefills the existing Add income /
+// Add expense form — never a financial fact. No date, frequency, or
+// recurrence field exists; see docs/architecture/ROADMAP.md.
+
+export interface CashEntryTemplate {
+  id: number;
+  workspace_id: number;
+  name: string;
+  transaction_type: "INCOME" | "EXPENSE";
+  cash_account_id: number;
+  cash_account_name: string | null;
+  cash_account_is_archived: boolean | null;
+  amount: number;
+  category: string;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type CashEntryTemplateCreate = {
+  name: string;
+  transaction_type: "INCOME" | "EXPENSE";
+  cash_account_id: number;
+  amount: number;
+  category: string;
+  note?: string | null;
+};
+
+export type CashEntryTemplateUpdate = {
+  name?: string;
+  transaction_type?: "INCOME" | "EXPENSE";
+  cash_account_id?: number;
+  amount?: number;
+  category?: string;
+  note?: string | null;
+};
+
+export const listCashEntryTemplates = () => apiFetch<CashEntryTemplate[]>("/cash-entry-templates");
+
+export const createCashEntryTemplate = (body: CashEntryTemplateCreate) =>
+  apiFetch<CashEntryTemplate>("/cash-entry-templates", { method: "POST", body: JSON.stringify(body) });
+
+export const updateCashEntryTemplate = (id: number, body: CashEntryTemplateUpdate) =>
+  apiFetch<CashEntryTemplate>(`/cash-entry-templates/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+
+export const deleteCashEntryTemplate = (id: number) =>
+  apiFetch<{ deleted: number }>(`/cash-entry-templates/${id}`, { method: "DELETE" });
 
 export const updatePortfolioGoal = (portfolioId: number, goal: number | null) =>
   apiFetch<{ id: number; goal_target_value: number | null; ok: boolean }>(
@@ -340,6 +514,628 @@ export const updatePortfolioCash = (id: number, cash_balance: number) =>
   apiFetch<{ id: number; cash_balance: number }>(`/portfolios/${id}/cash`, {
     method: "PATCH",
     body: JSON.stringify({ cash_balance }),
+  });
+
+// ─── Cash Accounts ──────────────────────────────────────────────────────────
+
+export type CashAccountCreate = {
+  name: string;
+  currency: "THB";
+  institution?: string | null;
+  balance?: number;
+};
+
+export type CashAccountUpdate = {
+  name?: string;
+  institution?: string | null;
+  balance?: number;
+  is_archived?: boolean;
+};
+
+export const listCashAccounts = (includeArchived = false) =>
+  apiFetch<CashAccount[]>(`/cash-accounts${includeArchived ? "?include_archived=true" : ""}`);
+
+export const createCashAccount = (body: CashAccountCreate) =>
+  apiFetch<CashAccount>("/cash-accounts", { method: "POST", body: JSON.stringify(body) });
+
+export const updateCashAccount = (id: number, body: CashAccountUpdate) =>
+  apiFetch<CashAccount>(`/cash-accounts/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+
+// ─── Liabilities ────────────────────────────────────────────────────────────
+
+export type LiabilityCreate = {
+  name: string;
+  liability_type: LiabilityType;
+  lender?: string | null;
+  balance: number;
+  currency: "THB";
+  note?: string | null;
+};
+
+export type LiabilityUpdate = {
+  name?: string;
+  liability_type?: LiabilityType;
+  lender?: string | null;
+  balance?: number;
+  note?: string | null;
+  is_archived?: boolean;
+};
+
+export const listLiabilities = (includeArchived = false) =>
+  apiFetch<Liability[]>(`/liabilities${includeArchived ? "?include_archived=true" : ""}`);
+
+export const createLiability = (body: LiabilityCreate) =>
+  apiFetch<Liability>("/liabilities", { method: "POST", body: JSON.stringify(body) });
+
+export const updateLiability = (id: number, body: LiabilityUpdate) =>
+  apiFetch<Liability>(`/liabilities/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+
+// ─── Liability Historical Observations (Phase 5) ───────────────────────────
+// Dated, explicitly recorded observed-balance facts — an effective-state
+// model, not a payment ledger. `balance` is null and `available` is false for
+// any date before the first observation — never a fabricated zero or the
+// liability's current balance.
+
+export interface LiabilityBalanceObservation {
+  id: number;
+  workspace_id: number;
+  liability_id: number;
+  balance: number;
+  observed_on: string;
+  created_at: string;
+}
+
+export type LiabilityBalanceObservationCreate = {
+  balance: number;
+  observed_on: string;
+};
+
+export interface LiabilityBalanceAsOf {
+  liability_id: number;
+  date: string;
+  currency: "THB";
+  balance: number | null;
+  available: boolean;
+}
+
+export const createLiabilityBalanceObservation = (id: number, body: LiabilityBalanceObservationCreate) =>
+  apiFetch<LiabilityBalanceObservation>(`/liabilities/${id}/observations`, { method: "POST", body: JSON.stringify(body) });
+
+export const listLiabilityBalanceObservations = (id: number) =>
+  apiFetch<LiabilityBalanceObservation[]>(`/liabilities/${id}/observations`);
+
+export const getLiabilityBalanceAsOf = (id: number, date: string) =>
+  apiFetch<LiabilityBalanceAsOf>(`/liabilities/${id}/as-of?date=${encodeURIComponent(date)}`);
+
+// ─── Wealth Goals (Phase 6, Milestone 1) ───────────────────────────────────
+// A workspace-owned whole-life financial goal, independent of any Portfolio.
+// Persistence and management only — no progress, funding, or projection yet.
+
+export type WealthGoalCreate = {
+  name: string;
+  goal_type: WealthGoalType;
+  target_amount: number;
+  currency: "THB";
+  target_date?: string | null;
+  priority: WealthGoalPriority;
+  note?: string | null;
+};
+
+export type WealthGoalUpdate = {
+  name?: string;
+  goal_type?: WealthGoalType;
+  target_amount?: number;
+  target_date?: string | null;
+  priority?: WealthGoalPriority;
+  note?: string | null;
+  is_archived?: boolean;
+};
+
+export const listWealthGoals = (includeArchived = false) =>
+  apiFetch<WealthGoal[]>(`/wealth-goals${includeArchived ? "?include_archived=true" : ""}`);
+
+export const createWealthGoal = (body: WealthGoalCreate) =>
+  apiFetch<WealthGoal>("/wealth-goals", { method: "POST", body: JSON.stringify(body) });
+
+export const updateWealthGoal = (id: number, body: WealthGoalUpdate) =>
+  apiFetch<WealthGoal>(`/wealth-goals/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+
+// Immutable record of amendments to a goal's current plan. It does not record
+// funding, contributions, transfers, or advice; WealthGoal remains current authority.
+export interface GoalPlanAmendmentHistory {
+  id: number;
+  workspace_id: number;
+  wealth_goal_id: number;
+  previous_target_amount: number;
+  resulting_target_amount: number;
+  previous_target_date: string | null;
+  resulting_target_date: string | null;
+  previous_priority: WealthGoalPriority;
+  resulting_priority: WealthGoalPriority;
+  recorded_at: string;
+}
+
+export const listGoalPlanAmendmentHistory = (goalId: number) =>
+  apiFetch<GoalPlanAmendmentHistory[]>(`/wealth-goals/${goalId}/plan-history`);
+
+export const listPortfolioInvestmentMandates = (portfolioId: number) =>
+  apiFetch<PortfolioInvestmentMandate[]>(`/portfolios/${portfolioId}/investment-mandates`);
+
+export const putPortfolioInvestmentMandate = (portfolioId: number, wealthGoalId: number) =>
+  apiFetch<PortfolioInvestmentMandate>(
+    `/portfolios/${portfolioId}/investment-mandates/${wealthGoalId}`,
+    { method: "PUT" },
+  );
+
+export const deletePortfolioInvestmentMandate = (portfolioId: number, wealthGoalId: number) =>
+  apiFetch<void>(
+    `/portfolios/${portfolioId}/investment-mandates/${wealthGoalId}`,
+    { method: "DELETE" },
+  );
+
+// ─── Wealth Goal Context (Phase 7.2) ───────────────────────────────────────
+// The Goal Context endpoint is the canonical, valuation-free read of goal
+// facts, allocation evidence, and designation arithmetic. Current Cash and
+// Portfolio values remain separate live reads owned by the UI.
+
+export type GoalContextCompleteness = "COMPLETE";
+
+export interface GoalContextScope {
+  kind: "WORKSPACE" | "GOAL";
+  include_archived?: boolean;
+  goal_id?: number;
+}
+
+export interface GoalContextAllocation {
+  id: number;
+  wealth_goal_id: number;
+  source_kind: GoalFundingSourceKind;
+  source_id: number;
+  source_name: string;
+  source_is_archived: boolean;
+  designated_amount: number;
+  currency: "THB";
+  updated_at: string;
+}
+
+export interface GoalContextGoal {
+  id: number;
+  name: string;
+  goal_type: WealthGoalType;
+  target_amount: number;
+  currency: "THB";
+  target_date: string | null;
+  priority: WealthGoalPriority;
+  is_archived: boolean;
+  updated_at: string;
+  allocations: GoalContextAllocation[];
+  designated_total: number;
+  progress_ratio: number;
+  progress_percent: number;
+  funding_gap: number;
+  fully_designated: boolean;
+}
+
+export interface GoalContextSourceDesignation {
+  source_kind: GoalFundingSourceKind;
+  source_id: number;
+  source_name: string;
+  source_is_archived: boolean;
+  currency: "THB";
+  designated_total_in_context_scope: number;
+}
+
+export interface GoalContextResponse {
+  contract_version: "wealth.goal-context.v1";
+  context_generated_at: string;
+  completeness: GoalContextCompleteness;
+  scope: GoalContextScope;
+  goals: GoalContextGoal[];
+  designation_by_source: GoalContextSourceDesignation[];
+}
+
+export const getWealthGoalsContext = (includeArchived = false) =>
+  apiFetch<GoalContextResponse>(`/wealth-goals/context?include_archived=${includeArchived ? "true" : "false"}`);
+
+export const getWealthGoalContext = (goalId: number) =>
+  apiFetch<GoalContextResponse>(`/wealth-goals/${goalId}/context`);
+
+// ─── Factual Wealth Review (Phase 7.3A) ───────────────────────────────
+
+export type FactualReviewValuationCompleteness = "COMPLETE" | "PARTIAL" | "UNAVAILABLE";
+export type FactualReviewValuationAvailability = "AVAILABLE" | "UNAVAILABLE";
+export type FactualReviewValuationQuality = "COMPLETE" | "PARTIAL" | "UNKNOWN";
+export type FactualReviewValuationProvenance = "CASH_ACCOUNT_CURRENT_BALANCE" | "PORTFOLIO_SNAPSHOT";
+export type FactualReviewCoverageStatus = "SUPPORTED" | "OVER_ALLOCATED" | "UNAVAILABLE";
+
+export interface FactualReviewSource {
+  source_kind: GoalFundingSourceKind;
+  source_id: number;
+  source_name: string;
+  source_is_archived: boolean;
+  currency: "THB";
+  designated_total_in_context_scope: number;
+  valuation: {
+    availability: FactualReviewValuationAvailability;
+    observed_value: number | null;
+    as_of: string | null;
+    provenance: FactualReviewValuationProvenance | null;
+    quality: FactualReviewValuationQuality | null;
+  };
+  designation_coverage: {
+    status: FactualReviewCoverageStatus;
+    shortfall: number | null;
+  };
+}
+
+export interface FactualReviewResponse {
+  contract_version: "wealth.factual-review.v1";
+  review_generated_at: string;
+  scope: GoalContextScope;
+  goal_context: GoalContextResponse;
+  valuation_completeness: FactualReviewValuationCompleteness;
+  sources: FactualReviewSource[];
+}
+
+export const getWealthFactualReview = (includeArchived = false) =>
+  apiFetch<FactualReviewResponse>(`/wealth-goals/factual-review?include_archived=${includeArchived ? "true" : "false"}`);
+
+// ─── Designated Portfolio legacy goal-profile evidence (Phase 7.3B) ───────
+
+export type LegacyGoalProfileProjectionStatus = "UNSET" | "UNCHANGED" | "NORMALIZED" | "UNRECOGNIZED";
+export type LegacyGoalProfileEvidenceAvailability =
+  | "NO_FIELDS_RECORDED"
+  | "PARTIAL_FIELDS_RECORDED"
+  | "ALL_FIELDS_RECORDED";
+export type LegacyGoalTypeComparison =
+  | "SAME_RECORDED_CODE"
+  | "DIFFERENT_RECORDED_CODES"
+  | "NOT_COMPARABLE";
+export type LegacyGoalDateComparison =
+  | "SAME_RECORDED_DATE"
+  | "DIFFERENT_RECORDED_DATES"
+  | "NOT_COMPARABLE";
+
+export interface LegacyGoalProfileGoalTypeEvidence {
+  raw_value: string | null;
+  compatibility_projection: string | null;
+  compatibility_label_th: string | null;
+  projection_status: LegacyGoalProfileProjectionStatus;
+  comparison: LegacyGoalTypeComparison;
+  provenance: "PORTFOLIO.GOAL_TYPE";
+}
+
+export interface LegacyGoalProfilePriorityEvidence {
+  raw_value: string | null;
+  compatibility_projection: string | null;
+  compatibility_label_th: string | null;
+  projection_status: LegacyGoalProfileProjectionStatus;
+  provenance: "PORTFOLIO.GOAL_PRIORITY";
+}
+
+export interface LegacyGoalProfileTargetDateEvidence {
+  raw_value: string | null;
+  compatibility_projection: string | null;
+  projection_status: LegacyGoalProfileProjectionStatus;
+  comparison: LegacyGoalDateComparison;
+  provenance: "PORTFOLIO.GOAL_TARGET_DATE";
+}
+
+export interface LegacyGoalProfileTargetValueEvidence {
+  raw_value: number | null;
+  compatibility_projection: number | null;
+  projection_status: LegacyGoalProfileProjectionStatus;
+  unit_status: "UNSPECIFIED_IN_LEGACY_CONTRACT";
+  provenance: "PORTFOLIO.GOAL_TARGET_VALUE";
+}
+
+export interface LegacyGoalProfileEvidenceEdge {
+  wealth_goal: Omit<GoalContextGoal,
+    "allocations" | "designated_total" | "progress_ratio" | "progress_percent" | "funding_gap" | "fully_designated">;
+  designation: GoalContextAllocation;
+  portfolio: {
+    id: number;
+    name: string;
+  };
+  legacy_profile: {
+    evidence_availability: LegacyGoalProfileEvidenceAvailability;
+    goal_type: LegacyGoalProfileGoalTypeEvidence;
+    goal_priority: LegacyGoalProfilePriorityEvidence;
+    goal_target_date: LegacyGoalProfileTargetDateEvidence;
+    goal_target_value: LegacyGoalProfileTargetValueEvidence;
+  };
+}
+
+export interface LegacyGoalProfileEvidenceResponse {
+  contract_version: "wealth.legacy-profile-evidence.v1";
+  generated_at: string;
+  completeness: "COMPLETE";
+  scope: GoalContextScope;
+  goal_context: GoalContextResponse;
+  evidence_edges: LegacyGoalProfileEvidenceEdge[];
+}
+
+export const getLegacyGoalProfileEvidence = (includeArchived = false) =>
+  apiFetch<LegacyGoalProfileEvidenceResponse>(
+    `/wealth-goals/legacy-profile-evidence?include_archived=${includeArchived ? "true" : "false"}`,
+  );
+
+// ─── Goal Funding Allocations (Phase 6, Milestone 2) ───────────────────────
+// "This amount from this source is designated toward this goal." These
+// mutation contracts carry designation evidence only; Goal Context owns the
+// derived progress, funding gap, and coverage facts.
+
+export type GoalFundingSourceKind = "CASH_ACCOUNT" | "PORTFOLIO";
+
+export interface GoalFundingAllocation {
+  id: number;
+  workspace_id: number;
+  wealth_goal_id: number;
+  source_kind: GoalFundingSourceKind;
+  cash_account_id: number | null;
+  portfolio_id: number | null;
+  source_name: string | null;
+  // Always false for a PORTFOLIO source — Portfolio has no archive lifecycle.
+  source_is_archived: boolean;
+  allocated_amount: number;
+  currency: "THB";
+  created_at: string;
+  updated_at: string;
+}
+
+export type GoalFundingAllocationCreate = {
+  cash_account_id?: number;
+  portfolio_id?: number;
+  allocated_amount: number;
+  currency: "THB";
+};
+
+export type GoalFundingAllocationUpdate = {
+  allocated_amount: number;
+};
+
+export const listGoalFundingAllocations = (goalId: number) =>
+  apiFetch<GoalFundingAllocation[]>(`/wealth-goals/${goalId}/funding-allocations`);
+
+export const createGoalFundingAllocation = (goalId: number, body: GoalFundingAllocationCreate) =>
+  apiFetch<GoalFundingAllocation>(`/wealth-goals/${goalId}/funding-allocations`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+export const updateGoalFundingAllocation = (goalId: number, allocationId: number, body: GoalFundingAllocationUpdate) =>
+  apiFetch<GoalFundingAllocation>(`/wealth-goals/${goalId}/funding-allocations/${allocationId}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+
+export const deleteGoalFundingAllocation = (goalId: number, allocationId: number) =>
+  apiFetch<{ deleted: number }>(`/wealth-goals/${goalId}/funding-allocations/${allocationId}`, { method: "DELETE" });
+
+// Immutable evidence of designation transitions. This is not contribution or
+// transaction data; current Goal Context remains the funding-state authority.
+export interface GoalFundingAllocationHistory {
+  id: number;
+  workspace_id: number;
+  wealth_goal_id: number;
+  source_kind: GoalFundingSourceKind;
+  source_id: number;
+  source_name: string;
+  action: "CREATE" | "UPDATE" | "REMOVE";
+  previous_designated_amount: number | null;
+  resulting_designated_amount: number | null;
+  currency: "THB";
+  recorded_at: string;
+}
+
+export const listGoalFundingAllocationHistory = (goalId: number) =>
+  apiFetch<GoalFundingAllocationHistory[]>(`/wealth-goals/${goalId}/funding-history`);
+
+// ─── Goal Scenarios (Phase 6, Milestone 3 — Named Scenario Foundation) ─────
+// A user-named, persisted set of forward What-If assumptions
+// (monthly_contribution, annual_return_pct) for one WealthGoal. Not a
+// forecast, probability, or saved snapshot — every other planning input
+// (target, target date, designated funding) is read live from the current
+// goal state whenever a scenario is loaded. No DELETE — archive/restore only.
+
+export interface GoalScenario {
+  id: number;
+  workspace_id: number;
+  wealth_goal_id: number;
+  name: string;
+  monthly_contribution: number;
+  annual_return_pct: number;
+  is_archived: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export type GoalScenarioCreate = {
+  name: string;
+  monthly_contribution: number;
+  annual_return_pct: number;
+};
+
+export type GoalScenarioUpdate = {
+  name?: string;
+  monthly_contribution?: number;
+  annual_return_pct?: number;
+  is_archived?: boolean;
+};
+
+export const listGoalScenarios = (goalId: number, includeArchived = false) =>
+  apiFetch<GoalScenario[]>(`/wealth-goals/${goalId}/scenarios${includeArchived ? "?include_archived=true" : ""}`);
+
+export const createGoalScenario = (goalId: number, body: GoalScenarioCreate) =>
+  apiFetch<GoalScenario>(`/wealth-goals/${goalId}/scenarios`, { method: "POST", body: JSON.stringify(body) });
+
+export const updateGoalScenario = (goalId: number, scenarioId: number, body: GoalScenarioUpdate) =>
+  apiFetch<GoalScenario>(`/wealth-goals/${goalId}/scenarios/${scenarioId}`, { method: "PATCH", body: JSON.stringify(body) });
+
+export type CashAccountBaselineCreate = {
+  effective_on: string;
+  observed_balance: number;
+};
+
+export type CashAccountTransactionCreate = {
+  transaction_type: "INCOME" | "EXPENSE";
+  amount: number;
+  occurred_on: string;
+  category: string;
+  note?: string | null;
+};
+
+export type CashAccountReconcile = {
+  observed_balance: number;
+  occurred_on: string;
+  note?: string | null;
+};
+
+export type CashAccountTransferCreate = {
+  source_cash_account_id: number;
+  destination_cash_account_id: number;
+  amount: number;
+  occurred_on: string;
+  note?: string | null;
+};
+
+export interface CashAccountTransfer {
+  id: number;
+  workspace_id: number;
+  source_cash_account_id: number;
+  destination_cash_account_id: number;
+  source_account_name: string;
+  destination_account_name: string;
+  amount: number;
+  occurred_on: string;
+  note: string | null;
+  created_at: string;
+}
+
+export const createCashAccountBaseline = (id: number, body: CashAccountBaselineCreate) =>
+  apiFetch<CashAccountBaseline>(`/cash-accounts/${id}/baseline`, { method: "POST", body: JSON.stringify(body) });
+
+export const listCashAccountTransactions = (id: number) =>
+  apiFetch<CashAccountTransaction[]>(`/cash-accounts/${id}/transactions`);
+
+export const createCashAccountTransaction = (id: number, body: CashAccountTransactionCreate) =>
+  apiFetch<CashAccountTransaction>(`/cash-accounts/${id}/transactions`, { method: "POST", body: JSON.stringify(body) });
+
+export const reconcileCashAccount = (id: number, body: CashAccountReconcile) =>
+  apiFetch<{ account: CashAccount; adjustment: CashAccountTransaction | null }>(`/cash-accounts/${id}/reconcile`, { method: "POST", body: JSON.stringify(body) });
+
+// ─── Cash As-Of Read (Phase 5) ────────────────────────────────────────────────
+// Read-only historical balance reconstruction from baseline + ledger. `balance`
+// is null and `available` is false for any date before tracking began — never
+// a fabricated zero or the account's current balance.
+
+export interface CashAccountBalanceAsOf {
+  cash_account_id: number;
+  date: string;
+  currency: "THB";
+  balance: number | null;
+  available: boolean;
+  baseline_effective_on: string | null;
+}
+
+export const getCashAccountBalanceAsOf = (id: number, date: string) =>
+  apiFetch<CashAccountBalanceAsOf>(`/cash-accounts/${id}/as-of?date=${encodeURIComponent(date)}`);
+
+export const createCashAccountTransfer = (body: CashAccountTransferCreate) =>
+  apiFetch<CashAccountTransfer>("/cash-account-transfers", { method: "POST", body: JSON.stringify(body) });
+
+// ── Net Worth Change Attribution (Level-1 balance-sheet component attribution, ADR-013) ──
+//
+// A derived read: never zero-substituted, always AVAILABLE or UNAVAILABLE.
+// The discriminated union on `status` is deliberate — a caller narrowing on
+// `status === "AVAILABLE"` gets `components`/`start`/`end` typed as present,
+// so an UNAVAILABLE result can never be accidentally rendered as zeroes.
+
+export interface NetWorthChangeAttributionEndpoint {
+  investment_assets: number;
+  external_cash: number;
+  total_assets: number;
+  total_liabilities: number;
+  net_worth: number;
+}
+
+export interface NetWorthChangeAttributionComponents {
+  investment_assets_change: number;
+  external_cash_change: number;
+  liability_impact: number;
+}
+
+export interface NetWorthChangeAttributionAvailable {
+  status: "AVAILABLE";
+  start_date: string;
+  end_date: string;
+  start: NetWorthChangeAttributionEndpoint;
+  end: NetWorthChangeAttributionEndpoint;
+  components: NetWorthChangeAttributionComponents;
+  net_worth_change: number;
+  reconciliation_difference: number;
+  new_tracking_scope: boolean;
+}
+
+export interface NetWorthChangeAttributionUnavailable {
+  status: "UNAVAILABLE";
+  start_date: string;
+  end_date: string;
+  reason_codes: string[];
+}
+
+export type NetWorthChangeAttribution = NetWorthChangeAttributionAvailable | NetWorthChangeAttributionUnavailable;
+
+export const getNetWorthChangeAttribution = (start: string, end: string) =>
+  apiFetch<NetWorthChangeAttribution>(
+    `/net-worth/change-attribution?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`
+  );
+
+// ─── Investment Funding Transfer (ADR-012) ────────────────────────────────────
+// Records that money moved between a Cash Account and a Portfolio. Authoritative
+// only for the Cash Account side — it never creates a Portfolio transaction or
+// asserts that one exists. See ADR-012.
+
+export type CashInvestmentTransferCreate = {
+  portfolio_id: number;
+  direction: "TO_PORTFOLIO" | "FROM_PORTFOLIO";
+  amount: number;
+  occurred_on: string;
+  note?: string | null;
+};
+
+export const createCashInvestmentTransfer = (cashAccountId: number, body: CashInvestmentTransferCreate) =>
+  apiFetch<CashAccountTransaction>(`/cash-accounts/${cashAccountId}/investment-transfers`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+// ─── Portfolio Funding Evidence (PFET-01, ADR-012) ────────────────────────────
+// Documentary cash-side Investment Funding Transfer evidence naming a
+// Portfolio. Not a funding ledger and not reconciliation evidence — a row
+// proves only that a CashAccountTransaction was recorded with this Portfolio
+// as its immutable, creation-time counterparty snapshot. See ADR-012.
+
+export interface PortfolioFundingEvidenceEvent extends CashAccountTransaction {
+  account_name: string;
+  account_is_archived: boolean;
+}
+
+export const getPortfolioFundingEvidence = (portfolioId: number) =>
+  apiFetch<PortfolioFundingEvidenceEvent[]>(`/portfolios/${portfolioId}/funding-evidence`);
+
+export const getCashFlowReport = (month: string) =>
+  apiFetch<CashFlowReport>(`/cash-flow?month=${encodeURIComponent(month)}`);
+
+export interface CashFlowSettings {
+  target_coverage_months: number | null;
+}
+
+export const getCashFlowSettings = () => apiFetch<CashFlowSettings>("/settings/cash-flow");
+export const updateCashFlowSettings = (body: CashFlowSettings) =>
+  apiFetch<CashFlowSettings>("/settings/cash-flow", {
+    method: "PATCH",
+    body: JSON.stringify(body),
   });
 
 // ─── Holdings ────────────────────────────────────────────────────────────────
@@ -924,6 +1720,7 @@ export type ConstraintSource =
   | "USER_PREFERENCE"
   | "REGIME_POLICY"
   | "EMERGENCY_OVERRIDE"
+  | "WEALTH_GOAL_POLICY"
   | "SYSTEM_SAFETY";
 
 export interface ConstraintBreakdown {
@@ -1010,6 +1807,47 @@ export interface ActionSummary {
   hold: ActionSummaryEntry[];
 }
 
+export type GoalConstraintRelationToBase =
+  | "STRICTER_THAN_BASE"
+  | "EQUAL_TO_BASE"
+  | "LOOSER_THAN_BASE"
+  | "NOT_APPLICABLE";
+
+export type GoalConstraintApplicationStatus =
+  | "APPLIED_AND_BINDING"
+  | "APPLIED_BUT_DOMINATED"
+  | "NOT_APPLICABLE";
+
+export interface GoalRecommendationConstraintEvidence {
+  contract_version: "wealth.goal-recommendation-constraints.v1";
+  rule_set: {
+    id: "GOAL_HORIZON_SINGLE_POSITION_CAP";
+    version: "1";
+  };
+  source: "EXPLICIT_GOAL_ACTIVATION";
+  activated_goal_id: number;
+  activation: {
+    field: "goal_constraint_goal_id";
+    mode: "EXPLICIT";
+  };
+  observed_is_archived: boolean;
+  target_date: string;
+  as_of_date: string;
+  days_remaining: number;
+  matched_rule: "TARGET_DATE_WITHIN_365_DAYS" | null;
+  contribution: {
+    constraint: "MAX_SINGLE_POSITION_PCT";
+    upper_bound_pct: number;
+  } | null;
+  resolution: {
+    pre_goal_effective_pct: number | null;
+    post_goal_effective_pct: number | null;
+    relation_to_base: GoalConstraintRelationToBase;
+    application_status: GoalConstraintApplicationStatus;
+    resulting_binding_source: ConstraintSource | null;
+  };
+}
+
 export interface OptimizerResult {
   portfolio_name: string;
   status?: OptimizerStatus;
@@ -1078,6 +1916,7 @@ export interface OptimizerResult {
   action_summary?: ActionSummary | null;
   // Execution Optimization — deterministic post-processing stage
   execution_optimization?: ExecutionOptimizationResult | null;
+  goal_recommendation_constraints?: GoalRecommendationConstraintEvidence | null;
 }
 
 // ── Execution Optimization ────────────────────────────────────────────────────
@@ -1130,6 +1969,7 @@ export const runOptimizer = (
   provider?: string,
   model?: string,
   forceRebalance?: boolean,
+  goalConstraintGoalId?: number | null,
 ) =>
   apiFetch<OptimizerResult>("/analyze/optimizer", {
     method: "POST",
@@ -1138,6 +1978,7 @@ export const runOptimizer = (
       ...(provider        ? { provider }                       : {}),
       ...(model           ? { model }                          : {}),
       ...(forceRebalance  ? { force_rebalance: true }          : {}),
+      ...(goalConstraintGoalId != null ? { goal_constraint_goal_id: goalConstraintGoalId } : {}),
     }),
   });
 
@@ -1422,6 +2263,31 @@ export type TransactionType =
   | "QUANTITY_CORRECTION"
   | "POSITION_CONVERSION";
 
+// Structured, display-ready detail for a POSITION_CONVERSION transaction —
+// parsed server-side through the canonical conversion payload contract
+// (backend/services/transaction_canonicalizer.py::parse_position_conversion_payload).
+// Present only for valid POSITION_CONVERSION rows; null for every other
+// transaction type and for legacy/malformed conversion payloads.
+export interface PositionConversionCashInLieu {
+  fractional_entitlement_shares: number;
+  net_cash: number;
+  realized_pnl: number;
+}
+
+export interface PositionConversionDetail {
+  predecessor_symbol: string;
+  successor_symbol: string;
+  conversion_ratio: number;
+  shares_surrendered: number;
+  shares_entitled: number;
+  shares_received: number;
+  legal_effective_date: string; // "YYYY-MM-DD"
+  valuation_transition_date: string; // "YYYY-MM-DD"
+  cost_basis_before: number;
+  cost_basis_carried: number;
+  cash_in_lieu: PositionConversionCashInLieu | null;
+}
+
 export interface TransactionRecord {
   id: number;
   portfolio_id: number;
@@ -1437,7 +2303,9 @@ export interface TransactionRecord {
   transaction_date: string;
   notes: string | null;
   sector: string | null;
+  execution_decision_id: number | null;
   created_at: string | null;
+  conversion_detail?: PositionConversionDetail | null;
 }
 
 export interface TransactionHolding {
@@ -1474,6 +2342,7 @@ export interface BuyPayload {
   exchange_rate?: number;
   transaction_date?: string;
   notes?: string;
+  execution_decision_id?: number;
 }
 
 export interface SellPayload {
@@ -1485,6 +2354,7 @@ export interface SellPayload {
   transaction_date?: string;
   notes?: string;
   remove_if_zero?: boolean;
+  execution_decision_id?: number;
 }
 
 export interface DepositPayload {
@@ -2118,8 +2988,39 @@ export interface ExecutionDecision {
   original_symbol: string | null;
   replacement_symbol: string | null;
   reason_category: string | null;
+  is_system_generated: boolean;
   executed_at: string;
   created_at: string | null;
+}
+
+// wealth.decision-goal-context.v1 (Phase 7.4/ADR-008) — CONTEXT_ONLY, never
+// fed back into recommendation/optimizer/policy/execution logic. Mirrors
+// backend/services/decision_goal_context.py's admitted field set.
+export interface DecisionGoalContextGoal {
+  id: number;
+  name: string;
+  goal_type: string;
+  priority: string;
+  target_amount: number;
+  currency: string;
+  target_date: string | null;
+  is_archived: boolean;
+  updated_at: string;
+  designated_total: number;
+  progress_ratio: number;
+  progress_percent: number;
+  funding_gap: number;
+  fully_designated: boolean;
+}
+
+export interface DecisionGoalContext {
+  contract_version: string;
+  source_goal_context_version: string;
+  decision_effect: "CONTEXT_ONLY";
+  context_state: "COMPLETE" | "EMPTY";
+  selected_goal_ids: number[];
+  observed_at: string;
+  goals: DecisionGoalContextGoal[];
 }
 
 export interface ExecutionDecisionDetail extends ExecutionDecision {
@@ -2133,6 +3034,7 @@ export interface ExecutionDecisionDetail extends ExecutionDecision {
     regime: Record<string, unknown> | null;
     consensus: Record<string, unknown> | null;
     projected_allocations: Array<{ symbol: string; target_weight: number; action: string }> | null;
+    decision_context: DecisionGoalContext | null;
   } | null;
 }
 
@@ -3452,7 +4354,17 @@ export interface ReportCardExecutionSection {
   decision_id?: number;
   decision?: string;
   executed_at?: string | null;
-  analysis?: Record<string, unknown>;
+  analysis?: ExecutionAnalysis;
+  // Slice 4 (Decision History / Audit UX) — already-persisted decision
+  // rationale (UX.2D) and frozen goal context at recommendation time
+  // (Phase 7.4/ADR-008, CONTEXT_ONLY), reused from the same columns/helper
+  // DecisionActionPanel and GET /optimizer/decisions/{id} already expose.
+  override_notes?: string | null;
+  override_type?: OverrideCategoryType | null;
+  original_symbol?: string | null;
+  replacement_symbol?: string | null;
+  reason_category?: string | null;
+  goal_context?: DecisionGoalContext | null;
 }
 
 export interface RecommendationReportCard {
@@ -3485,6 +4397,8 @@ export interface AcceptanceByClassEntry {
 export interface ExecutionLedgerSummary {
   total_decisions: number;
   decision_counts: Record<string, number>;
+  /** Eligible decisions with canonical plan-derived recording facts that are incomplete. */
+  incomplete_recording_count: number;
   acceptance_by_class: Record<string, AcceptanceByClassEntry>;
   acceptance_note: string;
   avg_execution_score: number | null;
@@ -3501,6 +4415,12 @@ export interface ExecutionLedgerRow {
   execution_score: number | null;
   completeness_pct: number | null;
   funding_fidelity_pct: number | null;
+  /** Existing decision semantics say transaction-recording progress is meaningful. */
+  recording_progress_eligible: boolean;
+  /** Canonical analyzer facts; null when recording progress is not applicable or unavailable. */
+  matched_count: number | null;
+  total_planned: number | null;
+  is_complete: boolean | null;
   outcome_delta: { grade_kind: string; return_pct: number | null; alpha: number | null; is_counterfactual: boolean } | null;
 }
 
@@ -3518,6 +4438,11 @@ export const getExecutionLedger = (portfolioId: number, periodDays = 90) =>
     `/analytics/evaluation/execution?portfolio_id=${portfolioId}&period_days=${periodDays}`,
   );
 
+export interface ExecutionSymbolLinkedTransaction {
+  id: number;
+  transaction_date: string;
+}
+
 export interface ExecutionSymbolDelta {
   action: string;
   planned_amount: number;
@@ -3525,15 +4450,31 @@ export interface ExecutionSymbolDelta {
   timing_delta_pct: number | null;
   size_delta_pct: number | null;
   note: string | null;
+  transactions: ExecutionSymbolLinkedTransaction[];
 }
 
 export interface ExecutionAnalysis {
+  // Grading/measurability status — NOT a completion signal (a decision with
+  // no planned funding-source trade is "partial" here even when fully
+  // recorded). Use matched_count/total_planned/is_complete for completion.
   status: "ok" | "partial" | "unavailable";
   reason?: string | null;
   score: number | null;
-  symbols: Record<string, ExecutionSymbolDelta>;
-  completeness_pct: number;
-  funding_fidelity_pct: number | null;
+  // Absent when reason === "no_target_allocations": the backend has no plan
+  // evidence at all for this decision (execution_ledger.py's
+  // _decision_analysis short-circuits before computing anything else). This
+  // is a stricter degraded case than "plan known, zero linked transactions
+  // yet" (reason === "no_linked_transactions"), which still populates every
+  // field below with real evidence. Never assume these are present just
+  // because status === "unavailable" — check the fields themselves.
+  symbols?: Record<string, ExecutionSymbolDelta>;
+  completeness_pct?: number;
+  funding_fidelity_pct?: number | null;
+  // Canonical derived completion facts (Execution Completion Polish, Slice 3).
+  // Absent, not zeroed, when there is no plan evidence to derive them from.
+  matched_count?: number;
+  total_planned?: number;
+  is_complete?: boolean;
 }
 
 export interface ExecutionDetail {

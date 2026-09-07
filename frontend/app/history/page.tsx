@@ -1,17 +1,36 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
+import { useSearchParams } from "next/navigation";
 import { usePortfolio } from "@/lib/PortfolioContext";
 import PortfolioTabs from "@/components/PortfolioTabs";
 import TransactionHistoryTable, { TYPE_STYLE } from "@/components/TransactionHistoryTable";
 import { getTransactionHistory, isUnresolvedPortfolioError } from "@/lib/api";
 import type { TransactionRecord, TransactionType } from "@/lib/api";
 import { DEFAULT_FILTERS, filterTransactions, hasActiveFilters, type TransactionFilters } from "@/lib/transactionFilters";
+import { transactionsToCsv, buildExportFilename, CSV_UTF8_BOM } from "@/lib/csvExport";
 
 const TYPE_OPTIONS = Object.entries(TYPE_STYLE) as [TransactionType, { label: string }][];
 
+// The history endpoint hard-caps at 500 server-side (backend/main.py). Export
+// draws from the same fetched array as the on-screen history — no second,
+// export-only request — so requesting the endpoint's actual maximum here is
+// what makes "Exports up to the most recent 500 transactions" true.
+const HISTORY_FETCH_LIMIT = 500;
+
 export default function TransactionHistoryPage() {
-  const { currentSelection: portfolioId, reportUnresolvedPortfolio } = usePortfolio();
+  const { currentSelection: portfolioId, portfolios, reportUnresolvedPortfolio } = usePortfolio();
+
+  // DEM-01: ?transactionId=<id> highlights a single already-loaded row —
+  // drill-through target from Execution Detail / Report Card evidence links.
+  // Read/navigation only; no new lookup, no backend change. An id outside
+  // the currently loaded history (pagination, another workspace, malformed)
+  // simply never matches — see TransactionHistoryTable's neutral no-match
+  // behavior.
+  const searchParams = useSearchParams();
+  const rawTransactionIdParam = searchParams.get("transactionId");
+  const highlightTransactionId =
+    rawTransactionIdParam !== null && /^\d+$/.test(rawTransactionIdParam) ? Number(rawTransactionIdParam) : null;
 
   // Captures the portfolio a request was issued for, so a response that
   // lands after the user has switched portfolios (or cleared selection) is
@@ -28,7 +47,7 @@ export default function TransactionHistoryPage() {
     setLoading(true);
     setError(null);
     try {
-      const data = await getTransactionHistory(pid);
+      const data = await getTransactionHistory(pid, undefined, HISTORY_FETCH_LIMIT);
       if (requestIdRef.current !== pid) return; // stale — user switched or cleared since this request began
       setTransactions(data);
     } catch (e) {
@@ -60,6 +79,22 @@ export default function TransactionHistoryPage() {
   const filtered = useMemo(() => filterTransactions(transactions, filters), [transactions, filters]);
   const filtersActive = hasActiveFilters(filters);
   const clearFilters = () => setFilters(DEFAULT_FILTERS);
+
+  // Exports the loaded history (`transactions`), not the filtered view
+  // (`filtered`) — search/type/date are viewing tools, so "Export CSV"
+  // means the bounded history currently loaded for this portfolio.
+  function handleExport() {
+    if (portfolioId == null || transactions.length === 0) return;
+    const csv = transactionsToCsv(transactions);
+    const blob = new Blob([CSV_UTF8_BOM + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const portfolioName = portfolios.find((p) => p.id === portfolioId)?.name ?? null;
+    a.download = buildExportFilename(portfolioName, new Date().toISOString().slice(0, 10));
+    a.click();
+    URL.revokeObjectURL(url);
+  }
 
   return (
     <main className="max-w-5xl mx-auto px-4 py-6 space-y-6">
@@ -144,6 +179,18 @@ export default function TransactionHistoryPage() {
                 Clear filters
               </button>
             )}
+            <div className="flex items-center gap-2 sm:ml-auto">
+              <button
+                type="button"
+                onClick={handleExport}
+                className="text-xs border rounded-lg px-3 py-1.5 text-gray-700 hover:bg-gray-50 whitespace-nowrap"
+              >
+                Export CSV
+              </button>
+              <span className="text-xs text-gray-400 whitespace-nowrap">
+                Exports up to the most recent {HISTORY_FETCH_LIMIT} transactions.
+              </span>
+            </div>
           </div>
 
           {filtersActive && (
@@ -157,7 +204,7 @@ export default function TransactionHistoryPage() {
               No transactions match these filters.
             </p>
           ) : (
-            <TransactionHistoryTable transactions={filtered} />
+            <TransactionHistoryTable transactions={filtered} highlightTransactionId={highlightTransactionId} />
           )}
         </div>
       )}

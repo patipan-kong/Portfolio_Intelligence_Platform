@@ -95,6 +95,7 @@ from models.database import (
     AttributionMetric,
     OptimizerHistory,
     Portfolio,
+    PortfolioInvestmentMandate,
     PortfolioItem,
     PortfolioSnapshot,
     RecommendationSnapshot,
@@ -2253,6 +2254,7 @@ def _cmd_recalculate_snapshot_returns(args: argparse.Namespace) -> int:
 # Ordered list used for both the pre-deletion summary and the post-deletion report.
 # Each entry: (display_label, count_key).
 _RELATION_LABELS: list[tuple[str, str]] = [
+    ("Investment Mandates",       "investment_mandates"),
     ("Portfolio Items",           "portfolio_items"),
     ("Transactions",              "transactions"),
     ("Snapshots",                 "snapshots"),
@@ -2275,6 +2277,11 @@ def _count_portfolio_relations(db, portfolio_id: int) -> dict[str, int]:
     ]
 
     return {
+        "investment_mandates": (
+            db.query(PortfolioInvestmentMandate)
+            .filter(PortfolioInvestmentMandate.portfolio_id == portfolio_id)
+            .count()
+        ),
         "portfolio_items": (
             db.query(PortfolioItem)
             .filter(PortfolioItem.portfolio_id == portfolio_id)
@@ -2336,6 +2343,14 @@ def _delete_portfolio_cascade(db, portfolio_id: int) -> dict[str, int]:
     ]
 
     counts: dict[str, int] = {}
+
+    # PortfolioInvestmentMandate — explicitly deleted because this bulk path
+    # bypasses ORM cascades and SQLite tests do not enforce FK actions.
+    counts["investment_mandates"] = (
+        db.query(PortfolioInvestmentMandate)
+        .filter(PortfolioInvestmentMandate.portfolio_id == portfolio_id)
+        .delete(synchronize_session=False)
+    )
 
     # 1. ShadowPortfolioSnapshot (deepest leaf under ShadowPortfolio)
     counts["shadow_snapshots"] = (
