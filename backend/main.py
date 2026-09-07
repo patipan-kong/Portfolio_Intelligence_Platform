@@ -1453,7 +1453,12 @@ LiabilityType = Literal[
 ]
 
 
-def _liability_payload(liability: Liability) -> dict:
+def _liability_payload(
+    liability: Liability,
+    *,
+    first_observation_on: str | None = None,
+    latest_observation_on: str | None = None,
+) -> dict:
     return {
         "id": liability.id,
         "workspace_id": liability.workspace_id,
@@ -1466,10 +1471,21 @@ def _liability_payload(liability: Liability) -> dict:
         "is_archived": liability.is_archived,
         "created_at": liability.created_at.isoformat(),
         "updated_at": liability.updated_at.isoformat(),
-        # Phase 5: presence alone tells the UI whether dated history exists,
-        # without a second request — never a substitute for the As-Of read.
-        "first_observation_on": min((o.observed_on for o in liability.observations), default=None),
+        # These are explicit-observation dates only, never substitutes for the
+        # As-Of read or inferred from the current balance/timestamps.
+        "first_observation_on": first_observation_on,
+        "latest_observation_on": latest_observation_on,
     }
+
+
+def _liability_payload_with_observation_dates(liability: Liability) -> dict:
+    """Payload for single-record writes; list reads use the scoped aggregate."""
+    observation_dates = [observation.observed_on for observation in liability.observations]
+    return _liability_payload(
+        liability,
+        first_observation_on=min(observation_dates, default=None),
+        latest_observation_on=max(observation_dates, default=None),
+    )
 
 
 def _liability_or_404(db: Session, liability_id: int, workspace_id: int) -> Liability:
@@ -1533,10 +1549,35 @@ class LiabilityUpdate(BaseModel):
 @app.get("/liabilities")
 async def list_liabilities(include_archived: bool = False, db: Session = Depends(get_db)) -> list[dict]:
     ws = _ws_id(db)
-    query = db.query(Liability).filter(Liability.workspace_id == ws)
+    observation_dates = (
+        db.query(
+            LiabilityBalanceObservation.liability_id.label("liability_id"),
+            func.min(LiabilityBalanceObservation.observed_on).label("first_observation_on"),
+            func.max(LiabilityBalanceObservation.observed_on).label("latest_observation_on"),
+        )
+        .filter(LiabilityBalanceObservation.workspace_id == ws)
+        .group_by(LiabilityBalanceObservation.liability_id)
+        .subquery()
+    )
+    query = (
+        db.query(
+            Liability,
+            observation_dates.c.first_observation_on,
+            observation_dates.c.latest_observation_on,
+        )
+        .outerjoin(observation_dates, observation_dates.c.liability_id == Liability.id)
+        .filter(Liability.workspace_id == ws)
+    )
     if not include_archived:
         query = query.filter(Liability.is_archived.is_(False))
-    return [_liability_payload(item) for item in query.order_by(Liability.name, Liability.id).all()]
+    return [
+        _liability_payload(
+            item,
+            first_observation_on=first_observation_on,
+            latest_observation_on=latest_observation_on,
+        )
+        for item, first_observation_on, latest_observation_on in query.order_by(Liability.name, Liability.id).all()
+    ]
 
 
 @app.post("/liabilities", status_code=201)
@@ -1553,7 +1594,7 @@ async def create_liability(body: LiabilityCreate, db: Session = Depends(get_db))
     db.add(liability)
     db.commit()
     db.refresh(liability)
-    return _liability_payload(liability)
+    return _liability_payload_with_observation_dates(liability)
 
 
 @app.patch("/liabilities/{liability_id}")
@@ -1590,7 +1631,7 @@ async def update_liability(liability_id: int, body: LiabilityUpdate, db: Session
         liability.is_archived = fields["is_archived"]
     db.commit()
     db.refresh(liability)
-    return _liability_payload(liability)
+    return _liability_payload_with_observation_dates(liability)
 
 
 def _write_liability_observation(

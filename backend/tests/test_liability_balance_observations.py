@@ -382,7 +382,26 @@ def test_liability_payload_exposes_first_observation_on_for_ui_status():
     rows = {row["id"]: row for row in asyncio.run(main.list_liabilities(include_archived=False, db=db))}
 
     assert rows[tracked["id"]]["first_observation_on"] == "2026-08-01"
+    assert rows[tracked["id"]]["latest_observation_on"] == "2026-08-10"
     assert rows[untouched["id"]]["first_observation_on"] is None
+    assert rows[untouched["id"]]["latest_observation_on"] is None
+
+
+def test_liability_list_observation_dates_preserve_latest_and_workspace_scope():
+    db = make_session()
+    tracked = create_liability(db, balance=80000.0)
+    create_observation(db, tracked["id"], balance=80000.0, observed_on="2026-08-20")
+    create_observation(db, tracked["id"], balance=90000.0, observed_on="2026-08-10")
+    other_workspace = Workspace(name="Other")
+    db.add(other_workspace)
+    db.commit()
+    db.add(LiabilityBalanceObservation(workspace_id=other_workspace.id, liability_id=tracked["id"], balance=1.0, observed_on="2099-01-01"))
+    db.commit()
+
+    row = asyncio.run(main.list_liabilities(include_archived=False, db=db))[0]
+
+    assert row["first_observation_on"] == "2026-08-10"
+    assert row["latest_observation_on"] == "2026-08-20"
 
 
 def test_current_liability_list_payload_unaffected_beyond_defined_rule():

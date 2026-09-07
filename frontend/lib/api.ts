@@ -81,10 +81,9 @@ export interface Liability {
   is_archived: boolean;
   created_at: string;
   updated_at: string;
-  // Phase 5: date of the most recent explicit balance observation, or null if
-  // no historical tracking has started yet. Status only — never a substitute
-  // for the As-Of read.
+  // Explicit-observation dates only; neither is a substitute for the As-Of read.
   first_observation_on?: string | null;
+  latest_observation_on?: string | null;
 }
 
 export type WealthGoalType =

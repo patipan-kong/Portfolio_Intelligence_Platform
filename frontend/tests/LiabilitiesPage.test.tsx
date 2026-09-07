@@ -157,6 +157,62 @@ describe("LiabilitiesPage", () => {
     expect(await screen.findByText("observation rejected")).toBeInTheDocument();
   });
 
+  it("records entered balances independently, skips blanks, preserves failed values, and refreshes canonical facts", async () => {
+    const second = { ...liability, id: 2, name: "Card", balance: 12500, latest_observation_on: "2026-08-20" };
+    let current: Liability[] = [liability, second];
+    listMock.mockImplementation(async () => current);
+    recordMock.mockImplementation(async (id, body) => {
+      if (id === 2) throw new Error("observation rejected");
+      current = current.map((item) => item.id === id ? { ...item, balance: body.balance, latest_observation_on: body.observed_on } : item);
+      return { id, workspace_id: 1, liability_id: id, balance: body.balance, observed_on: body.observed_on, created_at: "2026-08-25T00:00:00" };
+    });
+    render(<LiabilitiesPage />);
+    await screen.findByText("Home Loan");
+    fireEvent.click(screen.getByRole("button", { name: "Record balances" }));
+    expect(screen.getByRole("dialog", { name: "Record balances" })).toBeInTheDocument();
+    expect(screen.getByText("No recorded balance observation yet.")).toBeInTheDocument();
+    expect(screen.getByText("Latest observation: 2026-08-20")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Observation date"), { target: { value: "2026-08-10" } });
+    fireEvent.change(screen.getByLabelText("Observed balance for Home Loan"), { target: { value: "0" } });
+    fireEvent.change(screen.getByLabelText("Observed balance for Card"), { target: { value: "12000" } });
+    fireEvent.click(screen.getByRole("button", { name: "Record entered balances" }));
+
+    await waitFor(() => expect(recordMock).toHaveBeenCalledWith(1, { balance: 0, observed_on: "2026-08-10" }));
+    expect(recordMock).toHaveBeenCalledWith(2, { balance: 12000, observed_on: "2026-08-10" });
+    expect(await screen.findByText("Recorded")).toBeInTheDocument();
+    expect(screen.getByText("Could not record — observation rejected")).toBeInTheDocument();
+    expect(screen.getByLabelText("Observed balance for Card")).toHaveValue(12000);
+
+    fireEvent.click(screen.getByRole("button", { name: "Record entered balances" }));
+    await waitFor(() => expect(recordMock).toHaveBeenCalledTimes(3));
+    expect(recordMock).toHaveBeenLastCalledWith(2, { balance: 12000, observed_on: "2026-08-10" });
+  });
+
+  it("does not call the observation API for empty or invalid multi-record rows", async () => {
+    listMock.mockResolvedValue([liability]);
+    render(<LiabilitiesPage />);
+    await screen.findByText("Home Loan");
+    fireEvent.click(screen.getByRole("button", { name: "Record balances" }));
+    fireEvent.click(screen.getByRole("button", { name: "Record entered balances" }));
+    expect(screen.getByText("Enter an observation date and at least one observed balance.")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Observed balance for Home Loan"), { target: { value: "-1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Record entered balances" }));
+    expect(await screen.findByText("Enter a non-negative observed balance.")).toBeInTheDocument();
+    expect(recordMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps archived liabilities out of multi-record inputs", async () => {
+    const archived = { ...liability, id: 2, name: "Archived Card", is_archived: true };
+    listMock.mockImplementation(async (includeArchived = false) => includeArchived ? [liability, archived] : [liability]);
+    render(<LiabilitiesPage />);
+    await screen.findByText("Home Loan");
+    fireEvent.click(screen.getByRole("button", { name: "Show archived" }));
+    await screen.findByText("Archived Card");
+    fireEvent.click(screen.getByRole("button", { name: "Record balances" }));
+    expect(screen.getByLabelText("Observed balance for Home Loan")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Observed balance for Archived Card")).not.toBeInTheDocument();
+  });
+
   it("keeps zero-balance active liabilities visible as Paid off", async () => {
     listMock.mockResolvedValue([{ ...liability, balance: 0 }]);
     render(<LiabilitiesPage />);

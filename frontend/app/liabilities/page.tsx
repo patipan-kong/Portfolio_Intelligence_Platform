@@ -64,6 +64,11 @@ export default function LiabilitiesPage() {
   const [recordTarget, setRecordTarget] = useState<Liability | null>(null);
   const [recordDate, setRecordDate] = useState(today());
   const [recordBalance, setRecordBalance] = useState("");
+  const [recordBalancesOpen, setRecordBalancesOpen] = useState(false);
+  const [batchRecordDate, setBatchRecordDate] = useState(today());
+  const [batchRecordBalances, setBatchRecordBalances] = useState<Record<number, string>>({});
+  const [batchRecordStatuses, setBatchRecordStatuses] = useState<Record<number, string>>({});
+  const [batchRecording, setBatchRecording] = useState(false);
 
   const [historyTarget, setHistoryTarget] = useState<Liability | null>(null);
   const [historyRows, setHistoryRows] = useState<LiabilityBalanceObservation[]>([]);
@@ -130,6 +135,7 @@ export default function LiabilitiesPage() {
     setEditing(null);
     setBalanceTarget(null);
     setRecordTarget(null);
+    setRecordBalancesOpen(false);
   }
 
   function openEdit(item: Liability) {
@@ -195,6 +201,63 @@ export default function LiabilitiesPage() {
     setRecordTarget(item);
     setRecordDate(today());
     setRecordBalance(String(item.balance));
+  }
+
+  function openRecordBalances() {
+    setMutationError("");
+    closeMutationForms();
+    setBatchRecordDate(today());
+    setBatchRecordBalances({});
+    setBatchRecordStatuses({});
+    setRecordBalancesOpen(true);
+  }
+
+  async function handleBatchRecord(event: FormEvent) {
+    event.preventDefault();
+    if (batchRecording) return;
+    setMutationError("");
+    const entered = active
+      .map((item) => ({ item, value: batchRecordBalances[item.id]?.trim() ?? "" }))
+      .filter(({ value }) => value !== "");
+    if (!batchRecordDate.trim() || entered.length === 0) {
+      setMutationError("Enter an observation date and at least one observed balance.");
+      return;
+    }
+    const invalidIds = entered
+      .filter(({ value }) => { const parsed = Number(value); return !Number.isFinite(parsed) || parsed < 0; })
+      .map(({ item }) => item.id);
+    if (invalidIds.length > 0) {
+      setBatchRecordStatuses(Object.fromEntries(invalidIds.map((id) => [id, "Enter a non-negative observed balance."])));
+      return;
+    }
+
+    setBatchRecording(true);
+    setBatchRecordStatuses({});
+    const results = await Promise.allSettled(
+      entered.map(({ item, value }) => createLiabilityBalanceObservation(item.id, {
+        balance: Number(value), observed_on: batchRecordDate,
+      }).then(() => item.id)),
+    );
+    const successfulIds = new Set<number>();
+    const statuses: Record<number, string> = {};
+    results.forEach((result, index) => {
+      const item = entered[index].item;
+      if (result.status === "fulfilled") {
+        successfulIds.add(item.id);
+        statuses[item.id] = "Recorded";
+      } else {
+        statuses[item.id] = `Could not record — ${messageFor(result.reason, "Unable to record observed balance.")}`;
+      }
+    });
+    setBatchRecordStatuses(statuses);
+    setBatchRecordBalances((current) => Object.fromEntries(
+      Object.entries(current).filter(([id]) => !successfulIds.has(Number(id))),
+    ));
+    try {
+      if (successfulIds.size > 0) await load();
+    } finally {
+      setBatchRecording(false);
+    }
   }
 
   async function fetchHistory(liabilityId: number) {
@@ -350,7 +413,7 @@ export default function LiabilitiesPage() {
         </form>
       )}
 
-      {recordTarget && (
+       {recordTarget && (
         <form onSubmit={handleRecord} className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-3">
           <h2 className="font-semibold">Record balance — {recordTarget.name}</h2>
           <p className="text-sm text-gray-600">Record a dated observed balance. Earlier history is not reconstructed — only explicit dated observations become available for lookup.</p>
@@ -360,7 +423,26 @@ export default function LiabilitiesPage() {
           </div>
           <Actions><PrimaryButton>Record balance</PrimaryButton><Cancel onClick={() => setRecordTarget(null)} /></Actions>
         </form>
-      )}
+       )}
+
+       {recordBalancesOpen && (
+         <form onSubmit={handleBatchRecord} noValidate role="dialog" aria-modal="true" aria-labelledby="record-balances-title" className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-4">
+           <div className="flex items-center justify-between gap-3">
+             <div><h2 id="record-balances-title" className="font-semibold">Record balances</h2><p className="text-sm text-gray-600">Record explicit observed balances using one observation date.</p></div>
+             <Cancel onClick={() => setRecordBalancesOpen(false)} />
+           </div>
+           <Field label="Observation date"><input aria-label="Observation date" type="date" value={batchRecordDate} onChange={(event) => setBatchRecordDate(event.target.value)} className={`${inputClass} max-w-xs`} /></Field>
+           <div className="space-y-3">
+             {active.map((item) => (
+               <div key={item.id} className="bg-white border rounded-lg p-3 grid gap-3 sm:grid-cols-[1fr_12rem] sm:items-end">
+                 <div><p className="font-medium">{item.name}</p><p className="text-sm text-gray-600">Current balance: {formatThb(item.balance)}</p><p className="text-xs text-gray-500">{item.latest_observation_on ? `Latest observation: ${item.latest_observation_on}` : "No recorded balance observation yet."}</p></div>
+                 <div><Field label={`Observed balance for ${item.name} (THB)`}><input aria-label={`Observed balance for ${item.name}`} type="number" min="0" step="0.01" value={batchRecordBalances[item.id] ?? ""} onChange={(event) => { setBatchRecordBalances((current) => ({ ...current, [item.id]: event.target.value })); setBatchRecordStatuses((current) => ({ ...current, [item.id]: "" })); }} className={inputClass} /></Field>{batchRecordStatuses[item.id] && <p role="status" className={`mt-1 text-xs ${batchRecordStatuses[item.id] === "Recorded" ? "text-green-700" : "text-red-600"}`}>{batchRecordStatuses[item.id]}</p>}</div>
+               </div>
+             ))}
+           </div>
+           <div className="flex gap-2"><button type="submit" disabled={batchRecording} className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700 disabled:opacity-60">{batchRecording ? "Recording…" : "Record entered balances"}</button><Cancel onClick={() => setRecordBalancesOpen(false)} /></div>
+         </form>
+       )}
 
       {historyTarget && (
         <div className="bg-gray-50 border rounded-xl p-4 space-y-3">
@@ -413,7 +495,7 @@ export default function LiabilitiesPage() {
             <h2 className="text-lg font-semibold">Active liabilities</h2>
             <p className="text-sm text-gray-500">Total Outstanding: <strong>{error ? "Unavailable" : loading ? "Loading…" : totalOutstanding == null ? "Unavailable" : formatThb(totalOutstanding)}</strong></p>
           </div>
-          <button type="button" onClick={() => void toggleArchived()} className="text-sm text-blue-600 hover:underline">{showArchived ? "Hide archived" : "Show archived"}</button>
+          <div className="flex gap-3 text-sm"><button type="button" onClick={openRecordBalances} className="text-blue-600 hover:underline">Record balances</button><button type="button" onClick={() => void toggleArchived()} className="text-blue-600 hover:underline">{showArchived ? "Hide archived" : "Show archived"}</button></div>
         </div>
         {loading ? <p className="text-sm text-gray-400">Loading liabilities…</p> : error ? <div className="text-sm text-red-600 space-y-2"><p role="alert">{error}</p><button type="button" onClick={() => void load()} className="text-blue-600 hover:underline">Try again</button></div> : active.length === 0 ? <p className="text-sm text-gray-500">No active liabilities yet. Add your first liability above.</p> : <div className="space-y-3">{active.map((item) => <LiabilityCard key={item.id} item={item} historyOpen={historyTarget?.id === item.id} onEdit={openEdit} onBalance={openBalanceUpdate} onRecord={openRecord} onHistory={toggleHistory} onAsOf={openAsOf} onArchive={() => void setArchived(item, true)} />)}</div>}
       </section>

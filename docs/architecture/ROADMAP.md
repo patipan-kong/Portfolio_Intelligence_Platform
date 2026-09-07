@@ -178,6 +178,9 @@ unmodeled. Delivered:
 - Liability observation history and historical as-of lookup are visible in
   the Liabilities UI (per-liability balance history list and a date lookup),
   reading the existing observation/as-of endpoints — no new persistence
+- LBU-01 — on-demand multi-liability explicit balance observation entry,
+  reusing the existing observation write authority with no payment,
+  repayment, or amortization semantics and no new persistence
 
 This is a balance-tracking record, not a loan-servicing system: there is no
 amortization schedule, interest forecasting, or automatic link between Cash
