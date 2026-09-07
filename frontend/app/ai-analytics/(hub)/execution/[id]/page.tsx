@@ -16,6 +16,7 @@ import AsOfStamp from "@/components/evaluation/AsOfStamp";
 import PortfolioSelectionNotice from "@/components/PortfolioSelectionNotice";
 import { executionCompletionLabel } from "@/components/optimizer/DecisionActionPanel";
 import TransactionEvidenceLinks from "@/components/evaluation/TransactionEvidenceLinks";
+import ExecutionReviewCard from "@/components/evaluation/ExecutionReviewCard";
 import {
   isOpportunityCostEligibleDecision,
   opportunityCostHref,
@@ -240,6 +241,8 @@ export default function ExecutionDetailPage() {
               </Link>
             )}
           </div>
+
+          <ExecutionReviewCard portfolioId={portfolioId} decisionId={data.decision_id} reviewable={data.reviewable} />
         </>
       )}
     </div>

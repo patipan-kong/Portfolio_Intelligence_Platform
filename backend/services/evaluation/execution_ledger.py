@@ -32,7 +32,7 @@ import logging
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 logger = logging.getLogger(__name__)
 
@@ -207,6 +207,7 @@ def list_execution_ledger(db: Session, portfolio_id: int, period_days: int = 90)
     """Decision ledger + class-segmented acceptance summary (UX S4)."""
     from models.database import RecommendationGrade, UserExecutionDecision, Workspace
     from services.evaluation.plan_grader import derive_full_plan, read_snapshot_plan_inputs
+    from services.execution_review import is_reviewable
     from services.optimizer.execution_optimizer import STATE_DEFERRED
 
     ws_row = db.query(Workspace).order_by(Workspace.id).first()
@@ -215,6 +216,12 @@ def list_execution_ledger(db: Session, portfolio_id: int, period_days: int = 90)
 
     decisions = (
         db.query(UserExecutionDecision)
+        # Review Workflows Slice 4 closure — `dec.review` is read 3x per row
+        # below (reviewable/has_review/review_outcome/reviewed_at); without
+        # this, each access lazy-loads its own SELECT, i.e. one extra query
+        # per decision (real N+1, verified: 8 decisions -> 8 extra SELECTs).
+        # joinedload is correct here since review is a to-one relationship.
+        .options(joinedload(UserExecutionDecision.review))
         .filter(
             UserExecutionDecision.workspace_id == ws,
             UserExecutionDecision.portfolio_id == portfolio_id,
@@ -292,6 +299,16 @@ def list_execution_ledger(db: Session, portfolio_id: int, period_days: int = 90)
             "completeness_pct": analysis.get("completeness_pct"),
             "funding_fidelity_pct": analysis.get("funding_fidelity_pct"),
             **recording_progress,
+            # Slice 2 queue-membership fields, plus Slice 3 feedback-loop
+            # fields. `has_review`/`review_outcome`/`reviewed_at` are read
+            # independently of `reviewable` — a legacy review recorded on a
+            # since-reclassified system-generated decision must stay visible
+            # (never silently hidden), only the write path (main.py PUT
+            # .../review) enforces the reviewability boundary going forward.
+            "reviewable": is_reviewable(dec),
+            "has_review": dec.review is not None,
+            "review_outcome": dec.review.outcome if dec.review is not None else None,
+            "reviewed_at": dec.review.reviewed_at.isoformat() + "Z" if dec.review is not None else None,
             "outcome_delta": {
                 "grade_kind": grade_row.grade_kind,
                 "return_pct": grade_row.return_pct,
@@ -339,6 +356,7 @@ def get_execution_detail(db: Session, portfolio_id: int, decision_id: int) -> di
     portfolio — caller (main.py) turns that into a 404.
     """
     from models.database import UserExecutionDecision, Workspace
+    from services.execution_review import is_reviewable
 
     ws_row = db.query(Workspace).order_by(Workspace.id).first()
     ws = ws_row.id if ws_row else 1
@@ -372,5 +390,8 @@ def get_execution_detail(db: Session, portfolio_id: int, decision_id: int) -> di
         "executed_at": dec.executed_at.isoformat() + "Z" if dec.executed_at else None,
         "analysis": analysis,
         "partial_warning": partial_warning,
+        # Slice 3 — lets ExecutionReviewCard gate Add/Edit without a second
+        # fetch; same rule the ledger uses (services.execution_review.is_reviewable).
+        "reviewable": is_reviewable(dec),
         "as_of": datetime.utcnow().isoformat() + "Z",
     }

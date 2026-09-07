@@ -4365,6 +4365,16 @@ export interface ReportCardExecutionSection {
   replacement_symbol?: string | null;
   reason_category?: string | null;
   goal_context?: DecisionGoalContext | null;
+  // Review Workflows Slice 4 — attaches to the same canonical decision as
+  // the fields above (never a separately-selected reviewed decision).
+  // `changed_context` is intentionally excluded; the full review lives on
+  // Execution Detail via ExecutionReviewCard.
+  reviewable?: boolean;
+  execution_review?: {
+    outcome: ExecutionReviewOutcome;
+    reviewed_at: string;
+    summary: string | null;
+  } | null;
 }
 
 export interface RecommendationReportCard {
@@ -4421,6 +4431,15 @@ export interface ExecutionLedgerRow {
   matched_count: number | null;
   total_planned: number | null;
   is_complete: boolean | null;
+  /** Review Queue (Slice 2): reviewable = human-authored decision (not system-generated EXPIRED). */
+  reviewable: boolean;
+  /** Whether a canonical ExecutionReview already exists for this decision. */
+  has_review: boolean;
+  /** Slice 3 — the human-authored retrospective outcome; read independently
+   *  of `reviewable` so a legacy review on a since-reclassified decision is
+   *  never hidden. Null when has_review is false. */
+  review_outcome: ExecutionReviewOutcome | null;
+  reviewed_at: string | null;
   outcome_delta: { grade_kind: string; return_pct: number | null; alpha: number | null; is_counterfactual: boolean } | null;
 }
 
@@ -4485,12 +4504,51 @@ export interface ExecutionDetail {
   executed_at: string | null;
   analysis: ExecutionAnalysis;
   partial_warning: string | null;
+  /** Slice 3 — human-authored decision, not system-generated; gates Add/Edit on ExecutionReviewCard. */
+  reviewable: boolean;
   as_of: string;
 }
 
 export const getExecutionDetail = (portfolioId: number, decisionId: number) =>
   apiFetch<ExecutionDetail>(
     `/analytics/evaluation/execution/${decisionId}?portfolio_id=${portfolioId}`,
+  );
+
+// ── Review Workflows Slice 1 (ERR-01) — Execution Review ────────────────────
+// One canonical, human-authored retrospective review per execution decision.
+// Never mutates the decision or its recommendation snapshot. GET returns
+// `null` (not a 404) when the decision exists but has no review yet — a 404
+// here always means the decision itself doesn't resolve for this
+// workspace/portfolio, never "no review recorded".
+
+export type ExecutionReviewOutcome = "ON_TRACK" | "MIXED" | "OFF_TRACK";
+
+export interface ExecutionReview {
+  id: number;
+  execution_decision_id: number;
+  reviewed_at: string;
+  outcome: ExecutionReviewOutcome;
+  summary: string | null;
+  changed_context: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ExecutionReviewInput {
+  outcome: ExecutionReviewOutcome;
+  summary?: string | null;
+  changed_context?: string | null;
+}
+
+export const getExecutionReview = (portfolioId: number, decisionId: number) =>
+  apiFetch<ExecutionReview | null>(
+    `/portfolios/${portfolioId}/execution-decisions/${decisionId}/review`,
+  );
+
+export const putExecutionReview = (portfolioId: number, decisionId: number, body: ExecutionReviewInput) =>
+  apiFetch<ExecutionReview>(
+    `/portfolios/${portfolioId}/execution-decisions/${decisionId}/review`,
+    { method: "PUT", body: JSON.stringify(body) },
   );
 
 // ── AI Evaluation M5 — Human vs AI Scoreboard & Opportunity Cost ─────────────

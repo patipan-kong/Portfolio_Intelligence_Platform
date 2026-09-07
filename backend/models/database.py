@@ -90,6 +90,7 @@ class Workspace(Base):
     attribution_metrics = relationship("AttributionMetric", back_populates="workspace", cascade="all, delete-orphan")
     calibration_records = relationship("ConfidenceCalibrationRecord", back_populates="workspace", cascade="all, delete-orphan")
     recommendation_grades = relationship("RecommendationGrade", back_populates="workspace", cascade="all, delete-orphan")
+    execution_reviews = relationship("ExecutionReview", back_populates="workspace", cascade="all, delete-orphan")
 
 
 class Portfolio(Base):
@@ -1030,6 +1031,44 @@ class UserExecutionDecision(Base):
     workspace = relationship("Workspace", back_populates="execution_decisions")
     snapshot = relationship("RecommendationSnapshot", back_populates="decisions")
     shadow_portfolios = relationship("ShadowPortfolio", back_populates="execution_decision")
+    # Review Workflows Slice 1 (ERR-01). ORM-level cascade (not just the FK's
+    # ondelete=CASCADE) because SQLite — this app's default DATABASE_URL —
+    # does not enforce FK actions without an explicit PRAGMA this codebase
+    # does not set; matches Portfolio.investment_mandates' same reasoning.
+    review = relationship("ExecutionReview", back_populates="execution_decision", uselist=False, cascade="all, delete-orphan")
+
+
+class ExecutionReview(Base):
+    """Review Workflows Slice 1 (ERR-01): one canonical, human-authored
+    retrospective review per UserExecutionDecision.
+
+    Read-only with respect to history: never mutates UserExecutionDecision or
+    RecommendationSnapshot (OPTIMIZER_PHILOSOPHY.md Invariant 1 — recorded
+    history is immutable). `changed_context` is free text the reviewer writes
+    describing what changed; it is never derived or rebound from current
+    goal/mandate state. Editable over time (Option A) — `outcome`/`summary`/
+    `changed_context` may be updated, but `reviewed_at` is fixed at first
+    creation and edits only advance `updated_at`.
+    """
+    __tablename__ = "execution_reviews"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    execution_decision_id = Column(Integer, ForeignKey("user_execution_decisions.id", ondelete="CASCADE"), nullable=False, index=True)
+    reviewed_at = Column(DateTime, nullable=False, default=datetime.utcnow)  # server-generated at creation; never re-set on edit
+    outcome = Column(String, nullable=False)          # ON_TRACK | MIXED | OFF_TRACK
+    summary = Column(Text, nullable=True)
+    changed_context = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    workspace = relationship("Workspace", back_populates="execution_reviews")
+    execution_decision = relationship("UserExecutionDecision", back_populates="review")
+
+    __table_args__ = (
+        UniqueConstraint("execution_decision_id", name="uq_execution_reviews_decision"),
+        CheckConstraint("outcome IN ('ON_TRACK', 'MIXED', 'OFF_TRACK')", name="ck_execution_reviews_outcome"),
+    )
 
 
 class ShadowPortfolio(Base):

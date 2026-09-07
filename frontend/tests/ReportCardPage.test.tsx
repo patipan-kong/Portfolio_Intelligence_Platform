@@ -296,3 +296,149 @@ describe("Report Card — recorded execution evidence (DEM-01)", () => {
     expect(bodyText).not.toMatch(/settled|verified|matched|executed successfully|right call|wrong call/i);
   });
 });
+
+// Review Workflows Slice 4 — compact, read-only "Post-execution review"
+// block inside "2 · What Happened". Attaches to the same execution.decision
+// already rendered above it; never a second fetch, never an edit surface.
+describe("Report Card — post-execution review (Review Workflows Slice 4)", () => {
+  function executionWithReview(overrides: Record<string, unknown>) {
+    return {
+      status: "ok" as const,
+      decision_id: 456,
+      decision: "APPROVED",
+      executed_at: "2026-08-20T00:00:00Z",
+      analysis: { status: "unavailable", reason: "no_linked_transactions", score: null },
+      reviewable: true,
+      execution_review: null,
+      ...overrides,
+    };
+  }
+
+  test("reviewed decision renders label, badge, reviewed date, and summary", async () => {
+    getRecommendationReportCard.mockResolvedValue(reportCard({
+      execution: executionWithReview({
+        execution_review: { outcome: "ON_TRACK", reviewed_at: "2026-09-07T00:00:00Z", summary: "Held up well." },
+      }),
+    }));
+
+    render(<ReportCardPage />);
+
+    expect(await screen.findByText("Post-execution review")).toBeInTheDocument();
+    expect(await screen.findByText("On Track")).toBeInTheDocument();
+    expect(await screen.findByText("Reviewed Sep 7, 2026")).toBeInTheDocument();
+    expect(await screen.findByText("Held up well.")).toBeInTheDocument();
+  });
+
+  test("null summary renders no empty paragraph or placeholder", async () => {
+    getRecommendationReportCard.mockResolvedValue(reportCard({
+      execution: executionWithReview({
+        execution_review: { outcome: "MIXED", reviewed_at: "2026-09-07T00:00:00Z", summary: null },
+      }),
+    }));
+
+    render(<ReportCardPage />);
+
+    await screen.findByText("Mixed");
+    expect(screen.queryByText(/null/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/undefined/i)).not.toBeInTheDocument();
+  });
+
+  test("reviewable decision without a review shows a subtle 'Not reviewed yet' state", async () => {
+    getRecommendationReportCard.mockResolvedValue(reportCard({
+      execution: executionWithReview({ reviewable: true, execution_review: null }),
+    }));
+
+    render(<ReportCardPage />);
+
+    expect(await screen.findByText("Post-execution review")).toBeInTheDocument();
+    expect(await screen.findByText("Not reviewed yet")).toBeInTheDocument();
+  });
+
+  test("system-generated decision with no review renders no review block at all", async () => {
+    getRecommendationReportCard.mockResolvedValue(reportCard({
+      decision: { decision: "EXPIRED", is_system_generated: true, executed_at: "2026-08-20T00:00:00Z" },
+      execution: executionWithReview({ reviewable: false, execution_review: null }),
+    }));
+
+    render(<ReportCardPage />);
+
+    await screen.findByText("View full execution detail →");
+    expect(screen.queryByText("Post-execution review")).not.toBeInTheDocument();
+    expect(screen.queryByText("Not reviewed yet")).not.toBeInTheDocument();
+  });
+
+  test("system-generated decision with a legacy review still renders it, read-only", async () => {
+    getRecommendationReportCard.mockResolvedValue(reportCard({
+      decision: { decision: "EXPIRED", is_system_generated: true, executed_at: "2026-08-20T00:00:00Z" },
+      execution: executionWithReview({
+        reviewable: false,
+        execution_review: { outcome: "OFF_TRACK", reviewed_at: "2026-09-07T00:00:00Z", summary: "Regime shifted." },
+      }),
+    }));
+
+    render(<ReportCardPage />);
+
+    expect(await screen.findByText("Post-execution review")).toBeInTheDocument();
+    expect(await screen.findByText("Off Track")).toBeInTheDocument();
+    expect(await screen.findByText("Regime shifted.")).toBeInTheDocument();
+  });
+
+  test("no decision recorded renders no review section", async () => {
+    getRecommendationReportCard.mockResolvedValue(reportCard({
+      decision: null,
+      execution: { status: "no_decision_recorded" },
+    }));
+
+    render(<ReportCardPage />);
+
+    await screen.findByText("No decision recorded yet for this recommendation.");
+    expect(screen.queryByText("Post-execution review")).not.toBeInTheDocument();
+    expect(screen.queryByText("Not reviewed yet")).not.toBeInTheDocument();
+  });
+
+  test("no edit affordance (no textarea, Save, Add review, or Edit review control) ever renders on Report Card", async () => {
+    getRecommendationReportCard.mockResolvedValue(reportCard({
+      execution: executionWithReview({
+        execution_review: { outcome: "ON_TRACK", reviewed_at: "2026-09-07T00:00:00Z", summary: "Held up well." },
+      }),
+    }));
+
+    render(<ReportCardPage />);
+
+    await screen.findByText("Post-execution review");
+    expect(document.querySelector("textarea")).not.toBeInTheDocument();
+    expect(screen.queryByText("Save review")).not.toBeInTheDocument();
+    expect(screen.queryByText("Add review")).not.toBeInTheDocument();
+    expect(screen.queryByText("Edit review")).not.toBeInTheDocument();
+  });
+
+  test("Execution Detail navigation remains unchanged and is not duplicated by the review block", async () => {
+    getRecommendationReportCard.mockResolvedValue(reportCard({
+      execution: executionWithReview({
+        execution_review: { outcome: "ON_TRACK", reviewed_at: "2026-09-07T00:00:00Z", summary: "Held up well." },
+      }),
+    }));
+
+    render(<ReportCardPage />);
+
+    const links = await screen.findAllByText("View full execution detail →");
+    expect(links).toHaveLength(1);
+    expect(links[0].closest("a")).toHaveAttribute("href", "/ai-analytics/execution/456");
+  });
+
+  test("objective Outcome section still renders independently of the review block", async () => {
+    getRecommendationReportCard.mockResolvedValue(reportCard({
+      execution: executionWithReview({
+        execution_review: { outcome: "ON_TRACK", reviewed_at: "2026-09-07T00:00:00Z", summary: "Held up well." },
+      }),
+      outcomes: {
+        H30: { status: "graded", return_pct: 4.2, benchmark_return_pct: 2.1, alpha: 2.1, directional_correct: true },
+      },
+    }));
+
+    render(<ReportCardPage />);
+
+    expect(await screen.findByText("3 · Outcome (frozen shadow vs benchmark)")).toBeInTheDocument();
+    expect(await screen.findByText("Post-execution review")).toBeInTheDocument();
+  });
+});

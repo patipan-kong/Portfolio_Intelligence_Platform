@@ -402,7 +402,7 @@ function executionDetailFixture(analysis: ExecutionAnalysis): ExecutionDetail {
   return {
     decision_id: 7, snapshot_id: 5, portfolio_id: 1, decision: "APPROVED",
     executed_at: "2026-08-20T00:00:00Z", analysis, partial_warning: null,
-    as_of: "2026-08-21T00:00:00Z",
+    reviewable: true, as_of: "2026-08-21T00:00:00Z",
   };
 }
 
