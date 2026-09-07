@@ -7709,6 +7709,59 @@ async def get_execution_decision(decision_id: int, db: Session = Depends(get_db)
     }
 
 
+# ─── Review Workflows Slice 1 (ERR-01) ───────────────────────────────────────
+# One canonical, human-authored retrospective review per execution decision.
+# Never mutates UserExecutionDecision or RecommendationSnapshot. See
+# services/execution_review.py and docs design note ERR-01.
+
+class ExecutionReviewUpsert(BaseModel):
+    outcome: str
+    summary: str | None = None
+    changed_context: str | None = None
+
+
+@app.get("/portfolios/{portfolio_id}/execution-decisions/{decision_id}/review")
+async def get_portfolio_execution_review(
+    portfolio_id: int, decision_id: int, db: Session = Depends(get_db)
+) -> dict | None:
+    """Review payload, or null if the decision exists but has no review yet.
+
+    404 only when the execution decision itself does not resolve under this
+    workspace/portfolio — never used to signal "no review recorded".
+    """
+    ws = _ws_id(db)
+    decision = resolve_execution_decision_or_404(db, decision_id, ws, portfolio_id)
+
+    from services.execution_review import get_execution_review
+
+    return get_execution_review(db, decision)
+
+
+@app.put("/portfolios/{portfolio_id}/execution-decisions/{decision_id}/review")
+async def put_portfolio_execution_review(
+    portfolio_id: int,
+    decision_id: int,
+    body: ExecutionReviewUpsert,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Create the canonical review if absent, else update it in place."""
+    ws = _ws_id(db)
+    decision = resolve_execution_decision_or_404(db, decision_id, ws, portfolio_id)
+
+    from services.execution_review import upsert_execution_review, valid_outcome
+
+    outcome = valid_outcome(body.outcome)
+    if outcome is None:
+        raise HTTPException(status_code=422, detail=f"Invalid outcome: {body.outcome!r}")
+
+    payload, created = upsert_execution_review(
+        db, decision, ws, outcome, body.summary, body.changed_context,
+    )
+    response.status_code = 201 if created else 200
+    return payload
+
+
 @app.get("/optimizer/snapshots/{snapshot_id}")
 async def get_recommendation_snapshot(snapshot_id: int, db: Session = Depends(get_db)) -> dict:
     """Return the full RecommendationSnapshot for a given optimizer run."""

@@ -1,7 +1,8 @@
 import { describe, test, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import ExecutionDetailPage from "@/app/ai-analytics/(hub)/execution/[id]/page";
-import type { ExecutionDetail } from "@/lib/api";
+import type { ExecutionDetail, ExecutionReview } from "@/lib/api";
 
 // Decision Explainability Polish — Slice 2 (C): Execution Detail already has
 // `snapshot_id` in hand but had no way back to the recommendation that
@@ -14,12 +15,16 @@ import type { ExecutionDetail } from "@/lib/api";
 // tests/Dashboard.test.tsx (a lighter alternative to full PortfolioProvider
 // wiring, matched to this page's actual dependency surface).
 
-const { getExecutionDetail, isUnresolvedPortfolioError } = vi.hoisted(() => ({
+const { getExecutionDetail, isUnresolvedPortfolioError, getExecutionReview, putExecutionReview } = vi.hoisted(() => ({
   getExecutionDetail: vi.fn(),
   isUnresolvedPortfolioError: vi.fn(() => false),
+  getExecutionReview: vi.fn(),
+  putExecutionReview: vi.fn(),
 }));
 
-vi.mock("@/lib/api", () => ({ getExecutionDetail, isUnresolvedPortfolioError }));
+vi.mock("@/lib/api", () => ({
+  getExecutionDetail, isUnresolvedPortfolioError, getExecutionReview, putExecutionReview,
+}));
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ id: "42" }),
@@ -48,9 +53,25 @@ function executionDetail(overrides: Partial<ExecutionDetail> = {}): ExecutionDet
   };
 }
 
+function executionReview(overrides: Partial<ExecutionReview> = {}): ExecutionReview {
+  return {
+    id: 1,
+    execution_decision_id: 42,
+    reviewed_at: "2026-09-07T10:00:00Z",
+    outcome: "MIXED",
+    summary: "Partially worked out.",
+    changed_context: "Goal target date moved up.",
+    created_at: "2026-09-07T10:00:00Z",
+    updated_at: "2026-09-07T10:00:00Z",
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   getExecutionDetail.mockReset();
   isUnresolvedPortfolioError.mockReset().mockReturnValue(false);
+  getExecutionReview.mockReset().mockResolvedValue(null);
+  putExecutionReview.mockReset();
   portfolioState = { currentSelection: 1, reportUnresolvedPortfolio: vi.fn() };
 });
 
@@ -378,5 +399,94 @@ describe("Execution Detail — recorded-transaction drill-through (DEM-01)", () 
     await screen.findByText("#501 (20 Aug 26)");
     const bodyText = document.body.textContent ?? "";
     expect(bodyText).not.toMatch(/settled|verified|matched|executed successfully/i);
+  });
+});
+
+// ERR-01 (Review Workflows Slice 1): "Post-execution review" card on the
+// Execution Detail page — one canonical, human-authored, editable review per
+// decision. GET returning null means "no review yet", never a 404.
+describe("ERR-01: Post-execution review", () => {
+  test("no-review state shows the empty copy and an Add review action", async () => {
+    getExecutionDetail.mockResolvedValue(executionDetail());
+    getExecutionReview.mockResolvedValue(null);
+
+    render(<ExecutionDetailPage />);
+
+    expect(await screen.findByText("Post-execution review")).toBeInTheDocument();
+    expect(await screen.findByText("No review yet. Record what happened after this decision was executed.")).toBeInTheDocument();
+    expect(screen.getByText("Add review")).toBeInTheDocument();
+    expect(getExecutionReview).toHaveBeenCalledWith(1, 42);
+  });
+
+  test("existing-review state shows outcome, reviewed date, summary, and changed context", async () => {
+    getExecutionDetail.mockResolvedValue(executionDetail());
+    getExecutionReview.mockResolvedValue(executionReview());
+
+    render(<ExecutionDetailPage />);
+
+    expect(await screen.findByText("Mixed")).toBeInTheDocument();
+    expect(screen.getByText("Reviewed Sep 7, 2026")).toBeInTheDocument();
+    expect(screen.getByText("Partially worked out.")).toBeInTheDocument();
+    expect(screen.getByText("Goal target date moved up.")).toBeInTheDocument();
+    expect(screen.getByText("Edit review")).toBeInTheDocument();
+    expect(screen.queryByText("Add review")).not.toBeInTheDocument();
+  });
+
+  test("add review: fills the inline form and PUTs outcome + summary + changed_context", async () => {
+    const user = userEvent.setup();
+    getExecutionDetail.mockResolvedValue(executionDetail());
+    getExecutionReview.mockResolvedValue(null);
+    putExecutionReview.mockResolvedValue(executionReview({ outcome: "ON_TRACK", summary: "Looking good" }));
+
+    render(<ExecutionDetailPage />);
+
+    await user.click(await screen.findByText("Add review"));
+    await user.click(screen.getByText("On Track"));
+    await user.type(screen.getByPlaceholderText("What happened after this decision was executed?"), "Looking good");
+    await user.click(screen.getByText("Save review"));
+
+    await waitFor(() => {
+      expect(putExecutionReview).toHaveBeenCalledWith(1, 42, {
+        outcome: "ON_TRACK",
+        summary: "Looking good",
+        changed_context: null,
+      });
+    });
+    expect(await screen.findByText("On Track")).toBeInTheDocument();
+  });
+
+  test("edit review: prefills the form from the existing review and PUTs the revision", async () => {
+    const user = userEvent.setup();
+    getExecutionDetail.mockResolvedValue(executionDetail());
+    getExecutionReview.mockResolvedValue(executionReview({ outcome: "MIXED", summary: "Partially worked out." }));
+    putExecutionReview.mockResolvedValue(executionReview({ outcome: "OFF_TRACK", summary: "Worse than expected." }));
+
+    render(<ExecutionDetailPage />);
+
+    await user.click(await screen.findByText("Edit review"));
+    const summaryBox = screen.getByDisplayValue("Partially worked out.");
+    await user.clear(summaryBox);
+    await user.type(summaryBox, "Worse than expected.");
+    await user.click(screen.getByText("Off Track"));
+    await user.click(screen.getByText("Save review"));
+
+    await waitFor(() => {
+      expect(putExecutionReview).toHaveBeenCalledWith(1, 42, {
+        outcome: "OFF_TRACK",
+        summary: "Worse than expected.",
+        changed_context: "Goal target date moved up.",
+      });
+    });
+    expect(await screen.findByText("Off Track")).toBeInTheDocument();
+  });
+
+  test("does not mutate decision/analysis rendering — review card is additive only", async () => {
+    getExecutionDetail.mockResolvedValue(executionDetail());
+    getExecutionReview.mockResolvedValue(executionReview());
+
+    render(<ExecutionDetailPage />);
+
+    expect(await screen.findByText("Decision #42")).toBeInTheDocument();
+    expect(screen.getByText("Execution complete")).toBeInTheDocument();
   });
 });

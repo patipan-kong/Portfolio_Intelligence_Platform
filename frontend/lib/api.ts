@@ -4493,6 +4493,43 @@ export const getExecutionDetail = (portfolioId: number, decisionId: number) =>
     `/analytics/evaluation/execution/${decisionId}?portfolio_id=${portfolioId}`,
   );
 
+// ── Review Workflows Slice 1 (ERR-01) — Execution Review ────────────────────
+// One canonical, human-authored retrospective review per execution decision.
+// Never mutates the decision or its recommendation snapshot. GET returns
+// `null` (not a 404) when the decision exists but has no review yet — a 404
+// here always means the decision itself doesn't resolve for this
+// workspace/portfolio, never "no review recorded".
+
+export type ExecutionReviewOutcome = "ON_TRACK" | "MIXED" | "OFF_TRACK";
+
+export interface ExecutionReview {
+  id: number;
+  execution_decision_id: number;
+  reviewed_at: string;
+  outcome: ExecutionReviewOutcome;
+  summary: string | null;
+  changed_context: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ExecutionReviewInput {
+  outcome: ExecutionReviewOutcome;
+  summary?: string | null;
+  changed_context?: string | null;
+}
+
+export const getExecutionReview = (portfolioId: number, decisionId: number) =>
+  apiFetch<ExecutionReview | null>(
+    `/portfolios/${portfolioId}/execution-decisions/${decisionId}/review`,
+  );
+
+export const putExecutionReview = (portfolioId: number, decisionId: number, body: ExecutionReviewInput) =>
+  apiFetch<ExecutionReview>(
+    `/portfolios/${portfolioId}/execution-decisions/${decisionId}/review`,
+    { method: "PUT", body: JSON.stringify(body) },
+  );
+
 // ── AI Evaluation M5 — Human vs AI Scoreboard & Opportunity Cost ─────────────
 // Types mirror backend/services/{analytics/human_vs_ai.compute_scoreboard,
 // evaluation/opportunity_cost}.py exactly. Grade-row sourced (never live
