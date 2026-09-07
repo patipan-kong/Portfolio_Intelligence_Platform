@@ -4365,6 +4365,16 @@ export interface ReportCardExecutionSection {
   replacement_symbol?: string | null;
   reason_category?: string | null;
   goal_context?: DecisionGoalContext | null;
+  // Review Workflows Slice 4 — attaches to the same canonical decision as
+  // the fields above (never a separately-selected reviewed decision).
+  // `changed_context` is intentionally excluded; the full review lives on
+  // Execution Detail via ExecutionReviewCard.
+  reviewable?: boolean;
+  execution_review?: {
+    outcome: ExecutionReviewOutcome;
+    reviewed_at: string;
+    summary: string | null;
+  } | null;
 }
 
 export interface RecommendationReportCard {

@@ -383,3 +383,177 @@ def test_report_card_bk_variant_transaction_links_via_registry_aware_matching(db
     card = get_report_card(db, portfolio.id, snap.id)
     assert card["execution"]["analysis"]["symbols"]["BH"]["executed_amount"] == 30_000.0
     assert card["execution"]["analysis"]["symbols"]["BH"]["note"] is None
+
+
+# ── Review Workflows Slice 4 — Report Card review context ───────────────────
+# Attaches read-only retrospective review context to the same canonical
+# decision_row the Report Card already selects (executed_at desc). Never a
+# separate "find any reviewed decision" lookup. Reuses services.execution_
+# review.is_reviewable — no duplicated predicate.
+
+def test_report_card_reviewed_human_decision_surfaces_review(db, ws_portfolio):
+    from models.database import ExecutionReview, UserExecutionDecision
+
+    ws, portfolio = ws_portfolio
+    snap = _seed_snapshot(db, ws, portfolio, days_ago=2)
+    dec = UserExecutionDecision(
+        workspace_id=ws.id, recommendation_snapshot_id=snap.id, portfolio_id=portfolio.id,
+        decision="APPROVED", executed_at=datetime.utcnow(), created_at=datetime.utcnow(),
+    )
+    db.add(dec)
+    db.commit()
+    db.refresh(dec)
+
+    reviewed_at = datetime.utcnow() - timedelta(days=1)
+    db.add(ExecutionReview(
+        workspace_id=ws.id, execution_decision_id=dec.id,
+        outcome="ON_TRACK", summary="Held up well.", reviewed_at=reviewed_at,
+        created_at=reviewed_at, updated_at=reviewed_at,
+    ))
+    db.commit()
+
+    execution = get_report_card(db, portfolio.id, snap.id)["execution"]
+    assert execution["reviewable"] is True
+    assert execution["execution_review"]["outcome"] == "ON_TRACK"
+    assert execution["execution_review"]["summary"] == "Held up well."
+    assert execution["execution_review"]["reviewed_at"] == reviewed_at.isoformat() + "Z"
+    assert "changed_context" not in execution["execution_review"]
+
+
+def test_report_card_reviewable_decision_without_review(db, ws_portfolio):
+    from models.database import UserExecutionDecision
+
+    ws, portfolio = ws_portfolio
+    snap = _seed_snapshot(db, ws, portfolio, days_ago=2)
+    db.add(UserExecutionDecision(
+        workspace_id=ws.id, recommendation_snapshot_id=snap.id, portfolio_id=portfolio.id,
+        decision="APPROVED", executed_at=datetime.utcnow(), created_at=datetime.utcnow(),
+    ))
+    db.commit()
+
+    execution = get_report_card(db, portfolio.id, snap.id)["execution"]
+    assert execution["reviewable"] is True
+    assert execution["execution_review"] is None
+
+
+def test_report_card_system_generated_decision_without_review(db, ws_portfolio):
+    from models.database import UserExecutionDecision
+
+    ws, portfolio = ws_portfolio
+    snap = _seed_snapshot(db, ws, portfolio, days_ago=20)
+    db.add(UserExecutionDecision(
+        workspace_id=ws.id, recommendation_snapshot_id=snap.id, portfolio_id=portfolio.id,
+        decision="EXPIRED", is_system_generated=True,
+        executed_at=datetime.utcnow(), created_at=datetime.utcnow(),
+    ))
+    db.commit()
+
+    execution = get_report_card(db, portfolio.id, snap.id)["execution"]
+    assert execution["reviewable"] is False
+    assert execution["execution_review"] is None
+
+
+def test_report_card_system_generated_decision_with_legacy_review_still_shown(db, ws_portfolio):
+    """Slice 3 invariant, reconfirmed here: reviewable=False must not hide a
+    legacy review already persisted on a since-reclassified decision."""
+    from models.database import ExecutionReview, UserExecutionDecision
+
+    ws, portfolio = ws_portfolio
+    snap = _seed_snapshot(db, ws, portfolio, days_ago=20)
+    dec = UserExecutionDecision(
+        workspace_id=ws.id, recommendation_snapshot_id=snap.id, portfolio_id=portfolio.id,
+        decision="EXPIRED", is_system_generated=True,
+        executed_at=datetime.utcnow(), created_at=datetime.utcnow(),
+    )
+    db.add(dec)
+    db.commit()
+    db.refresh(dec)
+
+    db.add(ExecutionReview(workspace_id=ws.id, execution_decision_id=dec.id, outcome="MIXED"))
+    db.commit()
+
+    execution = get_report_card(db, portfolio.id, snap.id)["execution"]
+    assert execution["reviewable"] is False
+    assert execution["execution_review"] is not None
+    assert execution["execution_review"]["outcome"] == "MIXED"
+
+
+def test_report_card_no_decision_has_no_fabricated_review_state(db, ws_portfolio):
+    ws, portfolio = ws_portfolio
+    snap = _seed_snapshot(db, ws, portfolio, days_ago=2)
+
+    execution = get_report_card(db, portfolio.id, snap.id)["execution"]
+    assert execution["status"] == "no_decision_recorded"
+    assert "reviewable" not in execution
+    assert "execution_review" not in execution
+
+
+def test_report_card_canonical_decision_stays_newest_when_older_decision_has_review(db, ws_portfolio):
+    """Multiple decisions on one snapshot: the Report Card must keep selecting
+    the newest-by-executed_at decision for everything (unchanged pre-Slice-4
+    rule) and must never leak an older decision's review onto it merely
+    because the newer one lacks a review of its own."""
+    from models.database import ExecutionReview, UserExecutionDecision
+
+    ws, portfolio = ws_portfolio
+    snap = _seed_snapshot(db, ws, portfolio, days_ago=10)
+
+    older = UserExecutionDecision(
+        workspace_id=ws.id, recommendation_snapshot_id=snap.id, portfolio_id=portfolio.id,
+        decision="REJECTED", executed_at=datetime.utcnow() - timedelta(days=5),
+        created_at=datetime.utcnow() - timedelta(days=5),
+    )
+    db.add(older)
+    db.commit()
+    db.refresh(older)
+    db.add(ExecutionReview(workspace_id=ws.id, execution_decision_id=older.id, outcome="OFF_TRACK"))
+
+    newer = UserExecutionDecision(
+        workspace_id=ws.id, recommendation_snapshot_id=snap.id, portfolio_id=portfolio.id,
+        decision="MANUAL_OVERRIDE", executed_at=datetime.utcnow(), created_at=datetime.utcnow(),
+    )
+    db.add(newer)
+    db.commit()
+    db.refresh(newer)
+
+    execution = get_report_card(db, portfolio.id, snap.id)["execution"]
+    assert execution["decision_id"] == newer.id
+    assert execution["decision"] == "MANUAL_OVERRIDE"
+    assert execution["reviewable"] is True
+    assert execution["execution_review"] is None  # the newer decision's own (absent) review, not the older one's
+
+
+def test_report_card_review_presence_does_not_alter_plan_rationale_goal_context_or_verdict(db, ws_portfolio):
+    from models.database import ExecutionReview, RecommendationGrade, UserExecutionDecision
+
+    ws, portfolio = ws_portfolio
+    snap = _seed_snapshot(db, ws, portfolio, days_ago=2)
+    db.add(RecommendationGrade(
+        workspace_id=ws.id, recommendation_snapshot_id=snap.id, portfolio_id=portfolio.id,
+        grade_kind="PLAN", graded_at=datetime.utcnow(), score=90.0,
+        detail_json=json.dumps({"necessity_score": 100.0}),
+        created_at=datetime.utcnow(),
+    ))
+    dec = UserExecutionDecision(
+        workspace_id=ws.id, recommendation_snapshot_id=snap.id, portfolio_id=portfolio.id,
+        decision="MANUAL_OVERRIDE", executed_at=datetime.utcnow(), created_at=datetime.utcnow(),
+        override_type="REPLACE_SYMBOL", original_symbol="KBANK", replacement_symbol="TOA",
+        reason_category="HIGHER_CONVICTION", override_notes="Higher conviction in TOA.",
+    )
+    db.add(dec)
+    db.commit()
+    db.refresh(dec)
+
+    card_before = get_report_card(db, portfolio.id, snap.id)
+
+    db.add(ExecutionReview(workspace_id=ws.id, execution_decision_id=dec.id, outcome="ON_TRACK"))
+    db.commit()
+
+    card_after = get_report_card(db, portfolio.id, snap.id)
+
+    assert card_after["plan"] == card_before["plan"]
+    assert card_after["verdict"] == card_before["verdict"]
+    for key in ("override_type", "original_symbol", "replacement_symbol", "reason_category", "override_notes", "goal_context"):
+        assert card_after["execution"][key] == card_before["execution"][key]
+    assert card_before["execution"]["execution_review"] is None
+    assert card_after["execution"]["execution_review"]["outcome"] == "ON_TRACK"

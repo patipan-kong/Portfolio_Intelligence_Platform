@@ -258,6 +258,7 @@ def get_report_card(db: Session, portfolio_id: int, snapshot_id: int) -> dict[st
     execution_section: dict[str, Any] = {"status": "no_decision_recorded"}
     if decision_row:
         from services.decision_goal_context import load_persisted_decision_context
+        from services.execution_review import is_reviewable
 
         if inputs is not None:
             from services.evaluation.execution_analyzer import compute_execution_analysis
@@ -303,6 +304,20 @@ def get_report_card(db: Session, portfolio_id: int, snapshot_id: int) -> dict[st
             "replacement_symbol": decision_row.replacement_symbol,
             "reason_category": decision_row.reason_category,
             "goal_context": load_persisted_decision_context(snap.wealth_goal_context_json),
+            # Review Workflows Slice 4 — attaches to this same canonical
+            # decision_row only (never a separate "find any reviewed
+            # decision" lookup); `reviewable`/`execution_review` are read
+            # independently of each other so a legacy review persisted on a
+            # since-reclassified system-generated decision still surfaces
+            # read-only (Slice 3 invariant). `changed_context` is
+            # deliberately excluded — full review context stays on
+            # Execution Detail.
+            "reviewable": is_reviewable(decision_row),
+            "execution_review": {
+                "outcome": decision_row.review.outcome,
+                "reviewed_at": decision_row.review.reviewed_at.isoformat() + "Z",
+                "summary": decision_row.review.summary,
+            } if decision_row.review is not None else None,
         }
 
     horizons = _horizon_days(db, ws)

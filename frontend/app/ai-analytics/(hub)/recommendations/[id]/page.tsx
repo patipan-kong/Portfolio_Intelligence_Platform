@@ -18,6 +18,7 @@ import DecisionStatusBadge from "@/components/evaluation/DecisionStatusBadge";
 import HorizonStrip from "@/components/evaluation/HorizonStrip";
 import AsOfStamp from "@/components/evaluation/AsOfStamp";
 import TransactionEvidenceLinks from "@/components/evaluation/TransactionEvidenceLinks";
+import ReviewOutcomeBadge from "@/components/evaluation/ReviewOutcomeBadge";
 
 function pct(n: number | null | undefined, decimals = 1): string {
   if (n == null) return "—";
@@ -141,6 +142,17 @@ function decisionRecordedLabel(iso: string): string {
   return `decision recorded ${iso.slice(0, 10)}`;
 }
 
+// Review Workflows Slice 4 — deliberately distinct from decisionRecordedLabel
+// above: `reviewed_at` is when the human later recorded their retrospective
+// take, never the decision/execution moment. Same date format
+// ExecutionReviewCard already uses, so the same timestamp reads identically
+// on both surfaces.
+function formatReviewedAt(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
 function formatGoalTargetDate(targetDate: string | null): string | null {
   if (!targetDate) return null;
   const d = new Date(targetDate);
@@ -209,6 +221,39 @@ function GoalContextAtDecisionTime({ goalContext }: { goalContext: Recommendatio
   );
 }
 
+// Review Workflows Slice 4 — compact, read-only retrospective context for
+// the same canonical decision already shown above (never a separately
+// selected reviewed decision; see recommendation_ledger.py's decision_row
+// selection). Editing stays exclusively on Execution Detail via
+// ExecutionReviewCard — this block never fetches, mutates, or offers
+// Add/Edit. `changed_context` is deliberately omitted; see Slice 4 spec §D.
+function PostExecutionReview({ execution }: { execution: RecommendationReportCard["execution"] }) {
+  if (execution.status !== "ok") return null;
+  const review = execution.execution_review;
+
+  // System-generated decision with no persisted review: not eligible for
+  // review, so no "Not reviewed yet" prompt either — that would misrepresent
+  // an ineligible decision as merely pending.
+  if (!execution.reviewable && !review) return null;
+
+  return (
+    <div className="pt-2 border-t border-gray-100 space-y-1">
+      <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Post-execution review</p>
+      {review ? (
+        <div className="space-y-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <ReviewOutcomeBadge outcome={review.outcome} />
+            <span className="text-xs text-gray-400">Reviewed {formatReviewedAt(review.reviewed_at)}</span>
+          </div>
+          {review.summary && <p className="text-sm text-gray-700 whitespace-pre-wrap">{review.summary}</p>}
+        </div>
+      ) : (
+        <p className="text-sm text-gray-400 italic">Not reviewed yet</p>
+      )}
+    </div>
+  );
+}
+
 function ExecutionSection({ execution, decision }: { execution: RecommendationReportCard["execution"]; decision: RecommendationReportCard["decision"] }) {
   if (execution.status === "no_decision_recorded") {
     return <p className="text-sm text-gray-400 italic">No decision recorded yet for this recommendation.</p>;
@@ -265,6 +310,8 @@ function ExecutionSection({ execution, decision }: { execution: RecommendationRe
           </>
         )
       )}
+
+      <PostExecutionReview execution={execution} />
     </>
   );
 }
