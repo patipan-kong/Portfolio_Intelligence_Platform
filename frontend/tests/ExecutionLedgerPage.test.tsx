@@ -290,3 +290,183 @@ describe("Execution Intelligence — Decision Feedback Loop (Slice 3)", () => {
     expect(screen.queryByText("#504")).not.toBeInTheDocument();
   });
 });
+
+describe("Execution Intelligence — Decision Follow-up Queue (Slice 1)", () => {
+  test("includes only reviewable decisions with a current MIXED or OFF_TRACK review", async () => {
+    const mixed = row({ decision_id: 501, snapshot_id: 601, has_review: true, review_outcome: "MIXED", reviewed_at: "2026-08-05T00:00:00Z" });
+    const offTrack = row({ decision_id: 502, snapshot_id: 602, has_review: true, review_outcome: "OFF_TRACK", reviewed_at: "2026-08-06T00:00:00Z" });
+    const onTrack = row({ decision_id: 503, snapshot_id: 603, has_review: true, review_outcome: "ON_TRACK", reviewed_at: "2026-08-07T00:00:00Z" });
+    const noReview = row({ decision_id: 504, snapshot_id: 604, has_review: false, review_outcome: null });
+    const legacy = row({ decision_id: 505, snapshot_id: 605, reviewable: false, has_review: true, review_outcome: "OFF_TRACK", reviewed_at: "2026-08-01T00:00:00Z" });
+    const malformed = row({ decision_id: 506, snapshot_id: 606, has_review: false, review_outcome: "MIXED" });
+    const nullOutcome = row({ decision_id: 507, snapshot_id: 607, has_review: true, review_outcome: null });
+    getExecutionLedger.mockResolvedValue(ledger([mixed, offTrack, onTrack, noReview, legacy, malformed, nullOutcome]));
+
+    render(<ExecutionLedgerPage />);
+    await screen.findAllByText("#601");
+    fireEvent.click(screen.getByRole("button", { name: "Needs follow-up" }));
+
+    const visible = Array.from(new Set(screen.getAllByText(/^#60[1-7]$/).map((el) => el.textContent)));
+    expect(visible).toEqual(["#601", "#602"]);
+    expect(screen.getByText("2 decisions eligible for human review in this window have a current review of mixed or off track.")).toBeInTheDocument();
+    expect(screen.queryByText("#603")).not.toBeInTheDocument();
+    expect(screen.queryByText("#605")).not.toBeInTheDocument();
+    expect(screen.queryByText("#606")).not.toBeInTheDocument();
+    expect(screen.queryByText("#607")).not.toBeInTheDocument();
+  });
+
+  test("uses the exact follow-up heading, explanation, ordering hint, and empty state copy", async () => {
+    getExecutionLedger.mockResolvedValue(ledger([row({ has_review: true, review_outcome: "ON_TRACK" })]));
+
+    render(<ExecutionLedgerPage />);
+    await screen.findAllByText("#201");
+    fireEvent.click(screen.getByRole("button", { name: "Needs follow-up" }));
+
+    expect(screen.getByText("Decisions you reviewed as mixed or off track")).toBeInTheDocument();
+    expect(screen.getByText("Based on your current retrospective reviews. Follow-up completion is not tracked.")).toBeInTheDocument();
+    expect(screen.getByText("Oldest review first, based on when the review was first recorded.")).toBeInTheDocument();
+    expect(screen.getByText("0 decisions eligible for human review in this window have a current review of mixed or off track.")).toBeInTheDocument();
+    expect(screen.getByText("No decisions eligible for human review in this window have a mixed or off-track review.")).toBeInTheDocument();
+  });
+
+  test("keeps all three attention views mutually exclusive and restores all decisions from the active control", async () => {
+    const recording = row({ decision_id: 601, snapshot_id: 701, is_complete: false, has_review: true, review_outcome: "ON_TRACK" });
+    const review = row({ decision_id: 602, snapshot_id: 702, is_complete: true, has_review: false, review_outcome: null });
+    const followUp = row({ decision_id: 603, snapshot_id: 703, is_complete: true, has_review: true, review_outcome: "MIXED", reviewed_at: "2026-08-01T00:00:00Z" });
+    getExecutionLedger.mockResolvedValue(ledger([recording, review, followUp]));
+
+    render(<ExecutionLedgerPage />);
+    await screen.findAllByText("#701");
+
+    const recordingButton = () => screen.getByRole("button", { name: "Needs recording" });
+    const reviewButton = () => screen.getByRole("button", { name: "Needs review" });
+    const followUpButton = () => screen.getByRole("button", { name: "Needs follow-up" });
+    const activeButton = () => screen.getByRole("button", { name: "Show all decisions" });
+
+    fireEvent.click(recordingButton());
+    expect(activeButton()).toHaveAttribute("aria-pressed", "true");
+    expect(reviewButton()).toHaveAttribute("aria-pressed", "false");
+    expect(followUpButton()).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.click(reviewButton());
+    expect(recordingButton()).toHaveAttribute("aria-pressed", "false");
+    expect(activeButton()).toHaveAttribute("aria-pressed", "true");
+    expect(followUpButton()).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.click(followUpButton());
+    expect(recordingButton()).toHaveAttribute("aria-pressed", "false");
+    expect(reviewButton()).toHaveAttribute("aria-pressed", "false");
+    expect(activeButton()).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(recordingButton());
+    expect(activeButton()).toHaveAttribute("aria-pressed", "true");
+    expect(reviewButton()).toHaveAttribute("aria-pressed", "false");
+    expect(followUpButton()).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.click(followUpButton());
+    expect(recordingButton()).toHaveAttribute("aria-pressed", "false");
+    expect(reviewButton()).toHaveAttribute("aria-pressed", "false");
+    expect(activeButton()).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(reviewButton());
+    expect(recordingButton()).toHaveAttribute("aria-pressed", "false");
+    expect(activeButton()).toHaveAttribute("aria-pressed", "true");
+    expect(followUpButton()).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.click(activeButton());
+    expect(recordingButton()).toHaveAttribute("aria-pressed", "false");
+    expect(reviewButton()).toHaveAttribute("aria-pressed", "false");
+    expect(followUpButton()).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getAllByText("#701")).not.toHaveLength(0);
+    expect(screen.getAllByText("#702")).not.toHaveLength(0);
+    expect(screen.getAllByText("#703")).not.toHaveLength(0);
+  });
+
+  test("sorts by reviewed_at ascending, then decision_id, with invalid timestamps last", async () => {
+    const laterReview = row({ decision_id: 710, snapshot_id: 810, has_review: true, review_outcome: "MIXED", reviewed_at: "2026-08-04T00:00:00Z", date: "2026-08-01T00:00:00Z" });
+    const tiedHigherId = row({ decision_id: 712, snapshot_id: 812, has_review: true, review_outcome: "OFF_TRACK", reviewed_at: "2026-08-02T00:00:00Z", date: "2026-08-30T00:00:00Z" });
+    const tiedLowerId = row({ decision_id: 711, snapshot_id: 811, has_review: true, review_outcome: "MIXED", reviewed_at: "2026-08-02T00:00:00Z", date: "2026-08-31T00:00:00Z" });
+    const invalidHigherId = row({ decision_id: 714, snapshot_id: 814, has_review: true, review_outcome: "OFF_TRACK", reviewed_at: "not-a-date" });
+    const missingLowerId = row({ decision_id: 713, snapshot_id: 813, has_review: true, review_outcome: "MIXED", reviewed_at: null });
+    getExecutionLedger.mockResolvedValue(ledger([laterReview, tiedHigherId, tiedLowerId, invalidHigherId, missingLowerId]));
+
+    render(<ExecutionLedgerPage />);
+    await screen.findAllByText("#810");
+    fireEvent.click(screen.getByRole("button", { name: "Needs follow-up" }));
+
+    const ordered = Array.from(new Set(screen.getAllByText(/^#81[0-4]$/).map((el) => el.textContent)));
+    expect(ordered).toEqual(["#811", "#812", "#810", "#813", "#814"]);
+  });
+
+  test("preserves default order after leaving follow-up and keeps the review badge and detail navigation", async () => {
+    const newer = row({ decision_id: 720, snapshot_id: 820, date: "2026-08-20T00:00:00Z", has_review: true, review_outcome: "OFF_TRACK", reviewed_at: "2026-08-02T00:00:00Z" });
+    const older = row({ decision_id: 721, snapshot_id: 821, date: "2026-08-01T00:00:00Z", has_review: true, review_outcome: "MIXED", reviewed_at: "2026-08-01T00:00:00Z" });
+    getExecutionLedger.mockResolvedValue(ledger([newer, older]));
+
+    render(<ExecutionLedgerPage />);
+    await screen.findAllByText("#820");
+    fireEvent.click(screen.getByRole("button", { name: "Needs follow-up" }));
+    expect(screen.getAllByText("Off Track")).not.toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: "Show all decisions" }));
+
+    const ordered = Array.from(new Set(screen.getAllByText(/^#82[01]$/).map((el) => el.textContent)));
+    expect(ordered).toEqual(["#820", "#821"]);
+    fireEvent.click(screen.getAllByText("#820")[0]);
+    expect(push).toHaveBeenCalledWith("/ai-analytics/execution/720");
+  });
+
+  test("keeps the count stable across attention switches and updates it for refreshed period data", async () => {
+    const followUp = row({ decision_id: 730, snapshot_id: 830, has_review: true, review_outcome: "MIXED", reviewed_at: "2026-08-01T00:00:00Z" });
+    const review = row({ decision_id: 731, snapshot_id: 831, has_review: false, review_outcome: null });
+    getExecutionLedger.mockResolvedValueOnce(ledger([followUp, review]));
+
+    render(<ExecutionLedgerPage />);
+    await screen.findAllByText("#830");
+    expect(screen.getByText("1 decision eligible for human review in this window has a current review of mixed or off track.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Needs follow-up" }));
+    expect(screen.getByText("1 decision eligible for human review in this window has a current review of mixed or off track.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show all decisions" }));
+    expect(screen.getByText("1 decision eligible for human review in this window has a current review of mixed or off track.")).toBeInTheDocument();
+
+    getExecutionLedger.mockResolvedValueOnce(ledger([row({ decision_id: 732, snapshot_id: 832, has_review: true, review_outcome: "OFF_TRACK", reviewed_at: "2026-08-02T00:00:00Z" }), row({ decision_id: 733, snapshot_id: 833, has_review: true, review_outcome: "MIXED", reviewed_at: "2026-08-03T00:00:00Z" })]));
+    fireEvent.click(screen.getByRole("button", { name: "30D" }));
+    await waitFor(() => expect(getExecutionLedger).toHaveBeenLastCalledWith(1, 30));
+    expect(screen.getByText("2 decisions eligible for human review in this window have a current review of mixed or off track.")).toBeInTheDocument();
+  });
+
+  test("updates the count when the selected portfolio response changes", async () => {
+    getExecutionLedger.mockResolvedValueOnce(ledger([row({ decision_id: 734, snapshot_id: 834, has_review: true, review_outcome: "MIXED" })]));
+    const { rerender } = render(<ExecutionLedgerPage />);
+    await screen.findAllByText("#834");
+    expect(screen.getByText("1 decision eligible for human review in this window has a current review of mixed or off track.")).toBeInTheDocument();
+
+    getExecutionLedger.mockResolvedValueOnce(ledger([
+      row({ decision_id: 735, snapshot_id: 835, has_review: true, review_outcome: "OFF_TRACK" }),
+      row({ decision_id: 736, snapshot_id: 836, has_review: true, review_outcome: "MIXED" }),
+    ]));
+    portfolioState.currentSelection = 2;
+    rerender(<ExecutionLedgerPage />);
+    await waitFor(() => expect(getExecutionLedger).toHaveBeenLastCalledWith(2, 90));
+    expect(screen.getByText("2 decisions eligible for human review in this window have a current review of mixed or off track.")).toBeInTheDocument();
+  });
+
+  test("adds and removes follow-up membership when refreshed review outcomes change", async () => {
+    const onTrack = row({ decision_id: 740, snapshot_id: 840, has_review: true, review_outcome: "ON_TRACK", reviewed_at: "2026-08-01T00:00:00Z" });
+    const mixed = row({ decision_id: 740, snapshot_id: 840, has_review: true, review_outcome: "MIXED", reviewed_at: "2026-08-01T00:00:00Z" });
+    getExecutionLedger.mockResolvedValueOnce(ledger([onTrack])).mockResolvedValueOnce(ledger([mixed])).mockResolvedValueOnce(ledger([onTrack]));
+
+    render(<ExecutionLedgerPage />);
+    await screen.findAllByText("#840");
+    fireEvent.click(screen.getByRole("button", { name: "Needs follow-up" }));
+    expect(await screen.findByText("No decisions eligible for human review in this window have a mixed or off-track review.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "30D" }));
+    await waitFor(() => expect(getExecutionLedger).toHaveBeenLastCalledWith(1, 30));
+    expect(screen.getAllByText("#840")).not.toHaveLength(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "90D" }));
+    await waitFor(() => expect(getExecutionLedger).toHaveBeenLastCalledWith(1, 90));
+    expect(screen.getByText("No decisions eligible for human review in this window have a mixed or off-track review.")).toBeInTheDocument();
+  });
+});

@@ -30,6 +30,35 @@ function pct(n: number | null | undefined, decimals = 1): string {
   return `${n >= 0 ? "+" : ""}${n.toFixed(decimals)}%`;
 }
 
+function needsFollowUp(row: ExecutionLedgerRow): boolean {
+  return (
+    row.reviewable === true &&
+    row.has_review === true &&
+    (row.review_outcome === "MIXED" || row.review_outcome === "OFF_TRACK")
+  );
+}
+
+function reviewTimestamp(value: string | null): number | null {
+  if (!value) return null;
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function sortNeedsFollowUpRows(rows: ExecutionLedgerRow[]): ExecutionLedgerRow[] {
+  // `reviewed_at` is set when the canonical review is first created and does
+  // not advance when the review is edited, so this is review-creation order,
+  // not an ordering by last follow-up activity.
+  return rows.slice().sort((a, b) => {
+    const at = reviewTimestamp(a.reviewed_at);
+    const bt = reviewTimestamp(b.reviewed_at);
+
+    if (at == null && bt == null) return a.decision_id - b.decision_id;
+    if (at == null) return 1;
+    if (bt == null) return -1;
+    return at - bt || a.decision_id - b.decision_id;
+  });
+}
+
 export default function ExecutionLedgerPage() {
   const { currentSelection, reportUnresolvedPortfolio } = usePortfolio();
   const portfolioId = currentSelection;
@@ -41,6 +70,7 @@ export default function ExecutionLedgerPage() {
   const [error, setError] = useState<string | null>(null);
   const [needsRecording, setNeedsRecording] = useState(false);
   const [needsReview, setNeedsReview] = useState(false);
+  const [needsFollowUpView, setNeedsFollowUpView] = useState(false);
 
   // M36.1 WP4B F04 — captured Portfolio Identity; a response arriving after
   // Current Selection has moved to a different portfolio (or cleared to
@@ -80,11 +110,16 @@ export default function ExecutionLedgerPage() {
     return <PortfolioSelectionNotice label="Execution Intelligence" />;
   }
 
-  // "Needs recording" and "Needs review" are mutually exclusive (see toggle
-  // handlers below) — an intersection filter of two unrelated action queues
-  // has no clear meaning, so only one is ever active at a time.
+  const needsFollowUpRows = (data?.rows ?? []).filter(needsFollowUp);
+  const needsFollowUpCount = needsFollowUpRows.length;
+
+  // The three attention views are mutually exclusive (see toggle handlers
+  // below) — an intersection filter of unrelated attention views has no clear
+  // meaning, so only one is ever active at a time.
   let visibleRows: ExecutionLedgerRow[];
-  if (needsReview) {
+  if (needsFollowUpView) {
+    visibleRows = sortNeedsFollowUpRows(needsFollowUpRows);
+  } else if (needsReview) {
     // Actionable queue: oldest-waiting decision first. This is a view-level
     // sort only — the underlying fetched rows and the default/"Needs
     // recording" ordering (backend executed_at desc) are untouched.
@@ -210,6 +245,11 @@ export default function ExecutionLedgerPage() {
               <span className="text-gray-500">
                 {data.summary.incomplete_recording_count} {data.summary.incomplete_recording_count === 1 ? "decision has" : "decisions have"} incomplete transaction recording.
               </span>
+              <span className="text-gray-500">
+                {needsFollowUpCount === 1
+                  ? "1 decision eligible for human review in this window has a current review of mixed or off track."
+                  : `${needsFollowUpCount} decisions eligible for human review in this window have a current review of mixed or off track.`}
+              </span>
               {Object.entries(data.summary.decision_counts).map(([k, v]) => (
                 <span key={k} className="text-gray-400">
                   {k} <strong className="text-gray-600">{v}</strong>
@@ -236,21 +276,32 @@ export default function ExecutionLedgerPage() {
           </div>
 
           <div className="bg-white border border-gray-200 rounded-xl p-4">
-            <div className="flex items-center justify-between gap-3 mb-3">
-              <p className="text-sm text-gray-600">
-                {needsReview
-                  ? "Decisions needing a review"
-                  : needsRecording
-                    ? "Decisions with incomplete transaction recording"
-                    : "All decisions in this window"}
-              </p>
-              <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
+              <div className="min-w-0">
+                <p className="text-sm text-gray-600">
+                  {needsFollowUpView
+                    ? "Decisions you reviewed as mixed or off track"
+                    : needsReview
+                      ? "Decisions needing a review"
+                      : needsRecording
+                        ? "Decisions with incomplete transaction recording"
+                        : "All decisions in this window"}
+                </p>
+                {needsFollowUpView && (
+                  <div className="space-y-0.5 text-xs text-gray-400 mt-1">
+                    <p>Based on your current retrospective reviews. Follow-up completion is not tracked.</p>
+                    <p>Oldest review first, based on when the review was first recorded.</p>
+                  </div>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   aria-pressed={needsRecording}
                   onClick={() => {
                     setNeedsRecording((value) => !value);
                     setNeedsReview(false);
+                    setNeedsFollowUpView(false);
                   }}
                   className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
                     needsRecording ? "bg-blue-700 text-white" : "bg-blue-50 text-blue-700 hover:bg-blue-100"
@@ -264,12 +315,27 @@ export default function ExecutionLedgerPage() {
                   onClick={() => {
                     setNeedsReview((value) => !value);
                     setNeedsRecording(false);
+                    setNeedsFollowUpView(false);
                   }}
                   className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
                     needsReview ? "bg-blue-700 text-white" : "bg-blue-50 text-blue-700 hover:bg-blue-100"
                   }`}
                 >
                   {needsReview ? "Show all decisions" : "Needs review"}
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={needsFollowUpView}
+                  onClick={() => {
+                    setNeedsFollowUpView((value) => !value);
+                    setNeedsRecording(false);
+                    setNeedsReview(false);
+                  }}
+                  className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
+                    needsFollowUpView ? "bg-blue-700 text-white" : "bg-blue-50 text-blue-700 hover:bg-blue-100"
+                  }`}
+                >
+                  {needsFollowUpView ? "Show all decisions" : "Needs follow-up"}
                 </button>
               </div>
             </div>
@@ -279,7 +345,9 @@ export default function ExecutionLedgerPage() {
               rowKey={(r) => r.decision_id}
               onRowClick={(r) => router.push(`/ai-analytics/execution/${r.decision_id}`)}
               emptyMessage={
-                needsReview
+                needsFollowUpView
+                  ? "No decisions eligible for human review in this window have a mixed or off-track review."
+                  : needsReview
                   ? "No decisions need review right now."
                   : needsRecording
                     ? "No decisions with incomplete transaction recording in this view."
