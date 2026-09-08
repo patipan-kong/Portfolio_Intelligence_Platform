@@ -4440,6 +4440,8 @@ export interface ExecutionLedgerRow {
    *  never hidden. Null when has_review is false. */
   review_outcome: ExecutionReviewOutcome | null;
   reviewed_at: string | null;
+  /** Current follow-up workflow metadata; null means no acknowledgment. */
+  follow_up_acknowledged_at: string | null;
   outcome_delta: { grade_kind: string; return_pct: number | null; alpha: number | null; is_counterfactual: boolean } | null;
 }
 
@@ -4548,6 +4550,35 @@ export const getExecutionReview = (portfolioId: number, decisionId: number) =>
 export const putExecutionReview = (portfolioId: number, decisionId: number, body: ExecutionReviewInput) =>
   apiFetch<ExecutionReview>(
     `/portfolios/${portfolioId}/execution-decisions/${decisionId}/review`,
+    { method: "PUT", body: JSON.stringify(body) },
+  );
+
+// ── Product Intelligence Slice 2 — Follow-up acknowledgment ────────────────
+// Separate current-state workflow metadata for a canonical execution review.
+// The server owns acknowledged_at; clients send only the desired state and,
+// for acknowledgment, the review updated_at they displayed.
+
+export interface ExecutionFollowUp {
+  acknowledged_at: string | null;
+}
+
+export interface ExecutionFollowUpInput {
+  acknowledged: boolean;
+  expected_review_updated_at?: string;
+}
+
+export const getExecutionFollowUp = (portfolioId: number, decisionId: number) =>
+  apiFetch<ExecutionFollowUp>(
+    `/portfolios/${portfolioId}/execution-decisions/${decisionId}/follow-up`,
+  );
+
+export const putExecutionFollowUp = (
+  portfolioId: number,
+  decisionId: number,
+  body: ExecutionFollowUpInput,
+) =>
+  apiFetch<ExecutionFollowUp>(
+    `/portfolios/${portfolioId}/execution-decisions/${decisionId}/follow-up`,
     { method: "PUT", body: JSON.stringify(body) },
   );
 

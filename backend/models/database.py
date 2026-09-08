@@ -91,6 +91,7 @@ class Workspace(Base):
     calibration_records = relationship("ConfidenceCalibrationRecord", back_populates="workspace", cascade="all, delete-orphan")
     recommendation_grades = relationship("RecommendationGrade", back_populates="workspace", cascade="all, delete-orphan")
     execution_reviews = relationship("ExecutionReview", back_populates="workspace", cascade="all, delete-orphan")
+    execution_follow_ups = relationship("ExecutionFollowUp", back_populates="workspace", cascade="all, delete-orphan")
 
 
 class Portfolio(Base):
@@ -1036,6 +1037,7 @@ class UserExecutionDecision(Base):
     # does not enforce FK actions without an explicit PRAGMA this codebase
     # does not set; matches Portfolio.investment_mandates' same reasoning.
     review = relationship("ExecutionReview", back_populates="execution_decision", uselist=False, cascade="all, delete-orphan")
+    follow_up = relationship("ExecutionFollowUp", back_populates="execution_decision", uselist=False, cascade="all, delete-orphan")
 
 
 class ExecutionReview(Base):
@@ -1068,6 +1070,28 @@ class ExecutionReview(Base):
     __table_args__ = (
         UniqueConstraint("execution_decision_id", name="uq_execution_reviews_decision"),
         CheckConstraint("outcome IN ('ON_TRACK', 'MIXED', 'OFF_TRACK')", name="ck_execution_reviews_outcome"),
+    )
+
+
+class ExecutionFollowUp(Base):
+    """Product Intelligence Slice 2: current follow-up attention metadata.
+
+    The canonical retrospective assessment remains on ``ExecutionReview``.
+    This one-to-one row only records current acknowledgment metadata and is
+    intentionally not an event history, status enum, or task record.
+    """
+    __tablename__ = "execution_follow_ups"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    execution_decision_id = Column(Integer, ForeignKey("user_execution_decisions.id", ondelete="CASCADE"), nullable=False, index=True)
+    acknowledged_at = Column(DateTime, nullable=True)
+
+    workspace = relationship("Workspace", back_populates="execution_follow_ups")
+    execution_decision = relationship("UserExecutionDecision", back_populates="follow_up")
+
+    __table_args__ = (
+        UniqueConstraint("execution_decision_id", name="uq_execution_follow_ups_decision"),
     )
 
 

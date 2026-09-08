@@ -33,6 +33,7 @@ function row(overrides: Partial<ExecutionLedgerRow> = {}): ExecutionLedgerRow {
     has_review: false,
     review_outcome: null,
     reviewed_at: null,
+    follow_up_acknowledged_at: null,
     outcome_delta: null,
     ...overrides,
   };
@@ -315,6 +316,31 @@ describe("Execution Intelligence — Decision Follow-up Queue (Slice 1)", () => 
     expect(screen.queryByText("#607")).not.toBeInTheDocument();
   });
 
+  test("hides acknowledged rows from the queue while retaining the assessment count", async () => {
+    const acknowledged = row({
+      decision_id: 508,
+      snapshot_id: 608,
+      has_review: true,
+      review_outcome: "MIXED",
+      follow_up_acknowledged_at: "2026-09-08T03:00:00Z",
+    });
+    const open = row({
+      decision_id: 509,
+      snapshot_id: 609,
+      has_review: true,
+      review_outcome: "OFF_TRACK",
+    });
+    getExecutionLedger.mockResolvedValue(ledger([acknowledged, open]));
+
+    render(<ExecutionLedgerPage />);
+    await screen.findAllByText("#608");
+    expect(screen.getByText("2 decisions eligible for human review in this window have a current review of mixed or off track.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Needs follow-up" }));
+    expect(screen.queryByText("#608")).not.toBeInTheDocument();
+    expect(screen.getAllByText("#609")).not.toHaveLength(0);
+  });
+
   test("uses the exact follow-up heading, explanation, ordering hint, and empty state copy", async () => {
     getExecutionLedger.mockResolvedValue(ledger([row({ has_review: true, review_outcome: "ON_TRACK" })]));
 
@@ -323,7 +349,7 @@ describe("Execution Intelligence — Decision Follow-up Queue (Slice 1)", () => 
     fireEvent.click(screen.getByRole("button", { name: "Needs follow-up" }));
 
     expect(screen.getByText("Decisions you reviewed as mixed or off track")).toBeInTheDocument();
-    expect(screen.getByText("Based on your current retrospective reviews. Follow-up completion is not tracked.")).toBeInTheDocument();
+    expect(screen.getByText("Based on your current retrospective reviews. Acknowledged items are hidden from this view; acknowledgment does not mean resolution.")).toBeInTheDocument();
     expect(screen.getByText("Oldest review first, based on when the review was first recorded.")).toBeInTheDocument();
     expect(screen.getByText("0 decisions eligible for human review in this window have a current review of mixed or off track.")).toBeInTheDocument();
     expect(screen.getByText("No decisions eligible for human review in this window have a mixed or off-track review.")).toBeInTheDocument();

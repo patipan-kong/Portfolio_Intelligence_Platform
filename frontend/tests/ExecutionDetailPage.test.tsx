@@ -15,15 +15,29 @@ import type { ExecutionDetail, ExecutionReview } from "@/lib/api";
 // tests/Dashboard.test.tsx (a lighter alternative to full PortfolioProvider
 // wiring, matched to this page's actual dependency surface).
 
-const { getExecutionDetail, isUnresolvedPortfolioError, getExecutionReview, putExecutionReview } = vi.hoisted(() => ({
+const {
+  getExecutionDetail,
+  isUnresolvedPortfolioError,
+  getExecutionReview,
+  putExecutionReview,
+  getExecutionFollowUp,
+  putExecutionFollowUp,
+} = vi.hoisted(() => ({
   getExecutionDetail: vi.fn(),
   isUnresolvedPortfolioError: vi.fn(() => false),
   getExecutionReview: vi.fn(),
   putExecutionReview: vi.fn(),
+  getExecutionFollowUp: vi.fn(),
+  putExecutionFollowUp: vi.fn(),
 }));
 
 vi.mock("@/lib/api", () => ({
-  getExecutionDetail, isUnresolvedPortfolioError, getExecutionReview, putExecutionReview,
+  getExecutionDetail,
+  isUnresolvedPortfolioError,
+  getExecutionReview,
+  putExecutionReview,
+  getExecutionFollowUp,
+  putExecutionFollowUp,
 }));
 
 vi.mock("next/navigation", () => ({
@@ -73,6 +87,8 @@ beforeEach(() => {
   isUnresolvedPortfolioError.mockReset().mockReturnValue(false);
   getExecutionReview.mockReset().mockResolvedValue(null);
   putExecutionReview.mockReset();
+  getExecutionFollowUp.mockReset().mockResolvedValue({ acknowledged_at: null });
+  putExecutionFollowUp.mockReset();
   portfolioState = { currentSelection: 1, reportUnresolvedPortfolio: vi.fn() };
 });
 
@@ -479,6 +495,23 @@ describe("ERR-01: Post-execution review", () => {
       });
     });
     expect(await screen.findByText("Off Track")).toBeInTheDocument();
+  });
+
+  test("review outcome changes reconcile follow-up eligibility immediately", async () => {
+    const user = userEvent.setup();
+    getExecutionDetail.mockResolvedValue(executionDetail());
+    getExecutionReview.mockResolvedValue(executionReview({ outcome: "MIXED" }));
+    getExecutionFollowUp.mockResolvedValue({ acknowledged_at: "2026-09-08T03:00:00Z" });
+    putExecutionReview.mockResolvedValue(executionReview({ outcome: "ON_TRACK" }));
+
+    render(<ExecutionDetailPage />);
+
+    expect(await screen.findByText("Follow-up acknowledged on Sep 8, 2026.")).toBeInTheDocument();
+    await user.click(screen.getByText("Edit review"));
+    await user.click(screen.getByText("On Track"));
+    await user.click(screen.getByText("Save review"));
+
+    await waitFor(() => expect(screen.queryByText("Follow-up attention")).not.toBeInTheDocument());
   });
 
   test("does not mutate decision/analysis rendering — review card is additive only", async () => {

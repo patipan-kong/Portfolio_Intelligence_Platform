@@ -30,12 +30,16 @@ function pct(n: number | null | undefined, decimals = 1): string {
   return `${n >= 0 ? "+" : ""}${n.toFixed(decimals)}%`;
 }
 
-function needsFollowUp(row: ExecutionLedgerRow): boolean {
+function isFollowUpAssessment(row: ExecutionLedgerRow): boolean {
   return (
     row.reviewable === true &&
     row.has_review === true &&
     (row.review_outcome === "MIXED" || row.review_outcome === "OFF_TRACK")
   );
+}
+
+function needsFollowUp(row: ExecutionLedgerRow): boolean {
+  return isFollowUpAssessment(row) && row.follow_up_acknowledged_at == null;
 }
 
 function reviewTimestamp(value: string | null): number | null {
@@ -110,8 +114,8 @@ export default function ExecutionLedgerPage() {
     return <PortfolioSelectionNotice label="Execution Intelligence" />;
   }
 
+  const followUpAssessmentCount = (data?.rows ?? []).filter(isFollowUpAssessment).length;
   const needsFollowUpRows = (data?.rows ?? []).filter(needsFollowUp);
-  const needsFollowUpCount = needsFollowUpRows.length;
 
   // The three attention views are mutually exclusive (see toggle handlers
   // below) — an intersection filter of unrelated attention views has no clear
@@ -246,9 +250,9 @@ export default function ExecutionLedgerPage() {
                 {data.summary.incomplete_recording_count} {data.summary.incomplete_recording_count === 1 ? "decision has" : "decisions have"} incomplete transaction recording.
               </span>
               <span className="text-gray-500">
-                {needsFollowUpCount === 1
+                {followUpAssessmentCount === 1
                   ? "1 decision eligible for human review in this window has a current review of mixed or off track."
-                  : `${needsFollowUpCount} decisions eligible for human review in this window have a current review of mixed or off track.`}
+                  : `${followUpAssessmentCount} decisions eligible for human review in this window have a current review of mixed or off track.`}
               </span>
               {Object.entries(data.summary.decision_counts).map(([k, v]) => (
                 <span key={k} className="text-gray-400">
@@ -289,7 +293,7 @@ export default function ExecutionLedgerPage() {
                 </p>
                 {needsFollowUpView && (
                   <div className="space-y-0.5 text-xs text-gray-400 mt-1">
-                    <p>Based on your current retrospective reviews. Follow-up completion is not tracked.</p>
+                    <p>Based on your current retrospective reviews. Acknowledged items are hidden from this view; acknowledgment does not mean resolution.</p>
                     <p>Oldest review first, based on when the review was first recorded.</p>
                   </div>
                 )}

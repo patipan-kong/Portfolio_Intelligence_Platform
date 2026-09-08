@@ -39,11 +39,17 @@ export default function ExecutionReviewCard({
   portfolioId,
   decisionId,
   reviewable,
+  onReviewChange,
+  refreshToken = 0,
 }: {
   portfolioId: number;
   decisionId: number;
   /** Slice 3 — human-authored decision, not system-generated. Gates Add/Edit. */
   reviewable: boolean;
+  /** Keeps sibling workflow UI synchronized without moving review ownership. */
+  onReviewChange?: (review: ExecutionReview | null) => void;
+  /** Parent-triggered reload, used after a stale follow-up acknowledgment. */
+  refreshToken?: number;
 }) {
   const [review, setReview] = useState<ExecutionReview | null | undefined>(undefined);
   const [loading, setLoading] = useState(false);
@@ -62,12 +68,13 @@ export default function ExecutionReviewCard({
     try {
       const result = await getExecutionReview(portfolioId, decisionId);
       setReview(result);
+      onReviewChange?.(result);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Failed to load review");
     } finally {
       setLoading(false);
     }
-  }, [portfolioId, decisionId]);
+  }, [portfolioId, decisionId, onReviewChange, refreshToken]);
 
   useEffect(() => {
     load();
@@ -100,6 +107,7 @@ export default function ExecutionReviewCard({
         changed_context: changedContext.trim() ? changedContext.trim() : null,
       });
       setReview(saved);
+      onReviewChange?.(saved);
       setEditing(false);
     } catch (e) {
       setSubmitError(e instanceof Error ? e.message : "Failed to save review");
