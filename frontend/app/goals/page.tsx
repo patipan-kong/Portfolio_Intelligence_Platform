@@ -14,6 +14,7 @@ import {
 import {
   buildSourceFundingOverview,
   factualReviewMatchesGoalContext,
+  type SharedGoalDesignation,
   type SourceFundingOverviewRow,
 } from "@/lib/goalFunding";
 import {
@@ -216,8 +217,11 @@ export default function GoalsPage() {
   }, [contextByGoal, contextError, factualReview]);
 
   const overviewRows: SourceFundingOverviewRow[] = useMemo(
-    () => buildSourceFundingOverview(contextMatchesGoals ? reviewResponse?.sources ?? [] : []),
-    [contextMatchesGoals, reviewResponse]
+    () => buildSourceFundingOverview(
+      contextMatchesGoals ? reviewResponse?.sources ?? [] : [],
+      contextMatchesGoals ? contextResponse?.goals ?? [] : []
+    ),
+    [contextMatchesGoals, contextResponse, reviewResponse]
   );
 
   async function handleCreate(event: FormEvent) {
@@ -485,7 +489,24 @@ function SourceHealthRow({ row }: { row: SourceFundingOverviewRow }) {
       ) : (
         <p className="text-xs text-gray-500 mt-0.5">Observed value {formatThb(row.health.currentValue as number)} · Funding health: Supported · {evidence}{quality}</p>
       )}
+      <SharedGoalDesignationsLine designations={row.sharedGoals} />
     </li>
+  );
+}
+
+function SharedGoalDesignationsLine({ designations }: { designations: SharedGoalDesignation[] }) {
+  if (designations.length === 0) return null;
+  return (
+    <p className="text-xs text-gray-500 mt-0.5">
+      Designated by goal:{" "}
+      {designations.map((item, index) => (
+        <span key={item.goalId}>
+          {index > 0 ? ", " : ""}
+          {item.goalName}
+          {item.goalIsArchived ? " (archived)" : ""} {formatThb(item.designatedAmount)}
+        </span>
+      ))}
+    </p>
   );
 }
 
