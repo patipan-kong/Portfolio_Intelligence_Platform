@@ -1307,8 +1307,46 @@ def get_default_workspace(db) -> Workspace:
     return ws
 
 
+class DatabaseSchemaNotCurrentError(RuntimeError):
+    """PostgreSQL schema is behind (or diverged from) the Alembic migration graph."""
+
+
+def _alembic_ini_path() -> str:
+    # Resolve relative to this file, not the process working directory —
+    # startup can be launched from repo root, backend/, or elsewhere.
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "alembic.ini")
+
+
+def _require_alembic_current() -> None:
+    """Read-only check: PostgreSQL's current Alembic head-set must equal the
+    repository's migration-graph head-set. Never mutates schema, never runs
+    `upgrade`/`stamp`. ADR-017: PostgreSQL schema is Alembic-owned only."""
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+    from alembic.runtime.migration import MigrationContext
+
+    script = ScriptDirectory.from_config(Config(_alembic_ini_path()))
+    repo_heads = set(script.get_heads())
+
+    with engine.connect() as connection:
+        db_heads = set(MigrationContext.configure(connection).get_current_heads())
+
+    if db_heads != repo_heads:
+        raise DatabaseSchemaNotCurrentError(
+            "PostgreSQL schema is not current with the Alembic migration graph "
+            "(ADR-017: PostgreSQL schema is Alembic-owned; application startup "
+            "does not create or alter tables).\n"
+            f"  Database revision(s):   {sorted(db_heads) if db_heads else '<none — unversioned database>'}\n"
+            f"  Repository head(s):     {sorted(repo_heads)}\n"
+            "  Remediation: run `alembic upgrade head` from backend/ before starting the application."
+        )
+
+
 def init_db() -> None:
-    Base.metadata.create_all(bind=engine)
+    if _is_sqlite:
+        Base.metadata.create_all(bind=engine)
+        return
+    _require_alembic_current()
 
 
 def migrate_legacy_data() -> None:

@@ -7,6 +7,7 @@ import type {
   FactualReviewResponse,
   FactualReviewValuationProvenance,
   FactualReviewValuationQuality,
+  GoalContextGoal,
   GoalFundingSourceKind,
 } from "@/lib/api";
 
@@ -28,6 +29,20 @@ export interface SourceFundingHealth {
   quality: FactualReviewValuationQuality | null;
 }
 
+/**
+ * Shared Funding-Source Transparency (ADR-016): one Goal's own designated
+ * amount toward a source it shares with at least one other row in the same
+ * breakdown. Descriptive only — never a shortfall share, priority, or rank
+ * (ADR-016 §2-§3). Composed from `goal_context.py`'s existing per-goal
+ * allocations; introduces no new arithmetic.
+ */
+export interface SharedGoalDesignation {
+  goalId: number;
+  goalName: string;
+  goalIsArchived: boolean;
+  designatedAmount: number;
+}
+
 export interface SourceFundingOverviewRow {
   key: FundingSourceKey;
   sourceKind: GoalFundingSourceKind;
@@ -35,6 +50,7 @@ export interface SourceFundingOverviewRow {
   sourceName: string;
   sourceIsArchived: boolean;
   health: SourceFundingHealth;
+  sharedGoals: SharedGoalDesignation[];
 }
 
 export function sourceFundingHealth(source: FactualReviewSource): SourceFundingHealth {
@@ -98,15 +114,56 @@ export function unavailableSourceFundingHealth(): SourceFundingHealth {
   };
 }
 
-export function buildSourceFundingOverview(sources: FactualReviewSource[]): SourceFundingOverviewRow[] {
-  const rows = sources.map((source) => ({
-    key: sourceKey(source.source_kind, source.source_id),
-    sourceKind: source.source_kind,
-    sourceId: source.source_id,
-    sourceName: source.source_name || "Unknown source",
-    sourceIsArchived: source.source_is_archived,
-    health: sourceFundingHealth(source),
-  }));
+/**
+ * Group each Goal's own allocations by the source they designate to.
+ * Pure grouping over `goal_context.py`'s already-computed per-goal
+ * `allocations`: no coverage, shortfall, or valuation arithmetic (ADR-016
+ * §5). Ordering is by Goal name then id — presentation only, no priority
+ * meaning (ADR-016 §3).
+ */
+function buildSharedGoalDesignationsBySource(
+  goals: GoalContextGoal[]
+): Map<FundingSourceKey, SharedGoalDesignation[]> {
+  const bySource = new Map<FundingSourceKey, SharedGoalDesignation[]>();
+  for (const goal of goals) {
+    for (const allocation of goal.allocations) {
+      const key = sourceKey(allocation.source_kind, allocation.source_id);
+      const designations = bySource.get(key) ?? [];
+      designations.push({
+        goalId: goal.id,
+        goalName: goal.name,
+        goalIsArchived: goal.is_archived,
+        designatedAmount: allocation.designated_amount,
+      });
+      bySource.set(key, designations);
+    }
+  }
+  for (const designations of bySource.values()) {
+    designations.sort((a, b) => {
+      if (a.goalName !== b.goalName) return a.goalName < b.goalName ? -1 : 1;
+      return a.goalId - b.goalId;
+    });
+  }
+  return bySource;
+}
+
+export function buildSourceFundingOverview(
+  sources: FactualReviewSource[],
+  goals: GoalContextGoal[] = []
+): SourceFundingOverviewRow[] {
+  const sharedGoalsBySource = buildSharedGoalDesignationsBySource(goals);
+  const rows = sources.map((source) => {
+    const key = sourceKey(source.source_kind, source.source_id);
+    return {
+      key,
+      sourceKind: source.source_kind,
+      sourceId: source.source_id,
+      sourceName: source.source_name || "Unknown source",
+      sourceIsArchived: source.source_is_archived,
+      health: sourceFundingHealth(source),
+      sharedGoals: sharedGoalsBySource.get(key) ?? [],
+    };
+  });
 
   rows.sort((a, b) => {
     if (a.sourceName !== b.sourceName) return a.sourceName < b.sourceName ? -1 : 1;

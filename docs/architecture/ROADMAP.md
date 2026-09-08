@@ -273,6 +273,11 @@ currently provides.
   context, with no ranking and no winner
 - Workspace Goals view — per-goal funding summaries plus a cross-goal Funding
   source health view on `/goals`
+- Shared Funding-Source Transparency (ADR-016) — the Funding source health
+  view on `/goals` discloses, per source, which Goals designate to it and
+  each Goal's own designated amount, joined from existing 7.2/7.3A facts with
+  no new backend endpoint or arithmetic. It grants no per-goal
+  shortfall-attribution, priority, or behavioral authority.
 - Goal Setup Guidance (GGS-01) — contextual, presentation-only field guidance
   on the existing Goal creation form: per-goal-type wording for the target
   amount and target date fields, an explicit Retirement/FIRE limitation, and a
