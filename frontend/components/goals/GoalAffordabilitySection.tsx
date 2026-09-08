@@ -41,7 +41,7 @@ export function GoalAffordabilitySection({
 
   return (
     <div className="space-y-2 pt-3 border-t" aria-label="Goal affordability">
-      <h3 className="text-sm font-semibold text-gray-700">Can I afford this goal?</h3>
+      <h3 className="text-sm font-semibold text-gray-700">Recorded cash flow vs. required contribution</h3>
 
       {result.state === "NO_CONTRIBUTION_REQUIRED" && (
         <p className="text-sm text-gray-700">

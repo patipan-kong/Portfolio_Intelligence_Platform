@@ -85,16 +85,29 @@ def default_scenario_fields(**overrides):
 
 
 def test_goal_scenario_revision_merges_the_repository_heads():
-    """The repository migration chain has exactly one head (no unmerged branches).
+    """The migration graph has exactly one head, and the goal-scenario merge
+    revision (which reconciled two divergent branches) is connected into that
+    sole head's ancestry.
 
-    Updated for each new migration as it becomes the sole head — most
-    recently f7a9c1e3b5d7 (Goal Plan Amendment History); not
-    specific to the goal scenario migration itself.
+    Deliberately does not hardcode which revision is the current head: heads
+    move forward as new migrations land, so pinning a specific id here made
+    this test go stale every time an unrelated migration was added (as
+    happened with f7a9c1e3b5d7). The invariant this test protects is
+    structural — one head, no orphaned branches — not "the head is exactly
+    this revision".
     """
     config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["f7a9c1e3b5d7"]
+    heads = script.get_heads()
+    assert len(heads) == 1, f"expected exactly one migration head, found {heads}"
+
+    ancestry = {rev.revision for rev in script.iterate_revisions(heads, "base")}
+    goal_scenario_merge_revision = "d4f6a8c0e2b4"
+    assert goal_scenario_merge_revision in ancestry, (
+        f"goal-scenario merge revision {goal_scenario_merge_revision!r} is not "
+        f"connected into the ancestry of the sole head {heads[0]!r}"
+    )
 
 
 # 1. create scenario

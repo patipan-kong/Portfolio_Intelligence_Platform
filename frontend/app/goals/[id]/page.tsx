@@ -17,6 +17,7 @@ import {
 } from "@/components/goals/GoalPlanningSections";
 import { FundingHistorySection, type FundingHistoryState } from "@/components/goals/FundingHistorySection";
 import { PlanHistorySection, type PlanHistoryState } from "@/components/goals/PlanHistorySection";
+import { GoalIntelligenceSection, type GoalIntelligenceState } from "@/components/goals/GoalIntelligenceSection";
 import {
   GoalAffordabilitySection,
   type GoalAffordabilityEvidence,
@@ -36,6 +37,7 @@ import {
 import {
   createGoalScenario,
   getCashFlowReport,
+  getGoalIntelligence,
   getLegacyGoalProfileEvidence,
   getWealthFactualReview,
   listCashAccounts,
@@ -84,6 +86,7 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
   const [scenarios, setScenarios] = useState<ScenariosState>(undefined);
   const [fundingHistory, setFundingHistory] = useState<FundingHistoryState>(undefined);
   const [planHistory, setPlanHistory] = useState<PlanHistoryState>(undefined);
+  const [goalIntelligence, setGoalIntelligence] = useState<GoalIntelligenceState>(undefined);
   // Lifted above GoalWhatIfSection so "Load scenario" can populate its
   // transient assumptions from the Saved Scenarios section.
   const [whatIfExpanded, setWhatIfExpanded] = useState(false);
@@ -121,6 +124,7 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
     setScenarios(undefined);
     setFundingHistory(undefined);
     setPlanHistory(undefined);
+    setGoalIntelligence(undefined);
     setWhatIfExpanded(false);
     setWhatIfMode("forward");
     setWhatIfMonthlyContribution("");
@@ -216,6 +220,18 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
           },
           (err) => {
             if (isCurrentLoad()) setPlanHistory({ error: messageFor(err, "Unable to load plan history.") });
+          },
+        );
+      // Goal Intelligence (ADR-014) is a descriptive composed read. Its
+      // failure must never block or corrupt the rest of Goal Detail.
+      void Promise.resolve()
+        .then(() => getGoalIntelligence(goalId))
+        .then(
+          (result) => {
+            if (isCurrentLoad()) setGoalIntelligence(result);
+          },
+          (err) => {
+            if (isCurrentLoad()) setGoalIntelligence({ error: messageFor(err, "Unable to load Goal Intelligence.") });
           },
         );
       setFactualReview(contextResult.status === "fulfilled"
@@ -370,6 +386,16 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
       if (!isCurrentRefresh()) return;
       setFactualReview({ error: messageFor(err, "Unable to refresh factual wealth review.") });
     }
+    void Promise.resolve()
+      .then(() => getGoalIntelligence(goalId))
+      .then(
+        (result) => {
+          if (isCurrentRefresh()) setGoalIntelligence(result);
+        },
+        (err) => {
+          if (isCurrentRefresh()) setGoalIntelligence({ error: messageFor(err, "Unable to load Goal Intelligence.") });
+        },
+      );
   }, [goalId]);
 
   const reloadScenarios = useCallback(async () => {
@@ -441,6 +467,8 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
             <h2 id="goal-summary-heading" className="text-lg font-semibold">Goal Summary</h2>
             <GoalSummary item={currentGoal} goalContext={selectedGoalContext} />
           </section>
+
+          <GoalIntelligenceSection state={goalIntelligence} />
 
           <GoalReviewCues input={{
             goalContext: selectedGoalContext,

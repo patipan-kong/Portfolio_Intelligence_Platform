@@ -780,6 +780,50 @@ export interface FactualReviewResponse {
 export const getWealthFactualReview = (includeArchived = false) =>
   apiFetch<FactualReviewResponse>(`/wealth-goals/factual-review?include_archived=${includeArchived ? "true" : "false"}`);
 
+// ─── Goal Intelligence v1, Slice 1 (Phase 7.7, ADR-014) ───────────────────
+// Descriptive-only composition of existing Goal Context + Factual Wealth
+// Review facts for one goal. Grants no behavioral authority; introduces no
+// health/success/projection semantics.
+
+export interface GoalIntelligenceFunding {
+  designated_total: number;
+  progress_ratio: number;
+  funding_gap: number;
+  fully_designated: boolean;
+}
+
+export interface GoalIntelligenceTime {
+  target_date: string | null;
+  has_target_date: boolean;
+  days_remaining: number | null;
+  target_date_in_past: boolean;
+}
+
+export interface GoalIntelligenceFundingSource {
+  source_kind: GoalFundingSourceKind;
+  source_id: number;
+  source_name: string;
+  source_is_archived: boolean;
+  goal_designated_amount: number;
+  source_designated_total_in_context_scope: number;
+  valuation: FactualReviewSource["valuation"];
+  designation_coverage: FactualReviewSource["designation_coverage"];
+}
+
+export interface GoalIntelligenceResponse {
+  contract_version: "wealth.goal-intelligence.v1";
+  generated_at: string;
+  goal_id: number;
+  as_of_date: string;
+  funding: GoalIntelligenceFunding;
+  time: GoalIntelligenceTime;
+  funding_sources: GoalIntelligenceFundingSource[];
+  valuation_completeness: FactualReviewValuationCompleteness;
+}
+
+export const getGoalIntelligence = (goalId: number) =>
+  apiFetch<GoalIntelligenceResponse>(`/wealth-goals/${goalId}/intelligence`);
+
 // ─── Designated Portfolio legacy goal-profile evidence (Phase 7.3B) ───────
 
 export type LegacyGoalProfileProjectionStatus = "UNSET" | "UNCHANGED" | "NORMALIZED" | "UNRECOGNIZED";
