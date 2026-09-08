@@ -1612,7 +1612,7 @@ describe("GoalDetailPage", () => {
         "2026-07": [income("2026-07", 14_000), expense("2026-07", 5_000)],
       });
       render(<GoalDetailPage params={{ id: "1" }} />);
-      expect(await screen.findByRole("heading", { name: "Can I afford this goal?" })).toBeInTheDocument();
+      expect(await screen.findByRole("heading", { name: "Recorded cash flow vs. required contribution" })).toBeInTheDocument();
       expect(await screen.findByText(
         /Based on your recorded cash flow over the last 3 completed months, your average monthly surplus is ฿12,000\.00, enough to cover the ฿10,000\.00\/month this goal needs\./,
       )).toBeInTheDocument();
@@ -1902,7 +1902,7 @@ describe("GoalDetailPage", () => {
       });
       render(<GoalDetailPage params={{ id: "1" }} />);
       await screen.findByRole("heading", { name: "Retire by 55" });
-      expect(screen.queryByText("Can I afford this goal?")).not.toBeInTheDocument();
+      expect(screen.queryByText("Recorded cash flow vs. required contribution")).not.toBeInTheDocument();
     });
   });
 
