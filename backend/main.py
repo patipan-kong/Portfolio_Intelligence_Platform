@@ -8971,6 +8971,28 @@ async def get_evaluation_report_card(
     return result
 
 
+@app.get("/analytics/evaluation/recommendations/{snapshot_id}/comparison")
+async def get_evaluation_recommendation_comparison(
+    portfolio_id: int,
+    snapshot_id: int,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Read-only historical comparison with the immediately previous snapshot."""
+    ws = _ws_id(db)
+    from services.evaluation.recommendation_comparison import get_recommendation_comparison
+
+    result = await asyncio.to_thread(
+        get_recommendation_comparison,
+        db,
+        portfolio_id,
+        snapshot_id,
+        ws,
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Recommendation snapshot not found")
+    return result
+
+
 @app.get("/analytics/evaluation/execution")
 async def get_evaluation_execution_ledger(
     portfolio_id: int,

@@ -1,16 +1,15 @@
 "use client";
 
 // AI Evaluation M4 — S3 Recommendation Report Card
-// (`/ai-analytics/recommendations/{id}`). Three sections in pipeline order —
-// plan -> execution -> outcome — matching the three lenses (§12). Renders
-// GET /analytics/evaluation/recommendations/{id} verbatim; no section
-// recomputes anything the backend already delivered.
+// (`/ai-analytics/recommendations/{id}`). Sections follow the pipeline order —
+// plan -> execution -> outcome — with the historical comparison as a fourth
+// read-only section. No section recomputes data already delivered by the API.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { usePortfolio } from "@/lib/PortfolioContext";
-import { getRecommendationReportCard, isUnresolvedPortfolioError, type RecommendationReportCard, type ExecutionAnalysis, type DecisionGoalContextGoal } from "@/lib/api";
+import { getRecommendationComparison, getRecommendationReportCard, isUnresolvedPortfolioError, type RecommendationComparison, type RecommendationReportCard, type ExecutionAnalysis, type DecisionGoalContextGoal } from "@/lib/api";
 import BackBreadcrumb from "@/components/BackBreadcrumb";
 import PortfolioSelectionNotice from "@/components/PortfolioSelectionNotice";
 import VerdictSentence from "@/components/evaluation/VerdictSentence";
@@ -19,6 +18,7 @@ import HorizonStrip from "@/components/evaluation/HorizonStrip";
 import AsOfStamp from "@/components/evaluation/AsOfStamp";
 import TransactionEvidenceLinks from "@/components/evaluation/TransactionEvidenceLinks";
 import ReviewOutcomeBadge from "@/components/evaluation/ReviewOutcomeBadge";
+import RecommendationComparisonCard from "@/components/evaluation/RecommendationComparisonCard";
 
 function pct(n: number | null | undefined, decimals = 1): string {
   if (n == null) return "—";
@@ -349,11 +349,15 @@ export default function ReportCardPage() {
   const [data, setData] = useState<RecommendationReportCard | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [comparison, setComparison] = useState<RecommendationComparison | null>(null);
+  const [comparisonLoading, setComparisonLoading] = useState(false);
+  const [comparisonError, setComparisonError] = useState<string | null>(null);
 
   // M36.1 WP4C F04 — captured Portfolio Identity; a response arriving after
   // Current Selection has moved to a different portfolio (or cleared to
   // NONE) is discarded instead of repopulating the page.
   const requestIdRef = useRef<number | null>(null);
+  const comparisonRequestRef = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     if (portfolioId == null || !snapshotId) return;
@@ -373,16 +377,45 @@ export default function ReportCardPage() {
     }
   }, [portfolioId, snapshotId, reportUnresolvedPortfolio]);
 
+  const loadComparison = useCallback(async () => {
+    if (portfolioId == null || !snapshotId || typeof getRecommendationComparison !== "function") {
+      setComparisonLoading(false);
+      return;
+    }
+    const pid = portfolioId;
+    const requestKey = `${pid}:${snapshotId}`;
+    setComparisonLoading(true);
+    setComparisonError(null);
+    try {
+      const result = await getRecommendationComparison(pid, snapshotId);
+      if (requestIdRef.current !== pid || comparisonRequestRef.current !== requestKey) return;
+      setComparison(result ?? null);
+    } catch (e) {
+      if (requestIdRef.current !== pid || comparisonRequestRef.current !== requestKey) return;
+      setComparisonError(e instanceof Error ? e.message : "Failed to load comparison");
+      setComparison(null);
+    } finally {
+      if (requestIdRef.current === pid && comparisonRequestRef.current === requestKey) setComparisonLoading(false);
+    }
+  }, [portfolioId, snapshotId]);
+
   useEffect(() => {
     requestIdRef.current = portfolioId;
+    comparisonRequestRef.current = portfolioId == null ? null : `${portfolioId}:${snapshotId}`;
     if (portfolioId == null) {
       setData(null);
       setError(null);
+      setComparison(null);
+      setComparisonError(null);
+      setComparisonLoading(false);
       setLoading(false);
       return;
     }
+    setComparison(null);
+    setComparisonError(null);
     load();
-  }, [portfolioId, load]);
+    loadComparison();
+  }, [portfolioId, load, loadComparison]);
 
   if (portfolioId == null) {
     return <PortfolioSelectionNotice label="this Recommendation Report Card" />;
@@ -436,6 +469,14 @@ export default function ReportCardPage() {
           <SectionCard title="3 · Outcome (frozen shadow vs benchmark)">
             <OutcomeSection outcomes={data.outcomes} />
           </SectionCard>
+
+          <RecommendationComparisonCard
+            key={`${portfolioId}-${snapshotId}`}
+            comparison={comparison}
+            portfolioId={portfolioId}
+            loading={comparisonLoading}
+            error={comparisonError}
+          />
         </>
       )}
     </div>

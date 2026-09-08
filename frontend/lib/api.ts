@@ -4398,6 +4398,69 @@ export const getRecommendationReportCard = (portfolioId: number, snapshotId: num
     `/analytics/evaluation/recommendations/${snapshotId}?portfolio_id=${portfolioId}`,
   );
 
+export type RecommendationComparisonValue = string | number | boolean | null;
+
+export interface RecommendationComparisonField {
+  key: string;
+  label: string;
+  previous: RecommendationComparisonValue;
+  current: RecommendationComparisonValue;
+  delta?: number;
+}
+
+export interface RecommendationComparisonSectorEntry {
+  sector: string;
+  status: "added" | "removed" | "changed";
+  previous?: number;
+  current?: number;
+  delta?: number;
+}
+
+export interface RecommendationComparisonAllocationEntry {
+  symbol: string;
+  status: "added" | "removed" | "changed";
+  previous_target_weight?: number | null;
+  current_target_weight?: number | null;
+  delta?: number;
+  previous_action?: string | null;
+  current_action?: string | null;
+}
+
+export interface RecommendationComparisonSubsection {
+  status: "ok" | "unavailable";
+  changed: boolean;
+  fields: RecommendationComparisonField[];
+  reason?: string;
+}
+
+export interface RecommendationComparisonSection extends RecommendationComparisonSubsection {
+  key: "regime" | "constraint_envelope" | "policy_posture" | "consensus" | "allocations" | "portfolio_characteristics";
+  label: string;
+  sectors?: RecommendationComparisonSectorEntry[];
+  sectors_status?: "ok" | "unavailable";
+  entries?: RecommendationComparisonAllocationEntry[];
+  dna?: RecommendationComparisonSubsection;
+  style?: RecommendationComparisonSubsection;
+}
+
+export interface RecommendationComparisonSnapshotRef {
+  snapshot_id: number;
+  created_at: string | null;
+}
+
+export interface RecommendationComparison {
+  current: RecommendationComparisonSnapshotRef;
+  previous: RecommendationComparisonSnapshotRef | null;
+  status: "ok" | "no_previous";
+  sections: RecommendationComparisonSection[];
+  as_of: string;
+}
+
+export const getRecommendationComparison = (portfolioId: number, snapshotId: number) =>
+  apiFetch<RecommendationComparison>(
+    `/analytics/evaluation/recommendations/${snapshotId}/comparison?portfolio_id=${portfolioId}`,
+  );
+
 export interface AcceptanceByClassEntry {
   accepted: number;
   total: number;
