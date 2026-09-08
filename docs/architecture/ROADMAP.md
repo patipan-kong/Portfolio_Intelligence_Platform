@@ -52,6 +52,11 @@ management and intelligence.
   Card. Review outcomes are human-authored retrospective context — they do
   not currently influence optimizer recommendations, ranking, or objective
   performance grading.
+- Product Intelligence v1 — a Needs Follow-up attention view for reviewed
+  `MIXED`/`OFF_TRACK` decisions, separate follow-up acknowledgment/reopening
+  semantics, and factual change explanation between adjacent recommendation
+  snapshots. Acknowledgment does not mean resolution, and review data does not
+  influence optimizer recommendations or ranking.
 
 ### Multi-portfolio product capability
 

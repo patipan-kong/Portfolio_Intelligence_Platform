@@ -339,6 +339,10 @@ describe("Execution Intelligence — Decision Follow-up Queue (Slice 1)", () => 
     fireEvent.click(screen.getByRole("button", { name: "Needs follow-up" }));
     expect(screen.queryByText("#608")).not.toBeInTheDocument();
     expect(screen.getAllByText("#609")).not.toHaveLength(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show all decisions" }));
+    expect(screen.getAllByText("#608")).not.toHaveLength(0);
+    expect(screen.getAllByText("Mixed")).not.toHaveLength(0);
   });
 
   test("uses the exact follow-up heading, explanation, ordering hint, and empty state copy", async () => {
