@@ -1,7 +1,8 @@
 import { describe, test, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import ReportCardPage from "@/app/ai-analytics/(hub)/recommendations/[id]/page";
-import type { RecommendationReportCard, ExecutionSymbolDelta } from "@/lib/api";
+import type { RecommendationComparison, RecommendationReportCard, ExecutionSymbolDelta } from "@/lib/api";
 
 // Slice 4 (Decision History / Audit UX), Behaviors 3 & 4: the Report Card
 // already receives execution.decision_id but had no link out to the full
@@ -9,12 +10,13 @@ import type { RecommendationReportCard, ExecutionSymbolDelta } from "@/lib/api";
 // (UX.2D) and frozen goal context (Phase 7.4/ADR-008, CONTEXT_ONLY) that the
 // backend now surfaces on the same execution section.
 
-const { getRecommendationReportCard, isUnresolvedPortfolioError } = vi.hoisted(() => ({
+const { getRecommendationReportCard, getRecommendationComparison, isUnresolvedPortfolioError } = vi.hoisted(() => ({
   getRecommendationReportCard: vi.fn(),
+  getRecommendationComparison: vi.fn(),
   isUnresolvedPortfolioError: vi.fn(() => false),
 }));
 
-vi.mock("@/lib/api", () => ({ getRecommendationReportCard, isUnresolvedPortfolioError }));
+vi.mock("@/lib/api", () => ({ getRecommendationReportCard, getRecommendationComparison, isUnresolvedPortfolioError }));
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ id: "99" }),
@@ -53,6 +55,7 @@ function reportCard(overrides: Partial<RecommendationReportCard> = {}): Recommen
 
 beforeEach(() => {
   getRecommendationReportCard.mockReset();
+  getRecommendationComparison.mockReset();
   isUnresolvedPortfolioError.mockReset().mockReturnValue(false);
   portfolioState = { currentSelection: 1, reportUnresolvedPortfolio: vi.fn() };
 });
@@ -178,6 +181,37 @@ describe("Report Card — historical timestamp semantics (Slice 4 §H)", () => {
 
     expect(await screen.findByText("decision recorded 2026-08-20")).toBeInTheDocument();
     expect(screen.queryByText(/^executed /)).not.toBeInTheDocument();
+  });
+});
+
+describe("Report Card — recommendation comparison (Product Intelligence Slice 3)", () => {
+  const comparison: RecommendationComparison = {
+    current: { snapshot_id: 99, created_at: "2026-09-01T03:00:00Z" },
+    previous: { snapshot_id: 88, created_at: "2026-08-25T03:00:00Z" },
+    status: "ok",
+    sections: [{
+      key: "regime",
+      label: "Market regime",
+      status: "ok",
+      changed: true,
+      fields: [{ key: "regime", label: "Regime", previous: "SIDEWAYS", current: "RISK_ON" }],
+    }],
+    as_of: "2026-09-08T10:00:00Z",
+  };
+
+  test("loads the comparison beside the Report Card and keeps it collapsed until expanded", async () => {
+    const user = userEvent.setup();
+    getRecommendationReportCard.mockResolvedValue(reportCard());
+    getRecommendationComparison.mockResolvedValue(comparison);
+
+    render(<ReportCardPage />);
+
+    expect(await screen.findByText("4 · Compared to Previous Recommendation")).toBeInTheDocument();
+    expect(getRecommendationComparison).toHaveBeenCalledWith(1, 99);
+    expect(screen.queryByText("Previous recommendation")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Compared to Previous Recommendation/i }));
+    expect(screen.getByText("Previous recommendation")).toBeInTheDocument();
+    expect(screen.getByText("Market regime")).toBeInTheDocument();
   });
 });
 

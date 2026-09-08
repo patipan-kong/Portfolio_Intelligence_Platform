@@ -3457,3 +3457,55 @@ Python 3.13 incompatibility, not a style preference.
 **Verification:** Backend: new `test_net_worth_change_attribution.py` (18 tests — pure reconciliation, investment/cash-only movement, liability decline, mixed/offsetting movement, missing start/end evidence, the reconciliation guard both as a pure-function check and end-to-end via orchestration with a monkeypatched divergence, archived Cash Account/Liability inclusion, new-tracking-scope disclosure, the half-recorded `INVESTMENT_TRANSFER` funding case and its separately-recorded-deposit counterpart, a cash↔cash `TRANSFER` regression proving no aggregate external-cash effect, and endpoint date validation); full existing cash/liability/wealth-goal regression suites (114 tests total) green with zero changes. Frontend: new `NetWorthChangeAttributionCard.test.tsx` (8 tests — empty state below two complete points, exact dates/component rows, zero-delta still renders, liability increase/decrease wording, `UNAVAILABLE` never fabricates ฿0, half-recorded funding never renders a forbidden economic-cause label, new-tracking-scope disclosure, loading skeleton never fetches); full `Dashboard.test.tsx` (67 tests, page-level regression covering the new card's wiring) green with zero changes to existing assertions.
 **Reasoning:** The reconciliation guard follows ADR-002's existing fail-loud posture (an inconsistent composition is `UNAVAILABLE`, never silently adjusted) rather than inventing a new tolerance philosophy. Computing the attribution as one server-side derived read — rather than a client-side fan-out over per-account/per-liability As-Of requests, the pattern Net Worth History itself already uses — was chosen specifically because this feature's cross-domain reconciliation guard is safer enforced once, server-side, than recombined in the browser from three separate coverage computations; it does not reopen or change the existing client-side Net Worth History composition.
 **Impact:** `backend/services/net_worth_change_attribution.py` (new, pure arithmetic + DB-backed resolvers + orchestration, no ORM writes), `backend/main.py` (`GET /net-worth/change-attribution?start&end`), `backend/tests/test_net_worth_change_attribution.py`, `frontend/lib/api.ts` (typed `NetWorthChangeAttribution` discriminated union + fetch helper), `frontend/components/NetWorthChangeAttributionCard.tsx` (new), `frontend/app/page.tsx` (one card placed directly beneath `NetWorthHistoryCard`), `frontend/tests/Dashboard.test.tsx` (mock wiring only — new export added to the existing `@/lib/api` mock, safe `UNAVAILABLE` default), `frontend/tests/NetWorthChangeAttributionCard.test.tsx` (new), `docs/decisions/ADR-013_NET_WORTH_CHANGE_ATTRIBUTION_LEVEL1_BOUNDARY.md`, `docs/decisions/README.md`, `docs/architecture/ROADMAP.md` (Phase 5). Zero changes to `backend/models/database.py`, any Alembic migration, `services/portfolio_snapshots.py`, `services/cash_account_ledger.py`, `services/liability_balance.py`, or any existing frontend `lib/{wealthHistory,totalAssetsHistory,totalLiabilitiesHistory,netWorthHistory}.ts` module.
+
+## Product Intelligence v1 — Attention, Acknowledgment, and Historical Recommendation Comparison
+
+**Date:** 2026-09-08
+
+**Problem:** Review Workflows v1 exposed retrospective review state, but there
+was no bounded attention view for reviewed outcomes that warranted follow-up,
+no separate way to record that the follow-up had been seen, and no factual
+explanation of how a recommendation changed from its immediately preceding
+historical recommendation.
+
+**Decision:** Close Product Intelligence v1 with three bounded capabilities:
+Needs Follow-up is derived from a reviewable decision with a current review
+whose outcome is `MIXED` or `OFF_TRACK`; follow-up acknowledgment is separate
+workflow metadata that suppresses the row from that attention view; and an
+outcome-changing review edit clears the acknowledgment so attention can reopen.
+Acknowledgment does not mean resolution, and acknowledged rows remain
+historical decisions with their review outcome visible in the default ledger.
+Recommendation Change Explanation compares the selected immutable
+`RecommendationSnapshot` with the deterministic immediately previous snapshot
+for the same workspace and portfolio. It reports factual field, constraint,
+allocation, and style/consensus differences only.
+
+**Historical-truth boundary:**
+
+`historical captured recommendation ≠ objective evidence ≠ human review ≠
+follow-up acknowledgment ≠ current live state`.
+
+Execution review and follow-up acknowledgment do not rewrite execution
+decision facts, recommendation snapshots, evidence, review content, or
+`reviewed_at`. Recommendation comparison reads the two snapshots and does not
+consult or mutate live portfolio state, goal context, mandate state,
+execution/review state, or any other current domain state.
+
+**Recommendation comparison boundary:** The predecessor is scoped to the same
+workspace and portfolio and selected by deterministic chronological ordering.
+The result is a factual historical diff only: it excludes goal context,
+provides no causal explanation, applies no materiality threshold, and does not
+support arbitrary snapshot comparison.
+
+**Optimizer-learning boundary:** Review and follow-up data do not currently
+influence optimizer recommendations, ranking, or scoring. Recommendation
+comparison is explanatory only; Product Intelligence v1 introduces no
+self-learning, hidden adaptive behavior, or feedback loop into optimization.
+
+**Reasoning:** Keeping attention derivation, acknowledgment state, review
+content, and recommendation history separate preserves the existing ownership
+boundaries while making the next human action visible. Adjacent immutable
+snapshots provide a truthful comparison without inferring goals, causes, or
+importance that the captured evidence cannot establish.
+
+**Disposition:** `PRODUCT INTELLIGENCE V1 CLOSED`

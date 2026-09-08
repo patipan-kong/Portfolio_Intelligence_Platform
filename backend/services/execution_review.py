@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
-from models.database import ExecutionReview, UserExecutionDecision
+from models.database import ExecutionFollowUp, ExecutionReview, UserExecutionDecision
 
 OUTCOMES = ("ON_TRACK", "MIXED", "OFF_TRACK")
 
@@ -83,6 +83,10 @@ def upsert_execution_review(
         .first()
     )
     created = review is None
+    previous_outcome = valid_outcome(review.outcome) if review is not None else None
+    normalized_outcome = valid_outcome(outcome)
+    if normalized_outcome is not None:
+        outcome = normalized_outcome
     if review is None:
         review = ExecutionReview(
             workspace_id=workspace_id,
@@ -96,6 +100,26 @@ def upsert_execution_review(
         review.outcome = outcome
         review.summary = summary
         review.changed_context = changed_context
+
+    # Review edits and follow-up invalidation are one transaction.  The
+    # acknowledgment is workflow metadata for the prior outcome; any actual
+    # normalized outcome transition (including first creation) clears it. Text
+    # edits and identical saves leave it untouched. Flush first so a pending
+    # review update obtains its database write lock before the clear runs.
+    outcome_changed = created or previous_outcome != normalized_outcome
+    if outcome_changed:
+        db.flush()
+        (
+            db.query(ExecutionFollowUp)
+            .filter(
+                ExecutionFollowUp.execution_decision_id == execution_decision.id,
+                ExecutionFollowUp.workspace_id == workspace_id,
+            )
+            .update(
+                {ExecutionFollowUp.acknowledged_at: None},
+                synchronize_session=False,
+            )
+        )
 
     db.commit()
     db.refresh(review)

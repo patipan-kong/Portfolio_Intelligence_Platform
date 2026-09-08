@@ -9,7 +9,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { usePortfolio } from "@/lib/PortfolioContext";
-import { getExecutionDetail, isUnresolvedPortfolioError, type ExecutionDetail } from "@/lib/api";
+import { getExecutionDetail, isUnresolvedPortfolioError, type ExecutionDetail, type ExecutionReview } from "@/lib/api";
 import BackBreadcrumb from "@/components/BackBreadcrumb";
 import DecisionStatusBadge from "@/components/evaluation/DecisionStatusBadge";
 import AsOfStamp from "@/components/evaluation/AsOfStamp";
@@ -17,6 +17,7 @@ import PortfolioSelectionNotice from "@/components/PortfolioSelectionNotice";
 import { executionCompletionLabel } from "@/components/optimizer/DecisionActionPanel";
 import TransactionEvidenceLinks from "@/components/evaluation/TransactionEvidenceLinks";
 import ExecutionReviewCard from "@/components/evaluation/ExecutionReviewCard";
+import ExecutionFollowUpCard from "@/components/evaluation/ExecutionFollowUpCard";
 import {
   isOpportunityCostEligibleDecision,
   opportunityCostHref,
@@ -73,6 +74,11 @@ export default function ExecutionDetailPage() {
   const [data, setData] = useState<ExecutionDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // ExecutionReviewCard remains the owner of review fetching/editing. The
+  // page keeps only the latest object so its sibling follow-up card can apply
+  // the same eligibility and stale-review precondition immediately.
+  const [review, setReview] = useState<ExecutionReview | null | undefined>(undefined);
+  const [reviewRefreshToken, setReviewRefreshToken] = useState(0);
 
   // M36.1 WP4C F04 — captured Portfolio Identity; a response arriving after
   // Current Selection has moved to a different portfolio (or cleared to
@@ -99,6 +105,8 @@ export default function ExecutionDetailPage() {
 
   useEffect(() => {
     requestIdRef.current = portfolioId;
+    setReview(undefined);
+    setReviewRefreshToken(0);
     if (portfolioId == null) {
       setData(null);
       setError(null);
@@ -107,6 +115,10 @@ export default function ExecutionDetailPage() {
     }
     load();
   }, [portfolioId, load]);
+
+  const refreshReviewAfterConflict = useCallback(() => {
+    setReviewRefreshToken((value) => value + 1);
+  }, []);
 
   if (portfolioId == null) {
     return <PortfolioSelectionNotice label="this Execution Detail" />;
@@ -242,7 +254,21 @@ export default function ExecutionDetailPage() {
             )}
           </div>
 
-          <ExecutionReviewCard portfolioId={portfolioId} decisionId={data.decision_id} reviewable={data.reviewable} />
+          <ExecutionReviewCard
+            portfolioId={portfolioId}
+            decisionId={data.decision_id}
+            reviewable={data.reviewable}
+            onReviewChange={setReview}
+            refreshToken={reviewRefreshToken}
+          />
+          <ExecutionFollowUpCard
+            portfolioId={portfolioId}
+            decisionId={data.decision_id}
+            reviewable={data.reviewable}
+            review={review}
+            refreshToken={reviewRefreshToken}
+            onConflict={refreshReviewAfterConflict}
+          />
         </>
       )}
     </div>

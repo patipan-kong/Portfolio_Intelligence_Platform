@@ -7771,6 +7771,67 @@ async def put_portfolio_execution_review(
     return payload
 
 
+class ExecutionFollowUpUpdate(BaseModel):
+    """Desired-state update for the separate follow-up acknowledgment row."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    acknowledged: bool
+    expected_review_updated_at: datetime | None = None
+
+
+@app.get("/portfolios/{portfolio_id}/execution-decisions/{decision_id}/follow-up")
+async def get_portfolio_execution_follow_up(
+    portfolio_id: int, decision_id: int, db: Session = Depends(get_db)
+) -> dict:
+    """Return current follow-up state; a missing row is a null timestamp."""
+    ws = _ws_id(db)
+    decision = resolve_execution_decision_or_404(db, decision_id, ws, portfolio_id)
+
+    from services.execution_follow_up import get_execution_follow_up
+
+    return get_execution_follow_up(db, decision, ws)
+
+
+@app.put("/portfolios/{portfolio_id}/execution-decisions/{decision_id}/follow-up")
+async def put_portfolio_execution_follow_up(
+    portfolio_id: int,
+    decision_id: int,
+    body: ExecutionFollowUpUpdate,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Apply the desired current acknowledgment state.
+
+    Acknowledgment is only valid for a reviewable decision with a current
+    MIXED/OFF_TRACK review. Undo is a reviewable-state clear and is idempotent.
+    """
+    ws = _ws_id(db)
+    decision = resolve_execution_decision_or_404(db, decision_id, ws, portfolio_id)
+
+    from services.execution_follow_up import (
+        ExecutionFollowUpMissingPreconditionError,
+        ExecutionFollowUpNotEligibleError,
+        ExecutionFollowUpNotReviewableError,
+        ExecutionFollowUpStaleReviewError,
+        set_execution_follow_up,
+    )
+
+    try:
+        return set_execution_follow_up(
+            db,
+            decision,
+            ws,
+            body.acknowledged,
+            body.expected_review_updated_at,
+        )
+    except ExecutionFollowUpNotReviewableError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ExecutionFollowUpMissingPreconditionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except (ExecutionFollowUpNotEligibleError, ExecutionFollowUpStaleReviewError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @app.get("/optimizer/snapshots/{snapshot_id}")
 async def get_recommendation_snapshot(snapshot_id: int, db: Session = Depends(get_db)) -> dict:
     """Return the full RecommendationSnapshot for a given optimizer run."""
@@ -8905,6 +8966,28 @@ async def get_evaluation_report_card(
         result = await asyncio.to_thread(get_report_card, db, portfolio_id, snapshot_id)
     except DecisionGoalContextIntegrityError:
         raise HTTPException(status_code=409, detail=decision_context_integrity_error_detail())
+    if result is None:
+        raise HTTPException(status_code=404, detail="Recommendation snapshot not found")
+    return result
+
+
+@app.get("/analytics/evaluation/recommendations/{snapshot_id}/comparison")
+async def get_evaluation_recommendation_comparison(
+    portfolio_id: int,
+    snapshot_id: int,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Read-only historical comparison with the immediately previous snapshot."""
+    ws = _ws_id(db)
+    from services.evaluation.recommendation_comparison import get_recommendation_comparison
+
+    result = await asyncio.to_thread(
+        get_recommendation_comparison,
+        db,
+        portfolio_id,
+        snapshot_id,
+        ws,
+    )
     if result is None:
         raise HTTPException(status_code=404, detail="Recommendation snapshot not found")
     return result

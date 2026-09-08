@@ -4398,6 +4398,69 @@ export const getRecommendationReportCard = (portfolioId: number, snapshotId: num
     `/analytics/evaluation/recommendations/${snapshotId}?portfolio_id=${portfolioId}`,
   );
 
+export type RecommendationComparisonValue = string | number | boolean | null;
+
+export interface RecommendationComparisonField {
+  key: string;
+  label: string;
+  previous: RecommendationComparisonValue;
+  current: RecommendationComparisonValue;
+  delta?: number;
+}
+
+export interface RecommendationComparisonSectorEntry {
+  sector: string;
+  status: "added" | "removed" | "changed";
+  previous?: number;
+  current?: number;
+  delta?: number;
+}
+
+export interface RecommendationComparisonAllocationEntry {
+  symbol: string;
+  status: "added" | "removed" | "changed";
+  previous_target_weight?: number | null;
+  current_target_weight?: number | null;
+  delta?: number;
+  previous_action?: string | null;
+  current_action?: string | null;
+}
+
+export interface RecommendationComparisonSubsection {
+  status: "ok" | "unavailable";
+  changed: boolean;
+  fields: RecommendationComparisonField[];
+  reason?: string;
+}
+
+export interface RecommendationComparisonSection extends RecommendationComparisonSubsection {
+  key: "regime" | "constraint_envelope" | "policy_posture" | "consensus" | "allocations" | "portfolio_characteristics";
+  label: string;
+  sectors?: RecommendationComparisonSectorEntry[];
+  sectors_status?: "ok" | "unavailable";
+  entries?: RecommendationComparisonAllocationEntry[];
+  dna?: RecommendationComparisonSubsection;
+  style?: RecommendationComparisonSubsection;
+}
+
+export interface RecommendationComparisonSnapshotRef {
+  snapshot_id: number;
+  created_at: string | null;
+}
+
+export interface RecommendationComparison {
+  current: RecommendationComparisonSnapshotRef;
+  previous: RecommendationComparisonSnapshotRef | null;
+  status: "ok" | "no_previous";
+  sections: RecommendationComparisonSection[];
+  as_of: string;
+}
+
+export const getRecommendationComparison = (portfolioId: number, snapshotId: number) =>
+  apiFetch<RecommendationComparison>(
+    `/analytics/evaluation/recommendations/${snapshotId}/comparison?portfolio_id=${portfolioId}`,
+  );
+
 export interface AcceptanceByClassEntry {
   accepted: number;
   total: number;
@@ -4440,6 +4503,8 @@ export interface ExecutionLedgerRow {
    *  never hidden. Null when has_review is false. */
   review_outcome: ExecutionReviewOutcome | null;
   reviewed_at: string | null;
+  /** Current follow-up workflow metadata; null means no acknowledgment. */
+  follow_up_acknowledged_at: string | null;
   outcome_delta: { grade_kind: string; return_pct: number | null; alpha: number | null; is_counterfactual: boolean } | null;
 }
 
@@ -4548,6 +4613,35 @@ export const getExecutionReview = (portfolioId: number, decisionId: number) =>
 export const putExecutionReview = (portfolioId: number, decisionId: number, body: ExecutionReviewInput) =>
   apiFetch<ExecutionReview>(
     `/portfolios/${portfolioId}/execution-decisions/${decisionId}/review`,
+    { method: "PUT", body: JSON.stringify(body) },
+  );
+
+// ── Product Intelligence Slice 2 — Follow-up acknowledgment ────────────────
+// Separate current-state workflow metadata for a canonical execution review.
+// The server owns acknowledged_at; clients send only the desired state and,
+// for acknowledgment, the review updated_at they displayed.
+
+export interface ExecutionFollowUp {
+  acknowledged_at: string | null;
+}
+
+export interface ExecutionFollowUpInput {
+  acknowledged: boolean;
+  expected_review_updated_at?: string;
+}
+
+export const getExecutionFollowUp = (portfolioId: number, decisionId: number) =>
+  apiFetch<ExecutionFollowUp>(
+    `/portfolios/${portfolioId}/execution-decisions/${decisionId}/follow-up`,
+  );
+
+export const putExecutionFollowUp = (
+  portfolioId: number,
+  decisionId: number,
+  body: ExecutionFollowUpInput,
+) =>
+  apiFetch<ExecutionFollowUp>(
+    `/portfolios/${portfolioId}/execution-decisions/${decisionId}/follow-up`,
     { method: "PUT", body: JSON.stringify(body) },
   );
 

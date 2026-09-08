@@ -678,6 +678,26 @@ def test_ledger_row_system_generated_unreviewed_exposes_no_review_feedback(db, w
     assert row["reviewed_at"] is None
 
 
+def test_ledger_row_exposes_follow_up_acknowledged_at(db, ws_portfolio):
+    from datetime import datetime
+    from models.database import ExecutionFollowUp, ExecutionReview
+
+    ws, portfolio = ws_portfolio
+    _snap, dec = _seed_snapshot_and_decision(db, ws, portfolio, "APPROVED", _ALLOCS_BUY_ONLY)
+    db.add(ExecutionReview(workspace_id=ws.id, execution_decision_id=dec.id, outcome="MIXED"))
+    db.commit()
+    db.add(ExecutionFollowUp(
+        workspace_id=ws.id,
+        execution_decision_id=dec.id,
+        acknowledged_at=datetime(2026, 9, 8, 3, 0, 0),
+    ))
+    db.commit()
+
+    result = list_execution_ledger(db, portfolio.id)
+    row = next(row for row in result["rows"] if row["decision_id"] == dec.id)
+    assert row["follow_up_acknowledged_at"] == "2026-09-08T03:00:00Z"
+
+
 def test_ledger_row_preserves_inconsistent_review_on_system_generated_decision(db, ws_portfolio):
     """A legacy row where a review was somehow recorded against a
     system-generated decision (predates the Slice 3 write-boundary

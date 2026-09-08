@@ -221,7 +221,10 @@ def list_execution_ledger(db: Session, portfolio_id: int, period_days: int = 90)
         # this, each access lazy-loads its own SELECT, i.e. one extra query
         # per decision (real N+1, verified: 8 decisions -> 8 extra SELECTs).
         # joinedload is correct here since review is a to-one relationship.
-        .options(joinedload(UserExecutionDecision.review))
+        .options(
+            joinedload(UserExecutionDecision.review),
+            joinedload(UserExecutionDecision.follow_up),
+        )
         .filter(
             UserExecutionDecision.workspace_id == ws,
             UserExecutionDecision.portfolio_id == portfolio_id,
@@ -309,6 +312,11 @@ def list_execution_ledger(db: Session, portfolio_id: int, period_days: int = 90)
             "has_review": dec.review is not None,
             "review_outcome": dec.review.outcome if dec.review is not None else None,
             "reviewed_at": dec.review.reviewed_at.isoformat() + "Z" if dec.review is not None else None,
+            "follow_up_acknowledged_at": (
+                dec.follow_up.acknowledged_at.isoformat() + "Z"
+                if dec.follow_up is not None and dec.follow_up.acknowledged_at is not None
+                else None
+            ),
             "outcome_delta": {
                 "grade_kind": grade_row.grade_kind,
                 "return_pct": grade_row.return_pct,
