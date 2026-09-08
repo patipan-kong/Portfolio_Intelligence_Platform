@@ -6,6 +6,7 @@ import {
   createGoalScenario,
   deleteGoalFundingAllocation,
   getCashFlowReport,
+  getGoalIntelligence,
   getHoldings,
   getLegacyGoalProfileEvidence,
   getPortfolioPrices,
@@ -25,6 +26,7 @@ import {
   type GoalContextResponse,
   type GoalFundingAllocation,
   type GoalFundingAllocationHistory,
+  type GoalIntelligenceResponse,
   type GoalPlanAmendmentHistory,
   type LegacyGoalProfileEvidenceResponse,
   type GoalScenario,
@@ -39,6 +41,7 @@ vi.mock("@/lib/api", () => ({
   createGoalScenario: vi.fn(),
   deleteGoalFundingAllocation: vi.fn(),
   getCashFlowReport: vi.fn(),
+  getGoalIntelligence: vi.fn(),
   getHoldings: vi.fn(),
   getLegacyGoalProfileEvidence: vi.fn(),
   getPortfolioPrices: vi.fn(),
@@ -259,6 +262,20 @@ const scenariosMock = vi.mocked(listGoalScenarios);
 const scenariosCreateMock = vi.mocked(createGoalScenario);
 const scenariosUpdateMock = vi.mocked(updateGoalScenario);
 const cashFlowMock = vi.mocked(getCashFlowReport);
+const goalIntelligenceMock = vi.mocked(getGoalIntelligence);
+
+function defaultGoalIntelligence(goalId: number): GoalIntelligenceResponse {
+  return {
+    contract_version: "wealth.goal-intelligence.v1",
+    generated_at: "2026-08-26T00:00:00Z",
+    goal_id: goalId,
+    as_of_date: "2026-08-26",
+    funding: { designated_total: 0, progress_ratio: 0, funding_gap: 20_000_000, fully_designated: false },
+    time: { target_date: "2055-01-01", has_target_date: true, days_remaining: 10_356, target_date_in_past: false },
+    funding_sources: [],
+    valuation_completeness: "COMPLETE",
+  };
+}
 
 async function configuredGoalContext(): Promise<GoalContextResponse> {
   const latestListResult = listMock.mock.results[listMock.mock.results.length - 1] as
@@ -454,6 +471,7 @@ describe("GoalDetailPage", () => {
     scenariosCreateMock.mockResolvedValue(scenario);
     scenariosUpdateMock.mockResolvedValue(scenario);
     cashFlowMock.mockImplementation((month: string) => Promise.resolve({ month, events: [] }));
+    goalIntelligenceMock.mockImplementation((goalId: number) => Promise.resolve(defaultGoalIntelligence(goalId)));
   });
 
   it("loads a valid URL-anchored goal and keeps a back link", async () => {
@@ -1885,6 +1903,107 @@ describe("GoalDetailPage", () => {
       render(<GoalDetailPage params={{ id: "1" }} />);
       await screen.findByRole("heading", { name: "Retire by 55" });
       expect(screen.queryByText("Can I afford this goal?")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("Goal Intelligence", () => {
+    it("renders normal designation, remaining-to-target, and time facts", async () => {
+      goalIntelligenceMock.mockResolvedValue({
+        ...defaultGoalIntelligence(1),
+        funding: { designated_total: 300_000, progress_ratio: 0.015, funding_gap: 19_700_000, fully_designated: false },
+      });
+      render(<GoalDetailPage params={{ id: "1" }} />);
+
+      const section = await screen.findByRole("heading", { name: "Goal Intelligence" });
+      const panel = section.closest("section") as HTMLElement;
+      expect(within(panel).getByText("Designated total")).toBeInTheDocument();
+      expect(within(panel).getByText((_, el) => el?.textContent === "฿300,000.00")).toBeInTheDocument();
+      expect(within(panel).getByText(/10356 days remaining until 2055-01-01/)).toBeInTheDocument();
+    });
+
+    it("renders a goal with no target date without a days-remaining claim", async () => {
+      goalIntelligenceMock.mockResolvedValue({
+        ...defaultGoalIntelligence(1),
+        time: { target_date: null, has_target_date: false, days_remaining: null, target_date_in_past: false },
+      });
+      render(<GoalDetailPage params={{ id: "1" }} />);
+
+      expect(await screen.findByText("No target date is set for this goal.")).toBeInTheDocument();
+    });
+
+    it("renders a past target date without expired/failed language", async () => {
+      goalIntelligenceMock.mockResolvedValue({
+        ...defaultGoalIntelligence(1),
+        time: { target_date: "2026-01-01", has_target_date: true, days_remaining: -237, target_date_in_past: true },
+      });
+      render(<GoalDetailPage params={{ id: "1" }} />);
+
+      const heading = await screen.findByRole("heading", { name: "Goal Intelligence" });
+      const panel = heading.closest("section") as HTMLElement;
+      expect(within(panel).getByText("Target date 2026-01-01 has passed (237 days ago).")).toBeInTheDocument();
+      expect(within(panel).queryByText(/expired|failed|late/i)).not.toBeInTheDocument();
+    });
+
+    it("keeps over-100% designation representable rather than clamping it", async () => {
+      goalIntelligenceMock.mockResolvedValue({
+        ...defaultGoalIntelligence(1),
+        funding: { designated_total: 25_000_000, progress_ratio: 1.25, funding_gap: 0, fully_designated: true },
+      });
+      render(<GoalDetailPage params={{ id: "1" }} />);
+
+      const heading = await screen.findByRole("heading", { name: "Goal Intelligence" });
+      const panel = heading.closest("section") as HTMLElement;
+      expect(within(panel).getByText(/125\.0% \(fully designated\)/)).toBeInTheDocument();
+    });
+
+    it("shows unavailable valuation evidence as unavailable, never as zero", async () => {
+      goalIntelligenceMock.mockResolvedValue({
+        ...defaultGoalIntelligence(1),
+        funding_sources: [{
+          source_kind: "PORTFOLIO",
+          source_id: 9,
+          source_name: "Long-term Portfolio",
+          source_is_archived: false,
+          goal_designated_amount: 100_000,
+          source_designated_total_in_context_scope: 100_000,
+          valuation: { availability: "UNAVAILABLE", observed_value: null, as_of: null, provenance: null, quality: null },
+          designation_coverage: { status: "UNAVAILABLE", shortfall: null },
+        }],
+      });
+      render(<GoalDetailPage params={{ id: "1" }} />);
+
+      const heading = await screen.findByRole("heading", { name: "Goal Intelligence" });
+      const panel = heading.closest("section") as HTMLElement;
+      const sourceRow = within(panel).getByText(/Long-term Portfolio/).closest("div") as HTMLElement;
+      expect(within(sourceRow).getByText(/Observed value unavailable/)).toBeInTheDocument();
+      expect(within(sourceRow).queryByText((_, el) => el?.textContent === "฿0.00")).not.toBeInTheDocument();
+    });
+
+    it("keeps the rest of Goal Detail intact when Goal Intelligence fails to load", async () => {
+      goalIntelligenceMock.mockRejectedValue(new Error("goal intelligence offline"));
+      render(<GoalDetailPage params={{ id: "1" }} />);
+
+      expect(await screen.findByRole("heading", { name: "Retire by 55" })).toBeInTheDocument();
+      expect(await screen.findByText("goal intelligence offline")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Funding" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Planning / What-If" })).toBeInTheDocument();
+    });
+
+    it("renders the server-supplied funding facts verbatim without a client-side recomputation", async () => {
+      // designated_total and funding_gap intentionally do not sum to
+      // target_amount here — proving the page displays exactly what the
+      // endpoint returned rather than deriving its own totals.
+      goalIntelligenceMock.mockResolvedValue({
+        ...defaultGoalIntelligence(1),
+        funding: { designated_total: 123_456, progress_ratio: 0.5, funding_gap: 999, fully_designated: false },
+      });
+      render(<GoalDetailPage params={{ id: "1" }} />);
+
+      const heading = await screen.findByRole("heading", { name: "Goal Intelligence" });
+      const panel = heading.closest("section") as HTMLElement;
+      expect(within(panel).getByText((_, el) => el?.textContent === "฿123,456.00")).toBeInTheDocument();
+      expect(within(panel).getByText((_, el) => el?.textContent === "฿999.00")).toBeInTheDocument();
+      expect(within(panel).getByText(/50\.0%/)).toBeInTheDocument();
     });
   });
 });

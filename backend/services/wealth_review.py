@@ -244,7 +244,13 @@ def _portfolio_valuations(
     return valuations
 
 
-def _valuation_completeness(sources: list[dict]) -> str:
+def valuation_completeness(sources: list[dict]) -> str:
+    """Reduce a list of `{"valuation": {...}}` rows to COMPLETE/PARTIAL/UNAVAILABLE.
+
+    Public because `services/goal_intelligence.py` (Phase 7.7, ADR-014) reuses
+    this exact reduction over a goal-scoped subset of sources rather than
+    reimplementing it (ADR-004: one implementation per rule).
+    """
     if not sources or all(
         source["valuation"]["availability"] == AVAILABLE
         and source["valuation"]["quality"] == COMPLETE
@@ -304,7 +310,7 @@ def build_factual_wealth_review(
         "review_generated_at": generated_at.isoformat(),
         "scope": goal_context["scope"],
         "goal_context": goal_context,
-        "valuation_completeness": _valuation_completeness(sources),
+        "valuation_completeness": valuation_completeness(sources),
         "sources": sources,
     }
 

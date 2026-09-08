@@ -359,6 +359,16 @@ Delivered foundation:
   API, UI, or optimizer change, and no Goal-objective entity or categorical
   objective vocabulary.
 
+- **7.7 Goal Intelligence v1, Slice 1** (ADR-014) — `wealth.goal-intelligence.v1`
+  (`GET /wealth-goals/{goal_id}/intelligence`) composes existing 7.2 designation
+  facts and 7.3A source valuation/coverage facts for one Goal, plus deterministic
+  time-remaining arithmetic (`days_remaining`, `target_date_in_past`) from an
+  explicit as-of date. It recomputes no designation, funding, or coverage rule
+  and grants no behavioral authority (ADR-011's default non-authority rule
+  applies unchanged). It defines no goal-health classification, success
+  probability, projection, affordability, or cross-goal prioritization, and does
+  not attribute a shared source's `OVER_ALLOCATED` shortfall to one Goal.
+
 Still open: **7.6C–7.6D Cross-Goal Objectives / Optimization** remain
 future:
 

@@ -26,6 +26,7 @@ from services.wealth_review import (
     build_factual_wealth_review,
     integrity_error_detail as wealth_review_integrity_error_detail,
 )
+from services.goal_intelligence import build_goal_intelligence
 from services.legacy_goal_profile_evidence import (
     LegacyGoalProfileEvidenceIntegrityError,
     build_legacy_goal_profile_evidence,
@@ -2004,6 +2005,23 @@ async def get_goal_context(goal_id: int, db: Session = Depends(get_db)) -> dict:
     if context is None:
         raise HTTPException(status_code=404, detail="Wealth goal not found")
     return context
+
+
+@app.get("/wealth-goals/{goal_id}/intelligence")
+async def get_goal_intelligence(goal_id: int, db: Session = Depends(get_db)) -> dict:
+    """Descriptive-only composition of existing funding, time, and source
+    coverage facts for one owned goal (ADR-014). Grants no behavioral
+    authority; recomputes nothing already owned by goal_context.py or
+    wealth_review.py."""
+    try:
+        intelligence = build_goal_intelligence(db, _ws_id(db), goal_id, date.today())
+    except GoalContextIntegrityError:
+        raise HTTPException(status_code=409, detail=integrity_error_detail())
+    except WealthReviewIntegrityError:
+        raise HTTPException(status_code=409, detail=wealth_review_integrity_error_detail())
+    if intelligence is None:
+        raise HTTPException(status_code=404, detail="Wealth goal not found")
+    return intelligence
 
 
 @app.post("/wealth-goals", status_code=201)
