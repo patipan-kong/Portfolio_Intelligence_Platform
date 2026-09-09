@@ -3,9 +3,9 @@ import { describe, expect, test, vi } from "vitest";
 import DashboardPage from "@/app/page";
 import type { Portfolio } from "@/lib/api";
 
-// Section 4 of the Periodic Review Slice 1 contract: a small, obvious entry
-// point from `/` to `/review`, and no cross-domain data fetch added to `/`
-// merely to decorate the link (no count, no badge).
+// Periodic Review (Slice 1): `/` exposes a small, obvious entry point to
+// `/review`, and no cross-domain data fetch is added to `/` merely to
+// decorate the link (no count, no badge).
 const { getHoldings, getPortfolioPrices, getTransactionHistory, getSnapshots, listCashAccounts, listLiabilities, getCashAccountBalanceAsOf, getLiabilityBalanceAsOf, getNetWorthChangeAttribution } =
   vi.hoisted(() => ({
     getHoldings: vi.fn(),

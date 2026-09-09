@@ -125,6 +125,20 @@ describe("Navbar — desktop grouped navigation", () => {
     expect(desktopTrigger(planning.label)).toHaveClass("bg-blue-50");
   });
 
+  test("Periodic Review belongs to the Planning group, alongside Goals", () => {
+    renderNavbar();
+    fireEvent.click(desktopTrigger(planning.label));
+    const menu = screen.getByRole("menu");
+    expect(within(menu).getByText("Goals")).toBeInTheDocument();
+    expect(within(menu).getByText("Periodic Review")).toBeInTheDocument();
+  });
+
+  test("/review activates the Planning group", () => {
+    usePathname.mockReturnValue("/review");
+    renderNavbar();
+    expect(desktopTrigger(planning.label)).toHaveClass("bg-blue-50");
+  });
+
   test("Portfolio secondary routes (owned by PortfolioTabs) activate Investments", () => {
     usePathname.mockReturnValue("/performance");
     renderNavbar();

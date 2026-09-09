@@ -1,7 +1,6 @@
 // Periodic Review presentation adapter (Slice 1). Deliberately performs no
 // financial arithmetic, no Goal health/attention classification, and no
-// cross-domain ranking — see docs/architecture/ROADMAP.md's Periodic Review
-// Slice 1 contract. Every function here is selection, filtering, or
+// cross-domain ranking. Every function here is selection, filtering, or
 // presentation ordering over facts already computed by an existing
 // canonical service.
 
