@@ -673,7 +673,12 @@ export default function DashboardPage() {
   return (
     <div className="space-y-10">
       <section>
-        <h1 className="text-2xl font-bold mb-1">Wealth Overview</h1>
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <h1 className="text-2xl font-bold mb-1">Wealth Overview</h1>
+          <Link href="/review" className="text-sm font-medium text-blue-600 hover:underline">
+            Periodic Review →
+          </Link>
+        </div>
         {error && <p className="mt-2 text-sm text-red-500">{error}</p>}
         {portfolioError && <p className="mt-2 text-sm text-red-500">{portfolioError}</p>}
       </section>

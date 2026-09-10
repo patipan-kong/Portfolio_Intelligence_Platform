@@ -9,6 +9,17 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { usePortfolio } from "@/lib/PortfolioContext";
 import { getExecutionLedger, isUnresolvedPortfolioError, type ExecutionLedger, type ExecutionLedgerRow } from "@/lib/api";
+// Aliased on import: this page's own useState toggles are already named
+// needsReview/needsRecording/needsFollowUpView, so the imported row-level
+// predicates take a `row` prefix to avoid shadowing them.
+import {
+  isFollowUpAssessment,
+  needsFollowUp,
+  needsRecording as rowNeedsRecording,
+  needsReview as rowNeedsReview,
+  sortNeedsFollowUpRows,
+  sortNeedsReviewRows,
+} from "@/lib/executionWorkflow";
 import AsOfStamp from "@/components/evaluation/AsOfStamp";
 import DecisionStatusBadge from "@/components/evaluation/DecisionStatusBadge";
 import CounterfactualValue from "@/components/evaluation/CounterfactualValue";
@@ -30,38 +41,9 @@ function pct(n: number | null | undefined, decimals = 1): string {
   return `${n >= 0 ? "+" : ""}${n.toFixed(decimals)}%`;
 }
 
-function isFollowUpAssessment(row: ExecutionLedgerRow): boolean {
-  return (
-    row.reviewable === true &&
-    row.has_review === true &&
-    (row.review_outcome === "MIXED" || row.review_outcome === "OFF_TRACK")
-  );
-}
-
-function needsFollowUp(row: ExecutionLedgerRow): boolean {
-  return isFollowUpAssessment(row) && row.follow_up_acknowledged_at == null;
-}
-
-function reviewTimestamp(value: string | null): number | null {
-  if (!value) return null;
-  const timestamp = new Date(value).getTime();
-  return Number.isFinite(timestamp) ? timestamp : null;
-}
-
-function sortNeedsFollowUpRows(rows: ExecutionLedgerRow[]): ExecutionLedgerRow[] {
-  // `reviewed_at` is set when the canonical review is first created and does
-  // not advance when the review is edited, so this is review-creation order,
-  // not an ordering by last follow-up activity.
-  return rows.slice().sort((a, b) => {
-    const at = reviewTimestamp(a.reviewed_at);
-    const bt = reviewTimestamp(b.reviewed_at);
-
-    if (at == null && bt == null) return a.decision_id - b.decision_id;
-    if (at == null) return 1;
-    if (bt == null) return -1;
-    return at - bt || a.decision_id - b.decision_id;
-  });
-}
+// isFollowUpAssessment/needsFollowUp/needsReview/needsRecording/
+// sortNeedsFollowUpRows now live in @/lib/executionWorkflow so Periodic
+// Review can reuse the exact same canonical predicates.
 
 export default function ExecutionLedgerPage() {
   const { currentSelection, reportUnresolvedPortfolio } = usePortfolio();
@@ -127,16 +109,9 @@ export default function ExecutionLedgerPage() {
     // Actionable queue: oldest-waiting decision first. This is a view-level
     // sort only — the underlying fetched rows and the default/"Needs
     // recording" ordering (backend executed_at desc) are untouched.
-    visibleRows = (data?.rows ?? [])
-      .filter((row) => row.reviewable && !row.has_review)
-      .slice()
-      .sort((a, b) => {
-        const at = a.date ? new Date(a.date).getTime() : Infinity;
-        const bt = b.date ? new Date(b.date).getTime() : Infinity;
-        return at - bt;
-      });
+    visibleRows = sortNeedsReviewRows((data?.rows ?? []).filter(rowNeedsReview));
   } else if (needsRecording) {
-    visibleRows = (data?.rows ?? []).filter((row) => row.recording_progress_eligible && row.is_complete === false);
+    visibleRows = (data?.rows ?? []).filter(rowNeedsRecording);
   } else {
     visibleRows = data?.rows ?? [];
   }

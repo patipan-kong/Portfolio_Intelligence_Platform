@@ -45,7 +45,10 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     key: "planning",
     label: "การวางแผน",
-    items: [{ label: "Goals", href: "/goals", match: ["/goals"] }],
+    items: [
+      { label: "Goals", href: "/goals", match: ["/goals"] },
+      { label: "Periodic Review", href: "/review", match: ["/review"] },
+    ],
   },
   {
     key: "ai",
