@@ -2196,6 +2196,37 @@ async def delete_portfolio_investment_mandate(
     return Response(status_code=204)
 
 
+def _portfolio_investment_mandate_payload_with_portfolio(
+    mandate: PortfolioInvestmentMandate, db: Session
+) -> dict:
+    """Reverse (goal-first) view of a mandate, naming its portfolio.
+
+    Read-only composition over the same factual PortfolioInvestmentMandate
+    rows the portfolio-first endpoints already expose (ADR-010). Adds only
+    display identity — no allocation, risk, or constraint interpretation.
+    """
+    portfolio = db.query(Portfolio).filter(Portfolio.id == mandate.portfolio_id).first()
+    payload = _portfolio_investment_mandate_payload(mandate)
+    payload["portfolio_name"] = portfolio.name if portfolio is not None else None
+    return payload
+
+
+@app.get("/wealth-goals/{goal_id}/investment-mandates")
+async def list_goal_investment_mandates(goal_id: int, db: Session = Depends(get_db)) -> list[dict]:
+    ws = _ws_id(db)
+    goal = _wealth_goal_or_404(db, goal_id, ws)
+    mandates = (
+        db.query(PortfolioInvestmentMandate)
+        .filter(
+            PortfolioInvestmentMandate.workspace_id == ws,
+            PortfolioInvestmentMandate.wealth_goal_id == goal.id,
+        )
+        .order_by(PortfolioInvestmentMandate.id)
+        .all()
+    )
+    return [_portfolio_investment_mandate_payload_with_portfolio(item, db) for item in mandates]
+
+
 # ── Portfolio Funding Evidence (PFET-01, ADR-012) ────────────────────────────
 # Documentary cash-side Investment Funding Transfer evidence naming this
 # Portfolio. Not a funding ledger and not reconciliation: a row here proves

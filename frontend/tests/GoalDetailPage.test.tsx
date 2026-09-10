@@ -13,6 +13,7 @@ import {
   getWealthFactualReview,
   listCashAccounts,
   listGoalFundingAllocationHistory,
+  listGoalInvestmentMandates,
   listGoalPlanAmendmentHistory,
   listGoalFundingAllocations,
   listGoalScenarios,
@@ -27,6 +28,7 @@ import {
   type GoalFundingAllocation,
   type GoalFundingAllocationHistory,
   type GoalIntelligenceResponse,
+  type GoalInvestmentMandate,
   type GoalPlanAmendmentHistory,
   type LegacyGoalProfileEvidenceResponse,
   type GoalScenario,
@@ -48,6 +50,7 @@ vi.mock("@/lib/api", () => ({
   getWealthFactualReview: vi.fn(),
   listCashAccounts: vi.fn(),
   listGoalFundingAllocationHistory: vi.fn(),
+  listGoalInvestmentMandates: vi.fn(),
   listGoalPlanAmendmentHistory: vi.fn(),
   listGoalFundingAllocations: vi.fn(),
   listGoalScenarios: vi.fn(),
@@ -163,6 +166,24 @@ const fundingHistory: GoalFundingAllocationHistory[] = [
   },
 ];
 
+const investmentMandate: GoalInvestmentMandate = {
+  id: 700,
+  workspace_id: 1,
+  portfolio_id: 9,
+  wealth_goal_id: 1,
+  portfolio_name: "Long-term Portfolio",
+  created_at: "2026-08-26T00:00:00",
+};
+
+const secondInvestmentMandate: GoalInvestmentMandate = {
+  id: 701,
+  workspace_id: 1,
+  portfolio_id: 12,
+  wealth_goal_id: 1,
+  portfolio_name: "Balanced Portfolio",
+  created_at: "2026-08-27T00:00:00",
+};
+
 const planHistory: GoalPlanAmendmentHistory[] = [{
   id: 301,
   workspace_id: 1,
@@ -248,6 +269,7 @@ function quote(symbol: string, current: number): PriceRefreshItem {
 const listMock = vi.mocked(listWealthGoals);
 const allocationsMock = vi.mocked(listGoalFundingAllocations);
 const fundingHistoryMock = vi.mocked(listGoalFundingAllocationHistory);
+const investmentMandatesMock = vi.mocked(listGoalInvestmentMandates);
 const planHistoryMock = vi.mocked(listGoalPlanAmendmentHistory);
 const contextMock = vi.mocked(getWealthFactualReview);
 const legacyEvidenceMock = vi.mocked(getLegacyGoalProfileEvidence);
@@ -457,6 +479,7 @@ describe("GoalDetailPage", () => {
     listMock.mockResolvedValue([goal]);
     allocationsMock.mockResolvedValue([]);
     fundingHistoryMock.mockResolvedValue([]);
+    investmentMandatesMock.mockResolvedValue([]);
     planHistoryMock.mockResolvedValue([]);
     contextMock.mockImplementation(configuredFactualReview);
     legacyEvidenceMock.mockImplementation(configuredLegacyEvidence);
@@ -753,6 +776,51 @@ describe("GoalDetailPage", () => {
       expect(await screen.findByRole("heading", { name: "Retire by 55" })).toBeInTheDocument();
       expect(await screen.findByText("history offline")).toBeInTheDocument();
       expect(screen.getByRole("heading", { name: "Funding" })).toBeInTheDocument();
+    });
+  });
+
+  describe("Investment mandate", () => {
+    it("renders zero, one, and multiple mandated portfolios without priority or ranking implication", async () => {
+      investmentMandatesMock.mockResolvedValue([investmentMandate, secondInvestmentMandate]);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+
+      expect(await screen.findByRole("heading", { name: "Investment mandate" })).toBeInTheDocument();
+      expect(screen.getByText("Investment portfolios intentionally managed to serve this goal.")).toBeInTheDocument();
+      const firstLink = screen.getByRole("link", { name: "Long-term Portfolio" });
+      const secondLink = screen.getByRole("link", { name: "Balanced Portfolio" });
+      expect(firstLink).toHaveAttribute("href", "/portfolio?portfolio=9");
+      expect(secondLink).toHaveAttribute("href", "/portfolio?portfolio=12");
+    });
+
+    it("shows a quiet factual empty state when no portfolio is mandated", async () => {
+      investmentMandatesMock.mockResolvedValue([]);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+
+      expect(await screen.findByRole("heading", { name: "Investment mandate" })).toBeInTheDocument();
+      expect(screen.getByText("No portfolio is currently mandated to this goal.")).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+
+    it("isolates investment-mandate loading failure from the existing Goal Detail sections", async () => {
+      investmentMandatesMock.mockRejectedValue(new Error("mandate lookup offline"));
+      render(<GoalDetailPage params={{ id: "1" }} />);
+
+      expect(await screen.findByRole("heading", { name: "Retire by 55" })).toBeInTheDocument();
+      expect(await screen.findByText("mandate lookup offline")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Funding" })).toBeInTheDocument();
+    });
+
+    it("never introduces causal or allocation wording, and stays separate from Funding", async () => {
+      investmentMandatesMock.mockResolvedValue([investmentMandate]);
+      allocationsMock.mockResolvedValue([portfolioAllocation]);
+      render(<GoalDetailPage params={{ id: "1" }} />);
+
+      await screen.findByRole("heading", { name: "Investment mandate" });
+      const mandateSection = screen.getByRole("heading", { name: "Investment mandate" }).closest("section");
+      expect(mandateSection).not.toBeNull();
+      expect(mandateSection?.textContent).not.toMatch(/driven by|because of|allocation reflects|prioritized for|constrained by/i);
+      // The mandate list renders only the portfolio name/link, never a funding-designation amount.
+      expect(within(mandateSection as HTMLElement).queryByText(/฿/)).not.toBeInTheDocument();
     });
   });
 

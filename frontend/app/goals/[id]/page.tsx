@@ -16,6 +16,7 @@ import {
   messageFor,
 } from "@/components/goals/GoalPlanningSections";
 import { FundingHistorySection, type FundingHistoryState } from "@/components/goals/FundingHistorySection";
+import { GoalInvestmentMandateSection, type GoalInvestmentMandateState } from "@/components/goals/GoalInvestmentMandateSection";
 import { PlanHistorySection, type PlanHistoryState } from "@/components/goals/PlanHistorySection";
 import { GoalIntelligenceSection, type GoalIntelligenceState } from "@/components/goals/GoalIntelligenceSection";
 import {
@@ -42,6 +43,7 @@ import {
   getWealthFactualReview,
   listCashAccounts,
   listGoalFundingAllocationHistory,
+  listGoalInvestmentMandates,
   listGoalPlanAmendmentHistory,
   listGoalScenarios,
   listPortfolios,
@@ -85,6 +87,7 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
   const [legacyEvidence, setLegacyEvidence] = useState<LegacyGoalProfileEvidenceResponse | { error: string } | undefined>(undefined);
   const [scenarios, setScenarios] = useState<ScenariosState>(undefined);
   const [fundingHistory, setFundingHistory] = useState<FundingHistoryState>(undefined);
+  const [investmentMandates, setInvestmentMandates] = useState<GoalInvestmentMandateState>(undefined);
   const [planHistory, setPlanHistory] = useState<PlanHistoryState>(undefined);
   const [goalIntelligence, setGoalIntelligence] = useState<GoalIntelligenceState>(undefined);
   // Lifted above GoalWhatIfSection so "Load scenario" can populate its
@@ -123,6 +126,7 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
     setSourceLoadError("");
     setScenarios(undefined);
     setFundingHistory(undefined);
+    setInvestmentMandates(undefined);
     setPlanHistory(undefined);
     setGoalIntelligence(undefined);
     setWhatIfExpanded(false);
@@ -208,6 +212,20 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
           },
           (err) => {
             if (isCurrentLoad()) setFundingHistory({ error: messageFor(err, "Unable to load funding history.") });
+          },
+        );
+      // Investment mandate is a read-only, goal-first view of the same
+      // factual PortfolioInvestmentMandate rows already authored on the
+      // Portfolio page (ADR-010). Like funding history, it must never block
+      // the authoritative current-goal and review surfaces.
+      void Promise.resolve()
+        .then(() => listGoalInvestmentMandates(goalId))
+        .then(
+          (result) => {
+            if (isCurrentLoad()) setInvestmentMandates(result);
+          },
+          (err) => {
+            if (isCurrentLoad()) setInvestmentMandates({ error: messageFor(err, "Unable to load investment mandate.") });
           },
         );
       // Plan history is documentary evidence only. Like funding history, it
@@ -477,6 +495,8 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
             planHistory,
             fundingHistory,
           }} />
+
+          <GoalInvestmentMandateSection state={investmentMandates} />
 
           <section className="bg-white border rounded-xl p-4 shadow-sm space-y-3" aria-labelledby="funding-heading">
             <h2 id="funding-heading" className="text-lg font-semibold">Funding</h2>

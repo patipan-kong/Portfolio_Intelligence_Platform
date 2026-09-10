@@ -70,6 +70,10 @@ def list_rows(db, portfolio_id):
     return asyncio.run(main.list_portfolio_investment_mandates(portfolio_id, db))
 
 
+def list_goal_rows(db, goal_id):
+    return asyncio.run(main.list_goal_investment_mandates(goal_id, db))
+
+
 def delete(db, portfolio_id, goal_id):
     return asyncio.run(main.delete_portfolio_investment_mandate(portfolio_id, goal_id, db))
 
@@ -222,3 +226,65 @@ def test_http_portfolio_delete_uses_orm_cascade_for_mandates():
 
     assert db.query(PortfolioInvestmentMandate).filter_by(portfolio_id=portfolio.id).count() == 0
     assert list_rows(db, survivor.id) == [surviving_mandate]
+
+
+# ── Goal-first reverse lookup (Goal <-> Portfolio Mandate Visibility Slice 1) ─
+
+
+def test_goal_first_lookup_returns_empty_list_for_goal_with_no_mandates():
+    db = make_session()
+    goal = make_goal(db)
+    assert list_goal_rows(db, goal.id) == []
+
+
+def test_goal_first_lookup_names_portfolio_and_excludes_other_goals_mandates():
+    db = make_session()
+    portfolio = make_portfolio(db, name="Retirement Growth")
+    other_portfolio = make_portfolio(db, name="Other")
+    goal = make_goal(db, name="Retirement")
+    other_goal = make_goal(db, name="Other Goal")
+    put(db, portfolio.id, goal.id)
+    put(db, other_portfolio.id, other_goal.id)
+
+    rows = list_goal_rows(db, goal.id)
+
+    assert len(rows) == 1
+    assert rows[0]["portfolio_id"] == portfolio.id
+    assert rows[0]["wealth_goal_id"] == goal.id
+    assert rows[0]["portfolio_name"] == "Retirement Growth"
+    assert set(rows[0]) == {
+        "id", "workspace_id", "portfolio_id", "wealth_goal_id", "created_at", "portfolio_name",
+    }
+
+
+def test_goal_first_lookup_returns_multiple_portfolios_in_deterministic_order_without_priority():
+    db = make_session()
+    first = make_portfolio(db, name="First")
+    second = make_portfolio(db, name="Second")
+    goal = make_goal(db)
+    _, first_mandate = put(db, first.id, goal.id)
+    _, second_mandate = put(db, second.id, goal.id)
+
+    rows = list_goal_rows(db, goal.id)
+
+    assert [row["id"] for row in rows] == [first_mandate["id"], second_mandate["id"]]
+
+
+def test_goal_first_lookup_is_workspace_isolated_and_404s_on_unknown_or_foreign_goal():
+    db = make_session()
+    portfolio = make_portfolio(db)
+    goal = make_goal(db)
+    put(db, portfolio.id, goal.id)
+
+    other = Workspace(name="Other")
+    db.add(other)
+    db.commit()
+    foreign_goal = make_goal(db, workspace_id=other.id, name="Foreign Goal")
+
+    with pytest.raises(HTTPException) as missing:
+        list_goal_rows(db, 999999)
+    assert missing.value.status_code == 404
+
+    with pytest.raises(HTTPException) as foreign:
+        list_goal_rows(db, foreign_goal.id)
+    assert foreign.value.status_code == 404
