@@ -424,11 +424,17 @@ export function DecisionActionPanel({
             </div>
           )}
 
-          {(confirming === "MANUAL_OVERRIDE" || confirming === "APPROVED" || confirming === "PARTIAL_EXECUTION") && (
+          {(confirming === "MANUAL_OVERRIDE" || confirming === "APPROVED" || confirming === "PARTIAL_EXECUTION" || confirming === "REJECTED") && (
             <textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              placeholder={confirming === "MANUAL_OVERRIDE" ? "Reason (required) — e.g. Higher conviction in TOA vs GUNKUL" : "Notes (optional) — e.g. partial fill, adjusted sizing…"}
+              placeholder={
+                confirming === "MANUAL_OVERRIDE"
+                  ? "Reason (required) — e.g. Higher conviction in TOA vs GUNKUL"
+                  : confirming === "REJECTED"
+                  ? "Notes (optional) — e.g. why this recommendation wasn't accepted"
+                  : "Notes (optional) — e.g. partial fill, adjusted sizing…"
+              }
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-blue-400"
               rows={2}
             />

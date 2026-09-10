@@ -512,6 +512,7 @@ def test_expired_aged_out(db, ws_portfolio):
     decision = db.query(UserExecutionDecision).filter_by(recommendation_snapshot_id=snap.id).one()
     assert decision.decision == "EXPIRED"
     assert decision.is_system_generated is True
+    assert decision.expiry_reason == "aged_out"
 
 
 def test_not_yet_aged_stays_undecided(db, ws_portfolio):
@@ -542,6 +543,9 @@ def test_superseded_by_newer_decided_sibling(db, ws_portfolio):
     written_for_newer = [w for w in result["written"] if w["snapshot_id"] == newer.id]
     assert written_for_newer == []  # already decided, untouched
 
+    older_decision = db.query(UserExecutionDecision).filter_by(recommendation_snapshot_id=older.id).one()
+    assert older_decision.expiry_reason == "superseded"
+
 
 def test_decided_snapshot_never_touched(db, ws_portfolio):
     ws, portfolio = ws_portfolio
@@ -558,6 +562,7 @@ def test_decided_snapshot_never_touched(db, ws_portfolio):
     decisions = db.query(UserExecutionDecision).filter_by(recommendation_snapshot_id=snap.id).all()
     assert len(decisions) == 1
     assert decisions[0].decision == "REJECTED"
+    assert decisions[0].expiry_reason is None
 
 
 # ── Backfill idempotency ────────────────────────────────────────────────────────

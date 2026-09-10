@@ -96,6 +96,7 @@ def write_expired_decisions(db: Session) -> dict[str, Any]:
                     portfolio_id=portfolio_id,
                     decision="EXPIRED",
                     is_system_generated=True,
+                    expiry_reason=reason,
                     executed_at=datetime.utcnow(),
                     created_at=datetime.utcnow(),
                 )

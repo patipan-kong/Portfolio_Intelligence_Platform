@@ -3032,6 +3032,10 @@ export interface ExecutionDecision {
   original_symbol: string | null;
   replacement_symbol: string | null;
   reason_category: string | null;
+  // Decision & Execution Lifecycle Completeness Slice 2 — system-generated
+  // EXPIRED lifecycle cause, written only by expired_writer.py. Distinct
+  // from override_notes (human rationale); never human-editable.
+  expiry_reason: "superseded" | "aged_out" | null;
   is_system_generated: boolean;
   executed_at: string;
   created_at: string | null;
@@ -4408,6 +4412,7 @@ export interface ReportCardExecutionSection {
   original_symbol?: string | null;
   replacement_symbol?: string | null;
   reason_category?: string | null;
+  expiry_reason?: "superseded" | "aged_out" | null;
   goal_context?: DecisionGoalContext | null;
   // Review Workflows Slice 4 — attaches to the same canonical decision as
   // the fields above (never a separately-selected reviewed decision).
@@ -4610,6 +4615,8 @@ export interface ExecutionDetail {
   snapshot_id: number;
   portfolio_id: number;
   decision: string;
+  /** Decision & Execution Lifecycle Completeness Slice 2 — persisted only for decision="EXPIRED"; null for legacy rows and every other decision type. */
+  expiry_reason: "superseded" | "aged_out" | null;
   executed_at: string | null;
   analysis: ExecutionAnalysis;
   partial_warning: string | null;

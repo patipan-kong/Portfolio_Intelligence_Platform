@@ -286,7 +286,91 @@ def test_report_card_execution_section_degrades_cleanly_without_rationale_or_goa
     assert execution["replacement_symbol"] is None
     assert execution["reason_category"] is None
     assert execution["override_notes"] is None
+    assert execution["expiry_reason"] is None
     assert execution["goal_context"] is None
+
+
+def test_report_card_execution_section_surfaces_expiry_reason(db, ws_portfolio):
+    """Decision & Execution Lifecycle Completeness Slice 2 — a new EXPIRED
+    row's persisted expiry_reason round-trips through the execution section,
+    while a legacy-style EXPIRED row (expiry_reason=None) degrades to None
+    rather than a fabricated value."""
+    from models.database import UserExecutionDecision
+
+    ws, portfolio = ws_portfolio
+    snap = _seed_snapshot(db, ws, portfolio, days_ago=2)
+    db.add(UserExecutionDecision(
+        workspace_id=ws.id, recommendation_snapshot_id=snap.id, portfolio_id=portfolio.id,
+        decision="EXPIRED", is_system_generated=True, expiry_reason="aged_out",
+        executed_at=datetime.utcnow(), created_at=datetime.utcnow(),
+    ))
+    db.commit()
+
+    card = get_report_card(db, portfolio.id, snap.id)
+    assert card["execution"]["expiry_reason"] == "aged_out"
+
+
+def test_report_card_execution_section_legacy_expired_row_expiry_reason_is_none(db, ws_portfolio):
+    from models.database import UserExecutionDecision
+
+    ws, portfolio = ws_portfolio
+    snap = _seed_snapshot(db, ws, portfolio, days_ago=2)
+    db.add(UserExecutionDecision(
+        workspace_id=ws.id, recommendation_snapshot_id=snap.id, portfolio_id=portfolio.id,
+        decision="EXPIRED", is_system_generated=True,
+        executed_at=datetime.utcnow(), created_at=datetime.utcnow(),
+    ))
+    db.commit()
+
+    card = get_report_card(db, portfolio.id, snap.id)
+    assert card["execution"]["expiry_reason"] is None
+
+
+def test_report_card_rejected_decision_rationale_round_trips(db, ws_portfolio):
+    """Decision & Execution Lifecycle Completeness Slice 1 (Contract Recon
+    Model A): REJECTED may populate the existing generic `override_notes`
+    free-text field. No new vocabulary — `override_type`/`reason_category`
+    stay null, exactly as for any other decision type that doesn't set
+    them."""
+    from models.database import UserExecutionDecision
+
+    ws, portfolio = ws_portfolio
+    snap = _seed_snapshot(db, ws, portfolio, days_ago=2)
+    db.add(UserExecutionDecision(
+        workspace_id=ws.id, recommendation_snapshot_id=snap.id, portfolio_id=portfolio.id,
+        decision="REJECTED", executed_at=datetime.utcnow(), created_at=datetime.utcnow(),
+        override_notes="Already covered by an existing holding.",
+    ))
+    db.commit()
+
+    card = get_report_card(db, portfolio.id, snap.id)
+    execution = card["execution"]
+    assert execution["override_notes"] == "Already covered by an existing holding."
+    assert execution["override_type"] is None
+    assert execution["original_symbol"] is None
+    assert execution["replacement_symbol"] is None
+    assert execution["reason_category"] is None
+
+
+def test_report_card_rejected_decision_without_rationale_degrades_cleanly(db, ws_portfolio):
+    """A REJECTED decision with no rationale (the pre-Slice-1 shape, and the
+    still-valid default going forward) must continue to degrade to None
+    rather than fabricating a value."""
+    from models.database import UserExecutionDecision
+
+    ws, portfolio = ws_portfolio
+    snap = _seed_snapshot(db, ws, portfolio, days_ago=2)
+    db.add(UserExecutionDecision(
+        workspace_id=ws.id, recommendation_snapshot_id=snap.id, portfolio_id=portfolio.id,
+        decision="REJECTED", executed_at=datetime.utcnow(), created_at=datetime.utcnow(),
+    ))
+    db.commit()
+
+    card = get_report_card(db, portfolio.id, snap.id)
+    execution = card["execution"]
+    assert execution["override_notes"] is None
+    assert execution["override_type"] is None
+    assert execution["reason_category"] is None
 
 
 def test_report_card_execution_evidence_survives_unavailable_plan_reconstruction(db, ws_portfolio):
@@ -553,7 +637,7 @@ def test_report_card_review_presence_does_not_alter_plan_rationale_goal_context_
 
     assert card_after["plan"] == card_before["plan"]
     assert card_after["verdict"] == card_before["verdict"]
-    for key in ("override_type", "original_symbol", "replacement_symbol", "reason_category", "override_notes", "goal_context"):
+    for key in ("override_type", "original_symbol", "replacement_symbol", "reason_category", "override_notes", "expiry_reason", "goal_context"):
         assert card_after["execution"][key] == card_before["execution"][key]
     assert card_before["execution"]["execution_review"] is None
     assert card_after["execution"]["execution_review"]["outcome"] == "ON_TRACK"
