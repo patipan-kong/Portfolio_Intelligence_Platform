@@ -289,6 +289,53 @@ def test_report_card_execution_section_degrades_cleanly_without_rationale_or_goa
     assert execution["goal_context"] is None
 
 
+def test_report_card_rejected_decision_rationale_round_trips(db, ws_portfolio):
+    """Decision & Execution Lifecycle Completeness Slice 1 (Contract Recon
+    Model A): REJECTED may populate the existing generic `override_notes`
+    free-text field. No new vocabulary — `override_type`/`reason_category`
+    stay null, exactly as for any other decision type that doesn't set
+    them."""
+    from models.database import UserExecutionDecision
+
+    ws, portfolio = ws_portfolio
+    snap = _seed_snapshot(db, ws, portfolio, days_ago=2)
+    db.add(UserExecutionDecision(
+        workspace_id=ws.id, recommendation_snapshot_id=snap.id, portfolio_id=portfolio.id,
+        decision="REJECTED", executed_at=datetime.utcnow(), created_at=datetime.utcnow(),
+        override_notes="Already covered by an existing holding.",
+    ))
+    db.commit()
+
+    card = get_report_card(db, portfolio.id, snap.id)
+    execution = card["execution"]
+    assert execution["override_notes"] == "Already covered by an existing holding."
+    assert execution["override_type"] is None
+    assert execution["original_symbol"] is None
+    assert execution["replacement_symbol"] is None
+    assert execution["reason_category"] is None
+
+
+def test_report_card_rejected_decision_without_rationale_degrades_cleanly(db, ws_portfolio):
+    """A REJECTED decision with no rationale (the pre-Slice-1 shape, and the
+    still-valid default going forward) must continue to degrade to None
+    rather than fabricating a value."""
+    from models.database import UserExecutionDecision
+
+    ws, portfolio = ws_portfolio
+    snap = _seed_snapshot(db, ws, portfolio, days_ago=2)
+    db.add(UserExecutionDecision(
+        workspace_id=ws.id, recommendation_snapshot_id=snap.id, portfolio_id=portfolio.id,
+        decision="REJECTED", executed_at=datetime.utcnow(), created_at=datetime.utcnow(),
+    ))
+    db.commit()
+
+    card = get_report_card(db, portfolio.id, snap.id)
+    execution = card["execution"]
+    assert execution["override_notes"] is None
+    assert execution["override_type"] is None
+    assert execution["reason_category"] is None
+
+
 def test_report_card_execution_evidence_survives_unavailable_plan_reconstruction(db, ws_portfolio):
     """Review Correction Pass BLOCKER: a decision, its rationale, and its
     frozen goal context are independently persisted (UserExecutionDecision,

@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { DecisionActionPanel } from "@/components/optimizer/DecisionActionPanel";
 import type { ExecutionDecision, ExecutionDecisionDetail, ExecutionAnalysis, ExecutionDetail } from "@/lib/api";
 
@@ -489,5 +489,77 @@ describe("RAE-01: DecisionActionPanel opportunity-cost navigation", () => {
 
     expect(await screen.findByText("Shadow portfolios are being initialized — data will appear after the next daily valuation.")).toBeInTheDocument();
     expect(screen.queryByText("Review opportunity-cost evaluation →")).not.toBeInTheDocument();
+  });
+});
+
+// Decision & Execution Lifecycle Completeness — Slice 1: REJECTED rationale
+// capture. Reuses the existing generic `override_notes` free-text field
+// (Contract Recon Model A) — no new vocabulary, no reason_category, no
+// override-specific controls. No pre-existing decision for this snapshot,
+// so the panel renders its confirm-flow button row rather than the
+// already-recorded display used by every other test in this file.
+describe("DecisionActionPanel REJECTED rationale (Slice 1)", () => {
+  test("Case A: REJECTED without notes remains a valid, submittable decision", async () => {
+    listExecutionDecisions.mockResolvedValueOnce([]).mockResolvedValueOnce([baseDecision({ decision: "REJECTED" })]);
+    getExecutionDecision.mockResolvedValue(decisionDetail({ decision: "REJECTED" }));
+    recordDecisionBySnapshot.mockResolvedValue({});
+
+    render(<DecisionActionPanel snapshotId={5} portfolioId={1} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Reject Recommendation/ }));
+    fireEvent.click(await screen.findByText("Confirm"));
+
+    await waitFor(() => expect(recordDecisionBySnapshot).toHaveBeenCalledTimes(1));
+    const [, payload] = recordDecisionBySnapshot.mock.calls[0];
+    expect(payload.decision).toBe("REJECTED");
+    expect(payload.override_notes).toBeUndefined();
+  });
+
+  test("Case B: selecting REJECTED shows the existing notes textarea with REJECTED-specific optional copy", async () => {
+    listExecutionDecisions.mockResolvedValue([]);
+
+    render(<DecisionActionPanel snapshotId={5} portfolioId={1} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Reject Recommendation/ }));
+
+    const textarea = await screen.findByPlaceholderText("Notes (optional) — e.g. why this recommendation wasn't accepted");
+    expect(textarea).toBeInTheDocument();
+    // Structural controls that remain MANUAL_OVERRIDE-only must not appear.
+    expect(screen.queryByText("Override Type")).not.toBeInTheDocument();
+    expect(screen.queryByText("Symbol Affected")).not.toBeInTheDocument();
+  });
+
+  test("Case C: REJECTED with typed rationale submits override_notes only, with no override_type/reason_category leakage", async () => {
+    listExecutionDecisions.mockResolvedValueOnce([]).mockResolvedValueOnce([baseDecision({ decision: "REJECTED", override_notes: "Already covered by an existing holding." })]);
+    getExecutionDecision.mockResolvedValue(decisionDetail({ decision: "REJECTED", override_notes: "Already covered by an existing holding." }));
+    recordDecisionBySnapshot.mockResolvedValue({});
+
+    render(<DecisionActionPanel snapshotId={5} portfolioId={1} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Reject Recommendation/ }));
+    const textarea = await screen.findByPlaceholderText("Notes (optional) — e.g. why this recommendation wasn't accepted");
+    fireEvent.change(textarea, { target: { value: "Already covered by an existing holding." } });
+    fireEvent.click(await screen.findByText("Confirm"));
+
+    await waitFor(() => expect(recordDecisionBySnapshot).toHaveBeenCalledTimes(1));
+    const [, payload] = recordDecisionBySnapshot.mock.calls[0];
+    expect(payload.decision).toBe("REJECTED");
+    expect(payload.override_notes).toBe("Already covered by an existing holding.");
+    expect(payload.override_type).toBeUndefined();
+    expect(payload.original_symbol).toBeUndefined();
+    expect(payload.replacement_symbol).toBeUndefined();
+    expect("reason_category" in payload).toBe(false);
+  });
+
+  test("regression: MANUAL_OVERRIDE still requires its own textarea copy and structured controls, unaffected by the REJECTED addition", async () => {
+    listExecutionDecisions.mockResolvedValue([]);
+
+    render(<DecisionActionPanel snapshotId={5} portfolioId={1} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Manual Override/ }));
+
+    expect(await screen.findByPlaceholderText("Reason (required) — e.g. Higher conviction in TOA vs GUNKUL")).toBeInTheDocument();
+    expect(screen.getByText("Override Type")).toBeInTheDocument();
+    expect(screen.getByText("Symbol Affected")).toBeInTheDocument();
   });
 });

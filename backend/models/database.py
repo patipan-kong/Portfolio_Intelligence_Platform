@@ -1017,7 +1017,7 @@ class UserExecutionDecision(Base):
     decision = Column(String, nullable=False, index=True)
     approved_allocations_json = Column(Text, nullable=True)        # what the user actually executed
     rejected_symbols_json = Column(Text, nullable=True)            # symbols user explicitly declined
-    override_notes = Column(Text, nullable=True)                   # free-text note for MANUAL_OVERRIDE
+    override_notes = Column(Text, nullable=True)                   # optional free-text rationale for a human execution decision
     override_type = Column(String, nullable=True)                  # REJECT_SWAP | REPLACE_SYMBOL | …
     original_symbol = Column(String, nullable=True)               # symbol AI recommended
     replacement_symbol = Column(String, nullable=True)            # symbol human chose instead
