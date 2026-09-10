@@ -395,6 +395,7 @@ def get_execution_detail(db: Session, portfolio_id: int, decision_id: int) -> di
         "snapshot_id": dec.recommendation_snapshot_id,
         "portfolio_id": portfolio_id,
         "decision": dec.decision,
+        "expiry_reason": dec.expiry_reason,
         "executed_at": dec.executed_at.isoformat() + "Z" if dec.executed_at else None,
         "analysis": analysis,
         "partial_warning": partial_warning,

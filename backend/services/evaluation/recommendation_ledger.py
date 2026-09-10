@@ -303,6 +303,7 @@ def get_report_card(db: Session, portfolio_id: int, snapshot_id: int) -> dict[st
             "original_symbol": decision_row.original_symbol,
             "replacement_symbol": decision_row.replacement_symbol,
             "reason_category": decision_row.reason_category,
+            "expiry_reason": decision_row.expiry_reason,
             "goal_context": load_persisted_decision_context(snap.wealth_goal_context_json),
             # Review Workflows Slice 4 — attaches to this same canonical
             # decision_row only (never a separate "find any reviewed

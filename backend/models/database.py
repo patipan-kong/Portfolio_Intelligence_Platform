@@ -1022,6 +1022,13 @@ class UserExecutionDecision(Base):
     original_symbol = Column(String, nullable=True)               # symbol AI recommended
     replacement_symbol = Column(String, nullable=True)            # symbol human chose instead
     reason_category = Column(String, nullable=True)               # short category tag
+    # Decision & Execution Lifecycle Completeness Slice 2: system-generated
+    # EXPIRED lifecycle cause ("superseded" | "aged_out"), written only by
+    # services/evaluation/expired_writer.py. Distinct from override_notes
+    # (optional human rationale for a human execution decision) — this field
+    # never holds human-authored text and override_notes never holds this.
+    # Forward-only: legacy EXPIRED rows remain NULL, not backfilled.
+    expiry_reason = Column(String, nullable=True)
     # AI Evaluation M0 (P4): True for EXPIRED rows the daily scheduler writes on
     # behalf of the user (superseded-or-14-days undecided) — distinguishes system-
     # authored decisions from genuine human actions everywhere `decision` is read.

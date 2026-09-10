@@ -56,6 +56,7 @@ function executionDetail(overrides: Partial<ExecutionDetail> = {}): ExecutionDet
     snapshot_id: 99,
     portfolio_id: 1,
     decision: "APPROVED",
+    expiry_reason: null,
     executed_at: "2026-08-20T00:00:00Z",
     analysis: {
       status: "ok", score: 80, completeness_pct: 100, funding_fidelity_pct: 95,
@@ -260,6 +261,50 @@ describe("Execution Detail — Record execution CTA eligibility (Slice 4)", () =
     expect(await screen.findByText("No execution was recorded for this expired recommendation.")).toBeInTheDocument();
     const link = screen.getByText("Review opportunity-cost evaluation →");
     expect(link.closest("a")).toHaveAttribute("href", "/ai-analytics/opportunity-cost?decisionId=42");
+  });
+
+  // Decision & Execution Lifecycle Completeness Slice 2 — expiry_reason-aware
+  // copy on the one authorized display surface (Execution Detail only).
+  test("EXPIRED + superseded explains a newer recommendation replaced it", async () => {
+    getExecutionDetail.mockResolvedValue(executionDetail({
+      decision: "EXPIRED",
+      expiry_reason: "superseded",
+      analysis: { status: "unavailable", reason: "no_linked_transactions", score: null } as ExecutionDetail["analysis"],
+    }));
+
+    render(<ExecutionDetailPage />);
+
+    expect(
+      await screen.findByText(
+        "This recommendation expired because a newer recommendation superseded it before a decision was made.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  test("EXPIRED + aged_out explains it remained undecided until expiry", async () => {
+    getExecutionDetail.mockResolvedValue(executionDetail({
+      decision: "EXPIRED",
+      expiry_reason: "aged_out",
+      analysis: { status: "unavailable", reason: "no_linked_transactions", score: null } as ExecutionDetail["analysis"],
+    }));
+
+    render(<ExecutionDetailPage />);
+
+    expect(
+      await screen.findByText("This recommendation expired after remaining undecided until its review window closed."),
+    ).toBeInTheDocument();
+  });
+
+  test("EXPIRED + null (legacy) falls back to the generic expired copy", async () => {
+    getExecutionDetail.mockResolvedValue(executionDetail({
+      decision: "EXPIRED",
+      expiry_reason: null,
+      analysis: { status: "unavailable", reason: "no_linked_transactions", score: null } as ExecutionDetail["analysis"],
+    }));
+
+    render(<ExecutionDetailPage />);
+
+    expect(await screen.findByText("No execution was recorded for this expired recommendation.")).toBeInTheDocument();
   });
 
   test("APPROVED with zero linked transactions still offers Record execution (regression)", async () => {

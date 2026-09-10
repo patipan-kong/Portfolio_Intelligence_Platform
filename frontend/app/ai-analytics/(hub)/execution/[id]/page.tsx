@@ -59,9 +59,20 @@ function decisionRecordedLabel(iso: string): string {
   return `decision recorded ${iso.slice(0, 10)}`;
 }
 
-function noExecutionCopy(decision: string): string {
+// Decision & Execution Lifecycle Completeness Slice 2 — expiry_reason is
+// persisted only going forward (services/evaluation/expired_writer.py);
+// legacy EXPIRED rows and every other decision type pass null here.
+function noExecutionCopy(decision: string, expiryReason: "superseded" | "aged_out" | null): string {
   if (decision === "REJECTED") return "No execution was recorded for this rejected decision.";
-  if (decision === "EXPIRED") return "No execution was recorded for this expired recommendation.";
+  if (decision === "EXPIRED") {
+    if (expiryReason === "superseded") {
+      return "This recommendation expired because a newer recommendation superseded it before a decision was made.";
+    }
+    if (expiryReason === "aged_out") {
+      return "This recommendation expired after remaining undecided until its review window closed.";
+    }
+    return "No execution was recorded for this expired recommendation.";
+  }
   return "No execution was recorded for this decision.";
 }
 
@@ -175,7 +186,7 @@ export default function ExecutionDetailPage() {
                     Record execution →
                   </Link>
                 ) : (
-                  <p className="text-xs text-gray-400">{noExecutionCopy(data.decision)}</p>
+                  <p className="text-xs text-gray-400">{noExecutionCopy(data.decision, data.expiry_reason)}</p>
                 )}
               </div>
             ) : (

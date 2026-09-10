@@ -39,6 +39,7 @@ function baseDecision(overrides: Partial<ExecutionDecision> = {}): ExecutionDeci
     original_symbol: null,
     replacement_symbol: null,
     reason_category: null,
+    expiry_reason: null,
     is_system_generated: false,
     executed_at: "2026-08-20T00:00:00Z",
     created_at: "2026-08-20T00:00:00Z",
@@ -401,6 +402,7 @@ function executionAnalysis(overrides: Partial<ExecutionAnalysis> = {}): Executio
 function executionDetailFixture(analysis: ExecutionAnalysis): ExecutionDetail {
   return {
     decision_id: 7, snapshot_id: 5, portfolio_id: 1, decision: "APPROVED",
+    expiry_reason: null,
     executed_at: "2026-08-20T00:00:00Z", analysis, partial_warning: null,
     reviewable: true, as_of: "2026-08-21T00:00:00Z",
   };
