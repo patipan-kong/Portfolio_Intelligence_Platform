@@ -121,6 +121,10 @@ export interface PortfolioInvestmentMandate {
   created_at: string;
 }
 
+export interface GoalInvestmentMandate extends PortfolioInvestmentMandate {
+  portfolio_name: string | null;
+}
+
 export interface CashAccountBaseline {
   id: number;
   cash_account_id: number;
@@ -672,6 +676,9 @@ export const deletePortfolioInvestmentMandate = (portfolioId: number, wealthGoal
     `/portfolios/${portfolioId}/investment-mandates/${wealthGoalId}`,
     { method: "DELETE" },
   );
+
+export const listGoalInvestmentMandates = (goalId: number) =>
+  apiFetch<GoalInvestmentMandate[]>(`/wealth-goals/${goalId}/investment-mandates`);
 
 // ─── Wealth Goal Context (Phase 7.2) ───────────────────────────────────────
 // The Goal Context endpoint is the canonical, valuation-free read of goal
