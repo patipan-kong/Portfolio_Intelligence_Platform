@@ -37,16 +37,30 @@ export interface WealthSummary {
   anyStale: boolean;
 }
 
-function resolveHoldingsValue(
+/** One holding's resolved current value, for callers that need a per-holding
+ * breakdown (e.g. cross-portfolio sector/symbol exposure) rather than just
+ * the portfolio-level total that resolveHoldingsValue below sums to. */
+export interface HoldingValuation {
+  symbol: string;
+  sector: string | null;
+  value: number;
+  isEstimated: boolean;
+  isStale: boolean;
+}
+
+/**
+ * Resolves each holding's current value using the one Wealth OS price
+ * fallback chain (live?.current_price ?? item.current_price ?? avg_cost).
+ * Shared by resolveHoldingsValue below and by lib/crossPortfolioExposure.ts
+ * so a per-holding breakdown never drifts from the portfolio-level total.
+ */
+export function resolveHoldingValuations(
   items: PortfolioItem[],
   prices: PriceRefreshItem[]
-): { value: number; hasEstimatedPrice: boolean; hasStalePrice: boolean } {
+): HoldingValuation[] {
   const liveBySymbol = new Map(prices.map((p) => [p.symbol, p]));
-  let value = 0;
-  let hasEstimatedPrice = false;
-  let hasStalePrice = false;
 
-  for (const item of items) {
+  return items.map((item) => {
     const live = liveBySymbol.get(item.symbol);
     // A confirmed price is one we actually fetched (live this session, or
     // previously fetched and stored on the holding row). Falling all the way
@@ -54,15 +68,29 @@ function resolveHoldingsValue(
     // rather than silently presenting it as a confirmed market value.
     const confirmedPrice = live?.current_price ?? item.current_price ?? null;
     const price = confirmedPrice ?? item.avg_cost;
-    if (confirmedPrice == null) hasEstimatedPrice = true;
     // A stale price is a real, contributing number (backend guarantees
     // is_stale is only true alongside a non-null current_price), just not
     // confirmed current — a distinct honesty concern from "no price at all".
-    if (live?.is_stale) hasStalePrice = true;
-    value += item.shares * price;
-  }
+    return {
+      symbol: item.symbol,
+      sector: item.sector ?? null,
+      value: item.shares * price,
+      isEstimated: confirmedPrice == null,
+      isStale: live?.is_stale === true,
+    };
+  });
+}
 
-  return { value, hasEstimatedPrice, hasStalePrice };
+function resolveHoldingsValue(
+  items: PortfolioItem[],
+  prices: PriceRefreshItem[]
+): { value: number; hasEstimatedPrice: boolean; hasStalePrice: boolean } {
+  const valuations = resolveHoldingValuations(items, prices);
+  return {
+    value: valuations.reduce((sum, v) => sum + v.value, 0),
+    hasEstimatedPrice: valuations.some((v) => v.isEstimated),
+    hasStalePrice: valuations.some((v) => v.isStale),
+  };
 }
 
 /**
