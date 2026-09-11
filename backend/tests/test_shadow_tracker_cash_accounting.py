@@ -19,8 +19,16 @@ _resolve_shares_from_weights (unit, no DB)
   4. Zero-weight liquidation for one symbol -> that holding gets 0 shares,
      not folded into a cash leak.
   5. Full liquidation (empty allocation list) -> 100% cash.
-  6. Weights summing fractionally over 100% (rounding) -> cash clamped to 0,
-     never negative.
+  6. Weights summing fractionally over 100% (rounding) -> cash == 0, never
+     negative, AND equity no longer exceeds NAV (DOGFOOD-02 regression —
+     docs/DECISION_LOG.md, "Evaluation Scorecard NAV Invariant Failure":
+     weights are scaled down proportionally before market_value is computed,
+     rather than computed from the raw over-100% weights and then having
+     only the resulting negative cash residual clamped away).
+  6b. The exact real-data class of failure that surfaced DOGFOOD-02: many
+      small weights, one symbol with no price (price_frozen), summing to
+      101.1% -> NAV is exactly conserved (equity + cash == NAV), not just
+      cash >= 0.
 
 assert_nav_conserved / NavInvariantError (unit, no DB)
   7. Consistent equity+cash -> no exception.
@@ -127,8 +135,13 @@ def test_full_liquidation_is_all_cash():
 
 def test_over_allocated_weights_clamp_cash_to_zero_never_negative():
     """Weights summing fractionally over 100% (rounding upstream) must not
-    produce negative cash — clamp to 0 rather than fabricate a short cash
-    position."""
+    produce negative cash, AND — DOGFOOD-02 — must not deploy equity beyond
+    total_portfolio_value either. Before the DOGFOOD-02 fix, market_value
+    was computed from the raw over-100% weights and only the resulting
+    negative cash was clamped to 0, so equity alone exceeded NAV; the fix
+    scales every weight down proportionally first, so equity + cash == NAV
+    holds exactly, not just cash >= 0.
+    """
     allocs = [
         {"symbol": "AAA", "target_weight": 60.03, "action": "BUY"},
         {"symbol": "BBB", "target_weight": 40.02, "action": "BUY"},
@@ -136,6 +149,47 @@ def test_over_allocated_weights_clamp_cash_to_zero_never_negative():
     prices = {"AAA": 100.0, "BBB": 100.0}
     holdings, cash = _resolve_shares_from_weights(allocs, 1_000_000.0, prices)
     assert cash == 0.0
+    equity, _ = _compute_paper_value(holdings, prices)
+    assert equity <= 1_000_000.0 + 1e-6
+    assert equity + cash == pytest.approx(1_000_000.0)
+    assert_nav_conserved(label="unit-test", expected_nav=1_000_000.0, equity=equity, cash=cash)
+
+
+def test_dogfood02_real_data_class_over_allocated_with_unpriced_symbol_conserves_nav():
+    """The exact class of DOGFOOD-02's real-data failure (portfolio 2,
+    snapshot_id=78, 2026-07-15): many small target weights, one symbol with
+    no available price (price_frozen path), summing to 101.1% — a stored
+    RecommendationSnapshot the optimizer/policy engine should have
+    prevented, but which _resolve_shares_from_weights must still handle
+    without violating NAV conservation.
+    """
+    allocs = [
+        {"symbol": "SCB", "target_weight": 38.7, "action": "BUY"},
+        {"symbol": "AOT", "target_weight": 24.0, "action": "BUY"},
+        {"symbol": "BDMS", "target_weight": 16.4, "action": "BUY"},
+        {"symbol": "TOA", "target_weight": 2.0, "action": "BUY"},
+        {"symbol": "COM7", "target_weight": 5.0, "action": "BUY"},  # no price below
+        {"symbol": "BANPU", "target_weight": 4.2, "action": "BUY"},
+        {"symbol": "OR", "target_weight": 4.3, "action": "BUY"},
+        {"symbol": "TOP", "target_weight": 3.0, "action": "BUY"},
+        {"symbol": "CPALL", "target_weight": 3.5, "action": "BUY"},
+    ]
+    assert sum(a["target_weight"] for a in allocs) == pytest.approx(101.1)
+    prices = {
+        "SCB": 155.5, "AOT": 63.5, "BDMS": 19.4, "TOA": 15.2,
+        "BANPU": 5.75, "OR": 12.8, "TOP": 56.5, "CPALL": 46.25,
+    }
+    nav = 108.0694785208731
+    holdings, cash = _resolve_shares_from_weights(allocs, nav, prices)
+
+    com7 = next(h for h in holdings if h["symbol"] == "COM7")
+    assert com7["price_frozen"] is True
+
+    equity, _ = _compute_paper_value(holdings, prices)
+    assert equity <= nav + 1e-6
+    assert_nav_conserved(
+        label="dogfood02-regression", expected_nav=nav, equity=equity, cash=cash,
+    )
 
 
 # ─── assert_nav_conserved / NavInvariantError (unit, no DB) ────────────────

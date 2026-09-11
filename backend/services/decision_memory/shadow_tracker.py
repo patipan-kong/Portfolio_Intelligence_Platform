@@ -401,16 +401,46 @@ def _resolve_shares_from_weights(
     into the NAV basis of the next rebalance. Dropping it reproduces the
     cash-leak defect this function was fixed to eliminate (see
     docs/DECISION_LOG.md, "Paper Portfolio Cash-Leak Fix").
+
+    Target weights summing to MORE than 100% should already be prevented
+    upstream by the optimizer/policy engine; if one ever arrives anyway
+    (DOGFOOD-02, docs/DECISION_LOG.md), every weight is scaled down
+    proportionally before market_value is computed, so deployed equity can
+    never exceed total_portfolio_value and cash is exactly 0 rather than a
+    discarded negative residual — assert_nav_conserved's equity + cash ==
+    NAV holds by construction in both the under- and over-100% cases.
     """
+    deployed_weight = sum(float(a.get("target_weight") or 0) for a in allocations if a.get("symbol"))
+
+    # Over-100% target weights should already be prevented upstream by the
+    # optimizer/policy engine, but DOGFOOD-02 (docs/DECISION_LOG.md) found a
+    # real snapshot that violated this assumption. Scaling every weight down
+    # proportionally so they sum to exactly 100% before computing market
+    # values (rather than computing market_value from the raw, over-100%
+    # weights and then clamping the resulting negative cash residual to 0)
+    # keeps this a correctness fix rather than a value-creating clamp: it
+    # guarantees deployed equity can never exceed total_portfolio_value, so
+    # assert_nav_conserved's equity + cash == NAV holds by construction
+    # instead of by coincidence. Under-100% weights (the intentional cash
+    # floor — OPTIMIZER_PHILOSOPHY.md §2 Priority 7) are never scaled up.
+    scale = 1.0
+    if deployed_weight > 100.0001:
+        logger.warning(
+            "[SHADOW] target_weight sum %.4f%% exceeds 100%% — scaling all "
+            "weights down proportionally so deployed equity cannot exceed "
+            "NAV (over-allocation should already be prevented upstream by "
+            "the optimizer/policy engine)",
+            deployed_weight,
+        )
+        scale = 100.0 / deployed_weight
+
     holdings: list[dict] = []
-    deployed_weight = 0.0
     for a in allocations:
         sym = a.get("symbol")
         if not sym:
             continue
         target_weight = float(a.get("target_weight") or 0)
-        deployed_weight += target_weight
-        market_value = target_weight / 100.0 * total_portfolio_value
+        market_value = target_weight * scale / 100.0 * total_portfolio_value
         inception_price = prices.get(sym)
 
         if inception_price and inception_price > 0:
@@ -431,14 +461,7 @@ def _resolve_shares_from_weights(
             "price_frozen": price_frozen,
         })
 
-    if deployed_weight > 100.0001:
-        logger.warning(
-            "[SHADOW] target_weight sum %.4f%% exceeds 100%% — clamping cash "
-            "residual to 0 (over-allocation should already be prevented "
-            "upstream by the optimizer/policy engine)",
-            deployed_weight,
-        )
-    cash = max(0.0, (100.0 - deployed_weight) / 100.0 * total_portfolio_value)
+    cash = max(0.0, (100.0 - deployed_weight * scale) / 100.0 * total_portfolio_value)
     return holdings, cash
 
 
