@@ -496,7 +496,11 @@ tracked here ([ENGINEERING_PRINCIPLES.md](../engineering/ENGINEERING_PRINCIPLES.
   cue and filter to the existing detail/recording flow. No new execution,
   broker-fill, or settlement authority was introduced.
 - Sector BHB attribution
-- Cross-portfolio exposure and allocation analysis
+- ~~Cross-portfolio exposure~~ — delivered: a new `/exposure` page provides
+  descriptive current-snapshot portfolio contribution, aggregate sector
+  exposure, and cross-portfolio symbol overlap (PR #41). No historical trend,
+  severity/risk labels, target allocation, or rebalance guidance. Cross-
+  portfolio allocation analysis remains open.
 - ~~Total Assets History after external Cash Accounts have dated balance
   evidence~~ — delivered: `TotalAssetsHistoryCard` combines Investment Wealth
   History with Cash Account as-of evidence on the dashboard.
