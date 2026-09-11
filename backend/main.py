@@ -6,7 +6,7 @@ import re
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone, timedelta
 from typing import Literal
-from fastapi import FastAPI, HTTPException, Depends, Request, BackgroundTasks, Response
+from fastapi import FastAPI, HTTPException, Depends, Request, BackgroundTasks, Response, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
@@ -1280,6 +1280,71 @@ async def get_cash_account_balance_as_of(
     }
 
 
+_MAX_BALANCES_AS_OF_DATES = 400
+
+
+@app.get("/cash-accounts/balances-as-of")
+async def list_cash_account_balances_as_of(
+    dates: list[date] = Query(..., min_length=1),
+    include_archived: bool = False,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Bounded batch read: every workspace CashAccount's historical balance
+    (services.cash_account_ledger.cash_balance_as_of — same pure function
+    GET /cash-accounts/{id}/as-of uses) across multiple dates in one request.
+
+    Each account's baseline and ledger events are fetched exactly once
+    regardless of how many dates are requested, then evaluated per date
+    in-process — no arithmetic is duplicated. Exists to replace an
+    accounts x dates HTTP fan-out (e.g. Periodic Review's Net Worth section)
+    with exactly one request; the per-account, per-date endpoint above
+    remains the correct choice for a single lookup.
+    """
+    date_strs = sorted({d.isoformat() for d in dates})
+    if len(date_strs) > _MAX_BALANCES_AS_OF_DATES:
+        raise HTTPException(status_code=400, detail=f"at most {_MAX_BALANCES_AS_OF_DATES} dates per request")
+
+    ws = _ws_id(db)
+    query = db.query(CashAccount).filter(CashAccount.workspace_id == ws)
+    if not include_archived:
+        query = query.filter(CashAccount.is_archived.is_(False))
+    accounts = query.all()
+    account_ids = [a.id for a in accounts]
+
+    baseline_by_account = {
+        b.cash_account_id: b
+        for b in db.query(CashAccountBaseline).filter(CashAccountBaseline.cash_account_id.in_(account_ids)).all()
+    } if account_ids else {}
+
+    events_by_account: dict[int, list] = {aid: [] for aid in account_ids}
+    if account_ids:
+        for tx in (
+            db.query(CashAccountTransaction)
+            .filter(
+                CashAccountTransaction.cash_account_id.in_(account_ids),
+                CashAccountTransaction.workspace_id == ws,
+            )
+            .all()
+        ):
+            events_by_account[tx.cash_account_id].append((tx.transaction_type, tx.amount, tx.occurred_on))
+
+    result: dict[str, dict[str, dict]] = {}
+    for account in accounts:
+        baseline = baseline_by_account.get(account.id)
+        events = events_by_account[account.id]
+        per_date: dict[str, dict] = {}
+        for d in date_strs:
+            balance = cash_balance_as_of(
+                baseline.effective_on if baseline is not None else None,
+                baseline.observed_balance if baseline is not None else None,
+                events,
+                d,
+            )
+            per_date[d] = {"balance": balance, "available": balance is not None}
+        result[str(account.id)] = per_date
+    return result
+
+
 # ─── Cash Entry Templates ───────────────────────────────────────────────────────
 # User-triggered recurring cash-entry templates: workspace-owned convenience
 # metadata that prefills the existing Add income / Add expense form. A
@@ -1769,6 +1834,54 @@ async def get_liability_balance_as_of(
         "balance": balance,
         "available": balance is not None,
     }
+
+
+@app.get("/liabilities/balances-as-of")
+async def list_liability_balances_as_of(
+    dates: list[date] = Query(..., min_length=1),
+    include_archived: bool = False,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Bounded batch read: every workspace Liability's historical balance
+    (services.liability_balance.liability_balance_as_of — same pure function
+    GET /liabilities/{id}/as-of uses) across multiple dates in one request.
+
+    Each liability's observations are fetched exactly once regardless of how
+    many dates are requested, then evaluated per date in-process — no
+    arithmetic is duplicated. Exists to replace a liabilities x dates HTTP
+    fan-out (e.g. Periodic Review's Net Worth section) with exactly one
+    request; the per-liability, per-date endpoint above remains the correct
+    choice for a single lookup.
+    """
+    date_strs = sorted({d.isoformat() for d in dates})
+    if len(date_strs) > _MAX_BALANCES_AS_OF_DATES:
+        raise HTTPException(status_code=400, detail=f"at most {_MAX_BALANCES_AS_OF_DATES} dates per request")
+
+    ws = _ws_id(db)
+    query = db.query(Liability).filter(Liability.workspace_id == ws)
+    if not include_archived:
+        query = query.filter(Liability.is_archived.is_(False))
+    liabilities = query.all()
+    liability_ids = [l.id for l in liabilities]
+
+    observations_by_liability: dict[int, list] = {lid: [] for lid in liability_ids}
+    if liability_ids:
+        for row in (
+            db.query(LiabilityBalanceObservation)
+            .filter(LiabilityBalanceObservation.liability_id.in_(liability_ids))
+            .all()
+        ):
+            observations_by_liability[row.liability_id].append((row.observed_on, row.balance))
+
+    result: dict[str, dict[str, dict]] = {}
+    for liability in liabilities:
+        observations = observations_by_liability[liability.id]
+        per_date: dict[str, dict] = {}
+        for d in date_strs:
+            balance = liability_balance_as_of(observations, d)
+            per_date[d] = {"balance": balance, "available": balance is not None, "currency": liability.currency}
+        result[str(liability.id)] = per_date
+    return result
 
 
 @app.get("/net-worth/change-attribution")
