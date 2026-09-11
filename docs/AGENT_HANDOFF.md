@@ -7,14 +7,24 @@ Keep it short. Update it whenever the active track, branch, agent/session, or ne
 
 - Project: Wealth OS / Portfolio Intelligence Platform
 - Repository: `patipan-kong/Portfolio_Intelligence_Platform`
-- Current track: Cross-Portfolio Exposure Snapshot
-- Current branch: `feature/wealth-os-cross-portfolio-exposure`
-- Current phase: Track complete — ready for PR
-- Latest active coding agent/session: Claude Code — Cross-Portfolio Exposure Snapshot Slice 1
-- Last completed step: Cross-Portfolio Exposure Snapshot Slice 1 completed and final-reviewed
-- Next action: push feature branch, open PR, review, and merge
+- Current track: none selected
+- Current branch: `main`
+- Current phase: PRODUCT FEATURE PAUSE
+- Latest active coding agent/session: Claude Code — Wealth OS next-track reconnaissance (post–Cross-Portfolio Exposure)
+- Last completed step: Reconnaissance complete — no product track justified; PRODUCT FEATURE PAUSE selected for real-usage accumulation
+- Next action: accumulate real usage on Goals, Liabilities, Mandates, Reviews/Follow-ups, and Cash before the next product-feature pass; SA35 contract alignment remains optional governance work
 
 ## Previous Track
+
+- Track: Cross-Portfolio Exposure Snapshot
+- PR: #41
+- Status: MERGED
+- Delivered:
+  - Current-snapshot portfolio contribution, aggregate sector exposure, and cross-portfolio symbol overlap on a new `/exposure` page
+  - Descriptive only — no historical trend, severity/risk labels, target allocation, or rebalance guidance
+- Final track decision: `TRACK COMPLETE`
+
+## Earlier Track
 
 - Track: Goal ↔ Portfolio Mandate Visibility
 - PR: #40
@@ -22,16 +32,6 @@ Keep it short. Update it whenever the active track, branch, agent/session, or ne
 - Delivered:
   - Goal-first reverse lookup of mandated portfolios (`GET /wealth-goals/{id}/portfolio-mandates`)
   - Goal Detail page discloses which portfolios carry an investment mandate for that goal
-- Final track decision: `TRACK COMPLETE`
-
-## Earlier Track
-
-- Track: Decision & Execution Lifecycle Completeness
-- PR: #39
-- Status: MERGED
-- Delivered:
-  - REJECTED recommendations can preserve optional human rationale
-  - EXPIRED recommendations persist `expiry_reason` as `superseded` or `aged_out`
 - Final track decision: `TRACK COMPLETE`
 
 ## Working Rules
