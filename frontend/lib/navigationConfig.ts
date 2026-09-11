@@ -40,6 +40,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { label: "บัญชีเงินสด", href: "/cash", match: ["/cash"] },
       { label: "Cash Flow", href: "/cash-flow", match: ["/cash-flow"] },
       { label: "Liabilities", href: "/liabilities", match: ["/liabilities"] },
+      { label: "Exposure", href: "/exposure", match: ["/exposure"] },
     ],
   },
   {

@@ -7,14 +7,24 @@ Keep it short. Update it whenever the active track, branch, agent/session, or ne
 
 - Project: Wealth OS / Portfolio Intelligence Platform
 - Repository: `patipan-kong/Portfolio_Intelligence_Platform`
-- Current track: Goal ↔ Portfolio Mandate Visibility
-- Current branch: `feature/wealth-os-goal-portfolio-mandate-visibility`
-- Current phase: Track complete — awaiting commit/PR
-- Latest active coding agent/session: Claude Code — Goal Portfolio Mandate Visibility Slice 1
-- Last completed step: Slice 1 final review passed; Goal ↔ Portfolio Mandate Visibility complete
-- Next action: commit the reviewed track, push feature branch, and open PR
+- Current track: Cross-Portfolio Exposure Snapshot
+- Current branch: `feature/wealth-os-cross-portfolio-exposure`
+- Current phase: Track complete — ready for PR
+- Latest active coding agent/session: Claude Code — Cross-Portfolio Exposure Snapshot Slice 1
+- Last completed step: Cross-Portfolio Exposure Snapshot Slice 1 completed and final-reviewed
+- Next action: push feature branch, open PR, review, and merge
 
 ## Previous Track
+
+- Track: Goal ↔ Portfolio Mandate Visibility
+- PR: #40
+- Status: MERGED
+- Delivered:
+  - Goal-first reverse lookup of mandated portfolios (`GET /wealth-goals/{id}/portfolio-mandates`)
+  - Goal Detail page discloses which portfolios carry an investment mandate for that goal
+- Final track decision: `TRACK COMPLETE`
+
+## Earlier Track
 
 - Track: Decision & Execution Lifecycle Completeness
 - PR: #39
@@ -34,6 +44,7 @@ Keep it short. Update it whenever the active track, branch, agent/session, or ne
 6. When switching coding agents/sessions, update `Latest active coding agent/session` immediately.
 7. When a PR merges, record it under Previous Track before starting the next track.
 8. Keep detailed implementation reports in PRs/docs; this file is only the handoff snapshot.
+9. Do not run the full frontend Vitest suite by default on this development machine. Use targeted affected Vitest files + `npm run test:pure` + TypeScript verification. Run the full Vitest suite only when explicitly requested or when a concrete investigation requires it.
 
 ## Update Template
 
