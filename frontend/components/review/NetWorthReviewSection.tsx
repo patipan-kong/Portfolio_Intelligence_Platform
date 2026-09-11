@@ -11,12 +11,23 @@
 // NetWorthChangeAttributionCard itself. No new arithmetic is introduced
 // here — every number this section shows is produced by those existing
 // pure functions or that existing component.
+//
+// DOGFOOD-01: Cash/Liability As-Of evidence is fetched via the batch
+// endpoints (getCashAccountBalancesAsOf / getLiabilityBalancesAsOf — one
+// request per domain, for every account/liability and every history date at
+// once) rather than one getCashAccountBalanceAsOf/getLiabilityBalanceAsOf
+// call per (account, date) pair. That per-pair fan-out — accounts x dates,
+// liabilities x dates — was the original implementation here and is what
+// produced the request storm; the batch endpoints compose the same
+// cash_balance_as_of/liability_balance_as_of primitives server-side and
+// return an identically-shaped evidence map, so computeTotalAssetsHistory /
+// computeTotalLiabilitiesHistory are unchanged.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { usePortfolio } from "@/lib/PortfolioContext";
 import {
-  getCashAccountBalanceAsOf,
-  getLiabilityBalanceAsOf,
+  getCashAccountBalancesAsOf,
+  getLiabilityBalancesAsOf,
   getSnapshots,
   listCashAccounts,
   listLiabilities,
@@ -141,8 +152,22 @@ export default function NetWorthReviewSection() {
     return () => { active = false; };
   }, [portfolios, ctxLoading]);
 
-  const investmentHistoryPoints = computeWealthHistory(portfolios, snapshotsMap, snapshotsFailedMap).points;
-  const investmentHistoryDates = investmentHistoryPoints.map((p) => p.date);
+  // Memoized: computeWealthHistory returns a new points array each call, and
+  // an unmemoized derivation here would hand the effects below a new
+  // `investmentHistoryDates` array reference on every render (even when the
+  // underlying dates are unchanged), which — because that array is a
+  // dependency of the fetch effects below — would re-trigger those fetches
+  // on every render (including the re-renders those fetches themselves
+  // cause), a self-sustaining request loop layered on top of the fan-out
+  // this file's batch endpoints already fix.
+  const investmentHistoryPoints = useMemo(
+    () => computeWealthHistory(portfolios, snapshotsMap, snapshotsFailedMap).points,
+    [portfolios, snapshotsMap, snapshotsFailedMap]
+  );
+  const investmentHistoryDates = useMemo(
+    () => investmentHistoryPoints.map((p) => p.date),
+    [investmentHistoryPoints]
+  );
 
   const [cashAsOfMap, setCashAsOfMap] = useState<Record<number, Record<string, CashAccountBalanceAsOf>>>({});
   const [cashAsOfLoading, setCashAsOfLoading] = useState(false);
@@ -163,29 +188,32 @@ export default function NetWorthReviewSection() {
     }
 
     setCashAsOfLoading(true);
-    const pairs = cashAccountsAll.flatMap((account) =>
-      investmentHistoryDates.map((date) => ({ accountId: account.id, date }))
-    );
-
-    Promise.allSettled(
-      pairs.map(({ accountId, date }) =>
-        getCashAccountBalanceAsOf(accountId, date).then((result) => ({ accountId, date, result }))
-      )
-    )
-      .then((results) => {
+    getCashAccountBalancesAsOf(investmentHistoryDates, true)
+      .then((response) => {
         if (!active || cashAsOfRequestIdRef.current !== requestId) return;
         const map: Record<number, Record<string, CashAccountBalanceAsOf>> = {};
-        results.forEach((result, i) => {
-          if (result.status === "fulfilled") {
-            const { accountId, date, result: asOf } = result.value;
-            if (!map[accountId]) map[accountId] = {};
-            map[accountId][date] = asOf;
-          } else {
-            const { accountId, date } = pairs[i];
-            console.error(`Periodic Review: failed to load Cash As-Of for account ${accountId} on ${date}:`, result.reason);
+        for (const [accountIdStr, byDate] of Object.entries(response)) {
+          const accountId = Number(accountIdStr);
+          map[accountId] = {};
+          for (const [date, evidence] of Object.entries(byDate)) {
+            map[accountId][date] = {
+              cash_account_id: accountId,
+              date,
+              currency: "THB",
+              balance: evidence.balance,
+              available: evidence.available,
+              // Not returned by the batch endpoint; computeTotalAssetsHistory
+              // never reads it (only balance/available — see CashAsOfEvidence).
+              baseline_effective_on: null,
+            };
           }
-        });
+        }
         setCashAsOfMap(map);
+      })
+      .catch((reason) => {
+        if (!active || cashAsOfRequestIdRef.current !== requestId) return;
+        console.error("Periodic Review: failed to load Cash As-Of balances:", reason);
+        setCashAsOfMap({});
       })
       .finally(() => {
         if (active && cashAsOfRequestIdRef.current === requestId) setCashAsOfLoading(false);
@@ -222,29 +250,29 @@ export default function NetWorthReviewSection() {
     }
 
     setLiabilityAsOfLoading(true);
-    const pairs = liabilitiesAll.flatMap((liability) =>
-      investmentHistoryDates.map((date) => ({ liabilityId: liability.id, date }))
-    );
-
-    Promise.allSettled(
-      pairs.map(({ liabilityId, date }) =>
-        getLiabilityBalanceAsOf(liabilityId, date).then((result) => ({ liabilityId, date, result }))
-      )
-    )
-      .then((results) => {
+    getLiabilityBalancesAsOf(investmentHistoryDates, true)
+      .then((response) => {
         if (!active || liabilityAsOfRequestIdRef.current !== requestId) return;
         const map: Record<number, Record<string, LiabilityBalanceAsOf>> = {};
-        results.forEach((result, i) => {
-          if (result.status === "fulfilled") {
-            const { liabilityId, date, result: asOf } = result.value;
-            if (!map[liabilityId]) map[liabilityId] = {};
-            map[liabilityId][date] = asOf;
-          } else {
-            const { liabilityId, date } = pairs[i];
-            console.error(`Periodic Review: failed to load Liability As-Of for liability ${liabilityId} on ${date}:`, result.reason);
+        for (const [liabilityIdStr, byDate] of Object.entries(response)) {
+          const liabilityId = Number(liabilityIdStr);
+          map[liabilityId] = {};
+          for (const [date, evidence] of Object.entries(byDate)) {
+            map[liabilityId][date] = {
+              liability_id: liabilityId,
+              date,
+              currency: evidence.currency,
+              balance: evidence.balance,
+              available: evidence.available,
+            };
           }
-        });
+        }
         setLiabilityAsOfMap(map);
+      })
+      .catch((reason) => {
+        if (!active || liabilityAsOfRequestIdRef.current !== requestId) return;
+        console.error("Periodic Review: failed to load Liability As-Of balances:", reason);
+        setLiabilityAsOfMap({});
       })
       .finally(() => {
         if (active && liabilityAsOfRequestIdRef.current === requestId) setLiabilityAsOfLoading(false);

@@ -611,6 +611,20 @@ export const listLiabilityBalanceObservations = (id: number) =>
 export const getLiabilityBalanceAsOf = (id: number, date: string) =>
   apiFetch<LiabilityBalanceAsOf>(`/liabilities/${id}/as-of?date=${encodeURIComponent(date)}`);
 
+/** One entry per (liability_id, date) — see LiabilityAsOfEvidence in totalLiabilitiesHistory.ts. */
+export type LiabilityBalancesAsOf = Record<string, Record<string, { balance: number | null; available: boolean; currency: "THB" }>>;
+
+/**
+ * Batch form of getLiabilityBalanceAsOf: every workspace Liability's balance
+ * across all `dates` in a single request, instead of one request per
+ * (liability, date) pair. Backed by GET /liabilities/balances-as-of, which
+ * composes the same liability_balance_as_of primitive server-side.
+ */
+export const getLiabilityBalancesAsOf = (dates: string[], includeArchived = false) =>
+  apiFetch<LiabilityBalancesAsOf>(
+    `/liabilities/balances-as-of?${dates.map((d) => `dates=${encodeURIComponent(d)}`).join("&")}&include_archived=${includeArchived}`
+  );
+
 // ─── Wealth Goals (Phase 6, Milestone 1) ───────────────────────────────────
 // A workspace-owned whole-life financial goal, independent of any Portfolio.
 // Persistence and management only — no progress, funding, or projection yet.
@@ -1091,6 +1105,20 @@ export interface CashAccountBalanceAsOf {
 
 export const getCashAccountBalanceAsOf = (id: number, date: string) =>
   apiFetch<CashAccountBalanceAsOf>(`/cash-accounts/${id}/as-of?date=${encodeURIComponent(date)}`);
+
+/** One entry per (cash_account_id, date) — see CashAsOfEvidence in totalAssetsHistory.ts. */
+export type CashAccountBalancesAsOf = Record<string, Record<string, { balance: number | null; available: boolean }>>;
+
+/**
+ * Batch form of getCashAccountBalanceAsOf: every workspace CashAccount's
+ * balance across all `dates` in a single request, instead of one request
+ * per (account, date) pair. Backed by GET /cash-accounts/balances-as-of,
+ * which composes the same cash_balance_as_of primitive server-side.
+ */
+export const getCashAccountBalancesAsOf = (dates: string[], includeArchived = false) =>
+  apiFetch<CashAccountBalancesAsOf>(
+    `/cash-accounts/balances-as-of?${dates.map((d) => `dates=${encodeURIComponent(d)}`).join("&")}&include_archived=${includeArchived}`
+  );
 
 export const createCashAccountTransfer = (body: CashAccountTransferCreate) =>
   apiFetch<CashAccountTransfer>("/cash-account-transfers", { method: "POST", body: JSON.stringify(body) });

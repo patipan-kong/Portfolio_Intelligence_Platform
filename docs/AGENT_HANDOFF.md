@@ -7,12 +7,12 @@ Keep it short. Update it whenever the active track, branch, agent/session, or ne
 
 - Project: Wealth OS / Portfolio Intelligence Platform
 - Repository: `patipan-kong/Portfolio_Intelligence_Platform`
-- Current track: none selected
-- Current branch: `main`
+- Current track: DOGFOOD-01 — Periodic Review Net Worth request fan-out (bugfix, not a product track)
+- Current branch: `fix/wealth-os-periodic-review-net-worth-fanout`
 - Current phase: PRODUCT FEATURE PAUSE
-- Latest active coding agent/session: Claude Code — Wealth OS next-track reconnaissance (post–Cross-Portfolio Exposure)
-- Last completed step: Reconnaissance complete — no product track justified; PRODUCT FEATURE PAUSE selected for real-usage accumulation
-- Next action: accumulate real usage on Goals, Liabilities, Mandates, Reviews/Follow-ups, and Cash before the next product-feature pass; SA35 contract alignment remains optional governance work
+- Latest active coding agent/session: Claude Code — DOGFOOD-01 Periodic Review Net Worth fan-out fix
+- Last completed step: DOGFOOD-01 — Periodic Review Net Worth request fan-out: Fixed / final-reviewed. Root cause was two-fold: (1) `NetWorthReviewSection` called `GET /cash-accounts/{id}/as-of` and `GET /liabilities/{id}/as-of` once per (account, date) / (liability, date) pair — an accounts×dates / liabilities×dates HTTP fan-out (532 requests against this dev DB: 7 cash accounts × 76 history dates); (2) an unmemoized `investmentHistoryDates` array recomputed every render was a fetch-effect dependency, so the fan-out could re-fire on unrelated re-renders. Fix: two new bounded batch endpoints (`GET /cash-accounts/balances-as-of`, `GET /liabilities/balances-as-of`) that reuse the existing canonical `cash_balance_as_of`/`liability_balance_as_of` pure functions server-side (fetch each account's/liability's ledger once, evaluate every requested date in-process), plus `useMemo` on the date spine. Verified against the real dev DB: 532 requests → 1 request per domain, wall-clock 1772ms → 38ms, zero mismatches across all 532 compared (account, date) values. No migration; no calculation-policy change; Goals/Execution/Evaluation review sections untouched. Final review passed: backend contract, frontend request-graph, semantic-equivalence, and scope re-audited; targeted backend (164 passed) + frontend (147 passed) + `test:pure` (419 passed) + `tsc --noEmit` (no new errors) all green. Follow-up candidate: Dashboard Net Worth History (`frontend/app/page.tsx`) still uses the older per-account × per-date fan-out pattern.
+- Next action: commit and open a focused bugfix PR; continue PRODUCT FEATURE PAUSE afterward — accumulate real usage on Goals, Liabilities, Mandates, Reviews/Follow-ups, and Cash before the next product-feature pass; SA35 contract alignment remains optional governance work
 
 ## Previous Track
 
