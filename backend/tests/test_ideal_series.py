@@ -551,3 +551,194 @@ def test_ai_portfolio_revalues_correctly_across_a_symbol_conversion(db, ws_portf
     result = compute_three_portfolios(db, portfolio.id, period_days=10)
 
     assert result["ai_portfolio"]["return_pct"] == pytest.approx(10.0, abs=0.01)
+
+
+# --- DOGFOOD-03: Gap B semantic/calculation fix ---
+#
+# Gap B previously read attribution_engine's regret_score, which sources its
+# AI figure from compute_portfolio_attribution's ai_model_shadow.return_pct
+# (live-AgentCache-priced, full untruncated window) rather than this
+# function's own canonical-priced, overlap-truncated ai_return -- the exact
+# number rendered as the AI Portfolio headline alongside You on the Three
+# Portfolios screen. That mismatch let Gap B disagree in sign with the two
+# displayed return figures it is captioned to explain (the Two Gaps card
+# says: What explains the difference between the three portfolios). The
+# fix: gap_b is now always ai_return - actual_return, the two numbers
+# already computed above and rendered verbatim as ai_portfolio.return_pct
+# and actual.return_pct.
+
+def _seed_actual_nav(db, ws, portfolio, days_ago, price, actual_total_value):
+    """Like _seed_price_day, but total_value (actual NAV) is set
+    independently of the canonical AAA price -- lets a test drive the
+    canonical Ideal/AI return and Actual's own return to different values."""
+    from models.database import PortfolioSnapshot
+
+    db.add(PortfolioSnapshot(
+        workspace_id=ws.id, portfolio_id=portfolio.id,
+        snapshot_date=_d(days_ago), total_value=actual_total_value, cash_balance=0.0,
+        holdings_json=json.dumps([{"symbol": "AAA", "current_price": price}]),
+    ))
+    db.commit()
+
+
+def test_gap_b_positive_when_ai_outperforms_you(db, ws_portfolio):
+    """AI Portfolio +10 percent, You flat -> Gap B positive, reconciles with
+    the displayed headline figures."""
+    ws, portfolio = ws_portfolio
+    _seed_recommendation(db, ws, portfolio, _SEED_100_AAA, days_ago=15)
+    _seed_actual_nav(db, ws, portfolio, 10, 100.0, 1_000_000.0)
+    _seed_actual_nav(db, ws, portfolio, 0, 110.0, 1_000_000.0)
+    _seed_ai_shadow(
+        db, ws, portfolio, inception_days_ago=10, holdings=_AAA_10000_SHARES,
+        snapshot_rows=[
+            (10, _AAA_10000_SHARES, 1_000_000.0, 0.0),
+            (0, _AAA_10000_SHARES, 1_000_000.0, 0.0),  # stored (must be ignored)
+        ],
+    )
+
+    result = compute_three_portfolios(db, portfolio.id, period_days=10)
+
+    assert result["ai_portfolio"]["return_pct"] == pytest.approx(10.0, abs=0.01)
+    assert result["actual"]["return_pct"] == pytest.approx(0.0, abs=0.01)
+    assert result["gap_b"]["value"] > 0
+    assert result["gap_b"]["value"] == pytest.approx(
+        result["ai_portfolio"]["return_pct"] - result["actual"]["return_pct"], abs=0.01
+    )
+
+
+def test_gap_b_negative_when_you_outperform_ai(db, ws_portfolio):
+    """AI Portfolio flat, You +5 percent -> Gap B negative, reconciles with
+    the displayed headline figures (You outperformed AI)."""
+    ws, portfolio = ws_portfolio
+    _seed_recommendation(db, ws, portfolio, _SEED_100_AAA, days_ago=15)
+    _seed_actual_nav(db, ws, portfolio, 10, 100.0, 1_000_000.0)
+    _seed_actual_nav(db, ws, portfolio, 0, 100.0, 1_050_000.0)
+    _seed_ai_shadow(
+        db, ws, portfolio, inception_days_ago=10, holdings=_AAA_10000_SHARES,
+        snapshot_rows=[
+            (10, _AAA_10000_SHARES, 1_000_000.0, 0.0),
+            (0, _AAA_10000_SHARES, 1_000_000.0, 0.0),
+        ],
+    )
+
+    result = compute_three_portfolios(db, portfolio.id, period_days=10)
+
+    assert result["ai_portfolio"]["return_pct"] == pytest.approx(0.0, abs=0.01)
+    assert result["actual"]["return_pct"] == pytest.approx(5.0, abs=0.01)
+    assert result["gap_b"]["value"] < 0
+    assert result["gap_b"]["value"] == pytest.approx(
+        result["ai_portfolio"]["return_pct"] - result["actual"]["return_pct"], abs=0.01
+    )
+
+
+def test_gap_b_near_zero_when_ai_and_you_tie(db, ws_portfolio):
+    """AI Portfolio and You both flat -> Gap B approximately 0."""
+    ws, portfolio = ws_portfolio
+    _seed_recommendation(db, ws, portfolio, _SEED_100_AAA, days_ago=15)
+    _seed_actual_nav(db, ws, portfolio, 10, 100.0, 1_000_000.0)
+    _seed_actual_nav(db, ws, portfolio, 0, 100.0, 1_000_000.0)
+    _seed_ai_shadow(
+        db, ws, portfolio, inception_days_ago=10, holdings=_AAA_10000_SHARES,
+        snapshot_rows=[
+            (10, _AAA_10000_SHARES, 1_000_000.0, 0.0),
+            (0, _AAA_10000_SHARES, 1_000_000.0, 0.0),
+        ],
+    )
+
+    result = compute_three_portfolios(db, portfolio.id, period_days=10)
+
+    assert result["gap_b"]["value"] == pytest.approx(0.0, abs=0.01)
+
+
+def test_gap_b_reconciles_with_displayed_headline_returns(db, ws_portfolio):
+    """General case, both sides nonzero and unequal: Gap B must always equal
+    displayed ai_portfolio.return_pct minus displayed actual.return_pct --
+    the invariant the Two Gaps card's caption (What explains the difference
+    between the three portfolios) asserts."""
+    ws, portfolio = ws_portfolio
+    _seed_recommendation(db, ws, portfolio, _SEED_100_AAA, days_ago=15)
+    _seed_actual_nav(db, ws, portfolio, 10, 100.0, 1_000_000.0)
+    _seed_actual_nav(db, ws, portfolio, 0, 108.0, 1_030_000.0)
+    _seed_ai_shadow(
+        db, ws, portfolio, inception_days_ago=10, holdings=_AAA_10000_SHARES,
+        snapshot_rows=[
+            (10, _AAA_10000_SHARES, 1_000_000.0, 0.0),
+            (0, _AAA_10000_SHARES, 1_000_000.0, 0.0),
+        ],
+    )
+
+    result = compute_three_portfolios(db, portfolio.id, period_days=10)
+
+    assert result["gap_b"]["value"] == pytest.approx(
+        round(result["ai_portfolio"]["return_pct"] - result["actual"]["return_pct"], 4), abs=0.001
+    )
+
+
+def test_gap_b_ignores_stored_shadow_valuation_uses_canonical_ai_return(db, ws_portfolio):
+    """DOGFOOD-03 root-cause regression: the ACTIVE_MODEL shadow's STORED
+    total_value/return_pct_since_inception (what attribution_engine's
+    regret_score/ai_model_shadow would read, live-priced) implies a large
+    return, while the canonical-priced revaluation (flat AAA price) implies
+    approximately 0 percent. Gap B must track the canonical, displayed
+    ai_portfolio.return_pct -- never the stored, undisplayed figure. This
+    reproduces the live portfolio-4 bug: displayed AI +3.52 percent / You
+    +4.66 percent implying Gap B of about -1.14 percent, while the old
+    formula reported +2.49 percent, sourced from an undisplayed
+    ai_model_shadow return of +7.15 percent over the same window."""
+    ws, portfolio = ws_portfolio
+    _seed_recommendation(db, ws, portfolio, _SEED_100_AAA, days_ago=15)
+    _seed_actual_nav(db, ws, portfolio, 10, 100.0, 1_000_000.0)
+    _seed_actual_nav(db, ws, portfolio, 0, 100.0, 1_050_000.0)  # You +5 percent
+    _seed_ai_shadow(
+        db, ws, portfolio, inception_days_ago=10, holdings=_AAA_10000_SHARES,
+        snapshot_rows=[
+            # Canonical AAA price is flat (100 throughout) -> canonical AI
+            # revaluation approximately 0 percent. Stored total_value
+            # implies +20 percent (what a divergent live-price valuation
+            # would have recorded).
+            (10, _AAA_10000_SHARES, 1_000_000.0, 0.0),
+            (0, _AAA_10000_SHARES, 1_200_000.0, 20.0),
+        ],
+    )
+
+    result = compute_three_portfolios(db, portfolio.id, period_days=10)
+
+    # Canonical AI return is approximately 0 percent, not the stored +20.
+    assert result["ai_portfolio"]["return_pct"] == pytest.approx(0.0, abs=0.01)
+    assert result["actual"]["return_pct"] == pytest.approx(5.0, abs=0.01)
+    # Gap B must be approximately -5 percent (You outperformed AI), never
+    # approximately +15 percent (20 - 5), which is what reading the
+    # stored/live-priced shadow value would produce.
+    assert result["gap_b"]["value"] == pytest.approx(-5.0, abs=0.1)
+    assert result["gap_b"]["value"] != pytest.approx(15.0, abs=1.0)
+
+
+def test_gap_b_unaffected_by_attribution_waterfall_residual(db, ws_portfolio):
+    """Attribution isolation: compute_attribution_waterfall's residual and
+    execution/override effects live entirely in attribution_engine.py and
+    must never influence three_portfolios.gap_b, which is now derived solely
+    from this module's own ideal/ai/actual replay. Calling the waterfall
+    (which internally calls compute_portfolio_attribution again) must not
+    change gap_b on a second compute_three_portfolios call."""
+    from services.analytics.attribution_engine import compute_attribution_waterfall
+
+    ws, portfolio = ws_portfolio
+    _seed_recommendation(db, ws, portfolio, _SEED_100_AAA, days_ago=15)
+    _seed_actual_nav(db, ws, portfolio, 10, 100.0, 1_000_000.0)
+    _seed_actual_nav(db, ws, portfolio, 0, 105.0, 1_020_000.0)
+    _seed_ai_shadow(
+        db, ws, portfolio, inception_days_ago=10, holdings=_AAA_10000_SHARES,
+        snapshot_rows=[
+            (10, _AAA_10000_SHARES, 1_000_000.0, 0.0),
+            (0, _AAA_10000_SHARES, 1_000_000.0, 0.0),
+        ],
+    )
+
+    before = compute_three_portfolios(db, portfolio.id, period_days=10)
+    compute_attribution_waterfall(db, portfolio.id, period_days=10)  # side-effect probe
+    after = compute_three_portfolios(db, portfolio.id, period_days=10)
+
+    assert before["gap_b"]["value"] == after["gap_b"]["value"]
+    assert after["gap_b"]["value"] == pytest.approx(
+        after["ai_portfolio"]["return_pct"] - after["actual"]["return_pct"], abs=0.01
+    )

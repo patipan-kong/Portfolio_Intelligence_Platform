@@ -101,9 +101,12 @@ compute_ideal_series(db, portfolio_id, period_days=90) -> dict
 compute_three_portfolios(db, portfolio_id, period_days=90) -> dict
     Aligns Ideal / AI (ACTIVE_MODEL shadow) / Actual / Benchmark onto one
     date axis (indexed to 100) and computes Gap A (Ideal − AI) / Gap B
-    (AI − Actual, identical sign convention to
-    attribution_engine.compute_portfolio_attribution's regret_score — reused,
-    not recomputed, for Gap B specifically).
+    (AI − Actual). Both gaps are derived from this function's own aligned
+    ideal_return/ai_return/actual_return — the same figures rendered as the
+    Ideal/AI Portfolio/You headline numbers — never reconstructed from
+    attribution_engine's regret_score or waterfall effects (DOGFOOD-03 fix,
+    2026-09-14; see compute_three_portfolios's own docstring and
+    DECISION_LOG.md).
 """
 from __future__ import annotations
 
@@ -494,11 +497,31 @@ def _return_over_window(series: list[dict], start_date: str) -> tuple[float | No
 def compute_three_portfolios(db: Session, portfolio_id: int, period_days: int = 90) -> dict[str, Any]:
     """Ideal / AI (ACTIVE_MODEL) / Actual / Benchmark, aligned + Gap A/B (UX S7).
 
-    Gap B (AI − Actual) is read from attribution_engine's existing
-    `regret_score` (Single Source of Truth, never recomputed a second way
-    here) — Actual is a real brokerage account, so comparing it against the
-    AI shadow's own official (live-priced) valuation is the correct,
-    apples-to-real-world comparison for that gap.
+    DOGFOOD-03 correctness fix (2026-09-14): Gap B (AI − Actual) is now
+    computed from this function's OWN already-aligned ai_return/actual_return
+    — the identical two numbers rendered as the "AI Portfolio"/"You" headline
+    figures on the same Three Portfolios screen. It previously read
+    attribution_engine's `regret_score`, which is AI-model-return-minus-
+    actual but sources "AI" from compute_portfolio_attribution's
+    `ai_model_shadow.return_pct` — a different, undisplayed figure valued via
+    live AgentCache prices over the full (untruncated) evaluation window, not
+    the canonical-priced, overlap-truncated `ai_return` shown as "AI
+    Portfolio" on this same screen (see "Gap A Correctness Patch" below —
+    that patch deliberately re-sourced Gap A's AI figure but left Gap B
+    reading the old one, on the reasoning that Actual-vs-official-valuation
+    is a legitimate real-world comparison in isolation). It did not account
+    for this screen's own "The Two Gaps" caption ("What explains the
+    difference between the three portfolios") asserting that Gap A and Gap B
+    reconcile with the three headline numbers directly above it — which,
+    for Gap B, was false whenever the two AI figures diverged (confirmed on
+    live portfolio 4: displayed AI Portfolio +3.52%, You +4.66%, implying
+    Gap B ≈ -1.14%, while the old formula reported +2.49% — sourced from an
+    undisplayed ai_model_shadow return of +7.15% for the same window). See
+    docs/engineering/DECISION_LOG.md, "GAP B Semantic Fix (DOGFOOD-03)."
+    compute_portfolio_attribution's own `regret_score` field is untouched and
+    remains correct for its existing consumers (Scorecard, Trust Report,
+    verdict_composer.compose_scorecard_verdict) — this fix is scoped to
+    `three_portfolios.gap_b` only.
 
     Gap A (Ideal − AI) is different: both sides are hypothetical, friction-
     free constructs, so a fair comparison requires valuing them from the
@@ -565,7 +588,11 @@ def compute_three_portfolios(db: Session, portfolio_id: int, period_days: int = 
     ai_vol = a_vol if a_vol is not None else ai_canonical.get("annualized_volatility")
 
     gap_a = round(ideal_return - ai_return, 4) if ideal_return is not None and ai_return is not None else None
-    gap_b = attribution.get("regret_score")  # AI − Actual, already computed there
+    # DOGFOOD-03 fix: reuse this function's own aligned ai_return/actual_return
+    # (the exact figures rendered as "AI Portfolio"/"You" on this screen) —
+    # never attribution's regret_score, which sources "AI" from a different,
+    # undisplayed, live-priced valuation. See docstring above and DECISION_LOG.
+    gap_b = round(ai_return - actual_return, 4) if ai_return is not None and actual_return is not None else None
 
     # ── Aligned chart series (display only) ───────────────────────────────
     # Issue B (Accounting Correctness C5): "actual" must be the same
