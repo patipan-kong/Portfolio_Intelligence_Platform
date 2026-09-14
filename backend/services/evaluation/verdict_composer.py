@@ -109,10 +109,25 @@ def compose_scorecard_verdict(
 ) -> dict[str, Any]:
     """The Row-1 verdict-strip sentence (UX §3.2).
 
-    gap_b is AI Portfolio return minus the human's actual return over the
-    window (ShadowPortfolio ACTIVE_MODEL vs actual — the same sign
-    convention as attribution_engine.compute_portfolio_attribution's
-    regret_score: positive means the AI Portfolio did better).
+    gap_b is the AI model's own live-tracked shadow account return minus the
+    human's actual return over the window (ShadowPortfolio ACTIVE_MODEL vs
+    actual — the same sign convention as attribution_engine
+    .compute_portfolio_attribution's regret_score: positive means the AI
+    model's shadow account did better).
+
+    DOGFOOD-04 (2026-09-14): the gap_en/gap_th templates deliberately say
+    "the AI model's (live-tracked) shadow account", never "the AI
+    Portfolio" — that label is also used, unqualified, for the Three
+    Portfolios comparison's canonical-priced, AI-shadow-aligned figure,
+    which is a different number computed a different way (see
+    ideal_series.py's _revalue_ai_portfolio_with_canonical_prices
+    docstring). This sentence's own gap_b is exactly this lens's own
+    ai_model_return_pct minus actual_return_pct, so the wording must name
+    the concept it actually measures rather than reuse a label that, on
+    this same screen, could be mistaken for the Three Portfolios figure.
+    See DECISION_LOG.md, "Scorecard/Three Portfolios Same-Concept
+    Reconciliation (DOGFOOD-04)".
+
     gap_b_n is the number of graded/comparable decisions backing that gap
     (services.analytics.human_vs_ai.compare_human_vs_ai's
     decisions_with_data) — below min_n_win_rate the gap clause degrades to
@@ -130,16 +145,16 @@ def compose_scorecard_verdict(
         gap_th = "ยังมีการตัดสินใจที่ครบกำหนดประเมินไม่พอ จึงยังบอกไม่ได้ว่าการตัดสินใจของคุณหรือการทำตาม AI ทั้งหมดจะดีกว่ากัน"
     elif abs(gap_b) <= tie_band_pct:
         branch = "tie"
-        gap_en = "your own decisions performed about the same as following the AI Portfolio exactly"
-        gap_th = "การตัดสินใจของคุณให้ผลใกล้เคียงกับการทำตามพอร์ต AI ทั้งหมด"
+        gap_en = "your own decisions performed about the same as the AI model's shadow account"
+        gap_th = "การตัดสินใจของคุณให้ผลใกล้เคียงกับบัญชีจำลองของโมเดล AI"
     elif gap_b > 0:
         branch = "ai_ahead"
-        gap_en = f"full compliance with the AI Portfolio would have outperformed your own decisions by {gap_b:+.2f}%"
-        gap_th = f"การทำตามพอร์ต AI ทั้งหมดจะให้ผลดีกว่าการตัดสินใจของคุณ {gap_b:+.2f}%"
+        gap_en = f"full compliance with the AI model's shadow account would have outperformed your own decisions by {gap_b:+.2f}%"
+        gap_th = f"การทำตามบัญชีจำลองของโมเดล AI ทั้งหมดจะให้ผลดีกว่าการตัดสินใจของคุณ {gap_b:+.2f}%"
     else:
         branch = "human_ahead"
-        gap_en = f"your own decisions slightly outperformed full compliance by {abs(gap_b):.2f}%"
-        gap_th = f"การตัดสินใจของคุณเองให้ผลดีกว่าการทำตาม AI ทั้งหมดเล็กน้อย {abs(gap_b):.2f}%"
+        gap_en = f"your own decisions slightly outperformed the AI model's shadow account by {abs(gap_b):.2f}%"
+        gap_th = f"การตัดสินใจของคุณเองให้ผลดีกว่าบัญชีจำลองของโมเดล AI เล็กน้อย {abs(gap_b):.2f}%"
 
     return {
         "en": f"{belief_en}, and {gap_en}.",

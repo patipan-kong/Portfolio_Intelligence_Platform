@@ -144,7 +144,7 @@ def _calibration_join(db: Session, ws: int, portfolio_id: int) -> dict[str, Any]
 
 def _execution_lens(
     db: Session, ws: int, portfolio_id: int, cutoff_dt: datetime, min_n: int,
-    ideal: dict[str, Any], ai_model_return_pct: float | None,
+    three_portfolios: dict[str, Any],
 ) -> dict[str, Any]:
     from models.database import RecommendationGrade
 
@@ -182,20 +182,33 @@ def _execution_lens(
     grade = letter_grade(avg_score, len(scores), min_n)
 
     # Implementation Shortfall (Gap A) = Ideal − AI Portfolio return over the
-    # same window (AI Evaluation M6, services/evaluation/ideal_series.py).
-    # Single Source of Truth: this is the exact same figure
-    # /analytics/shadow-performance's three_portfolios.gap_a reports — never
-    # recomputed a second way here.
-    ideal_return = ideal.get("return_pct")
-    if ideal.get("status") != "ok" or ideal_return is None or ai_model_return_pct is None:
+    # same, AI-shadow-inception-aligned window (AI Evaluation M6,
+    # services/evaluation/ideal_series.py::compute_three_portfolios).
+    # DOGFOOD-04 fix (2026-09-14): this now literally READS
+    # three_portfolios["gap_a"]["value"] — the Single Source of Truth this
+    # comment always claimed but, before this fix, did not actually consume
+    # (it independently recomputed ideal.return_pct minus attribution's
+    # ai_model_shadow.return_pct — the RAW, full-period Ideal figure and the
+    # live-priced, undisplayed AI figure, neither of which is the aligned
+    # pair /analytics/shadow-performance's three_portfolios.gap_a is built
+    # from — producing a materially different number under an identical
+    # "Implementation Shortfall"/"Gap A" label). See DECISION_LOG.md,
+    # "Scorecard/Three Portfolios Same-Concept Reconciliation (DOGFOOD-04)".
+    gap_a = three_portfolios.get("gap_a") or {}
+    gap_a_value = gap_a.get("value")
+    if gap_a_value is None:
         implementation_shortfall: dict[str, Any] = {
             "status": "unavailable",
-            "reason": ideal.get("reason") or "ai_portfolio_return_unavailable",
+            "reason": (
+                "insufficient_data"
+                if three_portfolios.get("status") != "ok"
+                else "ai_portfolio_return_unavailable"
+            ),
         }
     else:
         implementation_shortfall = {
             "status": "ok",
-            "value_pct": round(ideal_return - ai_model_return_pct, 4),
+            "value_pct": gap_a_value,
         }
 
     return {
@@ -273,6 +286,39 @@ def _outcome_lens(
             "ideal": ideal.get("max_drawdown_pct"),
         },
         "regret_score": attribution.get("regret_score"),
+        # DOGFOOD-04 (2026-09-14): ai_model_return_pct and this lens's
+        # ideal_return_pct are DISTINCT CONCEPTS from the Three Portfolios
+        # screen's "AI Portfolio"/"Ideal" figures of the same name — not a
+        # defect, a deliberate, pre-existing design split (Gap A Correctness
+        # Patch): this lens answers "what has the ACTIVE_MODEL shadow's own
+        # live-tracked paper account actually returned" (ai_model_return_pct)
+        # and "what would the friction-free replay have returned over the
+        # full requested period" (ideal_return_pct), while Three Portfolios
+        # answers a controlled, fairness-adjusted question (same canonical
+        # price source, both truncated to their overlap window) built
+        # specifically to isolate execution friction. Surfaced here, plainly,
+        # so no user-facing surface presents one without disclosing the
+        # other exists under the same label. See DECISION_LOG.md,
+        # "Scorecard/Three Portfolios Same-Concept Reconciliation
+        # (DOGFOOD-04)".
+        "methodology": {
+            "ai_model_return_pct": (
+                "The AI model's own live-tracked shadow account since its "
+                "inception, valued with the same live price feed the "
+                "paper-trading engine uses day to day. This differs from "
+                "the Three Portfolios comparison's \"AI Portfolio\" figure, "
+                "which revalues the same holdings from canonical daily-close "
+                "prices over a shared, AI-shadow-aligned window so it can be "
+                "compared fairly against Ideal."
+            ),
+            "ideal_return_pct": (
+                "The friction-free replay over the full requested period. "
+                "The Three Portfolios comparison's \"Ideal\" figure instead "
+                "truncates this same replay to overlap with the AI shadow's "
+                "own tracking history, so Ideal and AI Portfolio there are "
+                "compared over an identical window."
+            ),
+        },
     }
 
 
@@ -357,15 +403,20 @@ def compute_scorecard(db: Session, portfolio_id: int, period_days: int = 90) -> 
     cutoff_date = (date.today() - timedelta(days=period_days)).isoformat()
     cutoff_dt = datetime.utcnow() - timedelta(days=period_days)
 
-    from services.evaluation.ideal_series import compute_ideal_series
+    from services.evaluation.ideal_series import compute_ideal_series, compute_three_portfolios
     from services.analytics.attribution_engine import compute_portfolio_attribution
 
     ideal = compute_ideal_series(db, portfolio_id, period_days)
     attribution = compute_portfolio_attribution(db, portfolio_id, period_days)
-    ai_model_return_pct = (attribution.get("ai_model_shadow") or {}).get("return_pct")
+    # Implementation Shortfall (Execution lens) must be the exact figure
+    # /analytics/shadow-performance's three_portfolios.gap_a reports (see
+    # _execution_lens's docstring/DOGFOOD-04) -- computed once here and
+    # threaded through, never recomputed from ideal/attribution's own raw
+    # fields a second way.
+    three_portfolios = compute_three_portfolios(db, portfolio_id, period_days)
 
     belief = _belief_lens(db, ws, portfolio_id, cutoff_date, min_n_letter)
-    execution = _execution_lens(db, ws, portfolio_id, cutoff_dt, min_n_letter, ideal, ai_model_return_pct)
+    execution = _execution_lens(db, ws, portfolio_id, cutoff_dt, min_n_letter, three_portfolios)
     outcome = _outcome_lens(db, ws, portfolio_id, period_days, min_n_win_rate, ideal, attribution)
 
     verdict = compose_scorecard_verdict(
