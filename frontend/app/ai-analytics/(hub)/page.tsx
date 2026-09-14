@@ -50,10 +50,12 @@ function LensCardShell({ title, question, right, children }: { title: string; qu
   );
 }
 
-function Stat({ label, value, valueClass, sub }: { label: string; value: string; valueClass?: string; sub?: string }) {
+function Stat({
+  label, value, valueClass, sub, title,
+}: { label: string; value: string; valueClass?: string; sub?: string; title?: string }) {
   return (
-    <div className="flex items-center justify-between text-sm">
-      <span className="text-gray-500">{label}</span>
+    <div className="flex items-center justify-between text-sm" title={title}>
+      <span className={`text-gray-500 ${title ? "cursor-help border-b border-dotted border-gray-300" : ""}`}>{label}</span>
       <span className={`font-semibold tabular-nums ${valueClass ?? "text-gray-800"}`}>
         {value}
         {sub && <span className="block text-xs font-normal text-gray-400 text-right">{sub}</span>}
@@ -198,12 +200,19 @@ export default function ScorecardPage() {
 
             <LensCardShell title="Outcome Quality" question="Did it work?">
               <Stat label="You" value={pct(data.outcome.actual_return_pct)} valueClass={pnlTone(data.outcome.actual_return_pct)} />
-              <Stat label="AI Portfolio" value={pct(data.outcome.ai_model_return_pct)} valueClass={pnlTone(data.outcome.ai_model_return_pct)} />
+              <Stat
+                label="AI Model (shadow)"
+                value={pct(data.outcome.ai_model_return_pct)}
+                valueClass={pnlTone(data.outcome.ai_model_return_pct)}
+                sub="live-tracked"
+                title={data.outcome.methodology?.ai_model_return_pct}
+              />
               <Stat
                 label="Ideal"
                 value={data.outcome.ideal_return_pct.status === "ok" ? pct(data.outcome.ideal_return_pct.value_pct) : "unavailable"}
                 valueClass={data.outcome.ideal_return_pct.status === "ok" ? pnlTone(data.outcome.ideal_return_pct.value_pct) : undefined}
-                sub={data.outcome.ideal_return_pct.status === "unavailable" ? data.outcome.ideal_return_pct.reason : undefined}
+                sub={data.outcome.ideal_return_pct.status === "unavailable" ? data.outcome.ideal_return_pct.reason : "full period"}
+                title={data.outcome.methodology?.ideal_return_pct}
               />
               <Stat label="Benchmark" value={pct(data.outcome.benchmark_return_pct)} valueClass={pnlTone(data.outcome.benchmark_return_pct)} />
               <div className="pt-1 border-t">
@@ -234,15 +243,22 @@ export default function ScorecardPage() {
             </LensCardShell>
           </div>
 
-          {/* Row 3 — cross-reference, not a second scorecard. The four
-              return numbers already appear in the Outcome Quality card
-              above; this is pure wayfinding to where the full indexed
-              chart and both named gaps live. */}
+          {/* Row 3 — cross-reference, not a second scorecard. Wayfinding to
+              where the full indexed chart and both named gaps live — NOT a
+              claim that its AI Portfolio/Ideal figures equal the Outcome
+              Quality card's "AI Model (shadow)"/"Ideal" above: Three
+              Portfolios revalues from canonical daily-close prices and
+              aligns both to a shared, AI-shadow-tracking window, while this
+              card reads the shadow's own live valuation and the full
+              requested period (DOGFOOD-04). */}
           <div className="bg-white border border-gray-200 rounded-xl p-4 flex flex-wrap items-center justify-between gap-3">
             <div>
               <h3 className="text-xs font-bold text-gray-700 uppercase tracking-wide">The Three Portfolios</h3>
               <p className="text-xs text-gray-500 mt-0.5">
                 Full indexed chart, Gap A (Ideal − AI), and Gap B (AI − You) — one click away.
+              </p>
+              <p className="text-[11px] text-gray-400 mt-1">
+                Uses a canonical-priced, window-aligned AI Portfolio/Ideal calculation for fair comparison — figures may differ from the Outcome Quality card above.
               </p>
             </div>
             <div className="flex items-center gap-4 text-xs font-medium">

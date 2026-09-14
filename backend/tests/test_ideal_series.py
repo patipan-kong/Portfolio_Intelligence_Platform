@@ -742,3 +742,80 @@ def test_gap_b_unaffected_by_attribution_waterfall_residual(db, ws_portfolio):
     assert after["gap_b"]["value"] == pytest.approx(
         after["ai_portfolio"]["return_pct"] - after["actual"]["return_pct"], abs=0.01
     )
+
+
+# DOGFOOD-04 (2026-09-14) -- payload-coherence regression
+#
+# Live dogfooding after DOGFOOD-03 merged still showed a non-reconciling
+# Gap B on the Three Portfolios screen (Ideal +5.3%, AI +5.6%, You +4.7%,
+# Gap A -0.3% (reconciled), Gap B +2.5% (did not -- 5.6-4.7 is +0.9)).
+# Root cause was NOT a second code defect: compute_three_portfolios's own
+# gap_a/gap_b formulas were already internally coherent on `main` (verified
+# by direct call). The live backend process, however, had been running
+# since before the DOGFOOD-03 merge with no --reload, so it kept serving
+# the pre-fix gap_b (attribution_engine's regret_score, ~+2.5%) forever,
+# while everything else in the payload (unchanged by DOGFOOD-03's one-line
+# diff) matched the current code exactly -- an operational/process-staleness
+# issue, not a semantic one. This test guards the actual invariant so a
+# real future regression in the formula (as opposed to a stale process)
+# is caught by pytest rather than only by live dogfooding: BOTH gaps must
+# reconcile against the SAME response object's own three headline figures
+# simultaneously, on one call. (Gap A's own friction mechanism -- Ideal and
+# AI Portfolio diverging because of differing replay/inception timing -- is
+# already covered by test_gap_a_aligns_to_overlapping_window_when_ai_
+# inception_is_later and test_ai_portfolio_revalues_correctly_across_a_
+# symbol_conversion; this test isolates the simultaneous-reconciliation
+# invariant itself, so Ideal and the AI shadow's canonical revaluation track
+# the same price move and gap_a comes out at/near zero by construction,
+# while the AI shadow's STORED valuation is deliberately set to a large,
+# divergent figure so this test fails against the pre-DOGFOOD-03 formula.)
+def test_three_portfolios_payload_gap_a_and_gap_b_both_reconcile_simultaneously(db, ws_portfolio):
+    """Single response object, both gaps reconciled at once against this
+    same payload's own ideal/ai_portfolio/actual return_pct fields -- never
+    against attribution_engine's regret_score or waterfall effects. AI beats
+    You (Gap B > 0) while Ideal and AI Portfolio track the same canonical
+    price move (Gap A at/near zero); the AI shadow's stored valuation is
+    deliberately set to diverge so a pre-fix formula would fail here."""
+    ws, portfolio = ws_portfolio
+    _seed_recommendation(db, ws, portfolio, _SEED_100_AAA, days_ago=15)
+    # Canonical AAA price (the shared price axis Ideal/AI both revalue from)
+    # appreciates 5.6% -- independent of "You"'s own actual_total_value,
+    # which only reaches +4.7%.
+    _seed_actual_nav(db, ws, portfolio, 10, 100.0, 1_000_000.0)
+    _seed_actual_nav(db, ws, portfolio, 0, 105.6, 1_047_000.0)  # You +4.7%
+    _seed_ai_shadow(
+        db, ws, portfolio, inception_days_ago=10, holdings=_AAA_10000_SHARES,
+        snapshot_rows=[
+            (10, _AAA_10000_SHARES, 1_000_000.0, 0.0),
+            # Stored total_value/return_pct_since_inception deliberately
+            # diverge from the canonical +5.6% price move (what
+            # attribution_engine's regret_score/ai_model_shadow would read,
+            # live-priced) -- this is what makes the test discriminate the
+            # DOGFOOD-03 defect: under the pre-fix formula
+            # (gap_b = regret_score), this stored +20% would leak into
+            # gap_b instead of the canonical, displayed ai_portfolio return.
+            (0, _AAA_10000_SHARES, 1_200_000.0, 20.0),
+        ],
+    )
+
+    result = compute_three_portfolios(db, portfolio.id, period_days=10)
+
+    ideal_return = result["ideal"]["return_pct"]
+    ai_return = result["ai_portfolio"]["return_pct"]
+    actual_return = result["actual"]["return_pct"]
+    assert None not in (ideal_return, ai_return, actual_return)
+
+    # The strict response invariant (DOGFOOD-04 section 6): both gaps must
+    # reconcile against this SAME payload's own three headline figures.
+    assert result["gap_a"]["value"] == pytest.approx(
+        round(ideal_return - ai_return, 4), abs=0.001
+    )
+    assert result["gap_b"]["value"] == pytest.approx(
+        round(ai_return - actual_return, 4), abs=0.001
+    )
+
+    # Qualitative DOGFOOD-04 acceptance shape: AI beat You (Gap B > 0), the
+    # sign the live bug got wrong only by way of a stale server process, not
+    # a formula defect. Values themselves are not hard-coded.
+    assert result["gap_a"]["value"] == pytest.approx(0.0, abs=0.01)
+    assert result["gap_b"]["value"] > 0

@@ -4341,6 +4341,15 @@ export interface NetOpportunityCostField {
   maturing_count: number | null;
 }
 
+// DOGFOOD-04: plain-English disambiguation for ai_model_return_pct/
+// ideal_return_pct against the Three Portfolios comparison's differently-
+// computed figures of the same name (services/evaluation/scorecard.py's
+// _outcome_lens). Absent only on the pre-M6 cold-start empty-lens shape.
+export interface OutcomeMethodology {
+  ai_model_return_pct: string;
+  ideal_return_pct: string;
+}
+
 export interface OutcomeLens {
   status: string;
   actual_return_pct: number | null;
@@ -4351,6 +4360,7 @@ export interface OutcomeLens {
   net_opportunity_cost: NetOpportunityCostField;
   max_drawdown_pct: { actual: number | null; ai_model: number | null; ideal: number | null };
   regret_score: number | null;
+  methodology?: OutcomeMethodology;
 }
 
 export interface RecentGrade {
