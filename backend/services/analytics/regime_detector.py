@@ -186,10 +186,20 @@ def get_regime_constraints(regime: str) -> dict:
 # Data fetching helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
+_YAHOO_CHART_URL = "https://query2.finance.yahoo.com/v8/finance/chart/{symbol}"
+
+
 def _fetch_benchmark_history(symbol: str, days: int = 95) -> pd.DataFrame:
-    """Fetch daily close prices for a benchmark symbol via yfinance.
+    """Fetch daily close prices for a benchmark symbol.
     Returns a DataFrame with columns ['Close'] indexed by date, or empty DataFrame on failure.
     On VPS: returns empty DataFrame immediately (no live fetch allowed).
+
+    Hits Yahoo's chart API directly with `requests` rather than going through
+    yfinance's Ticker.history(): yfinance>=1.4's history parser has been
+    observed to segfault the whole process (STATUS_ACCESS_VIOLATION, no
+    Python traceback) when Yahoo returns a degraded single-datapoint series
+    for a symbol (reproduced deterministically for "^SET.BK" — DOGFOOD-05).
+    A plain HTTP GET + manual JSON parse never touches that code path.
     """
     from services.core.runtime_env import allow_market_fetching
     if not allow_market_fetching():
@@ -201,15 +211,27 @@ def _fetch_benchmark_history(symbol: str, days: int = 95) -> pd.DataFrame:
         return pd.DataFrame()
 
     try:
-        import yfinance as yf  # local import — only needed here
-        ticker = yf.Ticker(symbol)
+        import requests
         period = "6mo" if days > 90 else "3mo"
-        hist = ticker.history(period=period, interval="1d", auto_adjust=True)
-        if hist.empty or "Close" not in hist.columns:
+        resp = requests.get(
+            _YAHOO_CHART_URL.format(symbol=symbol),
+            params={"range": period, "interval": "1d"},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        result = ((resp.json().get("chart") or {}).get("result") or [None])[0]
+        if not result:
             return pd.DataFrame()
-        df = hist[["Close"]].copy()
-        df.index = pd.to_datetime(df.index).tz_localize(None)
-        df = df.sort_index()
+        timestamps = result.get("timestamp") or []
+        closes = ((result.get("indicators") or {}).get("quote") or [{}])[0].get("close") or []
+        if not timestamps or len(timestamps) != len(closes):
+            return pd.DataFrame()
+
+        df = pd.DataFrame({"Close": closes}, index=pd.to_datetime(timestamps, unit="s"))
+        df = df.dropna().sort_index()
+        if df.empty:
+            return pd.DataFrame()
         log.info("[LOCAL FETCH] regime_detector fetched %s (%d rows)", symbol, len(df))
         return df.tail(days)
     except Exception as exc:
