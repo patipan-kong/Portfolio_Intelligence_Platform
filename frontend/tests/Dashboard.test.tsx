@@ -769,6 +769,32 @@ describe("Dashboard current liabilities", () => {
   });
 });
 
+describe("Overview hierarchy (UX-01 Slice 1)", () => {
+  test("'Why Net Worth changed' is promoted immediately after the wealth summary, before the supporting history sequence", async () => {
+    const portfolio = makePortfolio(1);
+    portfolioState.portfolios = [portfolio];
+    getHoldings.mockResolvedValue([]);
+    getPortfolioPrices.mockResolvedValue([]);
+    listCashAccounts.mockResolvedValue([]);
+    listLiabilities.mockResolvedValue([]);
+
+    render(<DashboardPage />);
+
+    await waitFor(() => expect(screen.getByText("Why Net Worth changed")).toBeInTheDocument());
+
+    const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
+    const summaryIndex = headings.indexOf("Wealth Summary");
+    const attributionIndex = headings.indexOf("Why Net Worth changed");
+    const incomeIndex = headings.indexOf("Dividend Income");
+    const investmentHistoryIndex = headings.indexOf("Investment Wealth History");
+
+    expect(summaryIndex).toBeGreaterThanOrEqual(0);
+    expect(attributionIndex).toBeGreaterThan(summaryIndex);
+    expect(attributionIndex).toBeLessThan(incomeIndex);
+    expect(attributionIndex).toBeLessThan(investmentHistoryIndex);
+  });
+});
+
 describe("Cross-portfolio dividend income", () => {
   test("aggregates dividend income from multiple portfolios into one total with per-portfolio contribution", async () => {
     const p1 = makePortfolio(1);

@@ -697,6 +697,8 @@ export default function DashboardPage() {
         portfolioLoadError={portfolioError}
       />
 
+      <NetWorthChangeAttributionCard summary={netWorthHistorySummary} loading={netWorthHistoryLoading} />
+
       <CrossPortfolioIncome
         portfolios={portfolios}
         transactionsByPortfolio={transactionsMap}
@@ -716,8 +718,6 @@ export default function DashboardPage() {
       <TotalLiabilitiesHistoryCard summary={totalLiabilitiesHistorySummary} loading={totalLiabilitiesHistoryLoading} />
 
       <NetWorthHistoryCard summary={netWorthHistorySummary} loading={netWorthHistoryLoading} />
-
-      <NetWorthChangeAttributionCard summary={netWorthHistorySummary} loading={netWorthHistoryLoading} />
 
       {isLoading ? (
         <p className="text-sm text-gray-400">Loading…</p>

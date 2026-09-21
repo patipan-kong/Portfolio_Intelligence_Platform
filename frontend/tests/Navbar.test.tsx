@@ -107,6 +107,29 @@ describe("Navbar — desktop grouped navigation", () => {
     expect(desktopTrigger(planning.label)).not.toHaveClass("bg-blue-50");
   });
 
+  test("Wealth Overview belongs to the Wealth group and links to the root route", () => {
+    renderNavbar();
+    fireEvent.click(desktopTrigger(wealth.label));
+    const menu = screen.getByRole("menu");
+    const link = within(menu).getByText("ภาพรวมความมั่งคั่ง").closest("a");
+    expect(link).toHaveAttribute("href", "/");
+  });
+
+  test("the root route activates only the Wealth group, not every group (root is not a blanket prefix match)", () => {
+    usePathname.mockReturnValue("/");
+    renderNavbar();
+    expect(desktopTrigger(wealth.label)).toHaveClass("bg-blue-50");
+    expect(desktopTrigger(investments.label)).not.toHaveClass("bg-blue-50");
+    expect(desktopTrigger(planning.label)).not.toHaveClass("bg-blue-50");
+    expect(desktopTrigger(ai.label)).not.toHaveClass("bg-blue-50");
+  });
+
+  test("an unrelated route does not activate the Wealth group merely because '/' is a string prefix of every path", () => {
+    usePathname.mockReturnValue("/goals");
+    renderNavbar();
+    expect(desktopTrigger(wealth.label)).not.toHaveClass("bg-blue-50");
+  });
+
   test("/cash-flow is owned by the Cash Flow leaf, not by the /cash leaf", () => {
     // Leaf-level proof of the segment-boundary fix in isActive(). Both leaves
     // live in the same Wealth group, so a group-level assertion cannot tell
