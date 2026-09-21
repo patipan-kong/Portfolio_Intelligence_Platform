@@ -1,6 +1,6 @@
 # Wealth OS Product Roadmap
 
-> Last Updated: 2026-09 (v3.0 — Wealth OS product rebaseline)
+> Last Updated: 2026-09-21 (v4.0 — post-dogfood roadmap rebaseline)
 >
 > Current Status:
 >
@@ -20,6 +20,15 @@
 > factual planning foundation. See the Phase 6 section for the delivered chain
 > and for the capabilities that remain future.
 >
+> **Phase 7 has delivered a substantial, bounded advisory foundation.** Broad
+> feature expansion was paused for dogfooding; this rebaseline does not reopen
+> unrestricted AI Wealth Advisor work.
+>
+> **ROADMAP REBASELINE COMPLETE — PRODUCT FEATURE PAUSE → bounded UX
+> reopening.** The next authorized activity is **UX-01 reconnaissance only**,
+> not implementation. Phases 8–13 below record the approved direction;
+> each implementation track still requires its own bounded scope and approval.
+>
 > This roadmap states the product capability sequence, active delivery
 > direction, and parallel future tracks. Platform domains, boundaries, laws,
 > and evolution principles are defined by
@@ -27,6 +36,82 @@
 > This document is subordinate to it under the constitution's governance
 > hierarchy (§11) and uses its domain vocabulary
 > ([GLOSSARY.md](../GLOSSARY.md)).
+
+---
+
+## Audited Product Baseline
+
+Audited against `main` at `ef57951fd75e7ec4b9cf52f4ea3d1d69b92113a9` on
+2026-09-21. The rebaseline starts from shipped capabilities and preserves the
+historical phases below; it does not renumber or rewrite their delivery history.
+
+| Foundation | Shipped capability and current boundary |
+| --- | --- |
+| Investment Intelligence | Portfolio / Investment Core is mature within its investment scope: ledger, holdings, valuation, performance, benchmarks, analytics, optimizer/recommendation, decision and execution workflows. This is not complete multi-asset support or production certification. |
+| Wealth Foundation | Cash Accounts, prospective Cash Flow, Liabilities, current/historical Net Worth and Level-1 change attribution. Net Worth covers tracked investments + external cash − liabilities; brokerage cash stays inside Portfolio NAV. Property ownership/appraisal, personal tax and insurance coverage are not complete household capabilities. |
+| Goal / Advisory Foundation | Canonical Wealth Goals, designations, source transparency, Goal Intelligence, what-if/inverse contribution, affordability evidence, scenarios, histories and Portfolio mandates. Designation is not an actual contribution. Mandates establish factual association, not priority or optimizer authority. Goal-aware context remains bounded by Phase 7. |
+| Review / Evaluation / Cross-Portfolio Intelligence | Periodic Review; Scorecard / Report Card; Ideal / AI / You, attribution and opportunity cost; retrospective reviews/follow-ups; current-snapshot portfolio contribution, sector exposure and symbol overlap. Exposure is not historical risk analytics. Operations/System Intelligence and Product Intelligence provide bounded status, attention and evidence surfaces. |
+
+A retrospective execution review is one editable, human-authored current
+review per decision, not immutable review history. Review outcomes do not
+change objective grades or optimizer ranking; follow-up acknowledgment does
+not mean resolution. Execution recording completion does not establish broker
+settlement.
+
+Evaluation methodologies remain intentionally distinct. Three Portfolios uses
+canonical-price comparison and aligned windows; Scorecard Outcome uses the
+live-tracked AI shadow and full-period Ideal. DOGFOOD-04 discloses those
+differences and makes Scorecard implementation shortfall reuse Three
+Portfolios' Gap A. Gap B reconciles the displayed AI and You returns.
+Decision-level opportunity-cost deltas across overlapping windows are not a
+portfolio-period return. UX work must preserve these distinctions, not force
+the numbers to agree. Calibration is partial: first-pass signal accuracy and
+regime stability exist, while policy-compliance calibration remains a stub.
+This baseline does not claim comprehensive self-learning AI or complete
+personal financial advisory.
+
+## Product Feature Pause / Bounded Reopening Gate
+
+PRODUCT FEATURE PAUSE successfully exposed real-use defects and semantic
+confusion. DOGFOOD-01 through DOGFOOD-05 are merged (PRs #43–#47); their
+current status and technical findings are recorded in
+[AGENT_HANDOFF.md](../AGENT_HANDOFF.md). The pause remains the governing
+restriction on broad feature expansion, with the following bounded reopening:
+
+- Continue dogfood correctness fixes.
+- Admit evidence-backed UX improvements through scoped reconnaissance and
+  review before implementation.
+- Open approved roadmap tracks one at a time, with explicit dependencies,
+  authority boundaries and non-goals.
+
+**The next authorized activity after this documentation pass is UX-01
+reconnaissance only.** It begins with walkthroughs and information hierarchy;
+neither UX-01 implementation nor CSS changes are authorized by this rebaseline.
+Later phase descriptions are direction, not standing implementation permission.
+
+The rebaseline does not authorize broad new analytics, speculative AI features,
+autonomous financial actions, cross-goal optimizer authority, Monte Carlo, a
+giant scenario engine, tax advice, insurance product recommendations or broad
+multi-asset expansion without an admitted track. These restrictions also apply
+to the parallel tracks and engineering backlog below.
+
+## Data Maturity / Advisory Honesty
+
+Shipped UI does not imply mature longitudinal data. The audited development
+data is sparse across Cash Flow, Goals, reviews, liabilities and saved scenarios;
+empty or lightly used domains limit inference rather than prove an absence of
+real-world needs, debts or commitments. Continue genuine dogfood use before
+claiming trends or learning from those populations.
+
+Distinguish historical reconstruction from observed facts: cash history starts
+at its explicit baseline; liability history uses dated observations; imported
+initial positions are not lifetime transaction history; stored/reconstructed
+portfolio and shadow values must retain their provenance. Goal amendment and
+designation histories are documentary changes, not contribution history.
+Saved scenarios retain assumptions and use live Goal context, not a frozen
+save-time projection. No trend, probability or recommendation claim may exceed
+the maturity, completeness and scope of its evidence. Development row counts
+are point-in-time recon evidence, not permanent roadmap guarantees.
 
 ---
 
@@ -208,6 +293,11 @@ History (Investment Wealth History combined with Cash Account as-of
 evidence), Recorded Expense Coverage, and an optional user-set Recorded
 Expense Coverage target with deterministic target/gap arithmetic (Phase 3).
 
+This covers tracked investment assets and external cash less tracked
+liabilities. Property/real-estate ownership and appraisal remain a separate
+coverage gap; a PROPERTY asset definition alone does not fill it. Insurance
+policy values and a complete household inventory are not implied by Net Worth.
+
 Future direction: a household wealth view and system-recommended or
 AI-assisted emergency-fund guidance. The Recorded Expense Coverage target
 remains a user-supplied preference compared against recorded expense
@@ -297,12 +387,19 @@ contributions and contribution tracking; probabilistic or Monte Carlo
 simulation; cross-goal prioritization and conflict resolution; allocation
 optimization; and advisory behavior. Goal-aware advice belongs to Phase 7.
 
+Under the rebaseline, target-needs estimation is Phase 9, whole-life
+deterministic cases are Phase 12, and probabilistic work is deferred in Phase
+13. These future directions do not change the completed Phase 6 boundary.
+
 ---
 
 # Phase 7 — AI Wealth Advisor
 
-**Active / in progress.** Phase 7 has delivered a factual, deterministic
-foundation; its Wealth Advisor direction remains future work.
+**Substantial advisory foundation shipped; advanced advisory work deferred.**
+Broad feature expansion was paused for dogfooding. The bounded reopening gate
+above authorizes UX-01 reconnaissance next, not unrestricted Phase-7 expansion.
+Remaining advanced advisory work requires evidence and an explicitly admitted
+track before it can reopen.
 
 Delivered foundation:
 
@@ -395,18 +492,213 @@ Learning and evaluation remain constrained by the existing trust and
 configuration boundaries; current AI investment evaluation is not yet a
 whole-life Wealth Advisor.
 
+Current calculation ownership is explicit in
+[ADR-015](../decisions/ADR-015_GOAL_PROJECTION_OWNERSHIP_FRONTEND_CANONICAL.md):
+`frontend/lib/goalWhatIf.ts` is the sole authority for the existing projection
+and inverse required-contribution math; no equivalent backend implementation
+or automatic selection of a canonical saved scenario is authorized.
+[ADR-014](../decisions/ADR-014_GOAL_INTELLIGENCE_DESCRIPTIVE_COMPOSITION_BOUNDARY.md)
+keeps Goal Intelligence descriptive, and
+[ADR-016](../decisions/ADR-016_SHARED_FUNDING_SOURCE_TRANSPARENCY_BOUNDARY.md)
+permits shared-source disclosure without per-goal shortfall attribution.
+ADR-009 remains the sole documented Goal-derived behavioral exception.
+
+Historical ADR-007 statements remain historical: ADR-009 and ADR-010 define
+the later bounded constraint and mandate capabilities; they do not grant
+general Goal authority or reinterpret the frozen Legacy Portfolio Goal Profile.
+Goal ↔ Portfolio Mandate Visibility (PR #40) is delivered in both directions,
+including Goal Detail's reverse lookup; it adds visibility, not behavioral
+authority.
+
+---
+
+# Phase 8 — UX vNext + Continued Dogfood
+
+**Next direction; UX-01 reconnaissance only is currently authorized.** Wealth
+OS has broad engine capability, but user journeys can expose too much internal
+architecture and too many competing details. The principle is:
+
+> Simple outside. Sophisticated inside.
+
+Reuse existing canonical calculations, evidence and navigation rather than
+creating new financial meaning to simplify a screen. Work in bounded tracks:
+
+| Track | Scope |
+| --- | --- |
+| UX-01 | Wealth Overview → Periodic Review: hierarchy, scope, and evidence navigation |
+| UX-02 | Goal comprehension and progressive disclosure |
+| UX-03 | Transaction / cash entry and lookup |
+| UX-04 | Decision → execution → evaluation continuity and methodology comprehension |
+
+UX-01 starts with reconnaissance, real-user walkthroughs and information
+hierarchy. Establish how users find tracked wealth, what changed, evidence
+completeness and the next review destination before proposing implementation.
+Preserve DOGFOOD correctness fixes and scope/as-of/unavailable distinctions.
+Mobile and accessibility validation accompanies each bounded track.
+
+Non-goals: new calculation authority, a cosmetic whole-app rewrite, new
+financial analytics merely to fill UI, collapsing intentionally distinct
+methodologies, or a Goal target calculator inside UX-01. Existing Goal-form
+comprehension belongs in UX-02; calculating a needs-based target requires
+Phase 9's separate semantic work.
+
+---
+
+# Phase 9 — Goal Needs Planning
+
+**Future direction, requiring separate track admission after initial UX work.**
+Current FIRE / retirement
+Goal creation requires a user-supplied target amount. Existing projection
+answers “Given this target, how might I reach it?”; it does not answer “How
+much do I actually need?”
+
+Reuse canonical `WealthGoal` target/date/type, funding designations, descriptive
+Goal Intelligence, `goalWhatIf` projection/inverse contribution math,
+affordability evidence, scenarios and amendment/history infrastructure.
+Recorded cash flow may inform a user-reviewed input; it does not establish
+complete household spending or committed recurring income.
+
+Before implementation, define spending basis (including today's money versus
+future nominal amounts), retirement/start date, planning duration, recurring
+income, inflation and return assumptions, accumulation versus withdrawal
+timing, taxes/cost inclusion, source availability and double-count prevention,
+provenance, and explicit user review. No silent assumptions.
+
+The first future slice should bound one needs-estimation case, explain its
+inputs and exclusions, and let the user review/adjust before saving a Goal.
+It must not duplicate ADR-015's canonical projection authority, silently
+choose a saved scenario, infer advisory authority from a mandate, or turn the
+legacy Goal Wizard into canonical planning semantics without an explicit
+future decision. Full retirement sustainability, recommended returns and
+cross-goal optimization are not granted by this phase description.
+
+---
+
+# Phase 10 — Fund Foundation
+
+**Future bounded instrument track.** `AssetType.FUND`, identity/identifier
+infrastructure, the FUND definition and definition tests already exist.
+Portfolio, ledger and valuation foundations may be reused; their existence
+does not prove a complete fund product workflow.
+
+Missing product acceptance includes admitted real fund/share-class records,
+fund master and provider/asset-manager metadata, authoritative fund-code
+lookup, NAV with effective date and provenance, stale/missing NAV semantics,
+subscription/redemption handling, unit precision and end-to-end
+valuation/performance/Net Worth proof. Confirm real user instrument demand and
+reliable evidence before admitting the track.
+
+The first future slice is deliberately narrow:
+
+> One real fund → one authoritative identity/code → NAV evidence → one
+> recorded transaction → holding valuation → Portfolio / Net Worth integration
+> → bounded history/performance proof.
+
+Use the existing identity and accounting authorities; distinguish NAV date
+from retrieval time and avoid counting fund value twice in wealth. Definition
+tests are not transaction-to-Net-Worth acceptance tests. This phase introduces
+no tax semantics, tax eligibility claims, fund recommendations or automatic
+admission of other asset classes.
+
+---
+
+# Phase 11 — Tax + Protection Factual Foundations
+
+**Future independent tracks grouped at roadmap level.** Tax and Protection
+are separate factual domains; neither is an automatic consequence of tracking
+cash payments, investments or liabilities.
+
+## Tax foundation and Tax-Fund dependency
+
+Start with factual annual tax-domain data. Cash-flow income is not equivalent
+to taxable income; brokerage transaction taxes are not annual personal tax
+liability. Future tax authority may require taxpayer, jurisdiction, tax year,
+categorized tax facts and recognition basis, withholding/prepayments,
+deductions/allowances, eligibility evidence, dated contributions, versioned
+rules with provenance/effective dates, and reproducible calculation records.
+Any future estimator needs its own verified rules and bounded acceptance;
+this roadmap states no current Thai statutory limits or tax advice.
+
+**Tax-Fund semantics require both Phase 10 Fund Foundation and tax factual/rule
+authority.** Instrument identity/NAV and an investor's tax treatment remain
+separate facts. Tax-year/versioned eligibility rules belong to tax authority,
+not a NAV provider or an implicit interpretation of an asset label. No tax
+filing, automatic deduction inference or tax optimization is authorized here.
+
+## Protection foundation
+
+Start with factual policy inventory: insured person, owner, beneficiary,
+coverage and coverage type, premium and frequency/due dates, policy term/status,
+evidence/as-of, and separately identified cash/surrender/investment value where
+applicable. Premium payments do not by themselves establish future commitments
+or coverage, and policy values must not be double-counted in Net Worth.
+
+A protection-gap calculation requires policy facts, obligations and explicit
+dependents/needs assumptions first. Inventory can progress independently of
+tax planning; claiming tax effects depends on tax authority. No product sales,
+commissions, policy ranking or insurance purchase recommendations.
+
+---
+
+# Phase 12 — Deterministic Life Cases
+
+**Future bounded cases, not a whole-life engine already delivered.** Existing
+Goal What-If, saved Goal scenario assumptions, scenario comparison and basket
+simulation are reusable, limited capabilities. They do not model the household
+timeline, recurring commitments or withdrawals.
+
+Begin with explicit dated assumptions:
+
+- Case A: continue working under explicitly entered income/spending assumptions.
+- Case B: stop salary at an explicit date, retain explicitly entered recurring
+  income, and change spending at an explicit date.
+
+Compare cash balance, liquidity/runway and included Goal effects only where
+their semantics are valid. Define recurring flows, deficit/withdrawal timing,
+available sources and surplus-to-investment treatment before claiming
+sustainability. Every result must state included and excluded domains.
+
+Only later extend to Net Worth trajectory, tax effects, protection effects,
+a dated business-start event or broader retirement sustainability, each after
+its factual and calculation prerequisites exist. A limited case may exclude
+tax/protection; it must disclose that exclusion rather than imply those effects
+are modeled. No hidden return assumptions, giant simulator or automatic
+optimizer action. Validate deterministic timing, conservation and liquidity
+semantics before considering Phase 13.
+
+---
+
+# Phase 13 — Probabilistic / Deeper Advisory Work
+
+**DEFERRED — no implementation scheduled.** Potential future work includes
+Monte Carlo, probabilistic retirement analysis, deeper AI advisory and
+additional calibration/advisory intelligence. Reopen only after deterministic
+semantics are validated, relevant factual domains exist, assumptions and
+distributions can be justified, uncertainty can be communicated honestly, and
+a demonstrated user question requires probabilistic treatment. Sparse local
+history and a high count of correlated evaluation rows do not establish those
+prerequisites.
+
 ---
 
 ## Multi-Asset Investment Evolution
 
-Investment instrument expansion is a parallel track that can proceed
-independently when prioritized. Candidate classes include ETFs, Mutual Funds,
+Investment instrument expansion remains a parallel direction, subject to the
+bounded reopening gate and an individually admitted track. Historical
+candidate classes include ETFs, Mutual Funds,
 Gold, Crypto, and Property or other valued assets where the architecture
 supports them.
 
 Asset-definition groundwork alone does not indicate complete user-facing
 support for a class. In particular, Mutual Funds are a separate multi-asset
 investment milestone, not part of Phase 2 Wealth Accounts.
+
+**Asset definition ≠ runtime product support; Fund ≠ Tax-Fund semantics.**
+The approved sequence now places ordinary Fund Foundation in Phase 10 and
+Tax-Fund semantics after both Fund and tax authority in Phase 11. FUND and
+PROPERTY definitions do not establish complete user-facing support.
+Property/real-estate ownership and appraisal remain a separate coverage gap;
+this rebaseline does not open a Property implementation phase.
 
 ## Asset Foundation Status
 
@@ -421,8 +713,9 @@ as its ownership or balance model.
 
 ## Parallel Platform Evolution
 
-These platform capabilities can continue without redefining the active Wealth
-OS product phase:
+These platform directions remain outside product phase numbering, but work
+requires the same bounded reopening gate; listing them does not authorize
+automatic expansion during the feature pause:
 
 - Registry-native adoption
 - Broader corporate-action support

@@ -7,24 +7,142 @@ Keep it short. Update it whenever the active track, branch, agent/session, or ne
 
 - Project: Wealth OS / Portfolio Intelligence Platform
 - Repository: `patipan-kong/Portfolio_Intelligence_Platform`
-- Current track: DOGFOOD-05 — Operations Center backend process crash (native segfault in regime detector's live market-data fetch; root-caused and fixed, uncommitted)
-- Current branch: `main` at `29c12ad`. DOGFOOD-04 confirmed merged: PR #46 (this handoff file's prior text was stale — it still said "PR pending" for DOGFOOD-04; git confirms it merged).
-- Current phase: PRODUCT FEATURE PAUSE
-- Latest active coding agent/session: Claude Code — DOGFOOD-05 Operations Center crash investigation
-- Last completed step: DOGFOOD-05 — real-user report: backend process (`uvicorn main:app`) exits with no FastAPI traceback when navigating to `/operations-center`. Root-caused and fixed; not yet committed. Full account:
-  1. **Root cause.** `GET /operations-center/status` → `services/operations_center.py::build_operations_status` → `services/analytics/regime_detector.py::detect_regime` → `_fetch_benchmark_history("^SET.BK", ...)`, which called `yfinance.Ticker(symbol).history()`. On this dev machine, `yfinance` (>=1.4, confirmed through 1.7.0; 1.3.0 does not reproduce) segfaults — `STATUS_ACCESS_VIOLATION` (exit code `-1073741819`), a genuine OS-level crash, not a Python exception — while parsing a degraded, single-datapoint chart response that Yahoo Finance returns for the `^SET.BK` index symbol (confirmed via raw HTTP inspection: Yahoo returns only 1 data point despite a 6-month range request, for this specific synthetic ticker, seemingly permanently). This is why no FastAPI traceback ever appeared: a native access violation bypasses Python's exception machinery entirely — no `try/except` in application code could ever have caught it. Reproduced deterministically (5/5) by calling `regime_detector.detect_regime(db)` directly, and independently by calling bare `yfinance.Ticker("^SET.BK").history()` with zero application code involved — ruling out frontend request storms, concurrency, and Operations Center's own code as the cause. Bisected across `yfinance` 1.3.0/1.4.0/1.5.1/1.5.2-equivalent/1.7.0 and `curl_cffi` 0.15.0/0.16.3; crash persisted across nearly all combinations and was shown to depend on this machine's full backend dependency set, not yfinance/curl_cffi versions alone (a minimal venv with only yfinance's own dependencies did not reproduce it) — i.e. an environment-level native-library conflict inside `yfinance`'s own history parser, not a simple upstream version regression.
-  2. **Fix.** `_fetch_benchmark_history` no longer uses `yfinance.Ticker(...).history()`. It now calls Yahoo's chart API directly via `requests` (already a direct dependency) and parses the JSON response manually — the same external endpoint yfinance itself calls, but never touching yfinance's internal parser. Verified this alternate path handles the exact degraded `^SET.BK` payload cleanly (returns a valid 1-row DataFrame, which the existing `_compute_signals` 25-row minimum already filters out via `bundle.ok = False` — so live-computed regime output is byte-identical to before for all currently-working benchmarks; only the previously-fatal failure mode changed). No calculation semantics, benchmark list, or regime/optimizer business logic changed. File: `backend/services/analytics/regime_detector.py` (`_fetch_benchmark_history`, ~30 lines). Regression test added: `backend/tests/test_regime_detector_fetch.py` (5 tests) — asserts the fetch goes through `requests` not `yfinance`, handles the real captured degraded-response payload, handles a normal multi-row response, degrades gracefully on a malformed response, and stays VPS-blocked correctly. Confirmed these tests **crash the actual test process** (a live segfault, not a clean failure) when run against the pre-fix code via `git stash` — the strongest possible proof this is a genuine regression guard for a real native crash, not a speculative test.
-  3. **Runtime acceptance.** Full real request graph the `/operations-center` page issues on mount (`GET /operations-center/status`, `GET /analytics/evaluation/trust-report`, `GET /optimizer/history`) exercised against a live `uvicorn` instance with the real dev Postgres DB — all succeeded, server stayed alive, memory stayed bounded (~198MB → ~213MB), repeat navigation and an unrelated endpoint (`/system/status`) still worked afterward.
-  4. **Environment note for future sessions:** this machine has no single Python environment with the full backend dependency set already installed — `backend/.venv` (has alembic/sqlalchemy/uvicorn but not fastapi/yfinance), `backend/venv-test` (has fastapi/yfinance/curl_cffi but was missing uvicorn until this session installed it), and two conda envs (`base`, `tradingagents`, neither has fastapi/uvicorn) were all found incomplete. `backend/venv-test` + a `pip install uvicorn[standard]` is the closest thing to a working dev environment discovered so far; confirm with the user which environment they actually use before assuming.
-  5. **User runtime verification — CONFIRMED.** The user manually verified the fix on their actual local development environment (the real dev backend process, not the agent's reproduction venv): navigating to `/operations-center` no longer terminates the backend process. Approved for commit/PR on this basis.
-- Next action: DOGFOOD-05 committed on `fix/wealth-os-operations-center-yfinance-crash` and pushed to origin. Open the PR manually against `main` if not opened programmatically. After it merges, resume the prior PRODUCT FEATURE PAUSE next action (below).
-- Prior step (DOGFOOD-04, merged): Three Portfolios / AI Scorecard same-concept reconciliation. Merged via PR #46. Full detail:
-  1. **Stale-process finding — RESOLVED environment evidence.** A live report that Gap B still didn't reconcile on Three Portfolios after DOGFOOD-03 merged (portfolio 4, 90D) traced to the port-8000 dev backend process running since 2026-09-11 (pre-dating the DOGFOOD-03 fix) with no `--reload` flag — not a code defect. The user restarted the process; live Three Portfolios now reconciles correctly (Ideal +5.3%, AI +5.6%, You +4.7%, Gap A −0.3%, Gap B +1.0%). One regression test added (`test_three_portfolios_payload_gap_a_and_gap_b_both_reconcile_simultaneously`, `tests/test_ideal_series.py`).
-  2. **Scorecard/Three Portfolios same-concept reconciliation — the remaining open DOGFOOD-04 issue, fix applied, pending review.** After the restart, AI Scorecard was found showing AI Portfolio +7.1% / Ideal +3.4% for the same portfolio/90D request where Three Portfolios shows AI Portfolio +5.6% / Ideal +5.3% — same unqualified labels, different numbers. Traced: (a) `execution.implementation_shortfall`'s own code comment falsely claimed it was "the exact same figure" as `three_portfolios.gap_a` but independently recomputed a stale formula (−3.72% vs −0.33%) — a proven bug, fixed by threading `compute_three_portfolios`'s own `gap_a` value through directly; (b) `outcome.ai_model_return_pct`/`ideal_return_pct` are DISTINCT, deliberately-designed concepts from Three Portfolios' figures (per the pre-existing 2026-07-06 "Gap A Correctness Patch" — not a bug), so left numerically unchanged but now disclosed via a new additive `outcome.methodology` field, relabeled Outcome Quality card stats ("AI Model (shadow)" / "Ideal" with sub-labels + tooltips), and a Three Portfolios cross-reference disclaimer; (c) the verdict sentence's "full compliance with **the AI Portfolio**..." wording was reworded to "the AI model's shadow account" so it no longer collides with Three Portfolios' own use of that exact label. Net Opportunity Cost (−5.9%) was independently audited and found NOT defective (a sum of per-decision counterfactual deltas over different, often-overlapping windows — not comparable to a portfolio return, not related to Gap B, already honestly captioned) — left unchanged, out of scope. 3 new tests added (`tests/test_scorecard.py`; also fixed that file's own pre-existing `models.asset` fixture order-fragility). 51/51 tests passing across `test_ideal_series.py`/`test_scorecard.py`/`test_verdict_composer.py`; boundary suites re-confirmed pre-existing-only failures via `git stash`. Files touched: `backend/services/evaluation/scorecard.py`, `backend/services/evaluation/verdict_composer.py`, `backend/tests/test_scorecard.py`, `frontend/lib/api.ts`, `frontend/app/ai-analytics/(hub)/page.tsx` — all uncommitted.
-- PRODUCT FEATURE PAUSE next action (once DOGFOOD-05 merges, resume this): accumulate real usage on Goals, Liabilities, Mandates, Reviews/Follow-ups, and Cash before the next product-feature pass; SA35 contract alignment remains optional governance work.
-- Prior step (DOGFOOD-03, merged): Three Portfolios GAP B semantic/calculation mismatch fixed — `gap_b` now sourced from `compute_three_portfolios`'s own `ai_return - actual_return` instead of `attribution_engine`'s `regret_score`. Merged via PR #45.
-- Prior step (DOGFOOD-02, merged): Evaluation Scorecard NAV invariant failure fixed — over-100%-weight `RecommendationSnapshot` rows now scale proportionally before market-value computation instead of clamping a negative cash residual to 0. Merged via PR #44.
-- Prior step (DOGFOOD-01, merged): Periodic Review Net Worth request fan-out fixed (532→1 requests per domain, zero semantic mismatches). Merged via PR #43.
+- Current track: Roadmap Rebaseline Documentation Pass — documentation edits complete, ready for review; no commit or push.
+- Main baseline: `ef57951fd75e7ec4b9cf52f4ea3d1d69b92113a9`, matching fetched `origin/main` on 2026-09-21 before this documentation pass.
+- Current phase: **ROADMAP REBASELINE COMPLETE — PRODUCT FEATURE PAUSE → bounded UX reopening.**
+- Latest active coding agent/session: Codex — documentation-only roadmap rebaseline.
+- Last completed step: Re-read repository/ADR/Git evidence, preserved historical Phases 1–7, recorded approved Phases 8–13 and corrected merged dogfood status. Sole Alembic head and dev PostgreSQL current revision both `n6o7p8q9r0s1`; no migration required or performed.
+- Next action / current authorized next work: **UX-01 reconnaissance only — Wealth Overview → Periodic Review: hierarchy, scope, and evidence navigation.** Begin with walkthroughs and information hierarchy, not implementation or CSS changes. This pass does not begin that reconnaissance.
+- Dogfood delivery state: DOGFOOD-01 through DOGFOOD-05 are merged; no pending dogfood implementation branch or PR is part of the current handoff. DOGFOOD-06 is investigated / no product defect / no code fix (see below).
+
+## Product Priorities and Reopening Boundary
+
+1. Phase 8 — UX vNext + continued dogfood.
+2. Phase 9 — Goal Needs Planning.
+3. Phase 10 — Fund Foundation.
+4. Phase 11 — Tax / Protection factual foundations; Tax-Fund semantics require both Fund Foundation and tax factual/rule authority.
+5. Phase 12 — Deterministic Life Cases.
+6. Phase 13 — Probabilistic / deeper advisory work: deferred, no implementation scheduled.
+
+The [roadmap](architecture/ROADMAP.md) records bounded reopening: continued
+dogfood correctness fixes, evidence-backed UX improvements after scoped recon,
+and approved tracks one at a time. It does not reopen the general feature
+backlog. UX-01 implementation requires a subsequent scoped decision; the next
+authorized activity is reconnaissance only. No broad analytics, speculative AI,
+autonomous financial actions, cross-goal optimizer authority, Monte Carlo,
+giant scenario engine, tax advice, insurance recommendations or broad
+multi-asset expansion is authorized merely by the rebaseline.
+
+Continue real usage on Goals/funding, Liabilities, Mandates, Cash, scenarios,
+linked execution and Reviews/Follow-ups. Sparse data limits inference; empty
+tables do not mean shipped capabilities need reimplementation. SA35 contract
+alignment remains optional governance work, not the next product track.
+
+## Dogfood History — Current Status Verified Against Main
+
+| Item | Status | Main commit / PR | Finding |
+| --- | --- | --- | --- |
+| DOGFOOD-01 | MERGED | `c338460` / #43 | Periodic Review Net Worth request fan-out fixed; historical acceptance recorded 532→1 requests per domain with zero semantic mismatches. |
+| DOGFOOD-02 | MERGED | `c3cd5b0` / #44 | Evaluation NAV conservation: over-100%-weight recommendation rows scale proportionally before valuation instead of clamping a negative cash residual to zero. |
+| DOGFOOD-03 | MERGED | `d2df199` / #45 | Three Portfolios Gap B now uses its own canonical displayed AI return minus actual return, rather than attribution's distinct `regret_score`. |
+| DOGFOOD-04 | MERGED | `29c12ad` / #46 | Resolved stale-process incident plus Scorecard / Three-Portfolios semantic reconciliation; details below. |
+| DOGFOOD-05 | MERGED | `ef57951` / #47 | Native yfinance benchmark-parser crash mitigated by direct Yahoo chart JSON handling; details below. |
+
+### DOGFOOD-04 — two separate findings, both resolved
+
+- **Stale backend process:** the port-8000 uvicorn process had run since
+  2026-09-11 without `--reload` and still served pre-DOGFOOD-03 code. The user
+  restarted it; live Three Portfolios reconciled (historical portfolio 4 / 90D
+  example: Ideal +5.3%, AI +5.6%, You +4.7%, Gap A −0.3%, Gap B +1.0%).
+  This was an environment issue, not another Gap B formula defect; no restart
+  blocker remains. The full-payload simultaneous Gap A/B regression is in
+  `backend/tests/test_ideal_series.py`.
+- **Scorecard semantic reconciliation:** implementation shortfall incorrectly
+  recomputed a stale formula (historically −3.72% versus canonical −0.33%);
+  it now reuses `compute_three_portfolios`'s Gap A. Scorecard Outcome's
+  live-tracked AI shadow and full-period Ideal remain deliberately distinct
+  from Three Portfolios' canonical-price/aligned-window figures. Additive
+  `outcome.methodology`, labels/tooltips, a cross-reference disclaimer and
+  “AI model's shadow account” verdict wording disclose those differences.
+  Opportunity cost was independently found to be a decision-level sum over
+  differing, often-overlapping windows, not a portfolio return or Gap B;
+  it was left unchanged. Historical acceptance: 51/51 targeted tests passed;
+  boundary-suite fixture fragility and nine unrelated frontend typing errors
+  were documented as pre-existing, not fresh validation of this docs pass.
+  The [Decision Log](engineering/DECISION_LOG.md) preserves the detailed
+  investigation, price-source/window provenance and then-current dispositions.
+
+### DOGFOOD-05 — native crash and bounded mitigation
+
+- **Root cause:** `/operations-center` called status aggregation → regime
+  detection → `_fetch_benchmark_history("^SET.BK", ...)` →
+  `yfinance.Ticker(...).history()`. On the investigated dev environment,
+  parsing Yahoo's degraded single-datapoint chart response caused native
+  `STATUS_ACCESS_VIOLATION` (`-1073741819`), bypassing Python exception
+  handling and producing no FastAPI traceback. It reproduced 5/5 directly
+  and in bare yfinance calls; frontend storms/concurrency were ruled out.
+  Version/dependency bisection (yfinance 1.3.0 through 1.7.0, curl_cffi
+  0.15.0/0.16.3) showed dependence on the full environment: 1.3.0 and a
+  minimal yfinance-only environment did not reproduce the crash. The recorded
+  diagnosis was an environment-level native-library conflict in the parser,
+  not a proven simple version-only regression.
+- **Merged mitigation:** `backend/services/analytics/regime_detector.py`
+  fetches Yahoo chart JSON directly with `requests` and parses it without
+  yfinance's history parser. A valid one-row response is safely rejected as
+  insufficient evidence by the existing 25-row signal minimum. Benchmark
+  selection and regime/optimizer calculation semantics were unchanged.
+  `backend/tests/test_regime_detector_fetch.py` contains five regression
+  cases for the requests path, degraded/normal/malformed payloads and VPS
+  blocking. The prior investigation recorded process crashes when these
+  guards exercised the pre-fix path.
+- **Historical runtime acceptance:** the page's status/trust-report/optimizer-
+  history request graph succeeded against live uvicorn/dev PostgreSQL;
+  repeat navigation and `/system/status` worked, with bounded observed memory
+  (~198MB→213MB). The user separately confirmed the fix in their actual dev
+  environment. These are preserved incident findings, not checks rerun in
+  this documentation pass. PR #47 is merged; no manual PR action remains.
+- **Environment caveat from that investigation:** Python dependencies were
+  split across `backend/.venv`, `backend/venv-test` and conda environments.
+  At that time `.venv` had Alembic/SQLAlchemy/uvicorn but lacked FastAPI/
+  yfinance; `venv-test` had FastAPI/yfinance/curl_cffi and gained uvicorn;
+  the conda environments lacked FastAPI/uvicorn. Verify the actual runtime
+  interpreter/dependencies before launching services. The docs pass verified
+  only Alembic heads/current through `.venv`, not full application readiness.
+
+### DOGFOOD-06 — investigated / no product defect / no code fix
+
+The separate read-only investigation supplied for this handoff found quantity
+valuation, canonical price resolution and snapshot persistence succeed, with
+performance unaffected. Asset Registry shadow consultation reported
+`MissingBinding` for some unminted assets because registry coverage is
+incomplete; consultation is intentionally shadow-only/log-only. The duplicate
+`GOOGL01.BK` warning came from two different portfolios. No product code defect
+was established. These are the supplied investigation findings, not a new
+runtime reproduction in this documentation pass.
+
+No symbols were minted, registry records added, warnings changed or tests
+added for DOGFOOD-06. Registry rollout/backfill/data hygiene remains a separate
+future concern; a shadow coverage warning must not be treated as valuation
+failure. There is no fix commit or PR to invent for this investigation.
+
+## Canonical Boundaries to Preserve
+
+- Net Worth is tracked investments + external cash − liabilities; property
+  ownership/appraisal and complete household coverage remain gaps.
+- Goal designation is not contribution or transfer. Mandate is factual
+  association, not funding priority or optimizer authority (ADR-007/010/011).
+- ADR-008 context is `CONTEXT_ONLY`; ADR-009's explicit single-Goal horizon
+  bound remains the sole documented Goal-derived behavioral exception.
+- Goal Intelligence is descriptive (ADR-014); existing projection/inverse
+  math is frontend-canonical in `goalWhatIf.ts` (ADR-015). No second engine,
+  automatic canonical scenario, legacy Goal Wizard reinterpretation or
+  per-goal shared-source shortfall attribution (ADR-016).
+- Cash-side investment funding is one-sided (ADR-012); Net Worth attribution
+  remains Level-1 (ADR-013). Review is editable retrospective context, not
+  immutable history. Exposure is current-snapshot only; distinct evaluation
+  methodologies remain disclosed rather than collapsed.
+- PostgreSQL schema ownership remains Alembic-only (ADR-017). This
+  documentation pass requires no schema change or migration.
 
 ## Previous Track
 
