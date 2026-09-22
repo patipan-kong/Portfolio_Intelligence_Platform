@@ -6,6 +6,7 @@
 // another's. Fixed domain order only: Net Worth, Goals, Execution,
 // Evaluation — no cross-domain ranking, no synthesized urgency.
 
+import Link from "next/link";
 import { usePortfolio } from "@/lib/PortfolioContext";
 import NetWorthReviewSection from "@/components/review/NetWorthReviewSection";
 import GoalsReviewSection from "@/components/review/GoalsReviewSection";
@@ -19,7 +20,10 @@ export default function PeriodicReviewPage() {
   return (
     <div className="space-y-8 max-w-3xl">
       <div>
-        <h1 className="text-2xl font-bold">Periodic Review</h1>
+        <Link href="/" className="text-sm font-medium text-blue-600 hover:underline">
+          ← Wealth Overview
+        </Link>
+        <h1 className="text-2xl font-bold mt-1">Periodic Review</h1>
         <p className="text-sm text-gray-500 mt-1">What changed, and what deserves review?</p>
       </div>
 

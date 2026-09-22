@@ -204,6 +204,34 @@ describe("WealthOverview", () => {
     expect(screen.getAllByText("0.0%").length).toBe(2);
   });
 
+  test("the headline wealth summary has a semantic heading distinct from the page H1", () => {
+    render(
+      <WealthOverview
+        portfolios={[]}
+        holdingsMap={{}}
+        priceMap={{}}
+        holdingsFailedMap={{}}
+        pricesLoaded
+        loading={false}
+      />
+    );
+    expect(screen.getByRole("heading", { level: 2, name: "Wealth Summary" })).toBeInTheDocument();
+  });
+
+  test("discloses that live figures and historical/snapshot figures can briefly differ", () => {
+    render(
+      <WealthOverview
+        portfolios={[]}
+        holdingsMap={{}}
+        priceMap={{}}
+        holdingsFailedMap={{}}
+        pricesLoaded
+        loading={false}
+      />
+    );
+    expect(screen.getByText(/latest complete recorded snapshot/)).toBeInTheDocument();
+  });
+
   test("clicking a portfolio card selects it and links into the existing portfolio experience", () => {
     const portfolios = [makePortfolio(7, "Retirement", 100)];
     render(

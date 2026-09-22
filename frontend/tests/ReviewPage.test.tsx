@@ -210,6 +210,12 @@ describe("Periodic Review page", () => {
     expect(texts).toEqual(["Net Worth", "Current goals", "Execution", "Evaluation"]);
   });
 
+  test("provides a return path to the Wealth Overview", async () => {
+    render(<PeriodicReviewPage />);
+    const link = await screen.findByRole("link", { name: /Wealth Overview/i });
+    expect(link).toHaveAttribute("href", "/");
+  });
+
   test("Net Worth: insufficient history shows the truthful existing empty state, never a fabricated zero", async () => {
     render(<PeriodicReviewPage />);
     expect(await screen.findByText("Two complete Net Worth history points are needed.")).toBeInTheDocument();

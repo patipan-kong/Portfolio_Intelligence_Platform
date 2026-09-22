@@ -37,6 +37,7 @@ export const NAV_GROUPS: NavGroup[] = [
     key: "wealth",
     label: "ความมั่งคั่ง",
     items: [
+      { label: "ภาพรวมความมั่งคั่ง", href: "/", match: ["/"] },
       { label: "บัญชีเงินสด", href: "/cash", match: ["/cash"] },
       { label: "Cash Flow", href: "/cash-flow", match: ["/cash-flow"] },
       { label: "Liabilities", href: "/liabilities", match: ["/liabilities"] },

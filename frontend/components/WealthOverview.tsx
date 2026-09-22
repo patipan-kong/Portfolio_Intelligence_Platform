@@ -92,6 +92,7 @@ export default function WealthOverview({
 
   return (
     <section className="space-y-4">
+      <h2 className="text-base font-semibold text-gray-500 uppercase tracking-wide">Wealth Summary</h2>
       <div className="bg-white border rounded-xl p-6 shadow-sm">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
           <div>
@@ -142,6 +143,9 @@ export default function WealthOverview({
         <Link href="/liabilities" className="inline-block mt-3 ml-4 text-xs text-blue-600 hover:text-blue-800 font-medium">
           Manage liabilities →
         </Link>
+        <p className="mt-3 text-xs text-gray-400 border-t pt-2">
+          Figures above use the latest available prices and balances. History and change figures below use the latest complete recorded snapshot, so they can briefly differ from the figures above.
+        </p>
       </div>
 
       {portfolios.length === 0 ? (

@@ -68,7 +68,7 @@ export default function Navbar() {
       {/* ── Desktop row ── */}
       <div className="max-w-5xl mx-auto flex items-center gap-2">
 
-        {/* Brand — links to the legacy dashboard (route kept; removed from nav) */}
+        {/* Brand — also links to the Wealth Overview ("/"), which is additionally reachable via the Wealth nav group */}
         <Link
           href="/"
           className="text-sm font-bold text-gray-800 shrink-0 mr-4 hover:text-blue-700 transition-colors"
