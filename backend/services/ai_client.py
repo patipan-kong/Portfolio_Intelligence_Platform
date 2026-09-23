@@ -166,12 +166,19 @@ def call_ai(
     use_schema: bool = False,
     usage_operation: str = "other",
     usage_layer: str | None = None,
+    timeout: float | None = None,
 ) -> dict:
     """
     Send a prompt to any supported AI provider.
     Returns dict: {"text": str, "latency_ms": int, "input_tokens": int,
                    "output_tokens": int, "provider": str, "model": str}
     JSON parsing (safe_parse_json) should be done by the caller, not here.
+
+    `timeout`, when given, bounds only the OpenAI-compatible branch's own
+    request (a per-call SDK override) so a slow/hanging call can unwind and
+    release its thread well before an outer application-level timeout gives
+    up on waiting for it. It has no effect on the anthropic/gemini branches.
+    Callers that omit it keep the SDK's own default (~600s) unchanged.
     """
     config = _load_config()
     provider_config = config.get("providers", {}).get(provider, {})
@@ -314,6 +321,8 @@ def call_ai(
         create_kwargs["max_completion_tokens"] = max_tokens
     else:
         create_kwargs["max_tokens"] = max_tokens
+    if timeout is not None:
+        create_kwargs["timeout"] = timeout
 
     start = time.perf_counter()
     response = client.chat.completions.create(**create_kwargs)

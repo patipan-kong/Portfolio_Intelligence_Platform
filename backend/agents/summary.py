@@ -84,6 +84,7 @@ def analyze_summary(
     provider: str = "anthropic",
     model: str = "claude-sonnet-4-6",
     scores: dict | None = None,
+    timeout: float | None = None,
 ) -> dict:
     has_ta   = technical   is not None and "error" not in technical
     has_fa   = fundamental is not None and "error" not in fundamental
@@ -281,6 +282,7 @@ Respond ONLY with a valid JSON object. No markdown. No text before or after.
             model,
             max_tokens=4096,
             usage_operation="analyze",
+            timeout=timeout,
         )
         parsed = safe_parse_json(ai_result["text"])
         raw_signal = parsed.get("signal", "HOLD")
@@ -299,4 +301,16 @@ Respond ONLY with a valid JSON object. No markdown. No text before or after.
             "latency_ms": ai_result["latency_ms"],
         }
     except Exception as e:
-        return {"error": f"AI error: {str(e)}"}
+        # Distinguish a bounded provider-level timeout (only possible when a
+        # caller passed `timeout=`, e.g. concurrent stock analysis) from any
+        # other AI error, so the caller can apply timeout-specific fallback
+        # handling instead of treating it as a generic AI failure.
+        try:
+            import openai
+            is_provider_timeout = isinstance(e, openai.APITimeoutError)
+        except ImportError:
+            is_provider_timeout = False
+        result = {"error": f"AI error: {str(e)}"}
+        if is_provider_timeout:
+            result["provider_timeout"] = True
+        return result
