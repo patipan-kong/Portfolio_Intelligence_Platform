@@ -142,7 +142,6 @@ export default function OperationsCenter({
           <MujiDashboard
             status={status}
             portfolioId={portfolioId}
-            onGoalSaved={refetch}
             optimizing={optimizing}
             onRunOptimizer={handleRunOptimizer}
           />
