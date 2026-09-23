@@ -109,6 +109,20 @@ except ImportError:
 _ANALYZE_CONCURRENCY = 10
 _ANALYZE_SEMAPHORE: asyncio.Semaphore | None = None
 
+# Application-level bound on the whole AI-call await (unchanged).
+_ANALYZE_AI_APP_TIMEOUT_S = 10.0
+# Provider-level bound on the underlying OpenAI-compatible HTTP request
+# itself, passed straight to the SDK's per-call `timeout=` override. Kept
+# slightly below the app-level bound above so a slow/hanging request has a
+# chance to unwind (raise openai.APITimeoutError) and release its worker
+# thread on its own before the outer asyncio.wait_for gives up on it —
+# without this, the thread would otherwise keep blocking for as long as the
+# SDK's own default (~600s), long after the app has already declared
+# failure. Only applied to the concurrent stock-analysis path; every other
+# call_ai()/analyze_summary() caller omits `timeout` and keeps the SDK
+# default unchanged.
+_ANALYZE_AI_PROVIDER_TIMEOUT_S = 9.0
+
 # In-process job store: job_id → job state dict.
 # Jobs expire after _JOB_TTL_SECONDS (10 min) and are pruned lazily on new job creation.
 _JOBS: dict[str, dict] = {}
@@ -3581,7 +3595,22 @@ async def _analyze_one_concurrent(ws: int, sym: str, s: dict, src: dict) -> dict
     """
     Analyze a single symbol with its own DB session.
     Concurrency is capped by _ANALYZE_SEMAPHORE (10 max).
-    AI call is wrapped in a 10 s timeout; on expiry returns a deterministic fallback.
+    AI call is wrapped in a 10 s app-level timeout (_ANALYZE_AI_APP_TIMEOUT_S);
+    the underlying provider request additionally carries its own bounded
+    timeout (_ANALYZE_AI_PROVIDER_TIMEOUT_S) so the worker thread is not left
+    relying on the SDK's own ~600s default once the app has given up on it.
+    Note this is an inactivity bound at the socket layer (each read/write/
+    connect operation individually capped), not a hard wall-clock cap on the
+    thread's total lifetime — asyncio.wait_for's cancellation does not and
+    cannot interrupt a thread that is already running (concurrent.futures.
+    Future.cancel() is a no-op once RUNNING), so it is the provider-level
+    timeout's own internal exception, not the outer wait_for, that is
+    responsible for the thread eventually unwinding. Either bound returns
+    the same deterministic fallback.
+
+    Diagnostics distinguish queue_wait_ms (waiting for a semaphore slot),
+    agent_fetch_ms (TA/FA/news fetch) and ai_wait_ms (the AI call itself) —
+    total_ms is their sum and is NOT the same thing as AI provider latency.
     """
     import time as _time
     t0 = _time.perf_counter()
@@ -3593,27 +3622,59 @@ async def _analyze_one_concurrent(ws: int, sym: str, s: dict, src: dict) -> dict
 
     assert _ANALYZE_SEMAPHORE is not None
     async with _ANALYZE_SEMAPHORE:
+        t_sem_acquired = _time.perf_counter()
+        queue_wait_ms = round((t_sem_acquired - t0) * 1000)
         db = SessionLocal()
         try:
             tech, fund, news_r = await _fetch_agents(db, sym, src)
             scores = compute_scores(tech, fund, news_r)
+            t_fetch_done = _time.perf_counter()
+            agent_fetch_ms = round((t_fetch_done - t_sem_acquired) * 1000)
 
             try:
                 summary = await asyncio.wait_for(
                     asyncio.to_thread(
                         analyze_summary, sym, tech, fund, news_r,
                         s["analyze_provider"], s["analyze_model"], scores,
+                        timeout=_ANALYZE_AI_PROVIDER_TIMEOUT_S,
                     ),
-                    timeout=10.0,
+                    timeout=_ANALYZE_AI_APP_TIMEOUT_S,
                 )
             except asyncio.TimeoutError:
-                elapsed_ms = round((_time.perf_counter() - t0) * 1000)
-                _log.warning("[analyze_concurrent] %s AI timeout after %d ms", sym, elapsed_ms)
-                return _build_fallback_result(sym, tech, fund, news_r, scores, su, elapsed_ms, "AI timeout")
+                ai_wait_ms = round((_time.perf_counter() - t_fetch_done) * 1000)
+                total_ms = round((_time.perf_counter() - t0) * 1000)
+                _log.warning(
+                    "[analyze_concurrent] %s AI timeout (app-level %.1fs bound) — "
+                    "queue_wait_ms=%d agent_fetch_ms=%d ai_wait_ms=%d total_ms=%d",
+                    sym, _ANALYZE_AI_APP_TIMEOUT_S,
+                    queue_wait_ms, agent_fetch_ms, ai_wait_ms, total_ms,
+                )
+                return _build_fallback_result(sym, tech, fund, news_r, scores, su, total_ms, "AI timeout")
 
+            ai_wait_ms = round((_time.perf_counter() - t_fetch_done) * 1000)
             total_latency_ms = round((_time.perf_counter() - t0) * 1000)
+
+            if isinstance(summary, dict) and summary.get("provider_timeout"):
+                # The provider-level bound fired first (see
+                # _ANALYZE_AI_PROVIDER_TIMEOUT_S) — analyze_summary() caught it
+                # and returned normally rather than the app-level wait_for
+                # raising, but this is the same timeout condition and must
+                # produce the same deterministic fallback, not a cached
+                # "AI error" summary.
+                _log.warning(
+                    "[analyze_concurrent] %s AI timeout (provider-level %.1fs bound) — "
+                    "queue_wait_ms=%d agent_fetch_ms=%d ai_wait_ms=%d total_ms=%d",
+                    sym, _ANALYZE_AI_PROVIDER_TIMEOUT_S,
+                    queue_wait_ms, agent_fetch_ms, ai_wait_ms, total_latency_ms,
+                )
+                return _build_fallback_result(sym, tech, fund, news_r, scores, su, total_latency_ms, "AI timeout")
+
             # print("ANALYZE", sym, total_latency_ms)
-            _log.debug("[analyze_concurrent] %s done in %d ms", sym, total_latency_ms)
+            _log.debug(
+                "[analyze_concurrent] %s done — queue_wait_ms=%d agent_fetch_ms=%d "
+                "ai_wait_ms=%d total_ms=%d",
+                sym, queue_wait_ms, agent_fetch_ms, ai_wait_ms, total_latency_ms,
+            )
 
             _sm = summary
             _save_analysis_cache(db, ws, sym, _sm, tech, fund, su)
