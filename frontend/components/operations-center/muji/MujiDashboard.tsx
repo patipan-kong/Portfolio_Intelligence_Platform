@@ -1,8 +1,6 @@
 "use client";
 
 import type { OperationsCenterStatus } from "@/lib/api";
-import GoalProfileCard from "./GoalProfileCard";
-import GoalProgressCard from "./GoalProgressCard";
 import MujiSummaryCard from "./MujiSummaryCard";
 import ActionCard from "./ActionCard";
 import TrustReportCard from "./TrustReportCard";
@@ -13,13 +11,11 @@ const fmtBaht = (v: number) =>
 export default function MujiDashboard({
   status,
   portfolioId,
-  onGoalSaved,
   optimizing,
   onRunOptimizer,
 }: {
   status: OperationsCenterStatus;
   portfolioId: number;
-  onGoalSaved: () => void;
   optimizing: boolean;
   onRunOptimizer: () => void;
 }) {
@@ -59,17 +55,6 @@ export default function MujiDashboard({
           </p>
         </div>
       </div>
-
-      {/* Phase 4C.3 — what the user is investing for (wizard data, display only) */}
-      <GoalProfileCard profile={status.goal_profile} />
-
-      <GoalProgressCard
-        portfolioId={portfolioId}
-        portfolioValue={s.portfolio_value}
-        goalTargetValue={s.goal_target_value}
-        goalProgressPct={s.goal_progress_pct}
-        onSaved={onGoalSaved}
-      />
 
       <MujiSummaryCard translation={status.muji_translation} />
 
