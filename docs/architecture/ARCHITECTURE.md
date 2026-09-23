@@ -494,7 +494,7 @@ call_ai(prompt, provider, model, max_tokens, usage_operation, usage_layer) -> di
 ```
 - Anthropic → anthropic SDK
 - All others → OpenAI SDK with `base_url` from `ai-model.json`
-- gpt-5/o1/o3/o4: uses `max_completion_tokens` instead of `max_tokens`
+- gpt-5/gpt-6/o1/o3/o4: uses `max_completion_tokens` instead of `max_tokens`
 - DeepSeek R1 / GLM-Z1: checks `reasoning_content` when `content` is empty
 - Always saves to `UserUsage` table (tokens + cost + latency_ms)
 - Always use `safe_parse_json()` — never `json.loads()` on AI output

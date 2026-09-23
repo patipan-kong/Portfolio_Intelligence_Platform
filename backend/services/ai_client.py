@@ -297,8 +297,8 @@ def call_ai(
         }
 
     # All other providers: OpenAI-compatible interface
-    # gpt-5, o1, o3, o4 and future reasoning models use max_completion_tokens instead of max_tokens
-    _REASONING_PATTERNS = ("gpt-5", "o1", "o3", "o4")
+    # gpt-5, gpt-6, o1, o3, o4 and future reasoning models use max_completion_tokens instead of max_tokens
+    _REASONING_PATTERNS = ("gpt-5", "gpt-6", "o1", "o3", "o4")
     _uses_completion_tokens = (
         provider in ("openai", "deepseek", "zhipu")
         and any(pat in model for pat in _REASONING_PATTERNS)
