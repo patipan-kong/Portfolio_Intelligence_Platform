@@ -695,9 +695,11 @@ export const listGoalInvestmentMandates = (goalId: number) =>
   apiFetch<GoalInvestmentMandate[]>(`/wealth-goals/${goalId}/investment-mandates`);
 
 // ─── Investor Intent V1 ─────────────────────────────────────────────────────
-// Owner-authored, position-scoped restrictions. Saved only: the optimizer does
-// not read them yet (enforced_by_optimizer is always false in V1). A missing
-// intent is "no confirmed intent", never "everything permitted".
+// Owner-authored, position-scoped restrictions. Never enforced
+// (enforced_by_optimizer is always false). With Advisory Integration V1 on
+// (advisory_review_enabled), /analyze/optimizer reads them as advisory context
+// for held positions and reviews its proposals against them. A missing intent
+// is "no confirmed intent", never "everything permitted".
 
 export type IntentSoftPreference = "NONE" | "PREFER_KEEP" | "PREFER_EXIT";
 
@@ -732,8 +734,68 @@ export interface PositionIntentView {
   portfolio_id: number;
   enforced_by_optimizer: false;
   disclosure: string;
+  // Advisory Integration V1 flag state; absent from older backends.
+  advisory_review_enabled?: boolean;
   positions: PositionIntentRow[];
 }
+
+// ─── Advisory Integration V1 — frozen Intent review (optimizer runs) ────────
+// Only the fields the UI reads are typed; the full envelope is the audit record.
+export type AdvisoryReviewOutcome = "CONSISTENT" | "CONFLICT" | "UNRESOLVED";
+
+export interface AdvisoryProposalReview {
+  outcome: AdvisoryReviewOutcome;
+  direction: "INCREASE" | "DECREASE" | "NO_CHANGE" | null;
+  restriction: "INCREASE_PROHIBITED_BY_OWNER" | "DECREASE_PROHIBITED_BY_OWNER" | null;
+  reasons: string[];
+}
+
+export interface AdvisoryRetainedProposal {
+  proposal_id: string;
+  source: "ADVISORY" | "SYSTEM_RULE" | "POLICY_RISK";
+  stage: string;
+  reason_code: string;
+  action: string | null;
+  disposition: "REPLACED" | "SUPPRESSED" | "DEFERRED" | "ACTIVE";
+  suppressed_by: string | null;
+  projection: { kind: string | null };
+  review: AdvisoryProposalReview;
+}
+
+export interface AdvisoryPositionReview {
+  symbol: string;
+  applicability: "CONFIRMED" | "NO_CONFIRMED_INTENT" | "RECONFIRMATION_REQUIRED" | "CONTEXT_UNAVAILABLE";
+  hard_restrictions: { increase_prohibited: boolean; decrease_prohibited: boolean } | null;
+  proposal: {
+    final_effective: { direction: "INCREASE" | "DECREASE" | "NO_CHANGE" | null; action: string | null };
+  };
+  review: {
+    final: AdvisoryProposalReview;
+    retained: AdvisoryRetainedProposal[];
+    status: AdvisoryReviewOutcome;
+    requires_owner_decision: boolean;
+    unresolved_reasons: string[];
+  };
+  display: { final_disposition: string; show: boolean };
+}
+
+export interface AdvisoryIntentReview {
+  contract_version: string;
+  identity: { review_id: string; created_at: string };
+  positions: AdvisoryPositionReview[];
+  coverage: {
+    referenced_positive_held_count: number;
+    resolved_count: number;
+    unresolved_positions: string[];
+    conflict_positions: string[];
+    final_conflict_positions: string[];
+    retained_conflict_positions: string[];
+    all_resolved_and_consistent: boolean;
+  };
+  review: { result: AdvisoryReviewOutcome; requires_owner_decision: boolean };
+}
+
+export type AdvisoryIntentReviewStatus = "CAPTURED" | "NOT_CAPTURED" | "EVIDENCE_INVALID";
 
 export interface PositionIntentInput {
   increase_prohibited: boolean;
@@ -2051,6 +2113,14 @@ export interface OptimizerResult {
   effective_envelope?: EffectiveEnvelope | null;
   // Phase 3B.7A — Decision Memory
   recommendation_snapshot_id?: number | null;
+  // Advisory Integration V1 — frozen Intent review (flag on; absent otherwise)
+  advisory_intent_review?: AdvisoryIntentReview | null;
+  advisory_intent_review_status?: AdvisoryIntentReviewStatus;
+  advisory_intent_changes_since_run?: {
+    symbol: string;
+    run_intent_revision: number | null;
+    current_intent_revision: number | null;
+  }[];
   // Phase 3B.10 — DR / execution quality context
   execution_context?: ExecutionContext | null;
   // Stabilization Sprint — post-processing churn reduction layer

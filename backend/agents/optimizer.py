@@ -23,8 +23,123 @@ from services.optimizer.constraint_resolver import (  # noqa: F401
     effective_sector_cap as _effective_sector_cap,
     envelope_to_dict as _eff_env_to_dict,
 )
+from services.advisory_intent_context import (
+    ATTEMPT_FALLBACK as _ATTEMPT_FALLBACK,
+    ATTEMPT_PRIMARY as _ATTEMPT_PRIMARY,
+    EFFECT_ORIGINATE as _ORIGINATE,
+    EFFECT_RELABEL as _RELABEL,
+    EFFECT_REPLACE as _REPLACE,
+    EFFECT_SCALE as _SCALE,
+    EFFECT_SUPPRESS as _SUPPRESS,
+    LAYER_FALLBACK as _LAYER_FALLBACK,
+    LAYER_L1 as _LAYER_L1,
+    LAYER_L1_RETRY as _LAYER_L1_RETRY,
+    LAYER_L2 as _LAYER_L2,
+    LAYER_L3 as _LAYER_L3,
+    SOURCE_ADVISORY as _SRC_ADVISORY,
+    SOURCE_POLICY_RISK as _SRC_POLICY,
+    SOURCE_SYSTEM_RULE as _SRC_SYSTEM,
+    STAGE_EXECUTION_CAP as _STAGE_EXEC_CAP,
+    STAGE_FALLBACK as _STAGE_FALLBACK,
+    STAGE_FORCED_SELL as _STAGE_FORCED_SELL,
+    STAGE_HARD_POLICY as _STAGE_HARD_POLICY,
+    STAGE_L1 as _STAGE_L1,
+    STAGE_L2 as _STAGE_L2,
+    STAGE_LEGACY_LOCK as _STAGE_LEGACY_LOCK,
+    STAGE_NEUTRAL_SNAP as _STAGE_NEUTRAL_SNAP,
+    STAGE_RECONCILIATION as _STAGE_RECONCILIATION,
+)
 
 logger = logging.getLogger(__name__)
+
+
+# ─── Advisory Integration V1 (Slice 1) hooks ─────────────────────────────────
+# `advisory` is an opaque run object (services.advisory_intent_context.
+# AdvisoryIntentRun) passed only when the default-OFF advisory-intent flag is
+# on. It carries a FROZEN prompt context and records proposal transitions at
+# the mutation sites below. With advisory=None every hook is a no-op and every
+# prompt is byte-identical to the legacy one. It never changes an allocation.
+
+def _alloc_basis(a: dict | None) -> dict | None:
+    if a is None:
+        return None
+    return {"action": (a.get("action") or "HOLD").upper(), "target_weight": a.get("target_weight"),
+            "current_weight": a.get("current_weight")}
+
+
+def _observe(advisory, symbol: str, before: dict | None, after_row: dict | None, *, stage: str,
+             source: str, effect: str, reason_code: str, reason_text: str = "") -> None:
+    if advisory is None:
+        return
+    advisory.observe(symbol, stage=stage, source=source, effect=effect, reason_code=reason_code,
+                     reason_text=reason_text, before=before, after=_alloc_basis(after_row))
+
+
+def _intent_block(advisory, layer: str) -> str:
+    return advisory.prompt_block(layer) if advisory is not None else ""
+
+
+def _note_prompt(advisory, layer: str, outcome: str) -> None:
+    if advisory is not None:
+        advisory.note_prompt(layer, advisory.ledger.attempt, outcome)
+
+
+def _note_l1_proposals(advisory, swaps: list[dict], locked: list[str]) -> None:
+    """Accepted L1 swap legs on held symbols; legs dropped by the legacy lock are SUPPRESSED."""
+    if advisory is None:
+        return
+    locked_set = set(locked)
+    for swap in swaps:
+        blocked = swap.get("sell_symbol") in locked_set or swap.get("buy_symbol") in locked_set
+        legs = ((swap.get("sell_symbol"), "SELL" if swap.get("type") == "SELL" else "REDUCE"),
+                (swap.get("buy_symbol"), "ACCUMULATE"))
+        for symbol, action in legs:
+            if not symbol:
+                continue
+            leg = {"action": action, "target_weight": 0.0 if action == "SELL" else None, "current_weight": None}
+            advisory.observe(symbol, stage=_STAGE_L1, source=_SRC_ADVISORY, effect=_ORIGINATE,
+                             reason_code="L1_PROPOSAL", reason_text=str(swap.get("reason") or ""),
+                             after=leg, direction_only=action != "SELL")
+            if blocked:
+                advisory.observe(symbol, stage=_STAGE_LEGACY_LOCK, source=_SRC_SYSTEM, effect=_SUPPRESS,
+                                 reason_code="LEGACY_ALLOW_SWAP_FALSE",
+                                 reason_text="Swap dropped: a leg is a legacy-locked position.",
+                                 before=leg, after={"action": "HOLD", "target_weight": None, "current_weight": None})
+
+
+def _apply_forced_and_locked(
+    alloc_map: dict[str, dict], sell_forced: list[str], locked_set: set, pc_map: dict[str, float],
+    advisory,
+) -> None:
+    """Forced exits then legacy locks (shared by the primary and fallback paths)."""
+    for sym in sell_forced:
+        if sym in alloc_map:
+            before = _alloc_basis(alloc_map[sym])
+            alloc_map[sym]["action"] = "SELL"
+            alloc_map[sym]["target_weight"] = 0.0
+            if (before["action"], before["target_weight"]) != ("SELL", 0.0):
+                _observe(advisory, sym, before, alloc_map[sym], stage=_STAGE_FORCED_SELL, source=_SRC_SYSTEM,
+                         effect=_REPLACE, reason_code="FORCED_EXIT_SELL_SIGNAL",
+                         reason_text="Forced exit: SELL signal.")
+        else:
+            cur_w = pc_map.get(sym, 0.0)
+            alloc_map[sym] = {
+                "symbol": sym, "current_weight": cur_w, "target_weight": 0.0,
+                "action": "SELL", "allocation_change_percent": round(-cur_w, 2),
+                "estimated_amount": 0, "reason": "Forced exit: SELL signal.",
+            }
+            _observe(advisory, sym, None, alloc_map[sym], stage=_STAGE_FORCED_SELL, source=_SRC_SYSTEM,
+                     effect=_ORIGINATE, reason_code="FORCED_EXIT_SELL_SIGNAL",
+                     reason_text="Forced exit: SELL signal.")
+    for sym in locked_set:
+        if sym in alloc_map and alloc_map[sym].get("action") not in ("HOLD", "WATCH"):
+            before = _alloc_basis(alloc_map[sym])
+            alloc_map[sym]["action"] = "HOLD"
+            alloc_map[sym]["target_weight"] = alloc_map[sym].get("current_weight", 0.0)
+            alloc_map[sym]["allocation_change_percent"] = 0.0
+            _observe(advisory, sym, before, alloc_map[sym], stage=_STAGE_LEGACY_LOCK, source=_SRC_SYSTEM,
+                     effect=_SUPPRESS, reason_code="LEGACY_ALLOW_SWAP_FALSE",
+                     reason_text="Legacy lock (allow_swap=false) holds this position unchanged.")
 
 
 class HardPolicyEnforcementError(RuntimeError):
@@ -289,7 +404,7 @@ def _normalize_allocations(
     return [a for a in result if a["symbol"]]
 
 
-def _snap_neutral_actions(allocations: list[dict]) -> None:
+def _snap_neutral_actions(allocations: list[dict], observer=None) -> None:
     """HOLD/WATCH are investment-conviction signals, not capital-movement instructions.
     Pin target_weight back to current_weight so no downstream consumer (Cash Impact
     column, action_summary, sector-weight projection) can show a nonzero trade for a
@@ -297,9 +412,14 @@ def _snap_neutral_actions(allocations: list[dict]) -> None:
     """
     for a in allocations:
         if (a.get("action") or "").upper() in ("HOLD", "WATCH"):
+            before = _alloc_basis(a)
             a["target_weight"] = a.get("current_weight", 0.0)
             a["allocation_change_percent"] = 0.0
             a["estimated_amount"] = 0
+            if observer is not None and before["target_weight"] != a["target_weight"]:
+                _observe(observer, a.get("symbol", ""), before, a, stage=_STAGE_NEUTRAL_SNAP,
+                         source=_SRC_SYSTEM, effect=_SCALE, reason_code="NEUTRAL_SNAP",
+                         reason_text="HOLD/WATCH pinned to the current weight.")
 
 
 def _rebuild_watchlist_ranking(buy_symbols: list, wc: list[dict]) -> list[dict]:
@@ -774,6 +894,7 @@ def _layer1_prompt(
     effective_envelope: "_EffectiveEnvelope | None" = None,
     t1_breach_note: str = "",
     execution_context: dict | None = None,
+    intent_block: str = "",
 ) -> str:
     # Phase 3B.5: use resolved per-sector limits when available; fall back to raw sector_limits
     if effective_envelope is not None:
@@ -866,7 +987,7 @@ Timing informs urgency — it does not block. A DEFER symbol with strong fundame
 
 """
 
-    return f"""{policy_block}{regime_block}{strategy_block}{t1_breach_note}{execution_block}{timing_block}You are a STRATEGIST. Output swap targets in JSON only.
+    return f"""{policy_block}{regime_block}{strategy_block}{t1_breach_note}{execution_block}{timing_block}{intent_block}You are a STRATEGIST. Output swap targets in JSON only.
 No explanation. No prose. Only valid JSON output.
 {violation_note}
 Portfolio: {json.dumps(c_pc)}
@@ -933,6 +1054,7 @@ def _layer2_prompt(
     policy_context: dict | None = None,
     t1_breach_note: str = "",
     execution_context: dict | None = None,
+    intent_block: str = "",
 ) -> str:
     role_line = f"Your role: {role}\n\n" if role else ""
 
@@ -1004,7 +1126,7 @@ Timing does not invalidate a fundamentally attractive stock — document the con
     )
 
     return f"""You are an independent portfolio reviewer.
-{policy_block}{regime_block}{strategy_block}{t1_breach_note}{execution_block}{timing_challenge_block}{role_line}The Strategist (Layer 1) proposed:
+{policy_block}{regime_block}{strategy_block}{t1_breach_note}{execution_block}{timing_challenge_block}{intent_block}{role_line}The Strategist (Layer 1) proposed:
 - Priority: {l1_priority}
 - Swaps: {json.dumps(l1_swaps, indent=2)}
 - Top watchlist picks: {l1_top_buys}
@@ -1094,6 +1216,7 @@ def _layer3_prompt(
     policy_context: dict | None = None,
     effective_envelope: "_EffectiveEnvelope | None" = None,
     t1_breach_note: str = "",
+    intent_block: str = "",
 ) -> str:
     role_line = f"Your role: {role}\n\n" if role else ""
     l1_swaps    = l1.get("swap_suggestions", l1.get("swaps", []))[:4]
@@ -1149,7 +1272,7 @@ Do NOT escalate to HIGH or CRITICAL for timing alone — timing cautions, it doe
 """
 
     return f"""{t1_breach_note}You are a portfolio risk auditor.
-{timing_risk_block}{policy_note}{persona_note}{role_line}Evaluate both allocation proposals for concentration risk and soundness.
+{timing_risk_block}{policy_note}{persona_note}{intent_block}{role_line}Evaluate both allocation proposals for concentration risk and soundness.
 
 Layer 1 (Strategist):
 Priority: {l1_priority}
@@ -1189,8 +1312,12 @@ def _enforce_hard_policy(
     effective_envelope: "_EffectiveEnvelope | None",
     portfolio_data: list[dict],
     watchlist_data: list[dict],
+    observer=None,
 ) -> None:
-    """Apply the existing Goal-agnostic deterministic hard-policy sequence."""
+    """Apply the existing Goal-agnostic deterministic hard-policy sequence.
+
+    observer: optional Advisory Integration V1 run; records each mutation.
+    """
     if policy_context:
         pc_hard = policy_context.get("hard_constraints", {})
         min_cash_pct = float(pc_hard.get("min_cash_pct", 5.0))
@@ -1204,10 +1331,14 @@ def _enforce_hard_policy(
                         "[POLICY_EMERGENCY] freezing %s BUY→HOLD (emergency override)",
                         allocation["symbol"],
                     )
+                    before = _alloc_basis(allocation)
                     allocation["action"] = "HOLD"
                     allocation["target_weight"] = allocation.get("current_weight", 0.0)
                     allocation["allocation_change_percent"] = 0.0
                     allocation["estimated_amount"] = 0
+                    _observe(observer, allocation["symbol"], before, allocation, stage=_STAGE_HARD_POLICY,
+                             source=_SRC_POLICY, effect=_SUPPRESS, reason_code="EMERGENCY_BUY_FREEZE",
+                             reason_text="Emergency policy override freezes new buying.")
 
         for allocation in allocations:
             if (
@@ -1219,6 +1350,7 @@ def _enforce_hard_policy(
                     allocation["symbol"], allocation["target_weight"], max_pos_pct,
                     policy_context.get("deployment_bias"),
                 )
+                before = _alloc_basis(allocation)
                 allocation["target_weight"] = max_pos_pct
                 allocation["allocation_change_percent"] = round(
                     allocation["target_weight"] - allocation["current_weight"], 2,
@@ -1226,6 +1358,9 @@ def _enforce_hard_policy(
                 allocation["estimated_amount"] = round(
                     (allocation["allocation_change_percent"] / 100) * total_value,
                 )
+                _observe(observer, allocation["symbol"], before, allocation, stage=_STAGE_HARD_POLICY,
+                         source=_SRC_POLICY, effect=_SCALE, reason_code="POSITION_CAP",
+                         reason_text=f"Capped at the {max_pos_pct:.1f}% single-position limit.")
 
         total_target = sum(
             allocation.get("target_weight", 0)
@@ -1243,6 +1378,7 @@ def _enforce_hard_policy(
                 if deficit <= 0:
                     break
                 trim = min(allocation["target_weight"], deficit)
+                before = _alloc_basis(allocation)
                 allocation["target_weight"] = round(allocation["target_weight"] - trim, 2)
                 allocation["allocation_change_percent"] = round(
                     allocation["target_weight"] - allocation["current_weight"], 2,
@@ -1250,6 +1386,9 @@ def _enforce_hard_policy(
                 allocation["estimated_amount"] = round(
                     (allocation["allocation_change_percent"] / 100) * total_value,
                 )
+                _observe(observer, allocation["symbol"], before, allocation, stage=_STAGE_HARD_POLICY,
+                         source=_SRC_POLICY, effect=_SCALE, reason_code="CASH_FLOOR_TRIM",
+                         reason_text=f"Trimmed to keep the {min_cash_pct:.0f}% minimum cash.")
                 deficit -= trim
             logger.info(
                 "[POLICY] enforced min_cash=%.0f%% deployment=%s",
@@ -1265,6 +1404,7 @@ def _enforce_hard_policy(
                 allocation.get("action") in ("BUY", "ACCUMULATE")
                 and allocation.get("target_weight", 0) > max_pos_pct
             ):
+                before = _alloc_basis(allocation)
                 allocation["target_weight"] = max_pos_pct
                 allocation["allocation_change_percent"] = round(
                     allocation["target_weight"] - allocation["current_weight"], 2,
@@ -1272,6 +1412,9 @@ def _enforce_hard_policy(
                 allocation["estimated_amount"] = round(
                     (allocation["allocation_change_percent"] / 100) * total_value,
                 )
+                _observe(observer, allocation["symbol"], before, allocation, stage=_STAGE_HARD_POLICY,
+                         source=_SRC_POLICY, effect=_SCALE, reason_code="REGIME_POSITION_CAP",
+                         reason_text=f"Capped at the {max_pos_pct:.1f}% regime position limit.")
         total_target = sum(
             allocation.get("target_weight", 0)
             for allocation in allocations
@@ -1288,6 +1431,7 @@ def _enforce_hard_policy(
                 if deficit <= 0:
                     break
                 trim = min(allocation["target_weight"], deficit)
+                before = _alloc_basis(allocation)
                 allocation["target_weight"] = round(allocation["target_weight"] - trim, 2)
                 allocation["allocation_change_percent"] = round(
                     allocation["target_weight"] - allocation["current_weight"], 2,
@@ -1295,6 +1439,9 @@ def _enforce_hard_policy(
                 allocation["estimated_amount"] = round(
                     (allocation["allocation_change_percent"] / 100) * total_value,
                 )
+                _observe(observer, allocation["symbol"], before, allocation, stage=_STAGE_HARD_POLICY,
+                         source=_SRC_POLICY, effect=_SCALE, reason_code="REGIME_CASH_FLOOR_TRIM",
+                         reason_text=f"Trimmed to keep the {min_cash_pct:.0f}% minimum cash.")
                 deficit -= trim
             logger.info(
                 "[REGIME] enforced min_cash=%.0f%% regime=%s",
@@ -1331,6 +1478,7 @@ def _enforce_hard_policy(
                 if excess <= 0:
                     break
                 trim = min(allocation["target_weight"], excess)
+                before = _alloc_basis(allocation)
                 allocation["target_weight"] = round(allocation["target_weight"] - trim, 2)
                 allocation["allocation_change_percent"] = round(
                     allocation["target_weight"] - allocation["current_weight"], 2,
@@ -1338,6 +1486,9 @@ def _enforce_hard_policy(
                 allocation["estimated_amount"] = round(
                     (allocation["allocation_change_percent"] / 100) * total_value,
                 )
+                _observe(observer, allocation["symbol"], before, allocation, stage=_STAGE_HARD_POLICY,
+                         source=_SRC_POLICY, effect=_SCALE, reason_code="SECTOR_CAP_TRIM",
+                         reason_text=f"Trimmed to the {limit:.0f}% resolved {sector} sector limit.")
                 excess -= trim
             logger.info(
                 "[SECTOR_ENFORCE] %s sector %.1f%% > %.1f%% resolved limit — trimmed",
@@ -1345,11 +1496,12 @@ def _enforce_hard_policy(
             )
 
 
-def _reconcile_allocation_actions(allocations: list[dict]) -> None:
+def _reconcile_allocation_actions(allocations: list[dict], observer=None) -> None:
     """Reconcile action labels after deterministic target-weight changes."""
     for allocation in allocations:
         delta = allocation.get("allocation_change_percent", 0)
         action = (allocation.get("action") or "HOLD").upper()
+        before = _alloc_basis(allocation)
         if action in ("BUY", "ACCUMULATE") and delta < -1.0:
             allocation["action"] = "REDUCE"
             logger.info(
@@ -1368,6 +1520,12 @@ def _reconcile_allocation_actions(allocations: list[dict]) -> None:
                 "[ACTION_RECONCILE] %s REDUCE→ACCUMULATE (delta=%.1f%% after constraint enforcement)",
                 allocation.get("symbol"), delta,
             )
+        if observer is not None and _alloc_basis(allocation)["action"] != before["action"]:
+            _observe(observer, allocation.get("symbol", ""), before, allocation,
+                     stage=_STAGE_RECONCILIATION, source=_SRC_SYSTEM, effect=_RELABEL,
+                     reason_code="ACTION_RECONCILE",
+                     reason_text=f"Relabelled {before['action']} to {allocation['action']} "
+                                 f"after constraint enforcement (delta {delta:.1f}%).")
 
 
 def _fallback_prompt(
@@ -1380,6 +1538,7 @@ def _fallback_prompt(
     total_value: float,
     cash_balance: float,
     effective_policy_rules: str = "",
+    intent_block: str = "",
 ) -> str:
     return f"""You are an emergency portfolio analyst. The multi-layer optimizer pipeline failed.
 Produce a complete, compliant capital allocation plan in a single response.
@@ -1392,7 +1551,7 @@ Max portfolio stocks: {max_stocks}
 Max sector weight: {max_sector_pct}%
 Total portfolio value: {total_value:.0f}, Cash balance: {cash_balance:.0f}
 
-HARD RULES — you MUST follow all of these:
+{intent_block}HARD RULES — you MUST follow all of these:
 1. Forced exit symbols MUST appear with action=SELL and target_weight=0.0
 2. Locked symbols MUST appear with action=HOLD and unchanged target_weight
 3. Total unique stocks after rebalancing (HOLD/BUY/ACCUMULATE/REDUCE combined) MUST NOT exceed {max_stocks}
@@ -1445,8 +1604,13 @@ def _run_single_shot_fallback(
     policy_context: dict | None = None,
     effective_envelope: "_EffectiveEnvelope | None" = None,
     enforce_effective_policy: bool = False,
+    advisory=None,
 ) -> dict:
-    """Single-shot emergency fallback when the 3-layer pipeline fails completely."""
+    """Single-shot emergency fallback when the 3-layer pipeline fails completely.
+
+    advisory: the SAME frozen Advisory Integration V1 run as the primary path
+    (substitutes for L2, so it receives hard + soft context).
+    """
     score_map = _build_score_context_map(pc, wc)
     effective_policy_rules = ""
     if enforce_effective_policy:
@@ -1475,11 +1639,17 @@ def _run_single_shot_fallback(
     prompt = _fallback_prompt(
         pc, wc, sell_forced, locked, max_stocks, max_sector_pct,
         total_value, cash_balance, effective_policy_rules,
+        **({"intent_block": _intent_block(advisory, _LAYER_FALLBACK)} if advisory is not None else {}),
     )
-    raw = call_ai(
-        prompt, fallback_provider, fallback_model, max_tokens=4096,
-        usage_operation="optimize", usage_layer="fallback",
-    )
+    try:
+        raw = call_ai(
+            prompt, fallback_provider, fallback_model, max_tokens=4096,
+            usage_operation="optimize", usage_layer="fallback",
+        )
+    except Exception:
+        _note_prompt(advisory, _LAYER_FALLBACK, "FAILED")
+        raise
+    _note_prompt(advisory, _LAYER_FALLBACK, "SUCCESS")
     fb_latency_ms = raw["latency_ms"]
     result = safe_parse_json(raw["text"])
 
@@ -1487,30 +1657,18 @@ def _run_single_shot_fallback(
     allocations = _normalize_allocations(raw_allocs, pc_map, score_map)
     for a in allocations:
         a["estimated_amount"] = round((a["allocation_change_percent"] / 100) * total_value)
+        _observe(advisory, a["symbol"], None, a, stage=_STAGE_FALLBACK, source=_SRC_ADVISORY,
+                 effect=_ORIGINATE, reason_code="FALLBACK_ALLOCATION", reason_text=a.get("reason", ""))
 
     locked_set = set(locked)
     alloc_map: dict[str, dict] = {a["symbol"]: a for a in allocations}
-    for sym in sell_forced:
-        if sym in alloc_map:
-            alloc_map[sym]["action"] = "SELL"
-            alloc_map[sym]["target_weight"] = 0.0
-        else:
-            cur_w = pc_map.get(sym, 0.0)
-            alloc_map[sym] = {
-                "symbol": sym, "current_weight": cur_w, "target_weight": 0.0,
-                "action": "SELL", "allocation_change_percent": round(-cur_w, 2),
-                "estimated_amount": 0, "reason": "Forced exit: SELL signal.",
-            }
-    for sym in locked_set:
-        if sym in alloc_map and alloc_map[sym].get("action") not in ("HOLD", "WATCH"):
-            alloc_map[sym]["action"] = "HOLD"
-            alloc_map[sym]["target_weight"] = alloc_map[sym].get("current_weight", 0.0)
-            alloc_map[sym]["allocation_change_percent"] = 0.0
+    _apply_forced_and_locked(alloc_map, sell_forced, locked_set, pc_map, advisory)
 
     final_allocations = list(alloc_map.values())
     for a in final_allocations:
         a["allocation_change_percent"] = round(a["target_weight"] - a["current_weight"], 2)
         a["estimated_amount"] = round((a["allocation_change_percent"] / 100) * total_value)
+    _observer_kw = {"observer": advisory} if advisory is not None else {}
     if enforce_effective_policy:
         try:
             _enforce_hard_policy(
@@ -1521,11 +1679,12 @@ def _run_single_shot_fallback(
                 effective_envelope=effective_envelope,
                 portfolio_data=portfolio_data,
                 watchlist_data=wc,
+                **_observer_kw,
             )
-            _reconcile_allocation_actions(final_allocations)
+            _reconcile_allocation_actions(final_allocations, **_observer_kw)
         except Exception as exc:
             raise HardPolicyEnforcementError("fallback hard-policy enforcement failed") from exc
-    _snap_neutral_actions(final_allocations)
+    _snap_neutral_actions(final_allocations, **_observer_kw)
 
     swap_suggestions = _derive_swap_suggestions(final_allocations, sell_forced, locked)
     projected_sector_weights = calculate_projected_sector_weights_from_allocations(
@@ -1625,13 +1784,14 @@ def _retry_l1_with_schema(
     sell_forced: list[str],
     swap_eligible: list[str],
     l1_cfg: dict,
+    intent_block: str = "",
 ) -> dict:
     """Single-shot L1 retry with a stripped-down prompt after an initial parse failure.
 
     Called only when the full L1 prompt produced unparseable output.  The goal is
     to get *something* structurally valid so L2/L3 can still run with real signal.
     """
-    minimal_prompt = (
+    minimal_prompt = intent_block + (
         "You are a portfolio strategist. Return ONLY a valid JSON object — "
         "no markdown, no prose, just the JSON.\n\n"
         f"Current holdings: {json.dumps(c_pc)}\n"
@@ -1722,12 +1882,18 @@ def run_layered_optimizer(
     execution_context: dict | None = None,
     on_stage: Callable[[str], None] | None = None,
     enforce_effective_policy_in_fallback: bool = False,
+    advisory=None,
 ) -> dict:
     """3-layer Dynamic Capital Allocation Engine with global single-shot fallback.
 
     on_stage: optional presentation-only progress callback (Phase 4C.1) invoked
     with a stage key before each AI layer call. Failures inside the callback are
     swallowed — it can never affect optimizer behavior.
+
+    advisory: Advisory Integration V1 run (default-OFF flag), else None. When
+    present: frozen Intent prompt context for L1/L2/L3 (+ retry/fallback),
+    common-NAV current weights for held positions when that basis resolves,
+    and proposal-transition capture. It never changes an allocation decision.
     """
     if layers is None:
         layers = _DEFAULT_LAYERS
@@ -1753,9 +1919,19 @@ def run_layered_optimizer(
 
     # Authoritative current weights from real portfolio data (not AI-reported)
     pc_map: dict[str, float] = {p["symbol"]: p.get("weight_pct", 0.0) for p in portfolio_data}
+    # Advisory Integration V1: held current weights on the common NAV basis
+    # (equity + cash, frozen quotes), matching L2's "% of portfolio" targets.
+    # None when that basis cannot be established — legacy weights then stand.
+    _canonical_weights = advisory.canonical_current_weights() if advisory is not None else None
+    if _canonical_weights:
+        pc_map.update(_canonical_weights)
 
     swap_eligible = [p["symbol"] for p in portfolio_data if p.get("allow_swap", True) and p.get("signal") != "SELL"]
     pc = _compact_p(portfolio_data)
+    if _canonical_weights:
+        for p in pc:
+            if p["symbol"] in _canonical_weights:
+                p["weight_pct"] = _canonical_weights[p["symbol"]]
     wc = _compact_w(watchlist_data)
     score_map = _build_score_context_map(pc, wc)
     c_pc, c_wc = _compress_for_layer1(pc, wc)
@@ -1841,6 +2017,7 @@ def run_layered_optimizer(
                 effective_envelope=effective_envelope,
                 t1_breach_note=_t1_note,
                 execution_context=execution_context,
+                **({"intent_block": _intent_block(advisory, _LAYER_L1)} if advisory is not None else {}),
             )
             logger.info(f"L1 prompt chars: {len(l1_prompt)}")
             l1_raw = call_ai(
@@ -1855,9 +2032,10 @@ def run_layered_optimizer(
                 l1_cfg["provider"], l1_cfg["model"], len(raw_l1_text), l1_latency_ms,
             )
             l1_result = safe_parse_json(raw_l1_text)
-            l1_result["swap_suggestions"] = _postprocess_swaps(
-                _normalize_l1_swaps(l1_result.get("swaps", []), score_map), sell_forced, locked
-            )
+            _l1_swaps = _normalize_l1_swaps(l1_result.get("swaps", []), score_map)
+            l1_result["swap_suggestions"] = _postprocess_swaps(_l1_swaps, sell_forced, locked)
+            _note_prompt(advisory, _LAYER_L1, "SUCCESS")
+            _note_l1_proposals(advisory, _l1_swaps, locked)
             logger.info(
                 "[L1_DEBUG] parsed: swaps_count=%d swap_suggestions_count=%d top_buys=%s priority=%s",
                 len(l1_result.get("swaps", [])),
@@ -1867,15 +2045,21 @@ def run_layered_optimizer(
             )
         except Exception as e:
             logger.error("[L1_DEBUG] parse_error=%s", e)
+            _note_prompt(advisory, _LAYER_L1, "FAILED")
             # Single quiet retry with a minimal stripped-down prompt before giving up
             try:
-                l1_result = _retry_l1_with_schema(c_pc, c_wc, sell_forced, swap_eligible, l1_cfg)
-                l1_result["swap_suggestions"] = _postprocess_swaps(
-                    _normalize_l1_swaps(l1_result.get("swaps", []), score_map), sell_forced, locked
+                l1_result = _retry_l1_with_schema(
+                    c_pc, c_wc, sell_forced, swap_eligible, l1_cfg,
+                    **({"intent_block": _intent_block(advisory, _LAYER_L1_RETRY)} if advisory is not None else {}),
                 )
+                _l1_swaps = _normalize_l1_swaps(l1_result.get("swaps", []), score_map)
+                l1_result["swap_suggestions"] = _postprocess_swaps(_l1_swaps, sell_forced, locked)
                 l1_parse_failed = False
+                _note_prompt(advisory, _LAYER_L1_RETRY, "SUCCESS")
+                _note_l1_proposals(advisory, _l1_swaps, locked)
                 logger.info("[L1_RETRY] recovered successfully after minimal-prompt retry")
             except Exception as retry_err:
+                _note_prompt(advisory, _LAYER_L1_RETRY, "FAILED")
                 logger.error("[L1_RETRY] also failed: %s", retry_err)
                 l1_parse_failed = True
                 l1_result = {
@@ -1894,7 +2078,9 @@ def run_layered_optimizer(
                                regime_context=regime_context,
                                policy_context=policy_context,
                                t1_breach_note=_t1_note,
-                               execution_context=execution_context),
+                               execution_context=execution_context,
+                               **({"intent_block": _intent_block(advisory, _LAYER_L2)}
+                                  if advisory is not None else {})),
                 l2_cfg["provider"], l2_cfg["model"], max_tokens=8192,
                 usage_operation="optimize", usage_layer="layer2",
             )
@@ -1912,6 +2098,10 @@ def run_layered_optimizer(
             l2_allocs = _normalize_allocations(raw_allocs, pc_map, score_map)
             for a in l2_allocs:
                 a["estimated_amount"] = round((a["allocation_change_percent"] / 100) * total_value)
+            _note_prompt(advisory, _LAYER_L2, "SUCCESS")
+            for a in l2_allocs:
+                _observe(advisory, a["symbol"], None, a, stage=_STAGE_L2, source=_SRC_ADVISORY,
+                         effect=_ORIGINATE, reason_code="L2_ALLOCATION", reason_text=a.get("reason", ""))
             l2_result["target_allocations"] = l2_allocs
             if "portfolio_assessment" in l2_result and "summary" not in l2_result:
                 l2_result["summary"] = l2_result["portfolio_assessment"]
@@ -1933,6 +2123,7 @@ def run_layered_optimizer(
             )
         except Exception as e:
             logger.error("[L2_DEBUG] parse_error=%s", e)
+            _note_prompt(advisory, _LAYER_L2, "FAILED")
             l2_result = {
                 "error": str(e), "agrees_with_layer1": False,
                 "disagreements": ["L2_PARSE_FAILURE: Challenger output could not be parsed."],
@@ -1948,13 +2139,17 @@ def run_layered_optimizer(
                                persona_context=persona_context,
                                policy_context=policy_context,
                                effective_envelope=effective_envelope,
-                               t1_breach_note=_t1_note),
+                               t1_breach_note=_t1_note,
+                               **({"intent_block": _intent_block(advisory, _LAYER_L3)}
+                                  if advisory is not None else {})),
                 l3_cfg["provider"], l3_cfg["model"], max_tokens=2048,
                 usage_operation="optimize", usage_layer="layer3",
             )
             l3_latency_ms = l3_raw["latency_ms"]
             l3_result = safe_parse_json(l3_raw["text"])
+            _note_prompt(advisory, _LAYER_L3, "SUCCESS")
         except Exception as e:
+            _note_prompt(advisory, _LAYER_L3, "FAILED")
             l3_result = {
                 "error": str(e), "risk_flags": [],
                 "safer_choice": "layer1", "final_risk_level": "medium", "auditor_notes": "",
@@ -1990,22 +2185,7 @@ def run_layered_optimizer(
         # Enforce constraints regardless of AI output
         locked_set = set(locked)
         alloc_map: dict[str, dict] = {a["symbol"]: a for a in final_allocations}
-        for sym in sell_forced:
-            if sym in alloc_map:
-                alloc_map[sym]["action"] = "SELL"
-                alloc_map[sym]["target_weight"] = 0.0
-            else:
-                cur_w = pc_map.get(sym, 0.0)
-                alloc_map[sym] = {
-                    "symbol": sym, "current_weight": cur_w, "target_weight": 0.0,
-                    "action": "SELL", "allocation_change_percent": round(-cur_w, 2),
-                    "estimated_amount": 0, "reason": "Forced exit: SELL signal.",
-                }
-        for sym in locked_set:
-            if sym in alloc_map and alloc_map[sym].get("action") not in ("HOLD", "WATCH"):
-                alloc_map[sym]["action"] = "HOLD"
-                alloc_map[sym]["target_weight"] = alloc_map[sym].get("current_weight", 0.0)
-                alloc_map[sym]["allocation_change_percent"] = 0.0
+        _apply_forced_and_locked(alloc_map, sell_forced, locked_set, pc_map, advisory)
 
         final_allocations = list(alloc_map.values())
 
@@ -2015,6 +2195,7 @@ def run_layered_optimizer(
             a["estimated_amount"] = round((a["allocation_change_percent"] / 100) * total_value)
 
         # ── Policy / regime / resolved-sector hard constraints ────────────────
+        _observer_kw = {"observer": advisory} if advisory is not None else {}
         try:
             _enforce_hard_policy(
                 final_allocations,
@@ -2024,6 +2205,7 @@ def run_layered_optimizer(
                 effective_envelope=effective_envelope,
                 portfolio_data=portfolio_data,
                 watchlist_data=watchlist_data,
+                **_observer_kw,
             )
         except Exception as exc:
             if enforce_effective_policy_in_fallback:
@@ -2047,10 +2229,14 @@ def run_layered_optimizer(
                         "[EXEC_CAP] %s target_weight %.1f%% → %.1f%% (DR/illiquid cap)",
                         sym, a["target_weight"], cap,
                     )
+                    _before = _alloc_basis(a)
                     a["target_weight"]             = round(cap, 2)
                     a["allocation_change_percent"] = round(a["target_weight"] - a["current_weight"], 2)
                     a["estimated_amount"]          = round((a["allocation_change_percent"] / 100) * total_value)
                     a["execution_capped"]          = True
+                    _observe(advisory, sym, _before, a, stage=_STAGE_EXEC_CAP, source=_SRC_POLICY,
+                             effect=_SCALE, reason_code="EXECUTION_QUALITY_CAP",
+                             reason_text=f"Capped at the {cap:.1f}% DR/illiquid position limit.")
 
         # Attach per-symbol execution metadata to allocations for frontend badge rendering
         if execution_context:
@@ -2067,9 +2253,9 @@ def run_layered_optimizer(
         # Constraint passes (policy cap, cash floor, sector cap, DR exec cap) all
         # update target_weight + allocation_change_percent but never touch action.
         # A BUY/ACCUMULATE whose delta went negative is now a net REDUCE; fix it.
-        _reconcile_allocation_actions(final_allocations)
+        _reconcile_allocation_actions(final_allocations, **_observer_kw)
 
-        _snap_neutral_actions(final_allocations)
+        _snap_neutral_actions(final_allocations, **_observer_kw)
 
         # Build sector_map for governance scoring (symbol → sector)
         _sector_map_for_scoring: dict[str, str] = {
@@ -2232,6 +2418,10 @@ def run_layered_optimizer(
             f"Multi-layer pipeline failed. Initiating Global Fallback Model: "
             f"{fallback_provider}/{fallback_model}. Error: {exc}"
         )
+        if advisory is not None:
+            # Primary-attempt proposals are abandoned: never active, never a conflict.
+            advisory.abandon_attempt(_ATTEMPT_PRIMARY)
+            advisory.begin_attempt(_ATTEMPT_FALLBACK)
         return _run_single_shot_fallback(
             pc, wc, sell_forced, locked, portfolio_data, current_sector_weights,
             pc_map, max_stocks, max_sector_pct, sector_limits,
@@ -2240,4 +2430,5 @@ def run_layered_optimizer(
             policy_context=policy_context,
             effective_envelope=effective_envelope,
             enforce_effective_policy=enforce_effective_policy_in_fallback,
+            **({"advisory": advisory} if advisory is not None else {}),
         )

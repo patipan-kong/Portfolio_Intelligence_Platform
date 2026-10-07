@@ -1,6 +1,7 @@
 # Investor Intent V1 — Position-Scoped Owner Restrictions
 
-**Status:** Implemented (isolated; not read by the optimizer)
+**Status:** Implemented. Isolated by default; read by `/analyze/optimizer` for held positions only when the
+default-OFF Advisory Integration V1 flag is on (see `ADVISORY_INTEGRATION_V1_SLICE1.md`).
 **Date:** 2026-10-07
 **Branch:** `feature/investor-intent-v1`
 **Migration:** `o7p8q9r0s1t2` (down: `n6o7p8q9r0s1`)
@@ -14,9 +15,13 @@ human remains the final decision authority at execution; overrides are
 exceptions and audit signals. Declared intent is never rewritten from
 observed behaviour, trades, legacy locks or previous decisions.
 
-V1 is persistence, an owner API, a small UI, and a pure validator. **Nothing in
-the recommendation, scoring, policy or execution pipeline reads it.** The UI
-and every API response say so (`enforced_by_optimizer: false`).
+V1 is persistence, an owner API, a small UI, and a pure validator. **With the
+Advisory Integration V1 flag off (the default), nothing in the recommendation,
+scoring, policy or execution pipeline reads it.** With the flag on,
+`/analyze/optimizer` reads a frozen copy as advisory prompt context and reviews
+its held-position proposals against it; it is still never enforced
+(`enforced_by_optimizer: false`) and the disclosure says which mode is active.
+See `docs/implementation/ADVISORY_INTEGRATION_V1_SLICE1.md`.
 
 ## Owner decisions applied (2026-10-07)
 
@@ -225,6 +230,7 @@ Owner-entered execution decisions are not evaluated in V1.
 
 ## Not in V1
 
-Optimizer/prompt wiring, enforcement, Discovery integration, conversion of
+Enforcement (Advisory Integration V1 Slice 1 adds flag-gated advisory context and
+review for `/analyze/optimizer` held positions only), Discovery integration, conversion of
 legacy locks, a canonical holding-episode identity (R1 is the V1 mechanism), evaluation of
 owner-entered decisions, delete/withdraw of intent, multi-user authorship.

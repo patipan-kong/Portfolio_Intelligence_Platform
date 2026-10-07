@@ -1,4 +1,10 @@
-"""Investor Intent V1 is not read by any recommendation, scoring or execution path."""
+"""Investor Intent isolation.
+
+With the default-OFF Advisory Integration V1 flag off, Investor Intent is not
+read by any recommendation, scoring or execution path. With it on, only the two
+advisory-intent modules read it, for /analyze/optimizer held positions; the
+optimizer itself only ever receives their opaque frozen run object.
+"""
 import ast
 import asyncio
 import json
@@ -21,10 +27,13 @@ INTENT_NAMES = {
     "evaluate_quantity_change",
 }
 # Modules allowed to know about Investor Intent: its own modules, the ORM,
-# the API surface, the CLI portfolio-deletion cascade, and migrations.
+# the API surface, the CLI portfolio-deletion cascade, migrations, and the
+# Advisory Integration V1 context/review modules (flag-gated, held positions).
 ALLOWED = {
     BACKEND / "services" / "investor_intent.py",
     BACKEND / "services" / "investor_intent_store.py",
+    BACKEND / "services" / "advisory_intent_context.py",
+    BACKEND / "services" / "advisory_intent_review.py",
     BACKEND / "models" / "database.py",
     BACKEND / "main.py",
     BACKEND / "manage.py",
@@ -32,6 +41,7 @@ ALLOWED = {
 
 
 def test_intent_create_and_revise_is_behaviorally_inert(monkeypatch):
+    monkeypatch.delenv("FEATURE_ADVISORY_INTENT_REVIEW_V1", raising=False)  # default OFF
     calls = []
 
     def optimizer(*args, **kwargs):
