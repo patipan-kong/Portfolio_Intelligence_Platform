@@ -8,6 +8,7 @@ import PortfolioTable from "@/components/PortfolioTable";
 import PortfolioTabs from "@/components/PortfolioTabs";
 import PortfolioSummary from "@/components/PortfolioSummary";
 import PortfolioInvestmentMandates from "@/components/PortfolioInvestmentMandates";
+import PositionInvestorIntent from "@/components/PositionInvestorIntent";
 import PortfolioFundingEvidence from "@/components/PortfolioFundingEvidence";
 import { usePortfolio } from "@/lib/PortfolioContext";
 import WorkspaceScopeSwitcher from "@/components/WorkspaceScopeSwitcher";
@@ -804,6 +805,10 @@ export default function PortfolioPage() {
 
           {currentSelection != null && (
             <PortfolioInvestmentMandates portfolioId={currentSelection} />
+          )}
+
+          {currentSelection != null && (
+            <PositionInvestorIntent portfolioId={currentSelection} />
           )}
 
           {currentSelection != null && (

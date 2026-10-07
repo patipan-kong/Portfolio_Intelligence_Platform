@@ -9,7 +9,7 @@ from typing import Literal
 from fastapi import FastAPI, HTTPException, Depends, Request, BackgroundTasks, Response, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, model_validator
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_ as sa_or
 from sqlalchemy.exc import IntegrityError
@@ -3251,6 +3251,75 @@ async def update_swap_permission(
     item.allow_swap = body.allow_swap
     db.commit()
     return {"symbol": symbol, "allow_swap": item.allow_swap}
+
+
+# ── Investor Intent V1 (position-scoped owner restrictions) ──────────────────
+# Persistence and management only. Not read by the optimizer; allow_swap above
+# remains separate legacy semantics and is never converted into intent.
+
+class PositionIntentBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    increase_prohibited: StrictBool
+    decrease_prohibited: StrictBool
+    soft_preference: Literal["NONE", "PREFER_KEEP", "PREFER_EXIT"]
+    # null to create; the current revision to revise.
+    expected_revision: StrictInt | None = None
+
+
+@app.get("/portfolios/{portfolio_id}/position-intents")
+async def list_position_intents(portfolio_id: int, db: Session = Depends(get_db)) -> dict:
+    from services.investor_intent_store import list_position_intent_view
+
+    ws = _ws_id(db)
+    portfolio = resolve_portfolio_or_404(db, portfolio_id, ws)
+    return list_position_intent_view(db, ws, portfolio.id)
+
+
+@app.put("/portfolios/{portfolio_id}/position-intents/{symbol}")
+async def put_position_intent(
+    portfolio_id: int,
+    symbol: str,
+    body: PositionIntentBody,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> dict:
+    from services.investor_intent_store import (
+        ENFORCEMENT_DISCLOSURE, IntentRevisionConflictError, PositionNotFoundError,
+        intent_payload, put_position_intent as store_put_position_intent,
+    )
+
+    ws = _ws_id(db)
+    portfolio = resolve_portfolio_or_404(db, portfolio_id, ws)
+    try:
+        intent, status = store_put_position_intent(
+            db, ws, portfolio.id, _resolve_symbol(symbol),
+            increase_prohibited=body.increase_prohibited,
+            decrease_prohibited=body.decrease_prohibited,
+            soft_preference=body.soft_preference,
+            expected_revision=body.expected_revision,
+        )
+    except PositionNotFoundError:
+        raise HTTPException(status_code=404, detail="Position not found in this portfolio")
+    except IntentRevisionConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    response.status_code = 201 if status == "CREATED" else 200
+    return {"status": status, "intent": intent_payload(intent),
+            "enforced_by_optimizer": False, "disclosure": ENFORCEMENT_DISCLOSURE}
+
+
+@app.get("/portfolios/{portfolio_id}/position-intents/{symbol}/revisions")
+async def list_position_intent_revisions(
+    portfolio_id: int, symbol: str, db: Session = Depends(get_db)
+) -> list[dict]:
+    from services.investor_intent_store import PositionNotFoundError, list_revisions
+
+    ws = _ws_id(db)
+    portfolio = resolve_portfolio_or_404(db, portfolio_id, ws)
+    try:
+        return list_revisions(db, ws, portfolio.id, _resolve_symbol(symbol))
+    except PositionNotFoundError:
+        raise HTTPException(status_code=404, detail="Position intent not found in this portfolio")
 
 
 @app.delete("/portfolios/{portfolio_id}/holdings/{symbol}")

@@ -130,6 +130,7 @@ class Portfolio(Base):
     # transactions/snapshots above already cascade at the ORM layer.
     goal_funding_allocations = relationship("GoalFundingAllocation", cascade="all, delete-orphan")
     investment_mandates = relationship("PortfolioInvestmentMandate", cascade="all, delete-orphan")
+    position_intents = relationship("PositionIntent", cascade="all, delete-orphan")
     # Investment Funding Transfer (ADR-012): deliberately NOT cascade="delete"
     # — a cash-side funding record is a Cash Account fact and must survive
     # Portfolio deletion. This relationship exists so the ORM disassociates
@@ -657,6 +658,75 @@ class PortfolioItem(Base):
     portfolio = relationship("Portfolio", back_populates="items")
 
     __table_args__ = (UniqueConstraint("portfolio_id", "symbol", name="uq_portfolio_symbol"),)
+
+
+class PositionIntent(Base):
+    """Investor Intent V1: current owner-authored restrictions for one position.
+
+    Keyed by (portfolio_id, position_symbol) — the same key the portfolio
+    rebuilder uses to preserve PortfolioItem.allow_swap — because
+    PortfolioItem.id is recreated on every rebuild and deleted on a full sale.
+    A missing row means "no confirmed intent", never "owner permits everything".
+    Never derived from allow_swap, trades, or decisions. Not read by the
+    optimizer; see docs/implementation/INVESTOR_INTENT_V1.md.
+    """
+    __tablename__ = "position_intents"
+
+    id = Column(Integer, primary_key=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    portfolio_id = Column(Integer, ForeignKey("portfolios.id", ondelete="CASCADE"), nullable=False, index=True)
+    position_symbol = Column(String, nullable=False)
+    increase_prohibited = Column(Boolean, nullable=False)
+    decrease_prohibited = Column(Boolean, nullable=False)
+    soft_preference = Column(String(16), nullable=False)
+    revision = Column(Integer, nullable=False)
+    # Single-user workspace: the workspace owner is the only author today.
+    author_kind = Column(String(16), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    revisions = relationship(
+        "PositionIntentRevision", back_populates="position_intent",
+        cascade="all, delete-orphan", order_by="PositionIntentRevision.revision",
+    )
+
+    __table_args__ = (
+        UniqueConstraint("portfolio_id", "position_symbol", name="uq_position_intents_portfolio_symbol"),
+        CheckConstraint("soft_preference IN ('NONE', 'PREFER_KEEP', 'PREFER_EXIT')", name="ck_position_intents_soft_preference"),
+        CheckConstraint("author_kind IN ('OWNER')", name="ck_position_intents_author_kind"),
+        CheckConstraint("revision >= 1", name="ck_position_intents_revision_positive"),
+    )
+
+
+class PositionIntentRevision(Base):
+    """Append-only record of each PositionIntent revision, including the first.
+
+    Append-only through services/investor_intent_store.py, the supported write
+    path; not protected against direct ORM/SQL mutation (no DB triggers).
+    (position_intent_id, revision) identifies the intent in force for a later
+    recommendation or decision. Documentary history only: PositionIntent
+    remains the sole authority for current intent.
+    """
+    __tablename__ = "position_intent_revisions"
+
+    id = Column(Integer, primary_key=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    position_intent_id = Column(Integer, ForeignKey("position_intents.id", ondelete="CASCADE"), nullable=False, index=True)
+    revision = Column(Integer, nullable=False)
+    increase_prohibited = Column(Boolean, nullable=False)
+    decrease_prohibited = Column(Boolean, nullable=False)
+    soft_preference = Column(String(16), nullable=False)
+    author_kind = Column(String(16), nullable=False)
+    recorded_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    position_intent = relationship("PositionIntent", back_populates="revisions")
+
+    __table_args__ = (
+        UniqueConstraint("position_intent_id", "revision", name="uq_position_intent_revisions_intent_revision"),
+        CheckConstraint("soft_preference IN ('NONE', 'PREFER_KEEP', 'PREFER_EXIT')", name="ck_position_intent_revisions_soft_preference"),
+        CheckConstraint("author_kind IN ('OWNER')", name="ck_position_intent_revisions_author_kind"),
+        CheckConstraint("revision >= 1", name="ck_position_intent_revisions_revision_positive"),
+    )
 
 
 class Watchlist(Base):

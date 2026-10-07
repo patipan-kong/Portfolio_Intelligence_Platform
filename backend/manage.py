@@ -98,6 +98,8 @@ from models.database import (
     PortfolioInvestmentMandate,
     PortfolioItem,
     PortfolioSnapshot,
+    PositionIntent,
+    PositionIntentRevision,
     RecommendationSnapshot,
     SessionLocal,
     ShadowPortfolio,
@@ -2255,6 +2257,7 @@ def _cmd_recalculate_snapshot_returns(args: argparse.Namespace) -> int:
 # Each entry: (display_label, count_key).
 _RELATION_LABELS: list[tuple[str, str]] = [
     ("Investment Mandates",       "investment_mandates"),
+    ("Position Intents",          "position_intents"),
     ("Portfolio Items",           "portfolio_items"),
     ("Transactions",              "transactions"),
     ("Snapshots",                 "snapshots"),
@@ -2280,6 +2283,11 @@ def _count_portfolio_relations(db, portfolio_id: int) -> dict[str, int]:
         "investment_mandates": (
             db.query(PortfolioInvestmentMandate)
             .filter(PortfolioInvestmentMandate.portfolio_id == portfolio_id)
+            .count()
+        ),
+        "position_intents": (
+            db.query(PositionIntent)
+            .filter(PositionIntent.portfolio_id == portfolio_id)
             .count()
         ),
         "portfolio_items": (
@@ -2349,6 +2357,24 @@ def _delete_portfolio_cascade(db, portfolio_id: int) -> dict[str, int]:
     counts["investment_mandates"] = (
         db.query(PortfolioInvestmentMandate)
         .filter(PortfolioInvestmentMandate.portfolio_id == portfolio_id)
+        .delete(synchronize_session=False)
+    )
+
+    # PositionIntent (Investor Intent V1) and its revision history — explicit
+    # for the same reason as mandates above. Revisions first (child of intent).
+    intent_ids = [
+        r[0] for r in
+        db.query(PositionIntent.id).filter(PositionIntent.portfolio_id == portfolio_id).all()
+    ]
+    if intent_ids:
+        (
+            db.query(PositionIntentRevision)
+            .filter(PositionIntentRevision.position_intent_id.in_(intent_ids))
+            .delete(synchronize_session=False)
+        )
+    counts["position_intents"] = (
+        db.query(PositionIntent)
+        .filter(PositionIntent.portfolio_id == portfolio_id)
         .delete(synchronize_session=False)
     )
 
