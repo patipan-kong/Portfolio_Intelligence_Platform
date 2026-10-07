@@ -694,6 +694,70 @@ export const deletePortfolioInvestmentMandate = (portfolioId: number, wealthGoal
 export const listGoalInvestmentMandates = (goalId: number) =>
   apiFetch<GoalInvestmentMandate[]>(`/wealth-goals/${goalId}/investment-mandates`);
 
+// ─── Investor Intent V1 ─────────────────────────────────────────────────────
+// Owner-authored, position-scoped restrictions. Saved only: the optimizer does
+// not read them yet (enforced_by_optimizer is always false in V1). A missing
+// intent is "no confirmed intent", never "everything permitted".
+
+export type IntentSoftPreference = "NONE" | "PREFER_KEEP" | "PREFER_EXIT";
+
+export interface PositionIntent {
+  id: number;
+  portfolio_id: number;
+  position_symbol: string;
+  increase_prohibited: boolean;
+  decrease_prohibited: boolean;
+  soft_preference: IntentSoftPreference;
+  revision: number;
+  author_kind: "OWNER";
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PositionIntentRow {
+  position_symbol: string;
+  currently_held: boolean;
+  legacy_allow_swap: boolean | null;
+  legacy_lock_status: "LEGACY_LOCKED_INTENT_UNCONFIRMED" | null;
+  // Start of the current continuously-held episode; null when not held.
+  holding_started_at: string | null;
+  // RECONFIRMATION_REQUIRED: intent was confirmed for an earlier holding of
+  // this symbol (full exit, then re-entry). It is history and does not apply.
+  intent_status: "CONFIRMED" | "NO_CONFIRMED_INTENT" | "RECONFIRMATION_REQUIRED";
+  intent: PositionIntent | null;
+}
+
+export interface PositionIntentView {
+  contract_version: string;
+  portfolio_id: number;
+  enforced_by_optimizer: false;
+  disclosure: string;
+  positions: PositionIntentRow[];
+}
+
+export interface PositionIntentInput {
+  increase_prohibited: boolean;
+  decrease_prohibited: boolean;
+  soft_preference: IntentSoftPreference;
+  expected_revision: number | null;
+}
+
+export interface PositionIntentWriteResult {
+  status: "CREATED" | "REVISED" | "RECONFIRMED" | "UNCHANGED";
+  intent: PositionIntent;
+  enforced_by_optimizer: false;
+  disclosure: string;
+}
+
+export const listPositionIntents = (portfolioId: number) =>
+  apiFetch<PositionIntentView>(`/portfolios/${portfolioId}/position-intents`);
+
+export const putPositionIntent = (portfolioId: number, symbol: string, input: PositionIntentInput) =>
+  apiFetch<PositionIntentWriteResult>(
+    `/portfolios/${portfolioId}/position-intents/${encodeURIComponent(symbol)}`,
+    { method: "PUT", body: JSON.stringify(input) },
+  );
+
 // ─── Wealth Goal Context (Phase 7.2) ───────────────────────────────────────
 // The Goal Context endpoint is the canonical, valuation-free read of goal
 // facts, allocation evidence, and designation arithmetic. Current Cash and

@@ -81,6 +81,7 @@ from enum import Enum
 from typing import Any, Callable, Optional
 
 import pandas as pd
+from sqlalchemy import null
 from sqlalchemy.orm import Session
 
 from models.database import LedgerRepair, Portfolio, PortfolioItem, PortfolioSnapshot, Transaction
@@ -1912,6 +1913,15 @@ def _commit_rebuild(
             sector       = h.sector,
             allow_swap   = existing.allow_swap if existing else True,
             asset_id     = asset_id,
+            # Investor Intent V1 (R1): created_at is the start of the current
+            # continuously-held (portfolio_id, symbol) episode, so a rebuild
+            # keeps it. A legacy NULL stays NULL (null(): a plain None would
+            # fire the column default). A row absent before the rebuild
+            # starts a new episode.
+            created_at   = (
+                (existing.created_at if existing.created_at is not None else null())
+                if existing else datetime.utcnow()
+            ),
         ))
 
     # ── 3. Upsert snapshot rows ────────────────────────────────────────────────
