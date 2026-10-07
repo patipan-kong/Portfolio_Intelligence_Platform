@@ -3578,3 +3578,21 @@ importance that the captured evidence cannot establish.
 **Re-entry (owner decision R1, 2026-10-07):** `PortfolioItem.created_at` is the start of the current continuously-held `(portfolio_id, symbol)` holding episode. `portfolio_rebuilder._commit_rebuild` now preserves it across rebuilds, as it already did for `allow_swap`; this is a metadata-only change, and shares, cost and cash replay are unchanged. An intent whose current revision's `recorded_at` predates the episode start (a full exit, then re-entry) is `RECONFIRMATION_REQUIRED` and does not apply until the owner explicitly re-confirms, which appends a revision. Accepted limits: symbol-slot semantics, not instrument identity; conversions and restorations may conservatively need re-confirmation; raw ledger manipulation is not perfectly modelled. No HoldingEpisode model, ledger replay or exit hooks.
 **Impact:** See `docs/implementation/INVESTOR_INTENT_V1.md`, including follow-up findings IIF-1 … IIF-8 (recorded, not fixed).
 **Disposition:** `INVESTOR INTENT V1 READY FOR REVIEW`
+
+## Advisory Integration V1 — Slice 1: Held-Position Intent Context + Deterministic Review
+
+**Date:** 2026-10-07
+**Problem:** Investor Intent V1 was stored but unread, so `/analyze/optimizer` recommended without the owner's confirmed restrictions and could not show where its proposals disagreed with them. Held current weights were equity-only while L2 targets are "% of portfolio", so quantity direction could not be derived reliably.
+**Decision (owner, Slice-1 instruction):** Integrate Intent as one default-OFF unit (`FEATURE_ADVISORY_INTENT_REVIEW_V1`) for `/analyze/optimizer` existing positive held positions only. Hard restrictions go to L1/L2/L3 as advisory context; soft preference goes to L2 (and the fallback that substitutes for it) only. Intent never wins automatically and is never scored. A deterministic review keeps the final-plan truth and retained-proposal truths separate. Conflicts are evidence for the owner, not governance violations, penalties or redistribution.
+**Implementation:** `services/advisory_intent_{flag,context,review}.py`. The frozen run context is loaded once before AI. The common-NAV basis `N = E + C` uses Decimal quantities, 6-dp ROUND_HALF_UP, no average-cost substitution and no FX. Provenance is bounded and captured at the mutation sites. The economic allocation is kept, while noise filter, action summary and execution optimization run once on a response projection. The frozen, digest-sealed envelope `wealth.advisory-intent-review.v1` lives in `OptimizerHistory.result_json`. Historical reads return CAPTURED / NOT_CAPTURED / EVIDENCE_INVALID and never recompute. No migration; RecommendationSnapshot reads through `optimizer_history_id`.
+**Reasoning:** Intent must inform the advisor before it recommends, while the deterministic review makes disagreement visible and auditable without giving Intent execution or policy authority.
+**Impact:** See `docs/implementation/ADVISORY_INTEGRATION_V1_SLICE1.md` (engineering choices, operational note O-1 on stale quotes, test debt TD-2/TD-4). With the flag off, behaviour is unchanged.
+**Amendment (owner, 2026-10-07, before commit):**
+- **L1 materiality.** L1 strategist legs are intermediate advisory reasoning. Once the accepted L2/fallback allocation supersedes them, they stay in provenance as `INTERMEDIATE_REASONING` but are never reviewed, counted as conflicts, or allowed to set `requires_owner_decision`. Material retained review covers the accepted allocation and the deterministic system/policy mutations downstream of it.
+- **Temporary mixed-basis boundary (`SLICE1_TEMPORARY_MIXED_BASIS`).**
+  - The common NAV applies only to prompt current weights, allocation-row `current_weight`, the canonical projection and the review.
+  - Policy, breach, sector and every other deterministic rule keep their legacy semantics.
+  - Provenance records each target's origin semantics separately from the NAV projection basis.
+  - Converting the policy engines to the NAV is deferred to a later slice.
+
+**Disposition:** `IMPLEMENTED BEHIND FLAG — NOT COMMITTED`

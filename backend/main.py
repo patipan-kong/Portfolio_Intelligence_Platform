@@ -3285,8 +3285,8 @@ async def put_position_intent(
     db: Session = Depends(get_db),
 ) -> dict:
     from services.investor_intent_store import (
-        ENFORCEMENT_DISCLOSURE, IntentRevisionConflictError, PositionNotFoundError,
-        intent_payload, put_position_intent as store_put_position_intent,
+        IntentRevisionConflictError, PositionNotFoundError,
+        intent_disclosure, intent_payload, put_position_intent as store_put_position_intent,
     )
 
     ws = _ws_id(db)
@@ -3305,7 +3305,7 @@ async def put_position_intent(
         raise HTTPException(status_code=409, detail=str(exc))
     response.status_code = 201 if status == "CREATED" else 200
     return {"status": status, "intent": intent_payload(intent),
-            "enforced_by_optimizer": False, "disclosure": ENFORCEMENT_DISCLOSURE}
+            "enforced_by_optimizer": False, "disclosure": intent_disclosure()}
 
 
 @app.get("/portfolios/{portfolio_id}/position-intents/{symbol}/revisions")
@@ -4420,6 +4420,14 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
     ws = _ws_id(db)
     portfolio = resolve_portfolio_or_404(db, body.portfolio_id, ws)
 
+    # Advisory Integration V1 (Slice 1) — one default-OFF flag for the whole
+    # integration. Off: every branch below keyed on it is skipped and the run
+    # is the legacy run. On: see services/advisory_intent_context.py.
+    from services.advisory_intent_flag import advisory_intent_review_enabled
+    _advisory_enabled = advisory_intent_review_enabled()
+    _advisory_quotes: dict[str, dict] = {}
+    advisory_run = None
+
     # ── Phase 7.4 (ADR-008) — pre-run Wealth Goal selection validation ───────
     # Cheap existence/workspace-membership check only, before any holdings,
     # watchlist, provider, or AI work, and before any OptimizerHistory row
@@ -4577,6 +4585,9 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
         else:
             combined = float(ta_score)
         price_info = await asyncio.to_thread(fetch_price_info, symbol)
+        if _advisory_enabled:
+            # Frozen quote provenance (stale / cache-miss / quarantine markers) for the review.
+            _advisory_quotes[symbol] = dict(price_info)
         current_price = price_info.get("current_price")
         target_price  = fa.get("target_price") or price_info.get("target_price")
         dr = is_dr_symbol(symbol)
@@ -4768,6 +4779,20 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
             exc_info=True,
         )
 
+    # ── Advisory Integration V1 — frozen run context, loaded once before AI ──
+    if _advisory_enabled:
+        from services.advisory_intent_context import build_advisory_run, unavailable_advisory_run
+        try:
+            advisory_run = build_advisory_run(
+                db, ws, portfolio, holdings,
+                quote_evidence=_advisory_quotes, execution_facts=execution_facts,
+            )
+        except Exception as _adv_exc:
+            # Observable degraded mode: legacy advice continues, every held
+            # position's review is UNRESOLVED (CONTEXT_UNAVAILABLE).
+            _log.error("analyze_optimizer: advisory intent context unavailable: %s", _adv_exc, exc_info=True)
+            advisory_run = unavailable_advisory_run(ws, portfolio, holdings, type(_adv_exc).__name__)
+
     try:
         result = await asyncio.to_thread(
             run_layered_optimizer, portfolio_data, watchlist_data, portfolio.name,
@@ -4779,6 +4804,7 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
             execution_ctx,
             on_stage=partial(mark_stage, body.portfolio_id),
             enforce_effective_policy_in_fallback=goal_constraint_candidate is not None,
+            **({"advisory": advisory_run} if advisory_run is not None else {}),
         )
     except Exception as _optimizer_exc:
         from agents.optimizer import HardPolicyEnforcementError
@@ -4904,6 +4930,26 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
     consensus_block = result.get("consensus") if isinstance(result.get("consensus"), dict) else {}
     result["final_consensus_score"] = consensus_block.get("consensus_strength_score")
 
+    # ── Advisory Integration V1 — final review, then freeze, then persist ────
+    # The economic allocation (result) stays exactly as stabilization left it.
+    # Noise filter / action summary / execution optimization run ONCE, on a
+    # separate response projection; the review reads both, the frozen envelope
+    # is attached to both, and the persisted row keeps the economic rows.
+    response = result
+    if advisory_run is not None:
+        from services.advisory_intent_review import (
+            ENVELOPE_KEY, READ_CAPTURED, STATUS_KEY, apply_response_views,
+            build_review_envelope, observe_stabilization,
+        )
+        import copy as _copy
+        observe_stabilization(advisory_run, result)
+        response = _copy.deepcopy(result)
+        apply_response_views(response, advisory_run, _log)
+        _review_envelope = build_review_envelope(advisory_run, result, response)
+        result[ENVELOPE_KEY] = _review_envelope
+        response[ENVELOPE_KEY] = _review_envelope
+        response[STATUS_KEY] = READ_CAPTURED
+
     entry = OptimizerHistory(
         workspace_id=ws,
         portfolio_id=body.portfolio_id,
@@ -4927,6 +4973,7 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
     db.commit()
     db.refresh(entry)
     result["history_id"] = entry.id
+    response["history_id"] = entry.id
 
     # ── Signal History pipeline ────────────────────────────────────────────────
     # Record every actionable allocation confirmed by the Consensus Engine so
@@ -5008,6 +5055,7 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
         )
         if _snap_id:
             result["recommendation_snapshot_id"] = _snap_id
+            response["recommendation_snapshot_id"] = _snap_id
     except Exception as _dm_exc:
         _log.warning("analyze_optimizer: decision_memory snapshot write failed: %s", _dm_exc)
 
@@ -5129,38 +5177,15 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
         daemon=True,
     ).start()
 
-    # ── Presentation layer: noise filter ─────────────────────────────────────────
-    # Suppresses micro-rebalance BUY/SELL recommendations for the HTTP response
-    # only. DB records (history, signal history, snapshots) already saved above
-    # with unfiltered optimizer output.
-    try:
-        from services.noise_filter import apply_noise_filter
-        apply_noise_filter(result)
-    except Exception as _nf_exc:
-        _log.warning("analyze_optimizer: noise filter failed — continuing: %s", _nf_exc)
-
-    # ── UX.2C — Action Summary (deterministic, no AI, no DB) ──────────────────
-    try:
-        from services.optimizer_action_summary import build_action_summary
-        result["action_summary"] = build_action_summary(result.get("target_allocations", []))
-    except Exception as _as_exc:
-        _log.warning("analyze_optimizer: action_summary failed — continuing: %s", _as_exc)
-
-    # ── Execution Optimization — deterministic post-processing stage ─────────
-    # See OPTIMIZER_PHILOSOPHY.md §7/§9/§10. Never re-runs L1/L2/L3, never
-    # mutates target_allocations — a response-time view, same pattern as
-    # action_summary above.
-    try:
-        from services.optimizer.execution_optimizer import optimize_execution
-        _violations = (result.get("active_policy") or {}).get("violations", [])
-        result["execution_optimization"] = optimize_execution(
-            result.get("action_summary", {}),
-            result.get("target_allocations", []),
-            cash_available=float(result.get("cash_balance") or 0.0),
-            violations=_violations,
-        ).model_dump()
-    except Exception as _eo_exc:
-        _log.warning("analyze_optimizer: execution_optimization failed — continuing: %s", _eo_exc)
+    # ── Presentation layer: noise filter → Action Summary (UX.2C) → Execution
+    # Optimization. Response-time views only: DB records (history, signal
+    # history, snapshots) were saved above with unfiltered optimizer output.
+    # Execution Optimization never re-runs L1/L2/L3 and never mutates
+    # target_allocations (OPTIMIZER_PHILOSOPHY.md §7/§9/§10). Enabled advisory
+    # runs computed these once, on the response projection, before freezing.
+    if advisory_run is None:
+        from services.advisory_intent_review import apply_response_views
+        apply_response_views(result, None, _log)
 
     # M31.3 shadow-only eligibility: all legacy optimizer output and execution
     # post-processing are complete. This emits telemetry and cannot alter the
@@ -5180,7 +5205,7 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
                     .get("classification_agrees")
                 ),
             )
-            for allocation in result.get("target_allocations", [])
+            for allocation in response.get("target_allocations", [])
             if str(allocation.get("action", "")).upper()
             in {"BUY", "SELL", "ACCUMULATE", "REDUCE"}
             and allocation.get("symbol")
@@ -5198,7 +5223,7 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
         )
 
     finish_run(body.portfolio_id, ok=True)
-    return result
+    return response
 
 
 @app.get("/optimizer/history")
@@ -5247,6 +5272,12 @@ async def get_optimizer_history_detail(history_id: int, db: Session = Depends(ge
     if "final_consensus_score" not in payload:
         consensus = payload.get("consensus") if isinstance(payload.get("consensus"), dict) else {}
         payload["final_consensus_score"] = consensus.get("consensus_strength_score")
+    # Advisory Integration V1 — the frozen review as captured at run time
+    # (NOT_CAPTURED / EVIDENCE_INVALID otherwise); never recomputed.
+    from services.advisory_intent_flag import advisory_intent_review_enabled
+    if advisory_intent_review_enabled():
+        from services.advisory_intent_review import frozen_review_read
+        payload.update(frozen_review_read(db, ws, row.portfolio_id, payload))
     # recommendation_snapshot_id is injected into result after result_json is committed,
     # so it is absent from stored history rows. Look it up and inject it here.
     if not payload.get("recommendation_snapshot_id"):
@@ -8149,7 +8180,23 @@ async def get_recommendation_snapshot(snapshot_id: int, db: Session = Depends(ge
     except DecisionGoalContextIntegrityError:
         raise HTTPException(status_code=409, detail=decision_context_integrity_error_detail())
 
+    # Advisory Integration V1 — read through the existing OptimizerHistory
+    # linkage; the envelope is never duplicated into RecommendationSnapshot.
+    advisory_fields: dict = {}
+    from services.advisory_intent_flag import advisory_intent_review_enabled
+    if advisory_intent_review_enabled():
+        from services.advisory_intent_review import frozen_review_read
+        history_row = db.query(OptimizerHistory).filter_by(
+            id=snap.optimizer_history_id, workspace_id=ws,
+        ).first()
+        try:
+            history_payload = _json.loads(history_row.result_json) if history_row and history_row.result_json else {}
+        except ValueError:
+            history_payload = {"advisory_intent_review": "unreadable"}
+        advisory_fields = frozen_review_read(db, ws, snap.portfolio_id, history_payload)
+
     return {
+        **advisory_fields,
         "id": snap.id,
         "optimizer_history_id": snap.optimizer_history_id,
         "portfolio_id": snap.portfolio_id,

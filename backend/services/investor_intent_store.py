@@ -15,15 +15,16 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from models.database import PortfolioItem, PositionIntent, PositionIntentRevision
+from services.advisory_intent_flag import (
+    DISCLOSURE_DISABLED, advisory_intent_review_enabled, intent_disclosure,
+)
 from services.investor_intent import (
     AUTHOR_OWNER, INTENT_CONTRACT_VERSION, STATUS_CONFIRMED, STATUS_RECONFIRMATION_REQUIRED,
     IntentState, intent_status,
 )
 
-ENFORCEMENT_DISCLOSURE = (
-    "Investor Intent V1 is saved for your records only. It is not yet read or "
-    "enforced by the portfolio optimizer, and it does not change current recommendations."
-)
+# Wording when Advisory Integration V1 is off (the default); see intent_disclosure().
+ENFORCEMENT_DISCLOSURE = DISCLOSURE_DISABLED
 
 
 class PositionNotFoundError(LookupError):
@@ -159,9 +160,65 @@ def list_position_intent_view(db: Session, workspace_id: int, portfolio_id: int)
             # Shown even when re-confirmation is required, as history; it does not apply then.
             "intent": intent_payload(intent) if intent is not None else None,
         })
+    # Even with Advisory Integration V1 on, intent is advisory context plus a
+    # deterministic review, never enforcement: enforced_by_optimizer stays False.
     return {"contract_version": INTENT_CONTRACT_VERSION, "portfolio_id": portfolio_id,
-            "enforced_by_optimizer": False, "disclosure": ENFORCEMENT_DISCLOSURE,
+            "enforced_by_optimizer": False, "disclosure": intent_disclosure(),
+            "advisory_review_enabled": advisory_intent_review_enabled(),
             "positions": positions}
+
+
+def held_intent_applicability(
+    db: Session, workspace_id: int, portfolio_id: int, items: list[PortfolioItem],
+) -> dict[str, dict]:
+    """Bulk applicability of intent for the given held items (two queries).
+
+    Returns {symbol: {"status", "intent", "confirmed_at"}} for every item.
+    "intent" is the applicable IntentState only when CONFIRMED; for
+    RECONFIRMATION_REQUIRED it is None and "historical_intent" carries the
+    stored revision as non-applicable evidence.
+    """
+    symbols = sorted({item.symbol for item in items})
+    intents = {
+        row.position_symbol: row for row in
+        db.query(PositionIntent)
+        .filter(PositionIntent.workspace_id == workspace_id,
+                PositionIntent.portfolio_id == portfolio_id,
+                PositionIntent.position_symbol.in_(symbols))
+        .all()
+    } if symbols else {}
+    confirmed_at = _confirmed_at(db, list(intents.values()))
+    result: dict[str, dict] = {}
+    for item in items:
+        intent = intents.get(item.symbol)
+        when = confirmed_at.get(intent.id) if intent is not None else None
+        status = _status(intent, item, when)
+        result[item.symbol] = {
+            "status": status,
+            "intent": intent_state(intent) if status == STATUS_CONFIRMED else None,
+            "confirmed_at": when,
+            "historical_intent": (
+                {**intent_payload(intent), "confirmed_at": when.isoformat() if when else None}
+                if intent is not None and status != STATUS_CONFIRMED else None
+            ),
+        }
+    return result
+
+
+def current_intent_revisions(
+    db: Session, workspace_id: int, portfolio_id: int, symbols: list[str],
+) -> dict[str, int]:
+    """Current stored revision per symbol (for "changed since this run" display only)."""
+    if not symbols:
+        return {}
+    return {
+        row.position_symbol: row.revision for row in
+        db.query(PositionIntent)
+        .filter(PositionIntent.workspace_id == workspace_id,
+                PositionIntent.portfolio_id == portfolio_id,
+                PositionIntent.position_symbol.in_(sorted(set(symbols))))
+        .all()
+    }
 
 
 def put_position_intent(

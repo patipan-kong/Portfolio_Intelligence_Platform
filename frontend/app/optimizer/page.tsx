@@ -19,6 +19,7 @@ import ActivePolicyEnvelopeCard from "@/components/ActivePolicyEnvelopeCard";
 import AttributionPanel from "@/components/AttributionPanel";
 import OperationsTimeline from "@/components/operations-center/quant/OperationsTimeline";
 import ExecutionPlanCard from "@/components/optimizer/ExecutionPlanCard";
+import AdvisoryIntentReviewCard from "@/components/optimizer/AdvisoryIntentReviewCard";
 import GoalConstraintDisclosure from "@/components/optimizer/GoalConstraintDisclosure";
 import { DecisionActionPanel, TZ, DECISION_CFG, DECISION_BADGE } from "@/components/optimizer/DecisionActionPanel";
 import { isDeferred, NO_ACTION_REASON_LABELS } from "@/lib/executionPlan";
@@ -2001,6 +2002,10 @@ function ResultPanel({ result, loading, profiles, portfolioId, onForceRebalance,
           target_allocations amounts), not a separately stored "execution
           plan". The canonical recommendation is never mutated. */}
       <ExecutionPlanCard result={result} portfolioId={portfolioId ?? undefined} />
+
+      {/* Advisory Integration V1 — frozen Intent review for held positions
+          (renders nothing when the feature flag is off). */}
+      <AdvisoryIntentReviewCard result={result} />
 
       {/* Act on the plan — record approve/reject/override */}
       {result.recommendation_snapshot_id && portfolioId && (

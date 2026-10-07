@@ -470,13 +470,20 @@ def test_shadow_adoption_sources_add_no_symbol_taxonomy_heuristics():
 
 
 def test_selected_boundary_placement_is_post_legacy_result():
+    from services import advisory_intent_review
+
     optimizer_source = inspect.getsource(main.analyze_optimizer)
+    views_source = inspect.getsource(advisory_intent_review.apply_response_views)
     plan_source = inspect.getsource(execution_plan.build_execution_plan)
     transaction_source = inspect.getsource(portfolio_transactions.execute_buy)
 
-    assert optimizer_source.index('result["execution_optimization"]') < optimizer_source.index(
-        'legacy_path="OPTIMIZER_TARGET_ALLOCATION"'
-    )
+    # Execution optimization lives in the shared response-view stage (legacy
+    # and Advisory Integration paths); every call to it precedes the shadow.
+    assert 'response["execution_optimization"]' in views_source
+    shadow_at = optimizer_source.index('legacy_path="OPTIMIZER_TARGET_ALLOCATION"')
+    view_calls = [i for i in range(len(optimizer_source))
+                  if optimizer_source.startswith("apply_response_views(", i)]
+    assert view_calls and all(i < shadow_at for i in view_calls)
     assert plan_source.index("result = ExecutionPlanResult(") < plan_source.index(
         'legacy_path="EXECUTION_PLAN"'
     )
