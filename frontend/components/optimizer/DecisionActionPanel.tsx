@@ -140,6 +140,8 @@ export function DecisionActionPanel({
   portfolioId: number;
 }) {
   const [existing, setExisting] = useState<ExecutionDecision | null | undefined>(undefined);
+  const [decisionLoadFailed, setDecisionLoadFailed] = useState(false);
+  const [decisionLoadAttempt, setDecisionLoadAttempt] = useState(0);
   const [confirming, setConfirming] = useState<ExecutionDecisionType | null>(null);
   const [notes, setNotes] = useState("");
   const [overrideType, setOverrideType] = useState<OverrideCategoryType | "">("");
@@ -152,13 +154,20 @@ export function DecisionActionPanel({
   const [goalContext, setGoalContext] = useState<DecisionGoalContext | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
+    setExisting(undefined);
+    setDecisionLoadFailed(false);
+    setConfirming(null);
     listExecutionDecisions(portfolioId, undefined, 50)
       .then((ds) => {
+        if (cancelled) return;
         const match = ds.find((d) => d.recommendation_snapshot_id === snapshotId);
+        if (!match && ds.length >= 50) { setDecisionLoadFailed(true); return; }
         setExisting(match ?? null);
       })
-      .catch(() => setExisting(null));
-  }, [snapshotId, portfolioId]);
+      .catch(() => { if (!cancelled) setDecisionLoadFailed(true); });
+    return () => { cancelled = true; };
+  }, [snapshotId, portfolioId, decisionLoadAttempt]);
 
   // Fetch shadow performance once we know an APPROVED decision exists
   useEffect(() => {
@@ -197,7 +206,11 @@ export function DecisionActionPanel({
       .catch(() => setGoalContext(null));
   }, [existing]);
 
-  if (existing === undefined) return null; // still loading
+  if (decisionLoadFailed) return <section className="bg-white border rounded-xl p-4 text-sm" role="status">
+    <p>Owner decision status unavailable. We could not check whether a decision was already recorded.</p>
+    <button type="button" className="text-blue-700 underline mt-2" onClick={() => setDecisionLoadAttempt((n) => n + 1)}>Retry decision status</button>
+  </section>;
+  if (existing === undefined) return <p className="text-xs text-gray-500" role="status">Checking recorded owner decision…</p>;
 
   const handleConfirm = async () => {
     if (!confirming) return;
@@ -214,9 +227,17 @@ export function DecisionActionPanel({
         original_symbol: (confirming === "MANUAL_OVERRIDE" && originalSymbol.trim()) ? originalSymbol.trim() : undefined,
         replacement_symbol: (confirming === "MANUAL_OVERRIDE" && replacementSymbol.trim()) ? replacementSymbol.trim() : undefined,
       });
-      const ds = await listExecutionDecisions(portfolioId, undefined, 50);
-      const match = ds.find((d) => d.recommendation_snapshot_id === snapshotId);
-      setExisting(match ?? null);
+      // The write succeeded. A failed/incomplete read-back must not reopen
+      // recording controls as though no owner decision exists.
+      setExisting(undefined);
+      try {
+        const ds = await listExecutionDecisions(portfolioId, undefined, 50);
+        const match = ds.find((d) => d.recommendation_snapshot_id === snapshotId);
+        if (match) setExisting(match);
+        else setDecisionLoadFailed(true);
+      } catch {
+        setDecisionLoadFailed(true);
+      }
       window.dispatchEvent(new CustomEvent("execution-decision-recorded", {
         detail: { portfolioId, snapshotId, decision: confirming },
       }));
@@ -348,8 +369,9 @@ export function DecisionActionPanel({
   return (
     <section className="bg-white border rounded-xl p-4 shadow-sm">
       <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
-        Record Execution Decision
+        Record owner decision
       </p>
+      <p className="text-xs text-gray-600 mb-3">Approval records your decision and starts virtual performance tracking. It does not place trades or execute this plan.</p>
 
       {confirming ? (
         <div className="space-y-3">

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import SignalBadge from "@/components/SignalBadge";
 import type { OptimizerResult, TradeReason } from "@/lib/api";
+import { executionEvidenceAvailable } from "@/lib/optimizerPresentation";
 import {
   deriveExecutionPlan,
   NO_ACTION_REASON_LABELS,
@@ -246,6 +247,12 @@ export default function ExecutionPlanCard({
   result: OptimizerResult;
   portfolioId?: number;
 }) {
+  if (!executionEvidenceAvailable(result)) return (
+    <section className="bg-white border rounded-xl p-4 shadow-sm" aria-label="Execution Plan">
+      <h3 className="text-sm font-bold">Execution Plan</h3>
+      <p className="text-sm text-gray-600 mt-2">Scheduled trades unavailable — execution evidence is missing or incomplete. This does not confirm zero trades.</p>
+    </section>
+  );
   const plan = deriveExecutionPlan(
     result.action_summary,
     result.target_allocations,
@@ -268,11 +275,11 @@ export default function ExecutionPlanCard({
         <h3 className="text-sm font-bold text-gray-800 uppercase tracking-wider">Execution Plan</h3>
         {plan.hasTrades ? (
           <span className="text-xs font-semibold px-2 py-0.5 rounded-full border bg-blue-50 border-blue-200 text-blue-700">
-            {plan.trades.length} trade{plan.trades.length !== 1 ? "s" : ""} today
+            {plan.trades.length} scheduled trade{plan.trades.length !== 1 ? "s" : ""} in this plan
           </span>
         ) : (
           <span className="text-xs font-semibold px-2 py-0.5 rounded-full border bg-green-50 border-green-200 text-green-700">
-            No trades today
+            No trades scheduled in this plan
           </span>
         )}
         {/* AI Evaluation M7 entry point (UX §2.3), wording corrected under
@@ -302,7 +309,7 @@ export default function ExecutionPlanCard({
 
       {plan.hasTrades ? (
         <>
-          <p className="px-4 pt-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Today&apos;s Trades</p>
+          <p className="px-4 pt-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Scheduled changes at analysis time — no orders placed</p>
           <div className="px-1 py-1">
             {plan.trades.map((t) => <TradeRow key={t.symbol} trade={t} />)}
           </div>
@@ -366,7 +373,8 @@ function NoTradesBody({ result, deferredCount }: { result: OptimizerResult; defe
           ✓
         </span>
         <div className="flex-1 min-w-0 space-y-1">
-          <p className="text-sm font-semibold text-gray-800">No trades recommended today</p>
+          <p className="text-sm font-semibold text-gray-800">No trades scheduled in this plan</p>
+          <p className="text-xs text-gray-500">Economic recommendations may remain deferred. Scheduling does not replace the recommendation or your Intent review.</p>
           <p className="text-sm text-gray-600">{primary.headline}</p>
           {primary.detail && <p className="text-xs text-gray-500 leading-relaxed">{primary.detail}</p>}
           <a href={primary.href} className="inline-block text-xs font-semibold text-blue-600 hover:underline">
