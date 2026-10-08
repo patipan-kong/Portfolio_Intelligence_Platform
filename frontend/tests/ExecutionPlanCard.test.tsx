@@ -68,6 +68,7 @@ function baseResult(overrides: Partial<OptimizerResult> = {}): OptimizerResult {
 describe("ExecutionPlanCard structured no-trade causes", () => {
   function noTrades(within: boolean): OptimizerResult {
     return baseResult({
+      action_summary: actionSummary(),
       status: "NO_REBALANCE_REQUIRED",
       no_action_reason: within ? "WELL_BALANCED" : "INSUFFICIENT_EDGE",
       stabilization: {
@@ -137,14 +138,14 @@ describe("ExecutionPlanCard structured trade reason", () => {
     expect(screen.queryByText("Funding source")).not.toBeInTheDocument();
   });
 
-  test("missing execution_optimization degrades gracefully — no reason line, no crash", () => {
+  test("missing sell scheduling evidence shows unavailable, not an executable trade", () => {
     const result = baseResult({
       action_summary: actionSummary({ sell: [actionSummaryEntry()] }),
       target_allocations: [allocation()],
       // execution_optimization intentionally omitted (old history payload)
     });
     render(<ExecutionPlanCard result={result} />);
-    expect(screen.getByText("KBANK")).toBeInTheDocument();
+    expect(screen.getByText(/Scheduled trades unavailable/)).toBeInTheDocument();
     expect(screen.queryByText(/^Reason:/)).not.toBeInTheDocument();
     expect(screen.queryByText("Funding source")).not.toBeInTheDocument();
   });

@@ -17,6 +17,7 @@ import {
 } from "@/lib/api";
 
 let currentSelection: number | null = 1;
+const reportUnresolvedPortfolio = vi.fn();
 const portfolios = [
   { id: 1, name: "Core", cash_balance: 10_000, created_at: "2026-01-01" },
   { id: 2, name: "Income", cash_balance: 5_000, created_at: "2026-01-01" },
@@ -26,13 +27,13 @@ vi.mock("@/lib/PortfolioContext", () => ({
   usePortfolio: () => ({
     portfolios,
     currentSelection,
-    reportUnresolvedPortfolio: vi.fn(),
+    reportUnresolvedPortfolio,
   }),
 }));
 
 vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
-  useRouter: () => ({ push: vi.fn() }),
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
 }));
 
 vi.mock("@/lib/api", () => ({

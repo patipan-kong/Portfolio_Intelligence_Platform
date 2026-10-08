@@ -27,6 +27,6 @@ describe("Auditor evidence attribution", () => {
   });
   it("does not reinterpret legacy evidence", () => {
     render(<AuditorClaimFlag flag={base} />);
-    expect(screen.getByText("[Historical model flag]")).toBeInTheDocument();
+    expect(screen.getByText("[Historical model flag — not independently verified]")).toBeInTheDocument();
   });
 });

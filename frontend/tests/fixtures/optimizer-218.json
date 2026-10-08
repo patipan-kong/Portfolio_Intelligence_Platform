@@ -1,0 +1,1886 @@
+{
+  "portfolio_name": "TA",
+  "portfolio_assessment": "Confirm no swaps: supplied scores establish neither a 10-point advantage nor a mandatory policy breach. Retain cash pending stronger growth evidence and cost-adjusted conviction; the 4% minimum overrides the 3% cash preference. Verified DR exposure of 43.90% exceeds advisory guidance only, while MICRON's existing holding does not trigger the buy-only 15% execution clamp.",
+  "optimization_notes": "No rebalancing action recommended at this time. No mandatory breach or demonstrated score advantage justifies trading costs. Continue monitoring: BH.BK, MICRON01.BK. BH.BK and MICRON01.BK exceed the maximum position cap of 15%, triggering high severity flags. The other allocations comply with risk thresholds.",
+  "target_allocations": [
+    {
+      "symbol": "AAPL01.BK",
+      "current_weight": 6.73,
+      "target_weight": 6.73,
+      "action": "HOLD",
+      "allocation_change_percent": 0.0,
+      "estimated_amount": 0,
+      "reason": "Strong momentum supports retention; elevated valuation limits conviction for additional capital.",
+      "ta_score": 1,
+      "fa_score": 4,
+      "pe_ratio": 38.51,
+      "roe": 148.8,
+      "sector": "Technology",
+      "combined_score": 5.0,
+      "timing_score": 90,
+      "execution_risk": "MEDIUM",
+      "execution_warnings": [
+        "DR - Execution Sensitive",
+        "Low Liquidity"
+      ],
+      "asset_type": "DR",
+      "slippage_est_pct": 0.5,
+      "execution_priority": "HIGH",
+      "timing_note": null
+    },
+    {
+      "symbol": "BH.BK",
+      "current_weight": 15.31,
+      "target_weight": 15.31,
+      "action": "HOLD",
+      "allocation_change_percent": 0.0,
+      "estimated_amount": 0,
+      "reason": "Maintain quantity under owner's no-increase restriction; deferred entry timing also discourages additions.",
+      "ta_score": 1,
+      "fa_score": 4,
+      "pe_ratio": 21.4,
+      "roe": 27.0,
+      "sector": "Healthcare",
+      "combined_score": 2.8,
+      "timing_score": 15,
+      "execution_risk": "MEDIUM",
+      "execution_warnings": [],
+      "asset_type": "EQUITY",
+      "slippage_est_pct": 0.3,
+      "execution_priority": "DEFER",
+      "timing_note": null
+    },
+    {
+      "symbol": "GOOGL01.BK",
+      "current_weight": 6.98,
+      "target_weight": 6.98,
+      "action": "HOLD",
+      "allocation_change_percent": 0.0,
+      "estimated_amount": 0,
+      "reason": "Attractive fundamentals support retention, but sideways momentum weakens the case for aggressive additions.",
+      "ta_score": 0,
+      "fa_score": 6,
+      "pe_ratio": 17.35,
+      "roe": 48.7,
+      "sector": "Communication Services",
+      "combined_score": 5.0,
+      "timing_score": 80,
+      "execution_risk": "MEDIUM",
+      "execution_warnings": [
+        "DR - Execution Sensitive",
+        "Low Liquidity"
+      ],
+      "asset_type": "DR",
+      "slippage_est_pct": 0.5,
+      "execution_priority": "HIGH",
+      "timing_note": null
+    },
+    {
+      "symbol": "MICRON01.BK",
+      "current_weight": 16.03,
+      "target_weight": 16.03,
+      "action": "HOLD",
+      "allocation_change_percent": 0.0,
+      "estimated_amount": 0,
+      "reason": "Preserve shares under owner's no-decrease restriction; conflicting technical indicators argue against adding.",
+      "ta_score": -1,
+      "fa_score": 7,
+      "pe_ratio": 14.58,
+      "roe": 88.3,
+      "sector": "Technology",
+      "combined_score": 5.0,
+      "timing_score": 90,
+      "execution_risk": "MEDIUM",
+      "execution_warnings": [
+        "DR - Execution Sensitive",
+        "Low Liquidity"
+      ],
+      "asset_type": "DR",
+      "slippage_est_pct": 0.5,
+      "execution_priority": "HIGH",
+      "timing_note": null
+    },
+    {
+      "symbol": "NVDA01.BK",
+      "current_weight": 14.16,
+      "target_weight": 14.16,
+      "action": "HOLD",
+      "allocation_change_percent": 0.0,
+      "estimated_amount": 0,
+      "reason": "Retain strong momentum exposure; remaining execution-cap headroom is below the 3% minimum adjustment.",
+      "ta_score": 2,
+      "fa_score": 5,
+      "pe_ratio": 29.95,
+      "roe": 117.2,
+      "sector": "Technology",
+      "combined_score": 5.0,
+      "timing_score": 90,
+      "execution_risk": "MEDIUM",
+      "execution_warnings": [
+        "DR - Execution Sensitive",
+        "Low Liquidity"
+      ],
+      "asset_type": "DR",
+      "slippage_est_pct": 0.5,
+      "execution_priority": "HIGH",
+      "timing_note": null
+    },
+    {
+      "symbol": "GULF.BK",
+      "current_weight": 12.0,
+      "target_weight": 12.0,
+      "action": "HOLD",
+      "allocation_change_percent": 0.0,
+      "estimated_amount": 0,
+      "reason": "Weak momentum warrants monitoring, but no sufficiently superior replacement establishes a cost-adjusted rotation benefit.",
+      "ta_score": 0,
+      "fa_score": 5,
+      "pe_ratio": 11.74,
+      "roe": 12.4,
+      "sector": "Utilities",
+      "combined_score": 3.0,
+      "timing_score": 20,
+      "execution_risk": "MEDIUM",
+      "execution_warnings": [],
+      "asset_type": "EQUITY",
+      "slippage_est_pct": 0.3,
+      "execution_priority": "DEFER",
+      "timing_note": null
+    },
+    {
+      "symbol": "META01.BK",
+      "current_weight": 0.0,
+      "target_weight": 0.0,
+      "action": "WATCH",
+      "allocation_change_percent": 0.0,
+      "estimated_amount": 0,
+      "reason": "Strong momentum and favorable timing merit review after instrument verification and revenue-growth validation.",
+      "ta_score": 1,
+      "fa_score": 5,
+      "pe_ratio": 27.3,
+      "roe": 29.8,
+      "sector": "Communication Services",
+      "combined_score": 3.4,
+      "timing_score": 90,
+      "execution_risk": "MEDIUM",
+      "execution_warnings": [],
+      "asset_type": "EQUITY",
+      "slippage_est_pct": 0.3,
+      "execution_priority": "HIGH",
+      "timing_note": null
+    },
+    {
+      "symbol": "MSFT01.BK",
+      "current_weight": 0.0,
+      "target_weight": 0.0,
+      "action": "WATCH",
+      "allocation_change_percent": 0.0,
+      "estimated_amount": 0,
+      "reason": "Quality and momentum fit the persona; require verified execution facts and incremental portfolio benefit.",
+      "ta_score": 0,
+      "fa_score": 5,
+      "pe_ratio": 29.41,
+      "roe": 34.0,
+      "sector": "Technology",
+      "combined_score": 5.0,
+      "timing_score": 90,
+      "execution_risk": "MEDIUM",
+      "execution_warnings": [
+        "DR - Execution Sensitive",
+        "Low Liquidity"
+      ],
+      "asset_type": "DR",
+      "slippage_est_pct": 0.5,
+      "execution_priority": "HIGH",
+      "timing_note": null
+    },
+    {
+      "symbol": "TOP.BK",
+      "current_weight": 0.0,
+      "target_weight": 0.0,
+      "action": "WATCH",
+      "allocation_change_percent": 0.0,
+      "estimated_amount": 0,
+      "reason": "Positive momentum offers energy diversification, but cyclical valuation alone does not establish durable growth.",
+      "ta_score": 0,
+      "fa_score": 6,
+      "pe_ratio": 5.37,
+      "roe": 16.0,
+      "sector": "Energy",
+      "combined_score": 3.6,
+      "timing_score": 65,
+      "execution_risk": "MEDIUM",
+      "execution_warnings": [],
+      "asset_type": "EQUITY",
+      "slippage_est_pct": 0.3,
+      "execution_priority": "MEDIUM",
+      "timing_note": null
+    }
+  ],
+  "swap_suggestions": [],
+  "watchlist_ranking": [],
+  "analyzed_at": "2026-10-08T04:48:03.698434Z",
+  "portfolio_count": 6,
+  "max_reached": false,
+  "status": "NO_ACTION",
+  "no_action_reason": "INSUFFICIENT_EDGE",
+  "no_action_summary": "No mandatory breach or demonstrated score advantage justifies trading costs.",
+  "cash_balance": 286562.71755,
+  "total_value": 995562.72,
+  "layer1_result": {
+    "swaps": [],
+    "top_buys": [
+      "NVDA01.BK",
+      "META01.BK",
+      "GOOGL01.BK",
+      "TOP.BK",
+      "PTTEP.BK"
+    ],
+    "sector_flags": [
+      "BH.BK timing defer (ts=15)",
+      "GULF.BK timing defer (ts=20)"
+    ],
+    "priority": "no_action",
+    "swap_suggestions": [],
+    "provider": "gemini",
+    "model": "gemini-3.8-flash",
+    "name": "Strategist"
+  },
+  "layer2_result": {
+    "status": "NO_ACTION",
+    "rebalance_opportunity_score": 21,
+    "no_action_reason": "INSUFFICIENT_EDGE",
+    "no_action_summary": "No mandatory breach or demonstrated score advantage justifies trading costs.",
+    "blocked_opportunities": [],
+    "agrees_with_layer1": true,
+    "disagreements": [],
+    "portfolio_assessment": "Confirm no swaps: supplied scores establish neither a 10-point advantage nor a mandatory policy breach. Retain cash pending stronger growth evidence and cost-adjusted conviction; the 4% minimum overrides the 3% cash preference. Verified DR exposure of 43.90% exceeds advisory guidance only, while MICRON's existing holding does not trigger the buy-only 15% execution clamp.",
+    "cash_balance_target": 28.79,
+    "target_allocations": [
+      {
+        "symbol": "AAPL01.BK",
+        "current_weight": 6.73,
+        "target_weight": 6.73,
+        "action": "HOLD",
+        "allocation_change_percent": 0.0,
+        "estimated_amount": 0,
+        "reason": "Strong momentum supports retention; elevated valuation limits conviction for additional capital.",
+        "ta_score": 1,
+        "fa_score": 4,
+        "pe_ratio": 38.51,
+        "roe": 148.8,
+        "sector": "Technology",
+        "combined_score": 5.0,
+        "timing_score": 90,
+        "execution_risk": "MEDIUM",
+        "execution_warnings": [
+          "DR - Execution Sensitive",
+          "Low Liquidity"
+        ],
+        "asset_type": "DR",
+        "slippage_est_pct": 0.5,
+        "execution_priority": "HIGH",
+        "timing_note": null
+      },
+      {
+        "symbol": "BH.BK",
+        "current_weight": 15.31,
+        "target_weight": 15.31,
+        "action": "HOLD",
+        "allocation_change_percent": 0.0,
+        "estimated_amount": 0,
+        "reason": "Maintain quantity under owner's no-increase restriction; deferred entry timing also discourages additions.",
+        "ta_score": 1,
+        "fa_score": 4,
+        "pe_ratio": 21.4,
+        "roe": 27.0,
+        "sector": "Healthcare",
+        "combined_score": 2.8,
+        "timing_score": 15,
+        "execution_risk": "MEDIUM",
+        "execution_warnings": [],
+        "asset_type": "EQUITY",
+        "slippage_est_pct": 0.3,
+        "execution_priority": "DEFER",
+        "timing_note": null
+      },
+      {
+        "symbol": "GOOGL01.BK",
+        "current_weight": 6.98,
+        "target_weight": 6.98,
+        "action": "HOLD",
+        "allocation_change_percent": 0.0,
+        "estimated_amount": 0,
+        "reason": "Attractive fundamentals support retention, but sideways momentum weakens the case for aggressive additions.",
+        "ta_score": 0,
+        "fa_score": 6,
+        "pe_ratio": 17.35,
+        "roe": 48.7,
+        "sector": "Communication Services",
+        "combined_score": 5.0,
+        "timing_score": 80,
+        "execution_risk": "MEDIUM",
+        "execution_warnings": [
+          "DR - Execution Sensitive",
+          "Low Liquidity"
+        ],
+        "asset_type": "DR",
+        "slippage_est_pct": 0.5,
+        "execution_priority": "HIGH",
+        "timing_note": null
+      },
+      {
+        "symbol": "MICRON01.BK",
+        "current_weight": 16.03,
+        "target_weight": 16.03,
+        "action": "HOLD",
+        "allocation_change_percent": 0.0,
+        "estimated_amount": 0,
+        "reason": "Preserve shares under owner's no-decrease restriction; conflicting technical indicators argue against adding.",
+        "ta_score": -1,
+        "fa_score": 7,
+        "pe_ratio": 14.58,
+        "roe": 88.3,
+        "sector": "Technology",
+        "combined_score": 5.0,
+        "timing_score": 90,
+        "execution_risk": "MEDIUM",
+        "execution_warnings": [
+          "DR - Execution Sensitive",
+          "Low Liquidity"
+        ],
+        "asset_type": "DR",
+        "slippage_est_pct": 0.5,
+        "execution_priority": "HIGH",
+        "timing_note": null
+      },
+      {
+        "symbol": "NVDA01.BK",
+        "current_weight": 14.16,
+        "target_weight": 14.16,
+        "action": "HOLD",
+        "allocation_change_percent": 0.0,
+        "estimated_amount": 0,
+        "reason": "Retain strong momentum exposure; remaining execution-cap headroom is below the 3% minimum adjustment.",
+        "ta_score": 2,
+        "fa_score": 5,
+        "pe_ratio": 29.95,
+        "roe": 117.2,
+        "sector": "Technology",
+        "combined_score": 5.0,
+        "timing_score": 90,
+        "execution_risk": "MEDIUM",
+        "execution_warnings": [
+          "DR - Execution Sensitive",
+          "Low Liquidity"
+        ],
+        "asset_type": "DR",
+        "slippage_est_pct": 0.5,
+        "execution_priority": "HIGH",
+        "timing_note": null
+      },
+      {
+        "symbol": "GULF.BK",
+        "current_weight": 12.0,
+        "target_weight": 12.0,
+        "action": "HOLD",
+        "allocation_change_percent": 0.0,
+        "estimated_amount": 0,
+        "reason": "Weak momentum warrants monitoring, but no sufficiently superior replacement establishes a cost-adjusted rotation benefit.",
+        "ta_score": 0,
+        "fa_score": 5,
+        "pe_ratio": 11.74,
+        "roe": 12.4,
+        "sector": "Utilities",
+        "combined_score": 3.0,
+        "timing_score": 20,
+        "execution_risk": "MEDIUM",
+        "execution_warnings": [],
+        "asset_type": "EQUITY",
+        "slippage_est_pct": 0.3,
+        "execution_priority": "DEFER",
+        "timing_note": null
+      },
+      {
+        "symbol": "META01.BK",
+        "current_weight": 0.0,
+        "target_weight": 0.0,
+        "action": "WATCH",
+        "allocation_change_percent": 0.0,
+        "estimated_amount": 0,
+        "reason": "Strong momentum and favorable timing merit review after instrument verification and revenue-growth validation.",
+        "ta_score": 1,
+        "fa_score": 5,
+        "pe_ratio": 27.3,
+        "roe": 29.8,
+        "sector": "Communication Services",
+        "combined_score": 3.4,
+        "timing_score": 90,
+        "execution_risk": "MEDIUM",
+        "execution_warnings": [],
+        "asset_type": "EQUITY",
+        "slippage_est_pct": 0.3,
+        "execution_priority": "HIGH",
+        "timing_note": null
+      },
+      {
+        "symbol": "MSFT01.BK",
+        "current_weight": 0.0,
+        "target_weight": 0.0,
+        "action": "WATCH",
+        "allocation_change_percent": 0.0,
+        "estimated_amount": 0,
+        "reason": "Quality and momentum fit the persona; require verified execution facts and incremental portfolio benefit.",
+        "ta_score": 0,
+        "fa_score": 5,
+        "pe_ratio": 29.41,
+        "roe": 34.0,
+        "sector": "Technology",
+        "combined_score": 5.0,
+        "timing_score": 90,
+        "execution_risk": "MEDIUM",
+        "execution_warnings": [
+          "DR - Execution Sensitive",
+          "Low Liquidity"
+        ],
+        "asset_type": "DR",
+        "slippage_est_pct": 0.5,
+        "execution_priority": "HIGH",
+        "timing_note": null
+      },
+      {
+        "symbol": "TOP.BK",
+        "current_weight": 0.0,
+        "target_weight": 0.0,
+        "action": "WATCH",
+        "allocation_change_percent": 0.0,
+        "estimated_amount": 0,
+        "reason": "Positive momentum offers energy diversification, but cyclical valuation alone does not establish durable growth.",
+        "ta_score": 0,
+        "fa_score": 6,
+        "pe_ratio": 5.37,
+        "roe": 16.0,
+        "sector": "Energy",
+        "combined_score": 3.6,
+        "timing_score": 65,
+        "execution_risk": "MEDIUM",
+        "execution_warnings": [],
+        "asset_type": "EQUITY",
+        "slippage_est_pct": 0.3,
+        "execution_priority": "MEDIUM",
+        "timing_note": null
+      }
+    ],
+    "summary": "Confirm no swaps: supplied scores establish neither a 10-point advantage nor a mandatory policy breach. Retain cash pending stronger growth evidence and cost-adjusted conviction; the 4% minimum overrides the 3% cash preference. Verified DR exposure of 43.90% exceeds advisory guidance only, while MICRON's existing holding does not trigger the buy-only 15% execution clamp.",
+    "target_cash_weight": 28.79,
+    "provider": "openai",
+    "model": "gpt-6.1-sol",
+    "name": "Challenger"
+  },
+  "layer3_result": {
+    "risk_flags": [
+      {
+        "symbol": "BH.BK",
+        "issue": "Position exceeds 15% max cap for single stock",
+        "severity": "HIGH",
+        "category": "INVESTMENT_RISK"
+      },
+      {
+        "symbol": "MICRON01.BK",
+        "issue": "Position exceeds 15% max cap for single stock",
+        "severity": "HIGH",
+        "category": "INVESTMENT_RISK"
+      }
+    ],
+    "safer_choice": "layer2",
+    "final_risk_level": "medium",
+    "auditor_notes": "BH.BK and MICRON01.BK exceed the maximum position cap of 15%, triggering high severity flags. The other allocations comply with risk thresholds.",
+    "provider": "openai",
+    "model": "gpt-4o-mini",
+    "name": "Risk Auditor"
+  },
+  "consensus": {
+    "consensus_type": "NO_ACTION_CONSENSUS",
+    "consensus_strength_score": 64,
+    "strategist_alignment_score": 78,
+    "risk_alignment_score": 39,
+    "disagreement_reasons": [],
+    "refinement_summary": "No mandatory breach or demonstrated score advantage justifies trading costs.",
+    "agrees": true,
+    "consensus_decision": "NO_ACTION",
+    "confidence": "medium",
+    "recommended": "no_action",
+    "final_risk_level": "medium",
+    "risk_flag_count": 2,
+    "recommended_action": "No rebalancing action recommended at this time. No mandatory breach or demonstrated score advantage justifies trading costs. Continue monitoring: BH.BK, MICRON01.BK. BH.BK and MICRON01.BK exceed the maximum position cap of 15%, triggering high severity flags. The other allocations comply with risk thresholds.",
+    "policy_alignment_score": 100.0,
+    "regime_compliance_score": 100.0,
+    "risk_governance_score": 100.0,
+    "governance_flags": [],
+    "violation_details": []
+  },
+  "stabilization": {
+    "enabled": true,
+    "status": "NO_ACTION",
+    "original_optimizer_status": "NO_ACTION",
+    "reason": null,
+    "drift_threshold_pct": 3.0,
+    "cooldown_days": 7,
+    "net_benefit_threshold_pct": 0.2,
+    "positions_within_tolerance": 9,
+    "positions_needing_action": 0,
+    "all_within_tolerance": true,
+    "drift_analysis": [
+      {
+        "symbol": "AAPL01.BK",
+        "current_weight": 6.73,
+        "target_weight": 6.73,
+        "allocation_drift": 0.0,
+        "within_tolerance": true
+      },
+      {
+        "symbol": "BH.BK",
+        "current_weight": 15.31,
+        "target_weight": 15.31,
+        "allocation_drift": 0.0,
+        "within_tolerance": true
+      },
+      {
+        "symbol": "GOOGL01.BK",
+        "current_weight": 6.98,
+        "target_weight": 6.98,
+        "allocation_drift": 0.0,
+        "within_tolerance": true
+      },
+      {
+        "symbol": "MICRON01.BK",
+        "current_weight": 16.03,
+        "target_weight": 16.03,
+        "allocation_drift": 0.0,
+        "within_tolerance": true
+      },
+      {
+        "symbol": "NVDA01.BK",
+        "current_weight": 14.16,
+        "target_weight": 14.16,
+        "allocation_drift": 0.0,
+        "within_tolerance": true
+      },
+      {
+        "symbol": "GULF.BK",
+        "current_weight": 12.0,
+        "target_weight": 12.0,
+        "allocation_drift": 0.0,
+        "within_tolerance": true
+      },
+      {
+        "symbol": "META01.BK",
+        "current_weight": 0.0,
+        "target_weight": 0.0,
+        "allocation_drift": 0.0,
+        "within_tolerance": true
+      },
+      {
+        "symbol": "MSFT01.BK",
+        "current_weight": 0.0,
+        "target_weight": 0.0,
+        "allocation_drift": 0.0,
+        "within_tolerance": true
+      },
+      {
+        "symbol": "TOP.BK",
+        "current_weight": 0.0,
+        "target_weight": 0.0,
+        "allocation_drift": 0.0,
+        "within_tolerance": true
+      }
+    ],
+    "cooldown": {
+      "active": true,
+      "last_rebalance_at": "2026-10-06T03:43:49.896117Z",
+      "days_elapsed": 2,
+      "days_remaining": 5,
+      "cooldown_days": 7,
+      "overridden": false,
+      "override_reasons": []
+    },
+    "minimum_impact": {
+      "expected_improvement_pct": 0.105,
+      "estimated_cost_pct": 0.0,
+      "net_benefit_pct": 0.105,
+      "passes_threshold": false,
+      "threshold_pct": 0.2,
+      "suppressed": true,
+      "total_turnover_pct": 0.0
+    },
+    "overrides_active": [],
+    "force_rebalance": false,
+    "duplicate_ticker_diagnostic": {
+      "total_duplicates_found": 0,
+      "duplicates": [],
+      "by_layer": {},
+      "root_cause_hypothesis": null
+    }
+  },
+  "advisory_intent_review": {
+    "contract_version": "wealth.advisory-intent-review.v1",
+    "projection_version": "wealth.held-quantity-projection.v1",
+    "intent_contract_version": "investor-intent.v1",
+    "identity": {
+      "review_id": "5e0be064-dfd5-409d-a4b3-4f30f482bd59",
+      "created_at": "2026-10-08T04:46:53.555456+00:00",
+      "mode": "ENABLED",
+      "feature_flag": "FEATURE_ADVISORY_INTENT_REVIEW_V1",
+      "workspace_id": 1,
+      "portfolio_id": 4,
+      "enabled_scope": "ANALYZE_OPTIMIZER_HELD_POSITIONS",
+      "context_error": null
+    },
+    "reference": {
+      "holdings_fingerprint": "a3fe7b6a48c55129a6d6956dab6ac71b30cedf6643a8fd8c958d9874ec5f853f",
+      "holdings": [
+        {
+          "symbol": "AAPL01.BK",
+          "shares": "2000",
+          "holding_started_at": "2026-06-30T10:10:40.625242",
+          "legacy_allow_swap": true
+        },
+        {
+          "symbol": "BH.BK",
+          "shares": "800",
+          "holding_started_at": "2026-06-30T10:10:40.625246",
+          "legacy_allow_swap": true
+        },
+        {
+          "symbol": "GOOGL01.BK",
+          "shares": "2000",
+          "holding_started_at": "2026-06-30T10:10:40.625253",
+          "legacy_allow_swap": true
+        },
+        {
+          "symbol": "GULF.BK",
+          "shares": "2000",
+          "holding_started_at": "2026-06-30T10:10:40.625250",
+          "legacy_allow_swap": true
+        },
+        {
+          "symbol": "MICRON01.BK",
+          "shares": "7000",
+          "holding_started_at": "2026-06-30T10:10:40.625257",
+          "legacy_allow_swap": true
+        },
+        {
+          "symbol": "NVDA01.BK",
+          "shares": "6000",
+          "holding_started_at": "2026-06-30T10:10:40.625256",
+          "legacy_allow_swap": true
+        }
+      ],
+      "referenced_cash": "286562.71755",
+      "anomalies": []
+    },
+    "valuation": {
+      "status": "RESOLVED",
+      "reasons": [],
+      "unit": "THB",
+      "cash": "286562.71755",
+      "equity": "709000",
+      "nav": "995562.71755",
+      "denominator": "NAV = sum(referenced shares x frozen held quote) + referenced cash",
+      "quotes": [
+        {
+          "symbol": "AAPL01.BK",
+          "price": "33.5",
+          "status": "OK",
+          "last_updated": "2026-10-08T04:45:48Z",
+          "currency": "THB",
+          "source": "data_fetcher.fetch_price_info"
+        },
+        {
+          "symbol": "BH.BK",
+          "price": "190.5",
+          "status": "OK",
+          "last_updated": "2026-10-08T04:45:48Z",
+          "currency": "THB",
+          "source": "data_fetcher.fetch_price_info"
+        },
+        {
+          "symbol": "GOOGL01.BK",
+          "price": "34.75",
+          "status": "OK",
+          "last_updated": "2026-10-08T04:45:48Z",
+          "currency": "THB",
+          "source": "data_fetcher.fetch_price_info"
+        },
+        {
+          "symbol": "GULF.BK",
+          "price": "59.75",
+          "status": "OK",
+          "last_updated": "2026-10-08T04:45:48Z",
+          "currency": "THB",
+          "source": "data_fetcher.fetch_price_info"
+        },
+        {
+          "symbol": "MICRON01.BK",
+          "price": "22.8",
+          "status": "OK",
+          "last_updated": "2026-10-08T04:45:48Z",
+          "currency": "THB",
+          "source": "data_fetcher.fetch_price_info"
+        },
+        {
+          "symbol": "NVDA01.BK",
+          "price": "23.5",
+          "status": "OK",
+          "last_updated": "2026-10-08T04:45:48Z",
+          "currency": "THB",
+          "source": "data_fetcher.fetch_price_info"
+        }
+      ],
+      "precision": {
+        "arithmetic": "decimal",
+        "serialization": "exact decimal strings",
+        "share_quantum": "0.000001",
+        "share_rounding": "ROUND_HALF_UP",
+        "display_rounding": "display fields only; never fed back into projection"
+      },
+      "row_current_weight_basis": "COMMON_NAV_FROZEN_QUOTES",
+      "basis_boundary": {
+        "name": "SLICE1_TEMPORARY_MIXED_BASIS",
+        "common_nav_applies_to": [
+          "ADVISORY_PROMPT_CURRENT_WEIGHTS",
+          "ALLOCATION_ROW_CURRENT_WEIGHT",
+          "CANONICAL_QUANTITY_PROJECTION",
+          "INTENT_REVIEW"
+        ],
+        "legacy_basis_retained_for": [
+          "POLICY_ENVELOPE_INPUTS",
+          "TIER1_BREACH_DETECTION",
+          "CURRENT_SECTOR_WEIGHTS",
+          "HARD_POLICY_RULES",
+          "EXECUTION_QUALITY_CAP",
+          "FORCED_SELL",
+          "LEGACY_ALLOW_SWAP",
+          "ACTION_RECONCILIATION",
+          "NEUTRAL_SNAP",
+          "STABILIZATION",
+          "NOISE_FILTER",
+          "EXECUTION_SCHEDULING"
+        ],
+        "note": "Rule-derived targets keep their legacy rule semantics; the review projects the resulting target onto the frozen common NAV without implying the rule used it. Rules that read a row's current_weight read the common-NAV value when the basis resolved (row_current_weight_basis)."
+      }
+    },
+    "prompt_use": {
+      "frozen_context": [
+        {
+          "symbol": "AAPL01.BK",
+          "referenced_shares": "2000",
+          "holding_started_at": "2026-06-30T10:10:40.625242",
+          "legacy_allow_swap": true,
+          "applicability": "CONFIRMED",
+          "intent_id": 1,
+          "intent_revision": 1,
+          "confirmed_at": "2026-10-07T16:30:16.631570",
+          "increase_prohibited": false,
+          "decrease_prohibited": false,
+          "soft_preference": "NONE",
+          "historical_intent": null
+        },
+        {
+          "symbol": "BH.BK",
+          "referenced_shares": "800",
+          "holding_started_at": "2026-06-30T10:10:40.625246",
+          "legacy_allow_swap": true,
+          "applicability": "CONFIRMED",
+          "intent_id": 4,
+          "intent_revision": 1,
+          "confirmed_at": "2026-10-07T16:31:05.035154",
+          "increase_prohibited": true,
+          "decrease_prohibited": false,
+          "soft_preference": "NONE",
+          "historical_intent": null
+        },
+        {
+          "symbol": "GOOGL01.BK",
+          "referenced_shares": "2000",
+          "holding_started_at": "2026-06-30T10:10:40.625253",
+          "legacy_allow_swap": true,
+          "applicability": "CONFIRMED",
+          "intent_id": 5,
+          "intent_revision": 1,
+          "confirmed_at": "2026-10-07T16:31:06.037429",
+          "increase_prohibited": false,
+          "decrease_prohibited": false,
+          "soft_preference": "NONE",
+          "historical_intent": null
+        },
+        {
+          "symbol": "GULF.BK",
+          "referenced_shares": "2000",
+          "holding_started_at": "2026-06-30T10:10:40.625250",
+          "legacy_allow_swap": true,
+          "applicability": "CONFIRMED",
+          "intent_id": 6,
+          "intent_revision": 1,
+          "confirmed_at": "2026-10-07T16:31:06.849678",
+          "increase_prohibited": false,
+          "decrease_prohibited": false,
+          "soft_preference": "NONE",
+          "historical_intent": null
+        },
+        {
+          "symbol": "MICRON01.BK",
+          "referenced_shares": "7000",
+          "holding_started_at": "2026-06-30T10:10:40.625257",
+          "legacy_allow_swap": true,
+          "applicability": "CONFIRMED",
+          "intent_id": 2,
+          "intent_revision": 1,
+          "confirmed_at": "2026-10-07T16:30:23.162577",
+          "increase_prohibited": false,
+          "decrease_prohibited": true,
+          "soft_preference": "PREFER_KEEP",
+          "historical_intent": null
+        },
+        {
+          "symbol": "NVDA01.BK",
+          "referenced_shares": "6000",
+          "holding_started_at": "2026-06-30T10:10:40.625256",
+          "legacy_allow_swap": true,
+          "applicability": "CONFIRMED",
+          "intent_id": 3,
+          "intent_revision": 1,
+          "confirmed_at": "2026-10-07T16:30:40.843644",
+          "increase_prohibited": false,
+          "decrease_prohibited": false,
+          "soft_preference": "PREFER_KEEP",
+          "historical_intent": null
+        }
+      ],
+      "intended_layers": {
+        "hard": [
+          "L1",
+          "L1_RETRY",
+          "L2",
+          "L3",
+          "FALLBACK"
+        ],
+        "soft": [
+          "L2",
+          "FALLBACK"
+        ]
+      },
+      "path": [
+        {
+          "layer": "L1",
+          "attempt": "PRIMARY",
+          "outcome": "SUCCESS",
+          "context": "HARD",
+          "context_digest": "6026a8ac451c7cdc09979288fbd3f89d764d23f55b99ca34c20114c07a014bca"
+        },
+        {
+          "layer": "L2",
+          "attempt": "PRIMARY",
+          "outcome": "SUCCESS",
+          "context": "HARD_AND_SOFT",
+          "context_digest": "6019635c5891688a9cf03ed8de63a7da7d7061b005cb49d90d491660d2f1ebb8"
+        },
+        {
+          "layer": "L3",
+          "attempt": "PRIMARY",
+          "outcome": "SUCCESS",
+          "context": "HARD",
+          "context_digest": "6026a8ac451c7cdc09979288fbd3f89d764d23f55b99ca34c20114c07a014bca"
+        }
+      ]
+    },
+    "positions": [
+      {
+        "symbol": "AAPL01.BK",
+        "referenced_shares": "2000",
+        "holding_started_at": "2026-06-30T10:10:40.625242",
+        "legacy_allow_swap": true,
+        "applicability": "CONFIRMED",
+        "intent": {
+          "intent_id": 1,
+          "revision": 1,
+          "confirmed_at": "2026-10-07T16:30:16.631570"
+        },
+        "historical_intent": null,
+        "hard_restrictions": {
+          "increase_prohibited": false,
+          "decrease_prohibited": false
+        },
+        "soft_preference": "NONE",
+        "proposal": {
+          "economic_candidate": {
+            "action": "HOLD",
+            "target_weight": "6.73",
+            "kind": "UNCHANGED_CONTROL",
+            "resolved": true,
+            "reasons": [],
+            "referenced_shares": "2000",
+            "proposed_shares": "2000",
+            "proposed_shares_raw": "2000",
+            "delta_shares_raw": "0",
+            "target_amount": "67000",
+            "delta_amount": "0",
+            "current_value": "67000",
+            "current_weight": "6.729862299874148194994347596",
+            "direction": "NO_CHANGE"
+          },
+          "final_effective": {
+            "action": "HOLD",
+            "target_weight": "6.73",
+            "kind": "UNCHANGED_CONTROL",
+            "resolved": true,
+            "reasons": [],
+            "referenced_shares": "2000",
+            "proposed_shares": "2000",
+            "proposed_shares_raw": "2000",
+            "delta_shares_raw": "0",
+            "target_amount": "67000",
+            "delta_amount": "0",
+            "current_value": "67000",
+            "current_weight": "6.729862299874148194994347596",
+            "direction": "NO_CHANGE",
+            "basis_evidence": {
+              "projection_basis": "COMMON_NAV_FROZEN_QUOTES",
+              "target_origin_stage": "L2_ALLOCATION",
+              "target_origin_semantics": "ADVISORY_MODEL_OUTPUT",
+              "row_current_weight_basis": "COMMON_NAV_FROZEN_QUOTES"
+            }
+          },
+          "scheduled": null
+        },
+        "provenance": [
+          {
+            "seq": 1,
+            "symbol": "AAPL01.BK",
+            "attempt": "PRIMARY",
+            "proposal_id": "P1",
+            "replaced_proposal_id": null,
+            "source": "ADVISORY",
+            "stage": "L2_ALLOCATION",
+            "effect": "ORIGINATE",
+            "reason_code": "L2_ALLOCATION",
+            "reason_text": "Strong momentum supports retention; elevated valuation limits conviction for additional capital.",
+            "rule_semantics": "ADVISORY_MODEL_OUTPUT",
+            "row_current_weight_basis": "COMMON_NAV_FROZEN_QUOTES",
+            "materiality": "MATERIAL",
+            "before": null,
+            "after": {
+              "action": "HOLD",
+              "target_weight": "6.73",
+              "current_weight": "6.73"
+            },
+            "resulting_disposition": "ACTIVE"
+          }
+        ],
+        "review": {
+          "final": {
+            "outcome": "CONSISTENT",
+            "direction": "NO_CHANGE",
+            "restriction": null,
+            "conflict_kind": null,
+            "reasons": [
+              "NO_QUANTITY_CHANGE"
+            ]
+          },
+          "retained": [],
+          "non_material_provenance": [],
+          "status": "CONSISTENT",
+          "requires_owner_decision": false,
+          "unresolved_reasons": []
+        },
+        "display": {
+          "final_disposition": "UNCHANGED",
+          "noise_reason": null,
+          "material_change": false,
+          "show": false
+        }
+      },
+      {
+        "symbol": "BH.BK",
+        "referenced_shares": "800",
+        "holding_started_at": "2026-06-30T10:10:40.625246",
+        "legacy_allow_swap": true,
+        "applicability": "CONFIRMED",
+        "intent": {
+          "intent_id": 4,
+          "revision": 1,
+          "confirmed_at": "2026-10-07T16:31:05.035154"
+        },
+        "historical_intent": null,
+        "hard_restrictions": {
+          "increase_prohibited": true,
+          "decrease_prohibited": false
+        },
+        "soft_preference": "NONE",
+        "proposal": {
+          "economic_candidate": {
+            "action": "HOLD",
+            "target_weight": "15.31",
+            "kind": "UNCHANGED_CONTROL",
+            "resolved": true,
+            "reasons": [],
+            "referenced_shares": "800",
+            "proposed_shares": "800",
+            "proposed_shares_raw": "800",
+            "delta_shares_raw": "0",
+            "target_amount": "152400",
+            "delta_amount": "0",
+            "current_value": "152400",
+            "current_weight": "15.30792558956448037189759065",
+            "direction": "NO_CHANGE"
+          },
+          "final_effective": {
+            "action": "HOLD",
+            "target_weight": "15.31",
+            "kind": "UNCHANGED_CONTROL",
+            "resolved": true,
+            "reasons": [],
+            "referenced_shares": "800",
+            "proposed_shares": "800",
+            "proposed_shares_raw": "800",
+            "delta_shares_raw": "0",
+            "target_amount": "152400",
+            "delta_amount": "0",
+            "current_value": "152400",
+            "current_weight": "15.30792558956448037189759065",
+            "direction": "NO_CHANGE",
+            "basis_evidence": {
+              "projection_basis": "COMMON_NAV_FROZEN_QUOTES",
+              "target_origin_stage": "L2_ALLOCATION",
+              "target_origin_semantics": "ADVISORY_MODEL_OUTPUT",
+              "row_current_weight_basis": "COMMON_NAV_FROZEN_QUOTES"
+            }
+          },
+          "scheduled": null
+        },
+        "provenance": [
+          {
+            "seq": 2,
+            "symbol": "BH.BK",
+            "attempt": "PRIMARY",
+            "proposal_id": "P2",
+            "replaced_proposal_id": null,
+            "source": "ADVISORY",
+            "stage": "L2_ALLOCATION",
+            "effect": "ORIGINATE",
+            "reason_code": "L2_ALLOCATION",
+            "reason_text": "Maintain quantity under owner's no-increase restriction; deferred entry timing also discourages additions.",
+            "rule_semantics": "ADVISORY_MODEL_OUTPUT",
+            "row_current_weight_basis": "COMMON_NAV_FROZEN_QUOTES",
+            "materiality": "MATERIAL",
+            "before": null,
+            "after": {
+              "action": "HOLD",
+              "target_weight": "15.31",
+              "current_weight": "15.31"
+            },
+            "resulting_disposition": "ACTIVE"
+          }
+        ],
+        "review": {
+          "final": {
+            "outcome": "CONSISTENT",
+            "direction": "NO_CHANGE",
+            "restriction": null,
+            "conflict_kind": null,
+            "reasons": [
+              "NO_QUANTITY_CHANGE"
+            ]
+          },
+          "retained": [],
+          "non_material_provenance": [],
+          "status": "CONSISTENT",
+          "requires_owner_decision": false,
+          "unresolved_reasons": []
+        },
+        "display": {
+          "final_disposition": "UNCHANGED",
+          "noise_reason": null,
+          "material_change": false,
+          "show": false
+        }
+      },
+      {
+        "symbol": "GOOGL01.BK",
+        "referenced_shares": "2000",
+        "holding_started_at": "2026-06-30T10:10:40.625253",
+        "legacy_allow_swap": true,
+        "applicability": "CONFIRMED",
+        "intent": {
+          "intent_id": 5,
+          "revision": 1,
+          "confirmed_at": "2026-10-07T16:31:06.037429"
+        },
+        "historical_intent": null,
+        "hard_restrictions": {
+          "increase_prohibited": false,
+          "decrease_prohibited": false
+        },
+        "soft_preference": "NONE",
+        "proposal": {
+          "economic_candidate": {
+            "action": "HOLD",
+            "target_weight": "6.98",
+            "kind": "UNCHANGED_CONTROL",
+            "resolved": true,
+            "reasons": [],
+            "referenced_shares": "2000",
+            "proposed_shares": "2000",
+            "proposed_shares_raw": "2000",
+            "delta_shares_raw": "0",
+            "target_amount": "69500",
+            "delta_amount": "0",
+            "current_value": "69500",
+            "current_weight": "6.980976564794825366449360566",
+            "direction": "NO_CHANGE"
+          },
+          "final_effective": {
+            "action": "HOLD",
+            "target_weight": "6.98",
+            "kind": "UNCHANGED_CONTROL",
+            "resolved": true,
+            "reasons": [],
+            "referenced_shares": "2000",
+            "proposed_shares": "2000",
+            "proposed_shares_raw": "2000",
+            "delta_shares_raw": "0",
+            "target_amount": "69500",
+            "delta_amount": "0",
+            "current_value": "69500",
+            "current_weight": "6.980976564794825366449360566",
+            "direction": "NO_CHANGE",
+            "basis_evidence": {
+              "projection_basis": "COMMON_NAV_FROZEN_QUOTES",
+              "target_origin_stage": "L2_ALLOCATION",
+              "target_origin_semantics": "ADVISORY_MODEL_OUTPUT",
+              "row_current_weight_basis": "COMMON_NAV_FROZEN_QUOTES"
+            }
+          },
+          "scheduled": null
+        },
+        "provenance": [
+          {
+            "seq": 3,
+            "symbol": "GOOGL01.BK",
+            "attempt": "PRIMARY",
+            "proposal_id": "P3",
+            "replaced_proposal_id": null,
+            "source": "ADVISORY",
+            "stage": "L2_ALLOCATION",
+            "effect": "ORIGINATE",
+            "reason_code": "L2_ALLOCATION",
+            "reason_text": "Attractive fundamentals support retention, but sideways momentum weakens the case for aggressive additions.",
+            "rule_semantics": "ADVISORY_MODEL_OUTPUT",
+            "row_current_weight_basis": "COMMON_NAV_FROZEN_QUOTES",
+            "materiality": "MATERIAL",
+            "before": null,
+            "after": {
+              "action": "HOLD",
+              "target_weight": "6.98",
+              "current_weight": "6.98"
+            },
+            "resulting_disposition": "ACTIVE"
+          }
+        ],
+        "review": {
+          "final": {
+            "outcome": "CONSISTENT",
+            "direction": "NO_CHANGE",
+            "restriction": null,
+            "conflict_kind": null,
+            "reasons": [
+              "NO_QUANTITY_CHANGE"
+            ]
+          },
+          "retained": [],
+          "non_material_provenance": [],
+          "status": "CONSISTENT",
+          "requires_owner_decision": false,
+          "unresolved_reasons": []
+        },
+        "display": {
+          "final_disposition": "UNCHANGED",
+          "noise_reason": null,
+          "material_change": false,
+          "show": false
+        }
+      },
+      {
+        "symbol": "GULF.BK",
+        "referenced_shares": "2000",
+        "holding_started_at": "2026-06-30T10:10:40.625250",
+        "legacy_allow_swap": true,
+        "applicability": "CONFIRMED",
+        "intent": {
+          "intent_id": 6,
+          "revision": 1,
+          "confirmed_at": "2026-10-07T16:31:06.849678"
+        },
+        "historical_intent": null,
+        "hard_restrictions": {
+          "increase_prohibited": false,
+          "decrease_prohibited": false
+        },
+        "soft_preference": "NONE",
+        "proposal": {
+          "economic_candidate": {
+            "action": "HOLD",
+            "target_weight": "12",
+            "kind": "UNCHANGED_CONTROL",
+            "resolved": true,
+            "reasons": [],
+            "referenced_shares": "2000",
+            "proposed_shares": "2000",
+            "proposed_shares_raw": "2000",
+            "delta_shares_raw": "0",
+            "target_amount": "119500",
+            "delta_amount": "0",
+            "current_value": "119500",
+            "current_weight": "12.00326186320836879554961997",
+            "direction": "NO_CHANGE"
+          },
+          "final_effective": {
+            "action": "HOLD",
+            "target_weight": "12",
+            "kind": "UNCHANGED_CONTROL",
+            "resolved": true,
+            "reasons": [],
+            "referenced_shares": "2000",
+            "proposed_shares": "2000",
+            "proposed_shares_raw": "2000",
+            "delta_shares_raw": "0",
+            "target_amount": "119500",
+            "delta_amount": "0",
+            "current_value": "119500",
+            "current_weight": "12.00326186320836879554961997",
+            "direction": "NO_CHANGE",
+            "basis_evidence": {
+              "projection_basis": "COMMON_NAV_FROZEN_QUOTES",
+              "target_origin_stage": "L2_ALLOCATION",
+              "target_origin_semantics": "ADVISORY_MODEL_OUTPUT",
+              "row_current_weight_basis": "COMMON_NAV_FROZEN_QUOTES"
+            }
+          },
+          "scheduled": null
+        },
+        "provenance": [
+          {
+            "seq": 6,
+            "symbol": "GULF.BK",
+            "attempt": "PRIMARY",
+            "proposal_id": "P6",
+            "replaced_proposal_id": null,
+            "source": "ADVISORY",
+            "stage": "L2_ALLOCATION",
+            "effect": "ORIGINATE",
+            "reason_code": "L2_ALLOCATION",
+            "reason_text": "Weak momentum warrants monitoring, but no sufficiently superior replacement establishes a cost-adjusted rotation benefit.",
+            "rule_semantics": "ADVISORY_MODEL_OUTPUT",
+            "row_current_weight_basis": "COMMON_NAV_FROZEN_QUOTES",
+            "materiality": "MATERIAL",
+            "before": null,
+            "after": {
+              "action": "HOLD",
+              "target_weight": "12",
+              "current_weight": "12"
+            },
+            "resulting_disposition": "ACTIVE"
+          }
+        ],
+        "review": {
+          "final": {
+            "outcome": "CONSISTENT",
+            "direction": "NO_CHANGE",
+            "restriction": null,
+            "conflict_kind": null,
+            "reasons": [
+              "NO_QUANTITY_CHANGE"
+            ]
+          },
+          "retained": [],
+          "non_material_provenance": [],
+          "status": "CONSISTENT",
+          "requires_owner_decision": false,
+          "unresolved_reasons": []
+        },
+        "display": {
+          "final_disposition": "UNCHANGED",
+          "noise_reason": null,
+          "material_change": false,
+          "show": false
+        }
+      },
+      {
+        "symbol": "MICRON01.BK",
+        "referenced_shares": "7000",
+        "holding_started_at": "2026-06-30T10:10:40.625257",
+        "legacy_allow_swap": true,
+        "applicability": "CONFIRMED",
+        "intent": {
+          "intent_id": 2,
+          "revision": 1,
+          "confirmed_at": "2026-10-07T16:30:23.162577"
+        },
+        "historical_intent": null,
+        "hard_restrictions": {
+          "increase_prohibited": false,
+          "decrease_prohibited": true
+        },
+        "soft_preference": "PREFER_KEEP",
+        "proposal": {
+          "economic_candidate": {
+            "action": "HOLD",
+            "target_weight": "16.03",
+            "kind": "UNCHANGED_CONTROL",
+            "resolved": true,
+            "reasons": [],
+            "referenced_shares": "7000",
+            "proposed_shares": "7000",
+            "proposed_shares_raw": "7000",
+            "delta_shares_raw": "0",
+            "target_amount": "159600",
+            "delta_amount": "0",
+            "current_value": "159600",
+            "current_weight": "16.03113467253603062568802801",
+            "direction": "NO_CHANGE"
+          },
+          "final_effective": {
+            "action": "HOLD",
+            "target_weight": "16.03",
+            "kind": "UNCHANGED_CONTROL",
+            "resolved": true,
+            "reasons": [],
+            "referenced_shares": "7000",
+            "proposed_shares": "7000",
+            "proposed_shares_raw": "7000",
+            "delta_shares_raw": "0",
+            "target_amount": "159600",
+            "delta_amount": "0",
+            "current_value": "159600",
+            "current_weight": "16.03113467253603062568802801",
+            "direction": "NO_CHANGE",
+            "basis_evidence": {
+              "projection_basis": "COMMON_NAV_FROZEN_QUOTES",
+              "target_origin_stage": "L2_ALLOCATION",
+              "target_origin_semantics": "ADVISORY_MODEL_OUTPUT",
+              "row_current_weight_basis": "COMMON_NAV_FROZEN_QUOTES"
+            }
+          },
+          "scheduled": null
+        },
+        "provenance": [
+          {
+            "seq": 4,
+            "symbol": "MICRON01.BK",
+            "attempt": "PRIMARY",
+            "proposal_id": "P4",
+            "replaced_proposal_id": null,
+            "source": "ADVISORY",
+            "stage": "L2_ALLOCATION",
+            "effect": "ORIGINATE",
+            "reason_code": "L2_ALLOCATION",
+            "reason_text": "Preserve shares under owner's no-decrease restriction; conflicting technical indicators argue against adding.",
+            "rule_semantics": "ADVISORY_MODEL_OUTPUT",
+            "row_current_weight_basis": "COMMON_NAV_FROZEN_QUOTES",
+            "materiality": "MATERIAL",
+            "before": null,
+            "after": {
+              "action": "HOLD",
+              "target_weight": "16.03",
+              "current_weight": "16.03"
+            },
+            "resulting_disposition": "ACTIVE"
+          }
+        ],
+        "review": {
+          "final": {
+            "outcome": "CONSISTENT",
+            "direction": "NO_CHANGE",
+            "restriction": null,
+            "conflict_kind": null,
+            "reasons": [
+              "NO_QUANTITY_CHANGE"
+            ]
+          },
+          "retained": [],
+          "non_material_provenance": [],
+          "status": "CONSISTENT",
+          "requires_owner_decision": false,
+          "unresolved_reasons": []
+        },
+        "display": {
+          "final_disposition": "UNCHANGED",
+          "noise_reason": null,
+          "material_change": false,
+          "show": false
+        }
+      },
+      {
+        "symbol": "NVDA01.BK",
+        "referenced_shares": "6000",
+        "holding_started_at": "2026-06-30T10:10:40.625256",
+        "legacy_allow_swap": true,
+        "applicability": "CONFIRMED",
+        "intent": {
+          "intent_id": 3,
+          "revision": 1,
+          "confirmed_at": "2026-10-07T16:30:40.843644"
+        },
+        "historical_intent": null,
+        "hard_restrictions": {
+          "increase_prohibited": false,
+          "decrease_prohibited": false
+        },
+        "soft_preference": "PREFER_KEEP",
+        "proposal": {
+          "economic_candidate": {
+            "action": "HOLD",
+            "target_weight": "14.16",
+            "kind": "UNCHANGED_CONTROL",
+            "resolved": true,
+            "reasons": [],
+            "referenced_shares": "6000",
+            "proposed_shares": "6000",
+            "proposed_shares_raw": "6000",
+            "delta_shares_raw": "0",
+            "target_amount": "141000",
+            "delta_amount": "0",
+            "current_value": "141000",
+            "current_weight": "14.16284454152619247006273151",
+            "direction": "NO_CHANGE"
+          },
+          "final_effective": {
+            "action": "HOLD",
+            "target_weight": "14.16",
+            "kind": "UNCHANGED_CONTROL",
+            "resolved": true,
+            "reasons": [],
+            "referenced_shares": "6000",
+            "proposed_shares": "6000",
+            "proposed_shares_raw": "6000",
+            "delta_shares_raw": "0",
+            "target_amount": "141000",
+            "delta_amount": "0",
+            "current_value": "141000",
+            "current_weight": "14.16284454152619247006273151",
+            "direction": "NO_CHANGE",
+            "basis_evidence": {
+              "projection_basis": "COMMON_NAV_FROZEN_QUOTES",
+              "target_origin_stage": "L2_ALLOCATION",
+              "target_origin_semantics": "ADVISORY_MODEL_OUTPUT",
+              "row_current_weight_basis": "COMMON_NAV_FROZEN_QUOTES"
+            }
+          },
+          "scheduled": null
+        },
+        "provenance": [
+          {
+            "seq": 5,
+            "symbol": "NVDA01.BK",
+            "attempt": "PRIMARY",
+            "proposal_id": "P5",
+            "replaced_proposal_id": null,
+            "source": "ADVISORY",
+            "stage": "L2_ALLOCATION",
+            "effect": "ORIGINATE",
+            "reason_code": "L2_ALLOCATION",
+            "reason_text": "Retain strong momentum exposure; remaining execution-cap headroom is below the 3% minimum adjustment.",
+            "rule_semantics": "ADVISORY_MODEL_OUTPUT",
+            "row_current_weight_basis": "COMMON_NAV_FROZEN_QUOTES",
+            "materiality": "MATERIAL",
+            "before": null,
+            "after": {
+              "action": "HOLD",
+              "target_weight": "14.16",
+              "current_weight": "14.16"
+            },
+            "resulting_disposition": "ACTIVE"
+          }
+        ],
+        "review": {
+          "final": {
+            "outcome": "CONSISTENT",
+            "direction": "NO_CHANGE",
+            "restriction": null,
+            "conflict_kind": null,
+            "reasons": [
+              "NO_QUANTITY_CHANGE"
+            ]
+          },
+          "retained": [],
+          "non_material_provenance": [],
+          "status": "CONSISTENT",
+          "requires_owner_decision": false,
+          "unresolved_reasons": []
+        },
+        "display": {
+          "final_disposition": "UNCHANGED",
+          "noise_reason": null,
+          "material_change": false,
+          "show": false
+        }
+      }
+    ],
+    "provenance": {
+      "proposals": [
+        {
+          "proposal_id": "P1",
+          "symbol": "AAPL01.BK",
+          "attempt": "PRIMARY",
+          "source": "ADVISORY",
+          "stage": "L2_ALLOCATION",
+          "reason_code": "L2_ALLOCATION",
+          "reason_text": "Strong momentum supports retention; elevated valuation limits conviction for additional capital.",
+          "action": "HOLD",
+          "target_weight": "6.73",
+          "target_origin_stage": "L2_ALLOCATION",
+          "target_origin_semantics": "ADVISORY_MODEL_OUTPUT",
+          "direction_only": false,
+          "materiality": "MATERIAL",
+          "disposition": "ACTIVE",
+          "replaced_proposal_id": null,
+          "replaced_by": null,
+          "suppressed_by": null,
+          "deferred_by": []
+        },
+        {
+          "proposal_id": "P2",
+          "symbol": "BH.BK",
+          "attempt": "PRIMARY",
+          "source": "ADVISORY",
+          "stage": "L2_ALLOCATION",
+          "reason_code": "L2_ALLOCATION",
+          "reason_text": "Maintain quantity under owner's no-increase restriction; deferred entry timing also discourages additions.",
+          "action": "HOLD",
+          "target_weight": "15.31",
+          "target_origin_stage": "L2_ALLOCATION",
+          "target_origin_semantics": "ADVISORY_MODEL_OUTPUT",
+          "direction_only": false,
+          "materiality": "MATERIAL",
+          "disposition": "ACTIVE",
+          "replaced_proposal_id": null,
+          "replaced_by": null,
+          "suppressed_by": null,
+          "deferred_by": []
+        },
+        {
+          "proposal_id": "P3",
+          "symbol": "GOOGL01.BK",
+          "attempt": "PRIMARY",
+          "source": "ADVISORY",
+          "stage": "L2_ALLOCATION",
+          "reason_code": "L2_ALLOCATION",
+          "reason_text": "Attractive fundamentals support retention, but sideways momentum weakens the case for aggressive additions.",
+          "action": "HOLD",
+          "target_weight": "6.98",
+          "target_origin_stage": "L2_ALLOCATION",
+          "target_origin_semantics": "ADVISORY_MODEL_OUTPUT",
+          "direction_only": false,
+          "materiality": "MATERIAL",
+          "disposition": "ACTIVE",
+          "replaced_proposal_id": null,
+          "replaced_by": null,
+          "suppressed_by": null,
+          "deferred_by": []
+        },
+        {
+          "proposal_id": "P4",
+          "symbol": "MICRON01.BK",
+          "attempt": "PRIMARY",
+          "source": "ADVISORY",
+          "stage": "L2_ALLOCATION",
+          "reason_code": "L2_ALLOCATION",
+          "reason_text": "Preserve shares under owner's no-decrease restriction; conflicting technical indicators argue against adding.",
+          "action": "HOLD",
+          "target_weight": "16.03",
+          "target_origin_stage": "L2_ALLOCATION",
+          "target_origin_semantics": "ADVISORY_MODEL_OUTPUT",
+          "direction_only": false,
+          "materiality": "MATERIAL",
+          "disposition": "ACTIVE",
+          "replaced_proposal_id": null,
+          "replaced_by": null,
+          "suppressed_by": null,
+          "deferred_by": []
+        },
+        {
+          "proposal_id": "P5",
+          "symbol": "NVDA01.BK",
+          "attempt": "PRIMARY",
+          "source": "ADVISORY",
+          "stage": "L2_ALLOCATION",
+          "reason_code": "L2_ALLOCATION",
+          "reason_text": "Retain strong momentum exposure; remaining execution-cap headroom is below the 3% minimum adjustment.",
+          "action": "HOLD",
+          "target_weight": "14.16",
+          "target_origin_stage": "L2_ALLOCATION",
+          "target_origin_semantics": "ADVISORY_MODEL_OUTPUT",
+          "direction_only": false,
+          "materiality": "MATERIAL",
+          "disposition": "ACTIVE",
+          "replaced_proposal_id": null,
+          "replaced_by": null,
+          "suppressed_by": null,
+          "deferred_by": []
+        },
+        {
+          "proposal_id": "P6",
+          "symbol": "GULF.BK",
+          "attempt": "PRIMARY",
+          "source": "ADVISORY",
+          "stage": "L2_ALLOCATION",
+          "reason_code": "L2_ALLOCATION",
+          "reason_text": "Weak momentum warrants monitoring, but no sufficiently superior replacement establishes a cost-adjusted rotation benefit.",
+          "action": "HOLD",
+          "target_weight": "12",
+          "target_origin_stage": "L2_ALLOCATION",
+          "target_origin_semantics": "ADVISORY_MODEL_OUTPUT",
+          "direction_only": false,
+          "materiality": "MATERIAL",
+          "disposition": "ACTIVE",
+          "replaced_proposal_id": null,
+          "replaced_by": null,
+          "suppressed_by": null,
+          "deferred_by": []
+        }
+      ],
+      "abandoned_transition_count": 0,
+      "capture_errors": []
+    },
+    "display": {
+      "stabilization_status": "NO_ACTION",
+      "original_optimizer_status": "NO_ACTION",
+      "stabilization_reason": null
+    },
+    "coverage": {
+      "referenced_positive_held_count": 6,
+      "checked_count": 6,
+      "resolved_count": 6,
+      "unresolved_positions": [],
+      "conflict_positions": [],
+      "final_conflict_positions": [],
+      "retained_conflict_positions": [],
+      "all_resolved_and_consistent": true
+    },
+    "review": {
+      "result": "CONSISTENT",
+      "requires_owner_decision": false,
+      "unresolved_reasons": {},
+      "not_a_governance_violation": true,
+      "allocations_changed_by_review": false
+    },
+    "integrity": {
+      "algorithm": "sha256",
+      "canonicalization": "json-sorted-keys-compact",
+      "digest": "41d4a84041b3e1df675d74e546ad382cb67542cde23e891f69aa1a58626ccb5a"
+    }
+  },
+  "active_policy": {
+    "hard_constraints": {
+      "min_cash_pct": 4.1,
+      "max_single_position_pct": 25.0,
+      "max_sector_pct": 70.0,
+      "max_turnover_pct": 66.2,
+      "suppress_speculative": false,
+      "beta_ceiling": null,
+      "max_new_positions": 3
+    },
+    "soft_factor_tilts": {
+      "growth": 0.368,
+      "value": 0.02,
+      "momentum": 0.441,
+      "quality": 0.147,
+      "dividend": 0.025
+    },
+    "deployment_bias": "AGGRESSIVE",
+    "risk_budget": 72.6,
+    "rebalance_aggressiveness": 0.845,
+    "strictness_level": "NORMAL",
+    "emergency_override": false,
+    "emergency_reason": null,
+    "policy_narrative": "Growth persona under RISK_ON → AGGRESSIVE deployment. Cash ≥4%, position cap 25%, dominant tilt MOMENTUM (44%). Strictness: NORMAL.",
+    "confidence_discount": 0.135,
+    "violations": [],
+    "resolved_sector_limits": {
+      "Technology": 60.0,
+      "Financial": 60.0,
+      "Energy": 20.0,
+      "Healthcare": 35.0,
+      "Consumer": 30.0,
+      "Industrial": 60.0,
+      "Real Estate": 10.0,
+      "Utilities": 50.0,
+      "Other": 30.0
+    },
+    "policy_alignment_score": 100.0,
+    "regime_compliance_score": 100.0,
+    "risk_governance_score": 100.0,
+    "governance_flags": [],
+    "violation_details": [],
+    "turnover_relaxation_active": false,
+    "turnover_relaxation_reason": null,
+    "relaxed_turnover_cap": null
+  },
+  "effective_envelope": {
+    "single_position": {
+      "user_pref": 27.5,
+      "regime_policy": 25.0,
+      "emergency_limit": null,
+      "system_safety": 40.0,
+      "effective": 25.0,
+      "binding_source": "REGIME_POLICY",
+      "tightened_reason": "Tightened 28% → 25% by RISK_ON regime policy"
+    },
+    "cash_min": {
+      "user_pref": 3.0,
+      "regime_policy": 2.0,
+      "emergency_limit": null,
+      "system_safety": 0.0,
+      "effective": 3.0,
+      "binding_source": "USER_PREFERENCE",
+      "tightened_reason": null
+    },
+    "turnover_max": {
+      "user_pref": 70.0,
+      "regime_policy": 84.0,
+      "emergency_limit": null,
+      "system_safety": 100.0,
+      "effective": 70.0,
+      "binding_source": "USER_PREFERENCE",
+      "tightened_reason": null
+    },
+    "beta_ceiling": 1.8,
+    "sector_limits": {
+      "Technology": {
+        "user_pref": 60.0,
+        "regime_policy": 60.0,
+        "emergency_limit": null,
+        "system_safety": 70.0,
+        "effective": 60.0,
+        "binding_source": "USER_PREFERENCE",
+        "tightened_reason": null
+      },
+      "Financial": {
+        "user_pref": 60.0,
+        "regime_policy": 60.0,
+        "emergency_limit": null,
+        "system_safety": 70.0,
+        "effective": 60.0,
+        "binding_source": "USER_PREFERENCE",
+        "tightened_reason": null
+      },
+      "Energy": {
+        "user_pref": 20.0,
+        "regime_policy": 20.0,
+        "emergency_limit": null,
+        "system_safety": 70.0,
+        "effective": 20.0,
+        "binding_source": "USER_PREFERENCE",
+        "tightened_reason": null
+      },
+      "Healthcare": {
+        "user_pref": 35.0,
+        "regime_policy": 35.0,
+        "emergency_limit": null,
+        "system_safety": 70.0,
+        "effective": 35.0,
+        "binding_source": "USER_PREFERENCE",
+        "tightened_reason": null
+      },
+      "Consumer": {
+        "user_pref": 30.0,
+        "regime_policy": 30.0,
+        "emergency_limit": null,
+        "system_safety": 70.0,
+        "effective": 30.0,
+        "binding_source": "USER_PREFERENCE",
+        "tightened_reason": null
+      },
+      "Industrial": {
+        "user_pref": 60.0,
+        "regime_policy": 60.0,
+        "emergency_limit": null,
+        "system_safety": 70.0,
+        "effective": 60.0,
+        "binding_source": "USER_PREFERENCE",
+        "tightened_reason": null
+      },
+      "Real Estate": {
+        "user_pref": 10.0,
+        "regime_policy": 10.0,
+        "emergency_limit": null,
+        "system_safety": 70.0,
+        "effective": 10.0,
+        "binding_source": "USER_PREFERENCE",
+        "tightened_reason": null
+      },
+      "Utilities": {
+        "user_pref": 50.0,
+        "regime_policy": 50.0,
+        "emergency_limit": null,
+        "system_safety": 70.0,
+        "effective": 50.0,
+        "binding_source": "USER_PREFERENCE",
+        "tightened_reason": null
+      },
+      "Other": {
+        "user_pref": 30.0,
+        "regime_policy": 30.0,
+        "emergency_limit": null,
+        "system_safety": 70.0,
+        "effective": 30.0,
+        "binding_source": "USER_PREFERENCE",
+        "tightened_reason": null
+      }
+    },
+    "global_sector_cap": {
+      "user_pref": 80.0,
+      "regime_policy": 80.0,
+      "emergency_limit": null,
+      "system_safety": 70.0,
+      "effective": 70.0,
+      "binding_source": "SYSTEM_SAFETY",
+      "tightened_reason": "Absolute system ceiling: capped at 70%"
+    },
+    "effective_single_position_pct": 25.0,
+    "effective_cash_min_pct": 3.0,
+    "effective_turnover_max_pct": 70.0,
+    "effective_sector_limits": {
+      "Technology": 60.0,
+      "Financial": 60.0,
+      "Energy": 20.0,
+      "Healthcare": 35.0,
+      "Consumer": 30.0,
+      "Industrial": 60.0,
+      "Real Estate": 10.0,
+      "Utilities": 50.0,
+      "Other": 30.0
+    },
+    "emergency_active": false,
+    "regime_name": "RISK_ON",
+    "resolver_notes": [
+      "Position cap: Tightened 28% → 25% by RISK_ON regime policy"
+    ]
+  },
+  "history_id": 218,
+  "recommendation_snapshot_id": 174,
+  "action_summary": {
+    "sell": [],
+    "reduce": [],
+    "accumulate": [],
+    "new_position": [],
+    "hold": []
+  },
+  "execution_optimization": {
+    "cash_available": 286562.72,
+    "total_buy_deployment": 0.0,
+    "funding_gap": 0.0,
+    "trades": [],
+    "idle_cash_after": 286562.72
+  }
+}

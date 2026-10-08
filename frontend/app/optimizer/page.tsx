@@ -19,6 +19,8 @@ import ActivePolicyEnvelopeCard from "@/components/ActivePolicyEnvelopeCard";
 import AttributionPanel from "@/components/AttributionPanel";
 import OperationsTimeline from "@/components/operations-center/quant/OperationsTimeline";
 import ExecutionPlanCard from "@/components/optimizer/ExecutionPlanCard";
+import OptimizerDecisionSummary from "@/components/optimizer/OptimizerDecisionSummary";
+import { assessment } from "@/lib/optimizerPresentation";
 import AdvisoryIntentReviewCard from "@/components/optimizer/AdvisoryIntentReviewCard";
 import AuditorClaimFlag from "@/components/optimizer/AuditorClaimFlag";
 import GoalConstraintDisclosure from "@/components/optimizer/GoalConstraintDisclosure";
@@ -667,7 +669,7 @@ function OpportunityScoreGauge({ score }: { score: number }) {
 }
 
 function NoActionCard({ result }: { result: OptimizerResult }) {
-  const score  = getFinalConsensusScore(result) ?? 0;
+  const score = assessment(getFinalConsensusScore(result));
   const reason = result.no_action_reason ?? null;
   const summary = result.no_action_summary ?? null;
   const blocked: BlockedOpportunity[] = result.blocked_opportunities ?? [];
@@ -681,7 +683,7 @@ function NoActionCard({ result }: { result: OptimizerResult }) {
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <h3 className="text-lg font-bold text-green-900">Portfolio is Well-Balanced</h3>
+            <h3 className="text-lg font-bold text-green-900">Recorded no-action assessment</h3>
             {reason && (
               <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-green-100 border border-green-300 text-green-700">
                 {NO_ACTION_REASON_LABELS[reason] ?? reason}
@@ -696,7 +698,7 @@ function NoActionCard({ result }: { result: OptimizerResult }) {
 
       {/* Score gauge */}
       <div className="bg-white/70 rounded-xl border border-green-100 px-5 py-4">
-        <OpportunityScoreGauge score={score} />
+        {score == null ? <p>Consensus assessment unavailable</p> : <OpportunityScoreGauge score={score} />}
       </div>
 
       {/* Blocked opportunities */}
@@ -806,12 +808,13 @@ function StabilizationCard({
             disabled={forceRunning}
             className="shrink-0 text-xs font-medium px-3 py-1.5 rounded border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-50 self-start"
           >
-            {forceRunning ? "Running…" : "Force Rebalance"}
+            {forceRunning ? "Running new analysis…" : "Start new analysis with rebalance override"}
           </button>
         )}
       </div>
 
       {/* Stats row */}
+      {isBlocked && <p className="text-xs text-gray-600">Starting a new analysis makes fresh analysis requests. It does not execute this historical plan.</p>}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
         <div className="bg-white/70 rounded-lg p-3">
           <p className="text-xs text-gray-400 mb-0.5">Drift Threshold</p>
@@ -941,9 +944,11 @@ function StabilizationCard({
 function Layer1Section({
   layer,
   totalValue,
+  historical,
 }: {
   layer: OptimizerResult["layer1_result"];
   totalValue?: number;
+  historical: boolean;
 }) {
   if (!layer) return null;
   const swaps: SwapSuggestion[] = layer.swap_suggestions ?? [];
@@ -956,7 +961,7 @@ function Layer1Section({
       <div className="flex items-center gap-2 flex-wrap">
         <div>
           <h3 className="font-semibold text-gray-800">🟠 {layer.name ?? "Strategist"}</h3>
-          <p className="text-xs text-orange-600 mt-0.5">Stability Review</p>
+          <p className="text-xs text-orange-600 mt-0.5">{historical ? "Historical model reasoning — policy claims not independently verified" : "Strategist model reasoning"}</p>
         </div>
         <AIBadge provider={layer.provider} model={layer.model} label="" />
       </div>
@@ -967,7 +972,7 @@ function Layer1Section({
         <>
           {layer.summary && (
             <div className="bg-orange-50 border border-orange-200 rounded-lg px-4 py-2">
-              <p className="text-sm text-orange-900">{layer.summary}</p>
+              <p className="text-sm text-orange-900">{historical ? "Historical model opinion: " : "Strategist opinion: "}{layer.summary}</p>
             </div>
           )}
 
@@ -1023,10 +1028,11 @@ function Layer1Section({
 }
 
 function Layer2Section({
-  layer, totalValue,
+  layer, totalValue, historical,
 }: {
   layer: Layer2Result | null | undefined;
   totalValue?: number;
+  historical: boolean;
 }) {
   if (!layer) return null;
   const agrees = layer.agrees_with_layer1;
@@ -1038,7 +1044,7 @@ function Layer2Section({
       <div className="flex items-center gap-2 flex-wrap">
         <div>
           <h3 className="font-semibold text-gray-800">🔵 {layer.name ?? "Challenger"}</h3>
-          <p className="text-xs text-blue-600 mt-0.5">{agrees ? "Confirms Strategist" : "Alternative Allocation"}</p>
+          <p className="text-xs text-blue-600 mt-0.5">{historical ? "Historical model reasoning — policy claims not independently verified" : "Challenger model reasoning"}</p>
         </div>
         <AIBadge provider={layer.provider} model={layer.model} label="" />
         <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ml-auto ${agrees ? "bg-green-100 border-green-300 text-green-700" : "bg-amber-100 border-amber-300 text-amber-700"}`}>
@@ -1075,7 +1081,7 @@ function Layer2Section({
           )}
 
           {agrees && layer.summary && (
-            <p className="text-sm text-green-700">{layer.summary}</p>
+            <p className="text-sm text-green-700">{historical ? "Historical model opinion: " : "Challenger opinion: "}{layer.summary}</p>
           )}
         </>
       )}
@@ -1088,7 +1094,8 @@ function Layer3Section({ layer }: { layer: Layer3Result | null | undefined }) {
   const flags = [...(layer.risk_flags ?? [])].sort(
     (a, b) => (SEVERITY_ORDER[a.severity?.toUpperCase()] ?? 99) - (SEVERITY_ORDER[b.severity?.toUpperCase()] ?? 99)
   );
-  const risk = layer.final_risk_level ?? "medium";
+  const risk = layer.final_risk_level;
+  const historical = !layer.claim_validation_version;
   const riskColor = risk === "high" ? "text-red-600" : risk === "low" ? "text-green-600" : "text-amber-600";
   return (
     <section className="bg-white border rounded-xl p-5 shadow-sm space-y-3">
@@ -1096,12 +1103,12 @@ function Layer3Section({ layer }: { layer: Layer3Result | null | undefined }) {
         <div>
           <h3 className="font-semibold text-gray-800">🟣 {layer.name ?? "Risk Auditor"}</h3>
           <p className="text-xs text-purple-600 mt-0.5">
-            {layer.safer_choice === "neither" ? "Caution — Review Manually" : risk === "high" ? "Defensive" : risk === "low" ? "No scored auditor concerns" : "Moderate Risk Profile"}
+            {historical ? "Historical model assessment — not independently verified" : !risk ? "Risk assessment unavailable" : layer.safer_choice === "neither" ? "Caution — Review Manually" : risk === "high" ? "Defensive" : risk === "low" ? "No scored auditor concerns — evidence coverage is limited" : "Moderate Risk Profile"}
           </p>
         </div>
         <AIBadge provider={layer.provider} model={layer.model} label="" />
         <span className={`text-xs font-semibold ml-auto ${riskColor}`}>
-          Risk: {risk.toUpperCase()}
+          {historical ? "Historical model risk" : "Auditor assessment"}: {risk?.toUpperCase() ?? "UNAVAILABLE"}
         </span>
       </div>
       {layer.error ? (
@@ -1112,15 +1119,15 @@ function Layer3Section({ layer }: { layer: Layer3Result | null | undefined }) {
             <p className="text-sm text-gray-600">{layer.claim_validation_version ? "No scored auditor observations. Review unscored claims separately." : "No historical model risk flags identified."}</p>
           ) : (
             <div className="space-y-1.5">
-              {flags.map((f, i) => <AuditorClaimFlag key={i} flag={f} />)}
+              {flags.map((f, i) => <AuditorClaimFlag key={i} flag={f} historical={historical} />)}
             </div>
           )}
           {layer.auditor_notes && (
-            <p className="text-xs text-gray-500 border-t pt-2">{layer.claim_validation_version ? "Validated interpretation: " : "Historical model opinion: "}{layer.auditor_notes}</p>
+            <p className="text-xs text-gray-500 border-t pt-2">{layer.claim_validation_version ? "Auditor interpretation — see each claim's evidence status: " : "Historical model opinion: "}{layer.auditor_notes}</p>
           )}
           {!!layer.claim_reviews?.length && <div className="border-t pt-2 space-y-1.5">
             <p className="text-xs text-gray-500">Unscored model claims — not verified policy breaches</p>
-            {layer.claim_reviews.map((f, i) => <AuditorClaimFlag key={i} flag={f} />)}
+            {layer.claim_reviews.map((f, i) => <AuditorClaimFlag key={i} flag={f} historical={historical} />)}
           </div>}
           {layer.raw_model_output?.auditor_notes && <details className="text-xs text-gray-500">
             <summary>Raw model opinion — not validated policy evidence</summary>
@@ -1229,22 +1236,22 @@ const CONF_COLOR: Record<string, string> = {
   high: "text-green-600", medium: "text-amber-600", low: "text-red-500",
 };
 
-function AlignmentBar({ label, score, barColor }: { label: string; score: number; barColor: string }) {
-  const s = Math.max(0, Math.min(100, score));
+function AlignmentBar({ label, score, barColor }: { label: string; score: number | null; barColor: string }) {
+  const s = score == null ? null : Math.max(0, Math.min(100, score));
   return (
     <div className="space-y-1">
       <div className="flex justify-between text-xs">
         <span className="text-gray-500">{label}</span>
-        <span className="font-semibold text-gray-700">{s}</span>
+        <span className="font-semibold text-gray-700">{s ?? "Unavailable"}</span>
       </div>
-      <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+      {s != null && <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
         <div className={`h-full rounded-full ${barColor}`} style={{ width: `${s}%` }} />
-      </div>
+      </div>}
     </div>
   );
 }
 
-function ConsensusSection({ consensus }: { consensus: OptimizerConsensus }) {
+function ConsensusSection({ consensus, historical }: { consensus: OptimizerConsensus; historical: boolean }) {
   const ct = consensus.consensus_type;
 
   // Legacy path: old history rows without consensus_type
@@ -1254,32 +1261,32 @@ function ConsensusSection({ consensus }: { consensus: OptimizerConsensus }) {
       consensus.recommended === "no_action" ? "Stable"
       : consensus.recommended === "layer1"  ? "Strategist"
       : consensus.recommended === "layer2"  ? "Challenger"
-      : "Review";
+      : "Unavailable";
     return (
       <section className={`border-2 rounded-xl p-5 shadow-sm space-y-3 ${isNoAction ? "bg-green-50 border-green-300" : "bg-white border-blue-200"}`}>
         <div className="flex items-center gap-2 flex-wrap">
           <h3 className="font-semibold text-gray-800">Consensus Engine</h3>
           <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full border ${isNoAction ? "bg-green-100 border-green-300 text-green-700" : "bg-blue-100 border-blue-200 text-blue-700"}`}>
-            {isNoAction ? "No Action" : "Rebalance"}
+            {isNoAction ? "No Action" : consensus.recommended === "layer1" || consensus.recommended === "layer2" ? "Rebalance" : "Decision unavailable"}
           </span>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
           <div className="bg-white/70 rounded-lg p-3">
             <p className="text-xs text-gray-500 mb-1">L1 vs L2</p>
             <p className={`text-sm font-semibold ${consensus.agrees ? "text-green-600" : "text-amber-600"}`}>
-              {consensus.agrees ? "✓ Agree" : "⚠ Disagree"}
+              {consensus.agrees == null ? "Unavailable" : consensus.agrees ? "✓ Agree" : "⚠ Disagree"}
             </p>
           </div>
           <div className="bg-white/70 rounded-lg p-3">
-            <p className="text-xs text-gray-500 mb-1">Risk Level</p>
-            <p className={`text-sm font-semibold ${RISK_COLOR[consensus.final_risk_level ?? "medium"] ?? ""}`}>
-              {(consensus.final_risk_level ?? "medium").toUpperCase()}
+            <p className="text-xs text-gray-500 mb-1">{historical ? "Historical model risk level" : "Risk Level"}</p>
+            <p className={`text-sm font-semibold ${RISK_COLOR[consensus.final_risk_level ?? "unavailable"] ?? ""}`}>
+              {(consensus.final_risk_level ?? "unavailable").toUpperCase()}
             </p>
           </div>
           <div className="bg-white/70 rounded-lg p-3">
             <p className="text-xs text-gray-500 mb-1">Confidence</p>
             <p className={`text-sm font-semibold ${CONF_COLOR[consensus.confidence] ?? ""}`}>
-              {consensus.confidence.toUpperCase()}
+              {(consensus.confidence?.toUpperCase() ?? "UNAVAILABLE")}
             </p>
           </div>
           <div className="bg-white/70 rounded-lg p-3">
@@ -1298,17 +1305,17 @@ function ConsensusSection({ consensus }: { consensus: OptimizerConsensus }) {
 
   // New path: Consensus Strength Matrix
   const cfg = CONSENSUS_TYPE_CFG[ct] ?? CONSENSUS_TYPE_CFG.WEAK_CONSENSUS;
-  const strength = consensus.consensus_strength_score ?? 0;
-  const stratAlign = consensus.strategist_alignment_score ?? 0;
-  const riskAlign = consensus.risk_alignment_score ?? 0;
-  const s = Math.max(0, Math.min(100, strength));
+  const strength = assessment(consensus.consensus_strength_score);
+  const stratAlign = assessment(consensus.strategist_alignment_score);
+  const riskAlign = assessment(consensus.risk_alignment_score);
+  const s = strength == null ? null : Math.max(0, Math.min(100, strength));
 
   const followLabel =
     consensus.recommended === "no_action" ? "Stable"
     : consensus.recommended === "layer1"  ? "Strategist"
     : consensus.recommended === "layer2"  ? "Challenger"
     : consensus.recommended === "fallback"? "Fallback"
-    : "Review";
+    : "Unavailable";
 
   return (
     <section className={`border-2 rounded-xl p-5 shadow-sm space-y-4 ${cfg.section}`}>
@@ -1319,7 +1326,7 @@ function ConsensusSection({ consensus }: { consensus: OptimizerConsensus }) {
           {cfg.icon} {cfg.label}
         </span>
         <span className={`text-xs font-medium ml-auto ${CONF_COLOR[consensus.confidence]}`}>
-          {consensus.confidence.toUpperCase()} confidence
+          {(consensus.confidence?.toUpperCase() ?? "UNAVAILABLE")} confidence
         </span>
       </div>
 
@@ -1327,11 +1334,11 @@ function ConsensusSection({ consensus }: { consensus: OptimizerConsensus }) {
       <div className="bg-white/70 rounded-xl border border-white/80 px-4 py-3 space-y-2">
         <div className="flex items-center justify-between text-xs">
           <span className="text-gray-500 font-medium">Final Consensus Score</span>
-          <span className={`font-bold text-sm ${cfg.badgeText}`}>{s}<span className="text-xs font-normal text-gray-400"> / 100</span></span>
+          <span className={`font-bold text-sm ${cfg.badgeText}`}>{s == null ? "Unavailable" : `${s} / 100`}</span>
         </div>
-        <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
+        {s != null && <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
           <div className={`h-full rounded-full transition-all duration-500 ${cfg.bar}`} style={{ width: `${s}%` }} />
-        </div>
+        </div>}
         {/* Alignment sub-scores */}
         <div className="grid grid-cols-2 gap-3 pt-1">
           <AlignmentBar label="Strategist alignment" score={stratAlign} barColor={cfg.bar} />
@@ -1363,15 +1370,15 @@ function ConsensusSection({ consensus }: { consensus: OptimizerConsensus }) {
       {/* Stats grid */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
         <div className="bg-white/60 rounded-lg p-2.5">
-          <p className="text-xs text-gray-400 mb-0.5">Risk Level</p>
-          <p className={`text-sm font-semibold ${RISK_COLOR[consensus.final_risk_level ?? "medium"] ?? ""}`}>
-            {(consensus.final_risk_level ?? "medium").toUpperCase()}
+          <p className="text-xs text-gray-400 mb-0.5">{historical ? "Historical model risk level" : "Risk Level"}</p>
+          <p className={`text-sm font-semibold ${RISK_COLOR[consensus.final_risk_level ?? "unavailable"] ?? ""}`}>
+            {(consensus.final_risk_level ?? "unavailable").toUpperCase()}
           </p>
         </div>
         <div className="bg-white/60 rounded-lg p-2.5">
-          <p className="text-xs text-gray-400 mb-0.5">Risk Flags</p>
+          <p className="text-xs text-gray-400 mb-0.5">{historical ? "Recorded model flags" : "Risk Flags"}</p>
           <p className={`text-sm font-semibold ${(consensus.risk_flag_count ?? 0) > 0 ? "text-amber-600" : "text-green-600"}`}>
-            {consensus.risk_flag_count ?? 0}
+            {assessment(consensus.risk_flag_count) ?? "Unavailable"}
           </p>
         </div>
         <div className="bg-white/60 rounded-lg p-2.5">
@@ -1389,7 +1396,7 @@ function ConsensusSection({ consensus }: { consensus: OptimizerConsensus }) {
       {/* Recommended action */}
       {consensus.recommended_action && (
         <div className="border-t border-white/50 pt-3">
-          <p className="text-xs font-medium text-gray-500 mb-1">Recommended action</p>
+          <p className="text-xs font-medium text-gray-500 mb-1">{historical ? "Recorded historical recommendation — model claims not independently verified" : "Recommended action"}</p>
           <p className={`text-sm ${cfg.summaryText}`}>{consensus.recommended_action}</p>
         </div>
       )}
@@ -1605,7 +1612,7 @@ function SendToWorkspaceButton({
           <p className="text-xs text-violet-600/70 mt-1">
             {hasSymbols
               ? `${symbols.length} accumulation candidate${symbols.length !== 1 ? "s" : ""} (BUY / ACCUMULATE) available to seed the sandbox`
-              : "No accumulation candidates — only reductions were suggested"}
+              : "No buy or accumulate candidates in this run"}
             {" "}— allocations there are recalculated from scratch, not copied from this recommendation.
           </p>
         </div>
@@ -1709,9 +1716,11 @@ function CollapsibleSection({
 function CommitteeDecisionCard({
   consensus,
   allocations,
+  historical,
 }: {
   consensus: OptimizerConsensus;
   allocations?: TargetAllocation[];
+  historical: boolean;
 }) {
   const ct = consensus.consensus_type;
   const cfg = ct ? (CONSENSUS_TYPE_CFG[ct] ?? CONSENSUS_TYPE_CFG.WEAK_CONSENSUS) : null;
@@ -1727,7 +1736,7 @@ function CommitteeDecisionCard({
     : consensus.recommended === "layer1"  ? "Strategist"
     : consensus.recommended === "layer2"  ? "Challenger"
     : consensus.recommended === "fallback"? "Fallback plan"
-    : "Human review required";
+    : "Decision unavailable";
 
   const sectionCls = isDeadlock
     ? "bg-red-50 border-red-300"
@@ -1779,7 +1788,7 @@ function CommitteeDecisionCard({
         <div>
           <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-0.5">Confidence</p>
           <p className={`text-sm font-bold ${CONF_COLOR[consensus.confidence] ?? "text-gray-700"}`}>
-            {consensus.confidence.toUpperCase()}
+            {(consensus.confidence?.toUpperCase() ?? "UNAVAILABLE")}
           </p>
         </div>
         {consensus.consensus_strength_score != null && (
@@ -1791,14 +1800,14 @@ function CommitteeDecisionCard({
           </div>
         )}
         <div>
-          <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-0.5">Risk</p>
-          <p className={`text-sm font-bold ${RISK_COLOR[consensus.final_risk_level ?? "medium"] ?? "text-gray-700"}`}>
-            {(consensus.final_risk_level ?? "medium").toUpperCase()}
+          <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-0.5">{historical ? "Historical model risk" : "Auditor assessment"}</p>
+          <p className={`text-sm font-bold ${RISK_COLOR[consensus.final_risk_level ?? "unavailable"] ?? "text-gray-700"}`}>
+            {(consensus.final_risk_level ?? "unavailable").toUpperCase()}
           </p>
         </div>
         {(consensus.risk_flag_count ?? 0) > 0 && (
           <div>
-            <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-0.5">Flags</p>
+            <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-0.5">{historical ? "Recorded model flags" : "Auditor flags"}</p>
             <p className="text-sm font-bold text-amber-600">{consensus.risk_flag_count}</p>
           </div>
         )}
@@ -1823,6 +1832,7 @@ function CommitteeDecisionCard({
         </div>
       )}
 
+      <p className="text-xs text-gray-600">{historical ? "Recorded historical assessment; model claims were not independently verified. " : "Evidence-backed observations and unscored opinions are distinguished in Auditor detail. "}Scores are assessments, not return probabilities.</p>
       {(consensus.refinement_summary || consensus.recommended_action) && (
         <div className={`rounded-lg px-4 py-3 border ${cfg?.summary ?? "bg-white/60 border-white/80"}`}>
           <p className={`text-sm leading-relaxed ${cfg?.summaryText ?? "text-gray-700"}`}>
@@ -1879,7 +1889,7 @@ function ResultPanel({ result, loading, profiles, portfolioId, onForceRebalance,
   const totalValue = result.total_value ?? 0;
   const riskMap: Record<string, string> = {};
   for (const flag of result.layer3_result?.risk_flags ?? []) {
-    if (flag.category === "OWNER_INTENT_REVIEW" || flag.scoring_eligible === false) continue;
+    if (!result.layer3_result?.claim_validation_version || flag.category === "OWNER_INTENT_REVIEW" || flag.scoring_eligible !== true || flag.validation_status !== "VERIFIED") continue;
     const key = flag.severity?.toUpperCase();
     const cur = riskMap[flag.symbol];
     if (!cur || (SEVERITY_ORDER[key] ?? 99) < (SEVERITY_ORDER[cur] ?? 99)) {
@@ -1894,7 +1904,7 @@ function ResultPanel({ result, loading, profiles, portfolioId, onForceRebalance,
         <span className="text-xs text-gray-400">Portfolio: {result.portfolio_count ?? "?"}/12 stocks</span>
         {result.max_reached && (
           <span className="text-xs bg-amber-100 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full font-medium">
-            ⚠ AT LIMIT — only reductions/swaps suggested
+            Position limit reached
           </span>
         )}
       </div>
@@ -1924,9 +1934,10 @@ function ResultPanel({ result, loading, profiles, portfolioId, onForceRebalance,
       {!result.layer1_result && (
         <section className="bg-white border rounded-xl p-5 shadow-sm">
           <div className="flex items-center gap-3 mb-2">
-            <h3 className="font-semibold">Portfolio Assessment — {result.portfolio_name}</h3>
+            <h3 className="font-semibold">Recorded model assessment — {result.portfolio_name}</h3>
             <AIBadge provider={result.ai_provider ?? ""} model={result.ai_model ?? ""} label="optimized by" />
           </div>
+          <p className="text-xs text-gray-500">Model reasoning is not verified policy evidence. This text and its scores reflect the recorded run.</p>
           <p className="text-sm text-gray-800 mb-1">{result.portfolio_assessment}</p>
           <p className="text-xs text-gray-500">{result.optimization_notes}</p>
           {result.target_allocations && result.target_allocations.length > 0 && (
@@ -1937,23 +1948,28 @@ function ResultPanel({ result, loading, profiles, portfolioId, onForceRebalance,
         </section>
       )}
 
-      {result.layer1_result && <Layer1Section layer={result.layer1_result} totalValue={totalValue} />}
-
-      {result.layer2_result && <Layer2Section layer={result.layer2_result} totalValue={totalValue} />}
-
-      {result.layer3_result && <Layer3Section layer={result.layer3_result} />}
+      {(result.layer1_result || result.layer2_result || result.layer3_result) && <CollapsibleSection title="AI reasoning and evidence" summary="Recorded layer opinions, verified observations and unscored claims">
+        {!result.layer3_result?.claim_validation_version && <p className="text-xs text-gray-600 mb-3">Historical model reasoning — recorded at run time. Policy assertions in this text are not independently verified.</p>}
+        <div className="space-y-4">
+          {result.layer1_result && <Layer1Section layer={result.layer1_result} totalValue={totalValue} historical={!result.layer3_result?.claim_validation_version} />}
+          {result.layer2_result && <Layer2Section layer={result.layer2_result} totalValue={totalValue} historical={!result.layer3_result?.claim_validation_version} />}
+          {result.layer3_result && <Layer3Section layer={result.layer3_result} />}
+        </div>
+      </CollapsibleSection>}
 
       {result.consensus && (
         <div className="space-y-3">
           <CommitteeDecisionCard
             consensus={result.consensus}
             allocations={result.target_allocations}
+            historical={!result.layer3_result?.claim_validation_version}
           />
           <CollapsibleSection
             title="Full Consensus Detail"
             summary="Alignment scores, strength matrix, and committee resolution"
           >
-            <ConsensusSection consensus={result.consensus} />
+            <p className="text-xs text-gray-600 mb-2">Stored assessment scores describe this run; they are not probabilities of returns. Historical model narratives are not independently verified evidence.</p>
+            <ConsensusSection consensus={result.consensus} historical={!result.layer3_result?.claim_validation_version} />
           </CollapsibleSection>
         </div>
       )}
@@ -2237,11 +2253,17 @@ export default function OptimizerPage() {
   // M36.1 WP4A F01 — the optimizer consumes canonical Current Selection
   // exclusively. No page-local selectedPortfolioId override: that shadowed
   // PortfolioContext with a second, competing effective selector.
-  const { portfolios, currentSelection, reportUnresolvedPortfolio } = usePortfolio();
+  const { portfolios, currentSelection, selectPortfolio, reportUnresolvedPortfolio } = usePortfolio();
+  const requestedHistory = searchParams.get("history");
+  const requestedPortfolio = searchParams.get("portfolio");
   const [result, setResult] = useState<OptimizerResult | null>(null);
   const [history, setHistory] = useState<OptimizerHistoryItem[]>([]);
   const [historyDetails, setHistoryDetails] = useState<Record<number, OptimizerResult | null>>({});
   const [selectedHistoryId, setSelectedHistoryId] = useState<number | null>(null);
+  const [historical, setHistorical] = useState(true);
+  const historyRequestRef = useRef(0);
+  const loadedHistoryRef = useRef<string | null>(null);
+  const appliedPortfolioRef = useRef<string | null>(null);
   const [running, setRunning] = useState(false);
   const [forceRunning, setForceRunning] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -2268,6 +2290,32 @@ export default function OptimizerPage() {
   // were issued for.
   const selectionRef = useRef<number | null>(portfolioId);
   selectionRef.current = portfolioId;
+  useEffect(() => {
+    if (!requestedPortfolio) {
+      appliedPortfolioRef.current = null;
+      return;
+    }
+    if (portfolios.length === 0) return;
+    const pid = Number(requestedPortfolio);
+    if (appliedPortfolioRef.current !== requestedPortfolio) {
+      appliedPortfolioRef.current = requestedPortfolio;
+      if (portfolios.some((p) => p.id === pid) && pid !== currentSelection) selectPortfolio(pid);
+    } else if (currentSelection != null && currentSelection !== pid && portfolios.some((p) => p.id === pid)) {
+      // An explicit portfolio switch starts that portfolio's own history.
+      // Do not keep forcing the portfolio embedded in the prior share link.
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("portfolio", String(currentSelection));
+      params.delete("history");
+      router.replace(`/optimizer?${params.toString()}`, { scroll: false });
+    }
+  }, [requestedPortfolio, portfolios, currentSelection, selectPortfolio]);
+
+  function syncHistoryUrl(pid: number, id: number) {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("portfolio", String(pid));
+    params.set("history", String(id));
+    router.replace(`/optimizer?${params.toString()}`, { scroll: false });
+  }
   const goalsRequestRef = useRef(0);
 
   const loadGoals = useCallback(async () => {
@@ -2377,6 +2425,8 @@ export default function OptimizerPage() {
 
   useEffect(() => {
     if (portfolioId == null) {
+      loadedHistoryRef.current = null;
+      ++historyRequestRef.current;
       // M36.1 WP4B F04 — Current Selection is NONE: synchronously clear all
       // portfolio-bound optimizer state (previously only cleared on the
       // next non-null portfolioId, leaving stale result/history in memory
@@ -2391,43 +2441,62 @@ export default function OptimizerPage() {
       setLoadingDetail(false);
       return;
     }
+    if (requestedPortfolio && Number(requestedPortfolio) !== portfolioId) {
+      setResult(null);
+      setSelectedHistoryId(null);
+      setLoadingDetail(false);
+      setError("Selected portfolio unavailable or loading. No other run is substituted.");
+      return;
+    }
+    if (requestedHistory && loadedHistoryRef.current === `${portfolioId}:${requestedHistory}`) return;
+    const request = ++historyRequestRef.current;
+    loadedHistoryRef.current = null;
     let cancelled = false;
 
     setResult(null);
     setSelectedHistoryId(null);
+    setHistorical(true);
+    setLoadingDetail(true);
 
     const bootstrapLatestHistory = async () => {
       const items = await loadHistory(portfolioId);
-      if (cancelled || items.length === 0) return;
+      if (cancelled || request !== historyRequestRef.current) return;
 
-      const rawHistoryId = searchParams.get("history");
+      const rawHistoryId = requestedHistory;
       const historyFromQuery = rawHistoryId ? Number(rawHistoryId) : Number.NaN;
       const queryTarget = Number.isFinite(historyFromQuery)
         ? items.find((h) => h.id === historyFromQuery)
         : undefined;
-      const target = queryTarget ?? items[0];
-      if (!target) return;
+      const remembered = items.find((h) => h.id === readSelectedHistoryMap()[String(portfolioId)]);
+      const target = rawHistoryId ? queryTarget : remembered ?? items[0];
+      if (!target) {
+        setLoadingDetail(false);
+        setError(rawHistoryId ? "Selected history is unavailable for this portfolio. No other run is substituted." : "");
+        return;
+      }
 
       setSelectedHistoryId(target.id);
       setLoadingDetail(true);
       setError("");
       try {
         const detail = await getOptimizerHistory(target.id);
-        if (!cancelled) {
+        if (!cancelled && request === historyRequestRef.current) {
+          loadedHistoryRef.current = `${portfolioId}:${target.id}`;
           setResult(detail);
           setLiveExpectedGoalId(null);
           setHistoryDetails((prev) => ({ ...prev, [target.id]: detail }));
           rememberSelectedHistory(portfolioId, target.id);
+          if (requestedHistory !== String(target.id) || requestedPortfolio !== String(portfolioId)) syncHistoryUrl(portfolioId, target.id);
         }
       } catch (e) {
-        if (!cancelled) {
+        if (!cancelled && request === historyRequestRef.current) {
           setError("Failed to load history");
           // M36.1 WP4C F03 — only the canonical "Portfolio not found"
           // response triggers bounded re-resolution.
           if (isUnresolvedPortfolioError(e)) reportUnresolvedPortfolio(portfolioId);
         }
       } finally {
-        if (!cancelled) setLoadingDetail(false);
+        if (!cancelled && request === historyRequestRef.current) setLoadingDetail(false);
       }
     };
 
@@ -2436,7 +2505,7 @@ export default function OptimizerPage() {
     return () => {
       cancelled = true;
     };
-  }, [portfolioId, loadHistory, searchParams, reportUnresolvedPortfolio]);
+  }, [portfolioId, loadHistory, requestedHistory, requestedPortfolio, reportUnresolvedPortfolio]);
 
   async function handlePersonaSave(p: StrategyPersona) {
     if (portfolioId == null) return;
@@ -2466,9 +2535,12 @@ export default function OptimizerPage() {
       // issued for; never let it repopulate a different portfolio's page.
       if (selectionRef.current !== pid) return;
       setResult(data);
+      setHistorical(false);
       setLiveExpectedGoalId(runGoalId);
       setSelectedHistoryId(data.history_id ?? null);
       if (data.history_id != null) {
+        loadedHistoryRef.current = `${pid}:${data.history_id}`;
+        syncHistoryUrl(pid, data.history_id);
         setHistoryDetails((prev) => ({ ...prev, [data.history_id as number]: data }));
         rememberSelectedHistory(pid, data.history_id);
       }
@@ -2500,23 +2572,29 @@ export default function OptimizerPage() {
 
   async function handleSelectHistory(item: OptimizerHistoryItem) {
     if (selectedHistoryId === item.id) return;
+    const request = ++historyRequestRef.current;
+    loadedHistoryRef.current = null;
+    setResult(null);
+    setHistorical(true);
     setSelectedHistoryId(item.id);
     if (portfolioId != null) {
       rememberSelectedHistory(portfolioId, item.id);
+      syncHistoryUrl(portfolioId, item.id);
     }
     setLoadingDetail(true);
     setError("");
     const pid = portfolioId;
     try {
       const detail = await getOptimizerHistory(item.id);
-      if (selectionRef.current !== pid) return;
+      if (selectionRef.current !== pid || request !== historyRequestRef.current) return;
+      loadedHistoryRef.current = `${pid}:${item.id}`;
       setResult(detail);
       setLiveExpectedGoalId(null);
       setHistoryDetails((prev) => ({ ...prev, [item.id]: detail }));
     } catch {
-      if (selectionRef.current === pid) setError("Failed to load history");
+      if (selectionRef.current === pid && request === historyRequestRef.current) setError("Failed to load selected history; recommendation unavailable.");
     } finally {
-      if (selectionRef.current === pid) setLoadingDetail(false);
+      if (selectionRef.current === pid && request === historyRequestRef.current) setLoadingDetail(false);
     }
   }
 
@@ -2528,6 +2606,11 @@ export default function OptimizerPage() {
   const deepLinkedHistoryId = deepLinkedHistoryIdRaw ? Number(deepLinkedHistoryIdRaw) : Number.NaN;
   const hasDeepLinkedHistory = Number.isFinite(deepLinkedHistoryId);
   const isViewingDeepLinkedHistory = hasDeepLinkedHistory && selectedHistoryId === deepLinkedHistoryId;
+  const selectionMatchesUrl = (!requestedHistory || (hasDeepLinkedHistory && selectedHistoryId === deepLinkedHistoryId))
+    && (!requestedPortfolio || Number(requestedPortfolio) === portfolioId);
+  // URL back/forward changes can render before effects finish. Hide the old
+  // result synchronously so a newly shared URL never labels a previous run.
+  const displayedResult = selectionMatchesUrl ? result : null;
   const todayIso = new Date().toISOString().slice(0, 10);
   const activeGoals = goals.filter((goal) => !goal.is_archived);
   const eligibleGoals = activeGoals.filter((goal) => goal.target_date != null && goal.target_date >= todayIso);
@@ -2546,14 +2629,11 @@ export default function OptimizerPage() {
         <p className="text-sm text-gray-500">
           Dynamic capital allocation — position sizing, rebalancing, cash deployment.
         </p>
-        {hasDeepLinkedHistory && (
-          <p className="mt-2 inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
-            {isViewingDeepLinkedHistory
-              ? "กำลังแสดงผลการวิเคราะห์ล่าสุดจาก Ops Center"
-              : "กำลังโหลดผลการวิเคราะห์ที่เลือกจาก Ops Center"}
-          </p>
-        )}
       </div>
+
+      <OptimizerDecisionSummary result={displayedResult} historyId={selectionMatchesUrl ? selectedHistoryId : null} historical={historical}
+        loading={loadingDetail || loadingHistory || running || forceRunning} />
+      {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
 
       {/* Controls */}
       <div className="bg-white border rounded-xl p-4 shadow-sm space-y-4">
@@ -2638,7 +2718,6 @@ export default function OptimizerPage() {
           {running && <Spinner />}
           {running ? "Optimizing…" : "Run Optimizer"}
         </button>
-        {error && <p className="text-red-500 text-xs self-center">{error}</p>}
         </div>
       </div>
 
@@ -2667,12 +2746,12 @@ export default function OptimizerPage() {
                 </div>
               )}
 
-              {!running && result && <OptimizerJumpNav />}
+              {!running && displayedResult && <OptimizerJumpNav />}
 
               {!running && (
                 <div className={`rounded-xl transition-colors ${isViewingDeepLinkedHistory ? "ring-1 ring-blue-200 bg-blue-50/30" : ""}`}>
                   <ResultPanel
-                    result={result}
+                    result={displayedResult}
                     loading={loadingDetail}
                     profiles={profiles}
                     portfolioId={portfolioId}
