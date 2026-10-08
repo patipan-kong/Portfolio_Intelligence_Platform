@@ -4653,7 +4653,7 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
             compute_portfolio_execution_context,
             apply_execution_score_penalties,
         )
-        execution_facts = resolve_execution_instruments(db, tuple(scores_map))
+        execution_facts = resolve_execution_instruments(db, tuple(dict.fromkeys((*scores_map, *(h.symbol for h in holdings)))))
         execution_ctx = compute_portfolio_execution_context(
             scores_map,
             facts_by_symbol=execution_facts,
@@ -4666,6 +4666,14 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
         )
     except Exception as _exc_err:
         _log.warning("analyze_optimizer: execution_penalty failed — continuing without: %s", _exc_err)
+
+    # Shared factual context, captured before model calls and persisted with
+    # unconditional OptimizerHistory. Never reconstructed on history reads.
+    from services.optimizer.instrument_context import build_instrument_context
+    execution_ctx = execution_ctx or {}
+    execution_ctx["canonical_instrument_context"] = build_instrument_context(
+        db, (h.symbol for h in holdings), execution_facts, execution_ctx,
+    )
 
     portfolio_data = [
         {**scores_map[h.symbol], "shares": h.shares, "avg_cost": h.avg_cost, "allow_swap": h.allow_swap}
