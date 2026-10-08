@@ -469,12 +469,16 @@ def test_consensus_l1_parse_failure_propagation():
 
 
 def test_consensus_critical_flag_forces_review():
-    """CRITICAL risk flag should veto NO_ACTION even at low score."""
+    """An evidence-backed CRITICAL flag retains the existing review formula."""
+    from services.optimizer.auditor_claims import build_claim_evidence, validate_auditor_claims
     l2 = {"agrees_with_layer1": True, "status": "NO_ACTION", "rebalance_opportunity_score": 5}
     l3 = {
-        "risk_flags": [{"symbol": "PTT.BK", "issue": "sector >40%", "severity": "CRITICAL"}],
+        "risk_flags": [{"symbol": "PTT.BK", "issue": "Position above cap", "severity": "CRITICAL",
+                        "category": "INVESTMENT_RISK", "claim_kind": "POLICY_BREACH", "evidence_ref": "policy:0"}],
         "safer_choice": "layer1", "final_risk_level": "high", "auditor_notes": "",
     }
+    l3 = validate_auditor_claims(l3, build_claim_evidence([], [{"symbol": "PTT.BK",
+        "violation_type": "SINGLE_POSITION_LIMIT", "proposed_pct": 40, "allowed_pct": 25}], {}))
     c = _consensus_engine({}, l2, l3)
     assert c["consensus_decision"] == "REVIEW"
 

@@ -1687,6 +1687,10 @@ export interface RiskFlag {
   severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
   // Absent in historical runs; only explicitly classified review flags are unscored.
   category?: "INVESTMENT_RISK" | "OWNER_INTENT_REVIEW";
+  claim_kind?: string;
+  validation_status?: "VERIFIED" | "MODEL_OPINION" | "ADVISORY" | "UNSUPPORTED" | "OWNER_REVIEW";
+  scoring_eligible?: boolean;
+  provenance?: string | Record<string, unknown>;
 }
 
 export interface Layer1Result {
@@ -1723,6 +1727,9 @@ export interface Layer2Result {
 
 export interface Layer3Result {
   risk_flags?: RiskFlag[];
+  claim_reviews?: RiskFlag[];
+  claim_validation_version?: string;
+  raw_model_output?: { auditor_notes?: string; risk_flags?: RiskFlag[] };
   safer_choice?: "layer1" | "layer2" | "neither";
   final_risk_level?: "low" | "medium" | "high";
   auditor_notes?: string;

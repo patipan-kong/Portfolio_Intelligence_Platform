@@ -659,7 +659,7 @@ def test_conflicts_cause_no_redistribution_and_no_governance_penalty(monkeypatch
 
 def test_deferred_disagreement_is_visible_unscored_and_soft_keep_stays_soft(monkeypatch, enabled):
     real_risk = {"symbol": "WWW", "issue": "Poor entry timing", "severity": "MEDIUM",
-                 "category": "INVESTMENT_RISK"}
+                 "category": "INVESTMENT_RISK", "claim_kind": "INVESTMENT_JUDGMENT"}
     disagreement = {"symbol": "AAA", "issue": "Owner restriction conflicts with reduction",
                     "severity": "MEDIUM", "category": "OWNER_INTENT_REVIEW"}
 
@@ -672,8 +672,10 @@ def test_deferred_disagreement_is_visible_unscored_and_soft_keep_stays_soft(monk
         return run(db, p)
 
     baseline, reviewed = once([real_risk]), once([real_risk, disagreement])
-    assert reviewed["layer3_result"]["risk_flags"] == [real_risk, disagreement]
-    assert reviewed["consensus"]["risk_alignment_score"] == baseline["consensus"]["risk_alignment_score"] == 72
+    assert reviewed["layer3_result"]["raw_model_output"]["risk_flags"] == [real_risk, disagreement]
+    assert [f["validation_status"] for f in reviewed["layer3_result"]["risk_flags"]] == ["OWNER_REVIEW"]
+    assert reviewed["layer3_result"]["claim_reviews"][0]["validation_status"] == "MODEL_OPINION"
+    assert reviewed["consensus"]["risk_alignment_score"] == baseline["consensus"]["risk_alignment_score"] == 92
     for key in ("risk_governance_score", "governance_flags", "violation_details"):
         assert reviewed["consensus"].get(key) == baseline["consensus"].get(key)
     assert reviewed["target_allocations"] == baseline["target_allocations"]

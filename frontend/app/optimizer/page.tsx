@@ -20,6 +20,7 @@ import AttributionPanel from "@/components/AttributionPanel";
 import OperationsTimeline from "@/components/operations-center/quant/OperationsTimeline";
 import ExecutionPlanCard from "@/components/optimizer/ExecutionPlanCard";
 import AdvisoryIntentReviewCard from "@/components/optimizer/AdvisoryIntentReviewCard";
+import AuditorClaimFlag from "@/components/optimizer/AuditorClaimFlag";
 import GoalConstraintDisclosure from "@/components/optimizer/GoalConstraintDisclosure";
 import { DecisionActionPanel, TZ, DECISION_CFG, DECISION_BADGE } from "@/components/optimizer/DecisionActionPanel";
 import { isDeferred, NO_ACTION_REASON_LABELS } from "@/lib/executionPlan";
@@ -29,7 +30,7 @@ import PortfolioSelectionNotice from "@/components/PortfolioSelectionNotice";
 import { ReasonCell, type ReasonFact } from "@/components/ReasonCell";
 import type {
   OptimizerResult, OptimizerHistoryItem, TargetAllocation, AllocationAction,
-  WatchlistRanking, Layer2Result, Layer3Result, OptimizerConsensus, RiskFlag, SectorWarning,
+  WatchlistRanking, Layer2Result, Layer3Result, OptimizerConsensus, SectorWarning,
   BlockedOpportunity, SwapSuggestion, ConsensusType,
   StrategyPersona, StrategyProfile, PortfolioDNA, MarketRegime,
   ActivePolicy,
@@ -619,38 +620,9 @@ function SwapTable({ swaps }: { swaps: SwapSuggestion[] }) {
 
 // ─── Layer sections ───────────────────────────────────────────────────────────
 
-const RISK_CLS: Record<string, string> = {
-  CRITICAL: "text-red-900   bg-red-100   border-red-500",
-  HIGH:     "text-red-700   bg-red-50    border-red-300",
-  MEDIUM:   "text-amber-700 bg-amber-50  border-amber-300",
-  LOW:      "text-gray-600  bg-gray-50   border-gray-200",
-};
-
-const RISK_DOT: Record<string, string> = {
-  CRITICAL: "bg-red-600", HIGH: "bg-red-400", MEDIUM: "bg-amber-400", LOW: "bg-gray-400",
-};
-
 const SEVERITY_ORDER: Record<string, number> = {
   CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3,
 };
-
-function RiskFlagPill({ flag }: { flag: RiskFlag }) {
-  const ownerReview = flag.category === "OWNER_INTENT_REVIEW";
-  const key = flag.severity?.toUpperCase() as keyof typeof RISK_CLS;
-  const cls = RISK_CLS[key] ?? RISK_CLS.LOW;
-  const dot = RISK_DOT[key] ?? RISK_DOT.LOW;
-  return (
-    <div className={`flex items-start gap-2 border rounded-lg px-3 py-2 text-xs ${cls}`}>
-      <span className={`mt-0.5 shrink-0 w-2 h-2 rounded-full ${dot}`} />
-      <div>
-        <span className="font-bold mr-1.5">[{ownerReview ? "Owner review" : key}]</span>
-        <span className="font-semibold mr-1">{flag.symbol}</span>
-        {flag.issue}
-      </div>
-    </div>
-  );
-}
-
 
 // ─── NO_ACTION display helpers ────────────────────────────────────────────────
 // NO_ACTION_REASON_LABELS moved to lib/executionPlan.ts (shared with ExecutionPlanCard).
@@ -1124,7 +1096,7 @@ function Layer3Section({ layer }: { layer: Layer3Result | null | undefined }) {
         <div>
           <h3 className="font-semibold text-gray-800">🟣 {layer.name ?? "Risk Auditor"}</h3>
           <p className="text-xs text-purple-600 mt-0.5">
-            {layer.safer_choice === "neither" ? "Caution — Review Manually" : risk === "high" ? "Defensive" : risk === "low" ? "Low Risk Confirmed" : "Moderate Risk Profile"}
+            {layer.safer_choice === "neither" ? "Caution — Review Manually" : risk === "high" ? "Defensive" : risk === "low" ? "No scored auditor concerns" : "Moderate Risk Profile"}
           </p>
         </div>
         <AIBadge provider={layer.provider} model={layer.model} label="" />
@@ -1137,15 +1109,23 @@ function Layer3Section({ layer }: { layer: Layer3Result | null | undefined }) {
       ) : (
         <>
           {flags.length === 0 ? (
-            <p className="text-sm text-green-600">No risk flags identified.</p>
+            <p className="text-sm text-gray-600">{layer.claim_validation_version ? "No scored auditor observations. Review unscored claims separately." : "No historical model risk flags identified."}</p>
           ) : (
             <div className="space-y-1.5">
-              {flags.map((f, i) => <RiskFlagPill key={i} flag={f} />)}
+              {flags.map((f, i) => <AuditorClaimFlag key={i} flag={f} />)}
             </div>
           )}
           {layer.auditor_notes && (
-            <p className="text-xs text-gray-500 border-t pt-2">{layer.auditor_notes}</p>
+            <p className="text-xs text-gray-500 border-t pt-2">{layer.claim_validation_version ? "Validated interpretation: " : "Historical model opinion: "}{layer.auditor_notes}</p>
           )}
+          {!!layer.claim_reviews?.length && <div className="border-t pt-2 space-y-1.5">
+            <p className="text-xs text-gray-500">Unscored model claims — not verified policy breaches</p>
+            {layer.claim_reviews.map((f, i) => <AuditorClaimFlag key={i} flag={f} />)}
+          </div>}
+          {layer.raw_model_output?.auditor_notes && <details className="text-xs text-gray-500">
+            <summary>Raw model opinion — not validated policy evidence</summary>
+            <p>{layer.raw_model_output.auditor_notes}</p>
+          </details>}
         </>
       )}
     </section>
@@ -1899,7 +1879,7 @@ function ResultPanel({ result, loading, profiles, portfolioId, onForceRebalance,
   const totalValue = result.total_value ?? 0;
   const riskMap: Record<string, string> = {};
   for (const flag of result.layer3_result?.risk_flags ?? []) {
-    if (flag.category === "OWNER_INTENT_REVIEW") continue;
+    if (flag.category === "OWNER_INTENT_REVIEW" || flag.scoring_eligible === false) continue;
     const key = flag.severity?.toUpperCase();
     const cur = riskMap[flag.symbol];
     if (!cur || (SEVERITY_ORDER[key] ?? 99) < (SEVERITY_ORDER[cur] ?? 99)) {

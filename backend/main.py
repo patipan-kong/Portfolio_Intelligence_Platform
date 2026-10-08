@@ -4636,6 +4636,7 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
                     "execution_priority": t.execution_priority,
                     "momentum":           t.momentum,
                     "timing_reason":      t.timing_reason,
+                    "timing_data_available": getattr(t, "data_available", False),
                 })
         _log.info(
             "analyze_optimizer: timing enriched %d/%d symbols",
