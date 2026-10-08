@@ -21,6 +21,7 @@ class OptimizerTimingContext(BaseModel):
     execution_priority: str
     momentum: str
     timing_reason: str
+    data_available: bool = False
 
 
 # Phase 4C.6H.6 — confidence multipliers by timing score threshold
@@ -50,6 +51,7 @@ def enrich_scores_with_timing(symbols: list[str]) -> dict[str, OptimizerTimingCo
                 execution_priority=r.execution_priority,
                 momentum=r.momentum,
                 timing_reason=r.reasons[0] if r.reasons else "",
+                data_available=getattr(r, "data_available", False) is True,
             )
             for r in results
         }

@@ -10,6 +10,7 @@ from typing import Callable
 from services.ai_client import call_ai
 from services.json_utils import safe_parse_json
 from services.optimizer.risk_flags import investment_risk_flags
+from services.optimizer.auditor_claims import build_claim_evidence, validate_auditor_claims
 from services.optimizer.strategy_profiles import build_persona_context, get_profile  # noqa: F401
 from services.optimizer.policy_engine import (  # noqa: F401
     compute_policy_alignment_score,
@@ -243,6 +244,7 @@ def _compact_p(items: list[dict]) -> list[dict]:
             "current_price": i.get("current_price"),
             # Phase 4C.6H.3 — timing fields
             "timing_score": i.get("timing_score"),
+            "timing_data_available": i.get("timing_data_available", False),
             "execution_priority": i.get("execution_priority"),
             "momentum": i.get("momentum"),
         }
@@ -264,6 +266,7 @@ def _compact_w(items: list[dict]) -> list[dict]:
             "roe": round(i["roe"] * 100, 1) if i.get("roe") else None,
             # Phase 4C.6H.3 — timing fields
             "timing_score": i.get("timing_score"),
+            "timing_data_available": i.get("timing_data_available", False),
             "execution_priority": i.get("execution_priority"),
             "momentum": i.get("momentum"),
         }
@@ -805,8 +808,8 @@ def _consensus_engine(l1: dict, l2: dict, l3: dict) -> dict:
         if critical_flags:
             syms = ", ".join(f.get("symbol", "?") for f in critical_flags[:3])
             refinement_summary = (
-                f"Risk Auditor identified CRITICAL concentration risk in {syms} — "
-                "execution blocked pending manual review."
+                f"Risk Auditor identified CRITICAL investment or constraint concerns in {syms} — "
+                "review the evidence before deciding whether to execute."
             )
         else:
             syms = ", ".join(f.get("symbol", "?") for f in high_flags[:3])
@@ -1220,6 +1223,7 @@ def _layer3_prompt(
     t1_breach_note: str = "",
     intent_block: str = "",
     execution_context: dict | None = None,
+    claim_contract: dict | None = None,
 ) -> str:
     from services.optimizer.execution_penalty import build_execution_prompt_block
     execution_block = build_execution_prompt_block(execution_context or {})
@@ -1279,6 +1283,21 @@ Do NOT escalate to HIGH or CRITICAL for timing alone — timing cautions, it doe
     return f"""{t1_breach_note}You are a portfolio risk auditor.
 {execution_block}{timing_risk_block}{policy_note}{persona_note}{intent_block}{role_line}Evaluate both allocation proposals for concentration risk and soundness.
 
+[AUTHORITATIVE POLICY CLAIM CONTRACT]
+{json.dumps(claim_contract or {}, sort_keys=True)}
+Every risk flag must include claim_kind. POLICY_BREACH and EXECUTION_RESTRICTION must
+reference an exact evidence_ref from this contract, with the same symbol (PORTFOLIO for
+portfolio-wide evidence). Missing or mismatched evidence is unscored, unsupported model output.
+General portfolio policy is separate from per-instrument execution caps. An execution cap
+is applicable only to proposed BUY/ACCUMULATE targets, never a universal holding limit.
+EXISTING_EXPOSURE above an execution cap requires no automatic liquidation; it is unscored context.
+ADVISORY_CONCERN includes the prompt-only 40% DR basket guidance; it is not a governance breach.
+Use INVESTMENT_JUDGMENT for independent business, valuation, volatility or timing risk opinions
+only, never assertions that a deterministic limit is breached. Model-only opinions are visible but
+unscored. Investment observations require a matching independently produced evidence_ref;
+the model label alone never authorizes a risk penalty. Only existing contract evidence is scoreable.
+Severity thresholds below guide opinions, not proof of a policy violation. Do not invent limits.
+
 Layer 1 (Strategist):
 Priority: {l1_priority}
 Proposed swaps: {json.dumps(l1_swaps, indent=2)}
@@ -1307,7 +1326,7 @@ must be a separate INVESTMENT_RISK flag. Never disguise investment risk as Inten
 Return JSON only. No markdown fences.
 
 {{
-  "risk_flags": [{{"symbol":"...","issue":"...","severity":"LOW|MEDIUM|HIGH|CRITICAL","category":"INVESTMENT_RISK|OWNER_INTENT_REVIEW"}}],
+  "risk_flags": [{{"symbol":"...","issue":"...","severity":"LOW|MEDIUM|HIGH|CRITICAL","category":"INVESTMENT_RISK|OWNER_INTENT_REVIEW","claim_kind":"POLICY_BREACH|EXECUTION_RESTRICTION|EXISTING_EXPOSURE|ADVISORY_CONCERN|INVESTMENT_JUDGMENT","evidence_ref":"exact contract key or null"}}],
   "safer_choice": "layer1|layer2|neither",
   "final_risk_level": "low|medium|high",
   "auditor_notes": "1-2 sentences."
@@ -1580,6 +1599,10 @@ Every risk flag must have category INVESTMENT_RISK or OWNER_INTENT_REVIEW.
 Owner Intent disagreement is allowed and belongs to OWNER_INTENT_REVIEW; preserve it
 for review but exclude it from investment risk, final_risk_level and governance judgments.
 Any actual investment risk in the same symbol must remain a separate INVESTMENT_RISK flag.
+Include claim_kind=INVESTMENT_JUDGMENT for independent risk opinions, ADVISORY_CONCERN
+for concentration guidance. Do not assert a deterministic breach without evidence_ref.
+Model-only opinions are visible but unscored; a model label never authorizes a penalty.
+Fallback execution has no deterministic DR target clamp; holding size does not mandate liquidation.
 
 Return ONLY valid JSON without markdown fences:
 {{
@@ -1593,7 +1616,7 @@ Return ONLY valid JSON without markdown fences:
   "allocations": [
     {{"s":"X","tw":0.0,"sig":"BUY|ACCUMULATE|HOLD|REDUCE|SELL|WATCH","r":"<20 words"}}
   ],
-  "risk_flags": [{{"symbol":"...","issue":"<15 words","severity":"LOW|MEDIUM|HIGH|CRITICAL","category":"INVESTMENT_RISK|OWNER_INTENT_REVIEW"}}],
+  "risk_flags": [{{"symbol":"...","issue":"<15 words","severity":"LOW|MEDIUM|HIGH|CRITICAL","category":"INVESTMENT_RISK|OWNER_INTENT_REVIEW","claim_kind":"INVESTMENT_JUDGMENT|ADVISORY_CONCERN","evidence_ref":null}}],
   "final_risk_level": "low|medium|high|critical",
   "auditor_notes": "brief compliance note"
 }}"""
@@ -1717,6 +1740,14 @@ def _run_single_shot_fallback(
     watchlist_ranking = _rebuild_watchlist_ranking(buy_symbols, wc)
 
     portfolio_assessment = result.get("portfolio_assessment", "Emergency fallback analysis.")
+    # Fallback has no execution-cap clamp. Do not imply primary-only enforcement.
+    fallback_details = []
+    if policy_context:
+        from services.optimizer.policy_engine import compute_policy_alignment_score
+        fallback_details = compute_policy_alignment_score(final_allocations,
+            _make_envelope_from_dict(policy_context), total_value)[4]
+    result = validate_auditor_claims(result, build_claim_evidence(final_allocations, fallback_details, {},
+        risk_inputs={p["symbol"]: p for p in [*pc, *wc]}))
     risk_flags = result.get("risk_flags", [])
     final_risk_level = result.get("final_risk_level", "medium")
     auditor_notes = result.get("auditor_notes", "Fallback mode — single-shot analysis.")
@@ -1786,6 +1817,7 @@ def _run_single_shot_fallback(
             "agrees_with_layer1": True, "disagreements": [],
         },
         "layer3_result": {
+            **{k: result[k] for k in ("claim_reviews", "claim_validation_version", "raw_model_output", "policy_claim_contract")},
             "provider": fallback_provider, "model": fallback_model, "name": "Fallback",
             "risk_flags": risk_flags, "safer_choice": "fallback",
             "final_risk_level": final_risk_level, "auditor_notes": auditor_notes,
@@ -2155,10 +2187,26 @@ def run_layered_optimizer(
 
         # Layer 3 — Risk Auditor
         _emit_stage(on_stage, "LAYER3_ARBITRATION")
+        # Evaluate the proposal with the existing policy calculator; do not enforce
+        # or change allocations here. This evidence is distinct from final governance.
+        proposal_details = []
+        if policy_context:
+            from services.optimizer.policy_engine import compute_policy_alignment_score
+            proposal_details = compute_policy_alignment_score(
+                l2_result.get("target_allocations", []), _make_envelope_from_dict(policy_context),
+                total_value, sector_map={p["symbol"]: p.get("sector", "Other")
+                    for p in [*portfolio_data, *watchlist_data]},
+                effective_turnover_cap=_relaxed_turn_cap,
+            )[4]
+        claim_contract = build_claim_evidence(l2_result.get("target_allocations", []),
+                                              proposal_details, execution_context,
+                                              risk_inputs={p["symbol"]: p for p in [*portfolio_data, *watchlist_data]})
+        claim_contract["general_policy_limits"] = (policy_context or {}).get("hard_constraints", {})
         try:
             l3_raw = call_ai(
                 _layer3_prompt(l1_result, l2_result, l3_cfg.get("role", ""), max_sector_pct=max_sector_pct,
                                execution_context=execution_context,
+                               claim_contract=claim_contract,
                                persona_context=persona_context,
                                policy_context=policy_context,
                                effective_envelope=effective_envelope,
@@ -2178,6 +2226,8 @@ def run_layered_optimizer(
                 "safer_choice": "layer1", "final_risk_level": "medium", "auditor_notes": "",
             }
             l3_latency_ms = 0
+
+        l3_result = validate_auditor_claims(l3_result, claim_contract)
 
         # If L2 produced no allocations all three layers failed — trigger global fallback
         if "error" in l2_result and not l2_result.get("target_allocations"):

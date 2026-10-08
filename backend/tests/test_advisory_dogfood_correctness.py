@@ -11,7 +11,8 @@ from services.optimizer.stabilization import apply_stabilization
 
 
 RISK = {"symbol": "AAA", "issue": "Poor entry timing", "severity": "MEDIUM",
-        "category": "INVESTMENT_RISK"}
+        "category": "INVESTMENT_RISK", "scoring_eligible": True, "validation_status": "VERIFIED",
+        "evidence_ref": "risk:ENTRY_TIMING:AAA", "provenance": {"source": "optimizer_timing.enrich_scores_with_timing"}}
 REVIEW = {"symbol": "AAA", "issue": "Owner restriction disagrees with reduction",
           "severity": "MEDIUM", "category": "OWNER_INTENT_REVIEW"}
 
@@ -28,9 +29,9 @@ def test_only_investment_flags_affect_alignment_and_evidence_is_preserved(flags,
 
 
 @pytest.mark.parametrize("category", [None, "UNKNOWN"])
-def test_unclassified_flags_remain_scored_without_prose_guessing(category):
+def test_unclassified_flags_are_unscored_without_prose_guessing(category):
     flag = {**REVIEW, "category": category}
-    assert _consensus_engine({}, {}, {"risk_flags": [flag]})["risk_alignment_score"] == 72
+    assert _consensus_engine({}, {}, {"risk_flags": [flag]})["risk_alignment_score"] == 92
 
 
 def stabilized(drift, flags=()):
