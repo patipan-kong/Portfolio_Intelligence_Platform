@@ -635,6 +635,7 @@ const SEVERITY_ORDER: Record<string, number> = {
 };
 
 function RiskFlagPill({ flag }: { flag: RiskFlag }) {
+  const ownerReview = flag.category === "OWNER_INTENT_REVIEW";
   const key = flag.severity?.toUpperCase() as keyof typeof RISK_CLS;
   const cls = RISK_CLS[key] ?? RISK_CLS.LOW;
   const dot = RISK_DOT[key] ?? RISK_DOT.LOW;
@@ -642,7 +643,7 @@ function RiskFlagPill({ flag }: { flag: RiskFlag }) {
     <div className={`flex items-start gap-2 border rounded-lg px-3 py-2 text-xs ${cls}`}>
       <span className={`mt-0.5 shrink-0 w-2 h-2 rounded-full ${dot}`} />
       <div>
-        <span className="font-bold mr-1.5">[{key}]</span>
+        <span className="font-bold mr-1.5">[{ownerReview ? "Owner review" : key}]</span>
         <span className="font-semibold mr-1">{flag.symbol}</span>
         {flag.issue}
       </div>
@@ -1898,6 +1899,7 @@ function ResultPanel({ result, loading, profiles, portfolioId, onForceRebalance,
   const totalValue = result.total_value ?? 0;
   const riskMap: Record<string, string> = {};
   for (const flag of result.layer3_result?.risk_flags ?? []) {
+    if (flag.category === "OWNER_INTENT_REVIEW") continue;
     const key = flag.severity?.toUpperCase();
     const cur = riskMap[flag.symbol];
     if (!cur || (SEVERITY_ORDER[key] ?? 99) < (SEVERITY_ORDER[cur] ?? 99)) {

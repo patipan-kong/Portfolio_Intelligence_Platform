@@ -71,6 +71,9 @@ function PositionDetail({ position }: { position: AdvisoryPositionReview }) {
       {final.outcome === "CONFLICT" && (
         <p className="text-red-800">
           The system sees a reason to {verb(final, position.proposal.final_effective.action === "SELL")} {symbol}.
+          {position.proposal.scheduled?.execution_state === "DEFERRED" && (
+            <> No {final.direction === "INCREASE" ? "increase" : "reduction"} is scheduled today.</>
+          )}
           {" "}You marked &lsquo;{restriction(final)}&rsquo;.
         </p>
       )}

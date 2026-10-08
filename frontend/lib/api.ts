@@ -768,6 +768,7 @@ export interface AdvisoryPositionReview {
   hard_restrictions: { increase_prohibited: boolean; decrease_prohibited: boolean } | null;
   proposal: {
     final_effective: { direction: "INCREASE" | "DECREASE" | "NO_CHANGE" | null; action: string | null };
+    scheduled?: { execution_state: "FULL" | "SCALED" | "DEFERRED"; executed_amount: number | null } | null;
   };
   review: {
     final: AdvisoryProposalReview;
@@ -1684,6 +1685,8 @@ export interface RiskFlag {
   symbol: string;
   issue: string;
   severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+  // Absent in historical runs; only explicitly classified review flags are unscored.
+  category?: "INVESTMENT_RISK" | "OWNER_INTENT_REVIEW";
 }
 
 export interface Layer1Result {

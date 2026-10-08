@@ -69,24 +69,29 @@ function resolveNoTradeReasons(result: OptimizerResult): NoTradeReason[] {
       linkLabel: "View Committee Decision",
     });
   }
-  if (stab && (stab.status === "NO_REBALANCE_REQUIRED" || stab.status === "OPTIMAL" || stab.all_within_tolerance)) {
+  if (stab?.all_within_tolerance === true) {
     reasons.push({
       headline: `Portfolio already within ${stab.drift_threshold_pct}% drift tolerance`,
       href: "#portfolio-drift",
       linkLabel: "View Portfolio Drift",
     });
   }
-  if (stab?.minimum_impact && (stab.minimum_impact.suppressed || !stab.minimum_impact.passes_threshold)) {
+  if (stab?.minimum_impact?.suppressed && result.no_action_reason === "INSUFFICIENT_EDGE") {
     const mi = stab.minimum_impact;
+    // Increase display precision until the actual below-threshold comparison
+    // stays visible. Arithmetic and decision thresholds are untouched.
+    let precision = 2;
+    while (precision < 12 && mi.net_benefit_pct.toFixed(precision) === mi.threshold_pct.toFixed(precision)) precision++;
     reasons.push({
-      headline: `Expected net benefit ${mi.net_benefit_pct >= 0 ? "+" : ""}${mi.net_benefit_pct.toFixed(2)}% is below the ${mi.threshold_pct}% cost threshold`,
+      headline: `Expected net benefit ${mi.net_benefit_pct >= 0 ? "+" : ""}${mi.net_benefit_pct.toFixed(precision)}% is below the ${mi.threshold_pct.toFixed(precision)}% cost threshold`,
       href: "#portfolio-drift",
       linkLabel: "View Portfolio Drift",
     });
   }
   if (reasons.length === 0) {
     reasons.push({
-      headline: "All proposed changes are below the noise / drift thresholds",
+      headline: "No changes are scheduled for execution today",
+      detail: stab?.reason ?? result.no_action_summary,
       href: "#portfolio-drift",
       linkLabel: "View Portfolio Drift",
     });

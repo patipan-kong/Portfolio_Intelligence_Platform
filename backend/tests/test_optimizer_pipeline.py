@@ -437,7 +437,7 @@ def test_postprocess_swaps_removes_locked():
 def test_consensus_rebalance_high_confidence():
     l2 = {"agrees_with_layer1": True, "status": "REBALANCE", "rebalance_opportunity_score": 75}
     l3 = {"risk_flags": [], "safer_choice": "layer1", "final_risk_level": "low", "auditor_notes": ""}
-    c = _consensus_engine(l2, l3)
+    c = _consensus_engine({}, l2, l3)
     assert c["consensus_decision"] == "REBALANCE"
     assert c["confidence"] == "high"
     assert c["recommended"] == "layer1"
@@ -447,7 +447,7 @@ def test_consensus_no_action_low_score():
     l2 = {"agrees_with_layer1": True, "status": "NO_ACTION", "rebalance_opportunity_score": 10,
           "no_action_summary": "Well balanced."}
     l3 = {"risk_flags": [], "safer_choice": "layer1", "final_risk_level": "low", "auditor_notes": ""}
-    c = _consensus_engine(l2, l3)
+    c = _consensus_engine({}, l2, l3)
     assert c["consensus_decision"] == "NO_ACTION"
     assert "Well balanced." in c["recommended_action"]
 
@@ -463,20 +463,20 @@ def test_consensus_l1_parse_failure_propagation():
         "rebalance_opportunity_score": 50,
     }
     l3 = {"risk_flags": [], "safer_choice": "layer2", "final_risk_level": "medium", "auditor_notes": ""}
-    c = _consensus_engine(l2, l3)
+    c = _consensus_engine({}, l2, l3)
     assert c["agrees"] is False
     assert c["consensus_decision"] == "REBALANCE"
 
 
-def test_consensus_critical_flag_forces_rebalance():
+def test_consensus_critical_flag_forces_review():
     """CRITICAL risk flag should veto NO_ACTION even at low score."""
     l2 = {"agrees_with_layer1": True, "status": "NO_ACTION", "rebalance_opportunity_score": 5}
     l3 = {
         "risk_flags": [{"symbol": "PTT.BK", "issue": "sector >40%", "severity": "CRITICAL"}],
         "safer_choice": "layer1", "final_risk_level": "high", "auditor_notes": "",
     }
-    c = _consensus_engine(l2, l3)
-    assert c["consensus_decision"] == "REBALANCE"
+    c = _consensus_engine({}, l2, l3)
+    assert c["consensus_decision"] == "REVIEW"
 
 
 # ── Real Gemini L1 response fixture ──────────────────────────────────────────

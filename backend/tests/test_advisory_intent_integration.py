@@ -657,6 +657,37 @@ def test_conflicts_cause_no_redistribution_and_no_governance_penalty(monkeypatch
     assert restricted["advisory_intent_review"]["review"]["allocations_changed_by_review"] is False
 
 
+def test_deferred_disagreement_is_visible_unscored_and_soft_keep_stays_soft(monkeypatch, enabled):
+    real_risk = {"symbol": "WWW", "issue": "Poor entry timing", "severity": "MEDIUM",
+                 "category": "INVESTMENT_RISK"}
+    disagreement = {"symbol": "AAA", "issue": "Owner restriction conflicts with reduction",
+                    "severity": "MEDIUM", "category": "OWNER_INTENT_REVIEW"}
+
+    def once(flags):
+        ai = FakeAI(plan(AAA=(5, "REDUCE")), l3={**L3_OK, "risk_flags": flags})
+        patch_pipeline(monkeypatch, ai)
+        db = session()
+        p = seed(db, book(), cash=CASH)
+        set_intent(db, p, "AAA", dec=True, pref="PREFER_KEEP")
+        return run(db, p)
+
+    baseline, reviewed = once([real_risk]), once([real_risk, disagreement])
+    assert reviewed["layer3_result"]["risk_flags"] == [real_risk, disagreement]
+    assert reviewed["consensus"]["risk_alignment_score"] == baseline["consensus"]["risk_alignment_score"] == 72
+    for key in ("risk_governance_score", "governance_flags", "violation_details"):
+        assert reviewed["consensus"].get(key) == baseline["consensus"].get(key)
+    assert reviewed["target_allocations"] == baseline["target_allocations"]
+    envelope = reviewed["advisory_intent_review"]
+    aaa = position(envelope, "AAA")
+    assert aaa["proposal"]["final_effective"]["action"] == "REDUCE"
+    assert aaa["review"]["final"]["outcome"] == "CONFLICT"
+    assert aaa["review"]["requires_owner_decision"] is True
+    assert aaa["proposal"]["scheduled"]["execution_state"] == "DEFERRED"
+    assert aaa["proposal"]["scheduled"]["executed_amount"] == 0
+    assert envelope["review"]["not_a_governance_violation"] is True
+    assert envelope["review"]["allocations_changed_by_review"] is False
+
+
 # ── Persistence and historical reads ──────────────────────────────────────────
 
 def test_history_read_is_frozen_against_later_intent_and_threshold_changes(monkeypatch, enabled):

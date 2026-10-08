@@ -90,6 +90,31 @@ describe("AdvisoryIntentReviewCard", () => {
     expect(screen.getByRole("status")).toHaveTextContent("1 proposal conflicts with your intent — review required.");
     expect(screen.getByText(/The system sees a reason to reduce KBANK\.BK\./)).toHaveTextContent(
       "You marked ‘Do not decrease’.");
+    expect(screen.queryByText(/No reduction is scheduled/)).not.toBeInTheDocument();
+  });
+
+  it("connects the economic conflict to frozen deferred scheduling without erasing review", () => {
+    const conflict = position({
+      symbol: "AAA",
+      proposal: {
+        final_effective: { direction: "DECREASE", action: "REDUCE" },
+        scheduled: { execution_state: "DEFERRED", executed_amount: 0 },
+      },
+      review: {
+        final: { outcome: "CONFLICT", direction: "DECREASE", restriction: "DECREASE_PROHIBITED_BY_OWNER", reasons: [] },
+        retained: [], status: "CONFLICT", requires_owner_decision: true, unresolved_reasons: [],
+      },
+      display: { final_disposition: "CHANGE_PROPOSED", show: true },
+    });
+    const { rerender } = render(<AdvisoryIntentReviewCard result={result({ advisory_intent_review: envelope([conflict]) })} />);
+    expect(screen.getByRole("status")).toHaveTextContent("review required");
+    expect(screen.getByText(/The system sees a reason/)).toHaveTextContent(
+      "The system sees a reason to reduce AAA. No reduction is scheduled today. You marked ‘Do not decrease’.");
+    // Full scheduling evidence must not inherit the deferred wording.
+    conflict.proposal.scheduled = { execution_state: "FULL", executed_amount: 1000 };
+    rerender(<AdvisoryIntentReviewCard result={result({ advisory_intent_review: envelope([conflict]) })} />);
+    expect(screen.queryByText(/No reduction is scheduled/)).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("review required");
   });
 
   it("keeps a suppressed exit visible next to an unchanged final plan", () => {

@@ -27,6 +27,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from services.optimizer.risk_flags import investment_risk_flags
 
 log = logging.getLogger(__name__)
 
@@ -435,7 +436,7 @@ def apply_stabilization(
     has_violations      = bool((policy_context or {}).get("violations"))
     has_risk_flags      = any(
         (f.get("severity") or "").upper() in ("HIGH", "CRITICAL")
-        for f in (result.get("layer3_result") or {}).get("risk_flags", [])
+        for f in investment_risk_flags((result.get("layer3_result") or {}).get("risk_flags", []) or [])
     )
     all_within_tol      = not needing_action and not has_sell
     already_no_action   = original_status in ("NO_ACTION", "NO_REBALANCE_REQUIRED", "COOLDOWN_ACTIVE")
