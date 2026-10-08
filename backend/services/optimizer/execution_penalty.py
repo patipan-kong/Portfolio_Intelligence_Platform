@@ -410,13 +410,17 @@ def apply_execution_score_penalties(
 
 
 def build_execution_prompt_block(execution_ctx: dict) -> str:
-    """Return the [EXECUTION QUALITY] governance block for L1/L2 prompts.
+    """Return shared canonical facts/rule boundaries for optimizer prompts.
 
-    Returns empty string when there are no execution-sensitive assets,
-    keeping prompts unchanged for pure-equity portfolios.
+    Older callers without the versioned context retain a compatibility
+    summary. That summary's basket guidance is advisory, not enforcement.
     """
     if not execution_ctx:
         return ""
+
+    canonical = execution_ctx.get("canonical_instrument_context")
+    if canonical is not None:
+        return canonical["prompt_block"]
 
     dr_syms   = execution_ctx.get("dr_symbols", [])
     high_risk = execution_ctx.get("high_risk_symbols", [])
@@ -428,17 +432,17 @@ def build_execution_prompt_block(execution_ctx: dict) -> str:
     if not dr_syms and not high_risk:
         return ""
 
-    lines = ["[EXECUTION QUALITY — MANDATORY CONSTRAINTS]"]
+    lines = ["[EXECUTION QUALITY — CLASSIFICATION AND EXECUTION GUIDANCE]"]
 
     if dr_syms:
         lines.append(
             f"DR assets (Thai Depository Receipts): {', '.join(dr_syms)}"
         )
         lines.append(
-            f"  -> MAX {dr_cap:.0f}% per DR asset (hard allocation cap — do NOT exceed)"
+            f"  -> MAX {dr_cap:.0f}% per DR asset; deterministic per-symbol cap applies to BUY/ACCUMULATE targets only"
         )
         lines.append(
-            f"  -> Total DR basket: max {port_cap:.0f}% of portfolio combined"
+            f"  -> Total DR basket: {port_cap:.0f}% prompt-only advisory guidance; no deterministic basket enforcement or verified breach"
         )
         lines.append(
             "  -> DRs trade with wider bid/ask spreads and lower depth than underlying equities"

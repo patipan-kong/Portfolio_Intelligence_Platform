@@ -428,7 +428,7 @@ def test_optimizer_boundary_batch_resolves_complete_symbol_set_once():
     source = inspect.getsource(main.analyze_optimizer)
 
     assert source.count("resolve_execution_instruments(") == 1
-    assert "tuple(scores_map)" in source
+    assert "dict.fromkeys((*scores_map, *(h.symbol for h in holdings)))" in source
     assert "facts_by_symbol=execution_facts" in source
 
 

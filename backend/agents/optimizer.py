@@ -1219,7 +1219,10 @@ def _layer3_prompt(
     effective_envelope: "_EffectiveEnvelope | None" = None,
     t1_breach_note: str = "",
     intent_block: str = "",
+    execution_context: dict | None = None,
 ) -> str:
+    from services.optimizer.execution_penalty import build_execution_prompt_block
+    execution_block = build_execution_prompt_block(execution_context or {})
     role_line = f"Your role: {role}\n\n" if role else ""
     l1_swaps    = l1.get("swap_suggestions", l1.get("swaps", []))[:4]
     l1_priority = l1.get("priority", "balanced")
@@ -1274,7 +1277,7 @@ Do NOT escalate to HIGH or CRITICAL for timing alone — timing cautions, it doe
 """
 
     return f"""{t1_breach_note}You are a portfolio risk auditor.
-{timing_risk_block}{policy_note}{persona_note}{intent_block}{role_line}Evaluate both allocation proposals for concentration risk and soundness.
+{execution_block}{timing_risk_block}{policy_note}{persona_note}{intent_block}{role_line}Evaluate both allocation proposals for concentration risk and soundness.
 
 Layer 1 (Strategist):
 Priority: {l1_priority}
@@ -1618,6 +1621,7 @@ def _run_single_shot_fallback(
     effective_envelope: "_EffectiveEnvelope | None" = None,
     enforce_effective_policy: bool = False,
     advisory=None,
+    execution_context: dict | None = None,
 ) -> dict:
     """Single-shot emergency fallback when the 3-layer pipeline fails completely.
 
@@ -1654,6 +1658,8 @@ def _run_single_shot_fallback(
         total_value, cash_balance, effective_policy_rules,
         **({"intent_block": _intent_block(advisory, _LAYER_FALLBACK)} if advisory is not None else {}),
     )
+    from services.optimizer.execution_penalty import build_execution_prompt_block
+    prompt = build_execution_prompt_block(execution_context or {}) + prompt
     try:
         raw = call_ai(
             prompt, fallback_provider, fallback_model, max_tokens=4096,
@@ -1798,13 +1804,15 @@ def _retry_l1_with_schema(
     swap_eligible: list[str],
     l1_cfg: dict,
     intent_block: str = "",
+    execution_context: dict | None = None,
 ) -> dict:
     """Single-shot L1 retry with a stripped-down prompt after an initial parse failure.
 
     Called only when the full L1 prompt produced unparseable output.  The goal is
     to get *something* structurally valid so L2/L3 can still run with real signal.
     """
-    minimal_prompt = intent_block + (
+    from services.optimizer.execution_penalty import build_execution_prompt_block
+    minimal_prompt = build_execution_prompt_block(execution_context or {}) + intent_block + (
         "You are a portfolio strategist. Return ONLY a valid JSON object — "
         "no markdown, no prose, just the JSON.\n\n"
         f"Current holdings: {json.dumps(c_pc)}\n"
@@ -2063,6 +2071,7 @@ def run_layered_optimizer(
             try:
                 l1_result = _retry_l1_with_schema(
                     c_pc, c_wc, sell_forced, swap_eligible, l1_cfg,
+                    execution_context=execution_context,
                     **({"intent_block": _intent_block(advisory, _LAYER_L1_RETRY)} if advisory is not None else {}),
                 )
                 _l1_swaps = _normalize_l1_swaps(l1_result.get("swaps", []), score_map)
@@ -2149,6 +2158,7 @@ def run_layered_optimizer(
         try:
             l3_raw = call_ai(
                 _layer3_prompt(l1_result, l2_result, l3_cfg.get("role", ""), max_sector_pct=max_sector_pct,
+                               execution_context=execution_context,
                                persona_context=persona_context,
                                policy_context=policy_context,
                                effective_envelope=effective_envelope,
@@ -2443,5 +2453,6 @@ def run_layered_optimizer(
             policy_context=policy_context,
             effective_envelope=effective_envelope,
             enforce_effective_policy=enforce_effective_policy_in_fallback,
+            execution_context=execution_context,
             **({"advisory": advisory} if advisory is not None else {}),
         )
