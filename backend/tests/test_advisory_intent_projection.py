@@ -35,6 +35,15 @@ NO_DECREASE = IntentState(False, True, "NONE", 7, 1)
 NO_INCREASE = IntentState(True, False, "NONE", 8, 1)
 
 
+def test_prefer_keep_is_soft_and_does_not_turn_reduce_into_hold():
+    a = held(intent=IntentState(False, False, "PREFER_KEEP", 9, 1))
+    v = basis([a], {"AAA": 50}, cash="500")
+    projection = project_quantity(a, v, "REDUCE", 25)
+    review = _review(a, projection, source="ADVISORY", reason_code="L2_ALLOCATION")
+    assert projection["direction"] == "DECREASE" and projection["proposed_shares"] == "5"
+    assert review["outcome"] == "CONSISTENT"
+
+
 def test_equity_and_cash_use_one_nav_basis():
     a, b = held("AAA", "10"), held("BBB", "30")
     v = basis([a, b], {"AAA": 50, "BBB": 10}, cash="500")

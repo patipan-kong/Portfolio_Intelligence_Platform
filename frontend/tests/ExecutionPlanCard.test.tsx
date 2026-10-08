@@ -4,6 +4,7 @@ import ExecutionPlanCard from "@/components/optimizer/ExecutionPlanCard";
 import type {
   OptimizerResult, ActionSummary, ActionSummaryEntry, TargetAllocation,
   OptimizedTrade, ExecutionOptimizationResult,
+  StabilizationMeta,
 } from "@/lib/api";
 
 // Decision Explainability Polish — Slice 2 (A): ExecutionPlanCard already
@@ -63,6 +64,39 @@ function baseResult(overrides: Partial<OptimizerResult> = {}): OptimizerResult {
     ...overrides,
   };
 }
+
+describe("ExecutionPlanCard structured no-trade causes", () => {
+  function noTrades(within: boolean): OptimizerResult {
+    return baseResult({
+      status: "NO_REBALANCE_REQUIRED",
+      no_action_reason: within ? "WELL_BALANCED" : "INSUFFICIENT_EDGE",
+      stabilization: {
+        status: "NO_REBALANCE_REQUIRED", all_within_tolerance: within, drift_threshold_pct: 3,
+        minimum_impact: { suppressed: true, passes_threshold: false, net_benefit_pct: .1974, threshold_pct: .2 },
+      } as StabilizationMeta,
+    });
+  }
+
+  test("genuinely within drift tolerance explains drift, not a diagnostic minimum-benefit check", () => {
+    render(<ExecutionPlanCard result={noTrades(true)} />);
+    expect(screen.getByText("Portfolio already within 3% drift tolerance")).toBeInTheDocument();
+    expect(screen.queryByText(/Expected net benefit/)).not.toBeInTheDocument();
+  });
+
+  test("outside drift tolerance explains actual insufficient benefit with intelligible precision", () => {
+    render(<ExecutionPlanCard result={noTrades(false)} />);
+    expect(screen.queryByText(/already within/)).not.toBeInTheDocument();
+    expect(screen.getByText("Expected net benefit +0.197% is below the 0.200% cost threshold")).toBeInTheDocument();
+  });
+
+  test("unknown cause never fabricates drift compliance or suppression from status alone", () => {
+    const value = noTrades(false);
+    delete value.no_action_reason;
+    render(<ExecutionPlanCard result={value} />);
+    expect(screen.queryByText(/already within|Expected net benefit/)).not.toBeInTheDocument();
+    expect(screen.getByText("No changes are scheduled for execution today")).toBeInTheDocument();
+  });
+});
 
 function resultWithSellTrade(tradeOverrides: Partial<OptimizedTrade> = {}): OptimizerResult {
   return baseResult({

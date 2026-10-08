@@ -9,6 +9,7 @@ import logging
 from typing import Callable
 from services.ai_client import call_ai
 from services.json_utils import safe_parse_json
+from services.optimizer.risk_flags import investment_risk_flags
 from services.optimizer.strategy_profiles import build_persona_context, get_profile  # noqa: F401
 from services.optimizer.policy_engine import (  # noqa: F401
     compute_policy_alignment_score,
@@ -678,7 +679,8 @@ def _consensus_engine(l1: dict, l2: dict, l3: dict) -> dict:
     l2_allocs         = list(l2.get("target_allocations", []) or [])
 
     # ── L3 inputs ─────────────────────────────────────────────────────────────
-    risk_flags   = list(l3.get("risk_flags", []) or [])
+    # Preserve all flags in layer3_result; only investment evidence is scored.
+    risk_flags   = investment_risk_flags(list(l3.get("risk_flags", []) or []))
     safer_choice = l3.get("safer_choice", "layer1")
     final_risk   = l3.get("final_risk_level", "medium")
     if final_risk not in ("low", "medium", "high"):
@@ -1293,10 +1295,16 @@ Only flag positions that actually cross a threshold above — do not add a LOW-s
 is merely fine. Max 8 risk_flags, "issue" under 15 words each. "auditor_notes" is a 1-2 sentence verdict — do not
 restate the risk_flags issue text there.
 
+Every flag must have category INVESTMENT_RISK or OWNER_INTENT_REVIEW.
+Use OWNER_INTENT_REVIEW only for disagreement with owner Intent. Such disagreement is
+allowed: preserve it for owner review, but exclude it from final_risk_level, safer_choice
+and investment/governance/quality judgments. A real investment risk in the same symbol
+must be a separate INVESTMENT_RISK flag. Never disguise investment risk as Intent review.
+
 Return JSON only. No markdown fences.
 
 {{
-  "risk_flags": [{{"symbol":"...","issue":"...","severity":"LOW|MEDIUM|HIGH|CRITICAL"}}],
+  "risk_flags": [{{"symbol":"...","issue":"...","severity":"LOW|MEDIUM|HIGH|CRITICAL","category":"INVESTMENT_RISK|OWNER_INTENT_REVIEW"}}],
   "safer_choice": "layer1|layer2|neither",
   "final_risk_level": "low|medium|high",
   "auditor_notes": "1-2 sentences."
@@ -1565,6 +1573,11 @@ not recommending (no BUY/ACCUMULATE) do NOT need an allocations row — omit the
 your top-ranked candidates. "r"/"reason" is one line, under 20 words. blocked_opportunities and risk_flags: only
 the highest-priority items, max 5 each. Never drop an existing-holding allocation row to make room for text.
 
+Every risk flag must have category INVESTMENT_RISK or OWNER_INTENT_REVIEW.
+Owner Intent disagreement is allowed and belongs to OWNER_INTENT_REVIEW; preserve it
+for review but exclude it from investment risk, final_risk_level and governance judgments.
+Any actual investment risk in the same symbol must remain a separate INVESTMENT_RISK flag.
+
 Return ONLY valid JSON without markdown fences:
 {{
   "status": "REBALANCE|NO_ACTION",
@@ -1577,7 +1590,7 @@ Return ONLY valid JSON without markdown fences:
   "allocations": [
     {{"s":"X","tw":0.0,"sig":"BUY|ACCUMULATE|HOLD|REDUCE|SELL|WATCH","r":"<20 words"}}
   ],
-  "risk_flags": [{{"symbol":"...","issue":"<15 words","severity":"LOW|MEDIUM|HIGH|CRITICAL"}}],
+  "risk_flags": [{{"symbol":"...","issue":"<15 words","severity":"LOW|MEDIUM|HIGH|CRITICAL","category":"INVESTMENT_RISK|OWNER_INTENT_REVIEW"}}],
   "final_risk_level": "low|medium|high|critical",
   "auditor_notes": "brief compliance note"
 }}"""
@@ -1721,7 +1734,7 @@ def _run_single_shot_fallback(
         "confidence":         "low",
         "recommended":        "fallback",
         "final_risk_level":   "medium",
-        "risk_flag_count":    len(risk_flags),
+        "risk_flag_count":    len(investment_risk_flags(risk_flags)),
         "recommended_action": (
             f"{fb_tag} Pipeline recovered via emergency single-shot analysis. "
             "Review allocations manually before acting."
