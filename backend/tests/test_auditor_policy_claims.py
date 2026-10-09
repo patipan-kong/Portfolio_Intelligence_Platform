@@ -181,10 +181,8 @@ def test_mocked_layered_pipeline_validates_before_scoring_and_preserves_hold(mon
     ai = FakeAI(proposal, l3={"risk_flags": [flag("POLICY_BREACH", "BH.BK", "policy:0"),
         flag("EXECUTION_RESTRICTION", ref="execution:1")], "final_risk_level": "high"})
     monkeypatch.setattr(optimizer, "call_ai", ai)
-    # Supply the frozen NAV weights, as enabled Advisory does in the live run.
-    monkeypatch.setattr(optimizer, "_compute_portfolio_weights", lambda rows: [
-        {**r, "weight_pct": 15.31 if r["symbol"] == "BH.BK" else 16.03,
-         "market_value": r["shares"] * r["current_price"]} for r in rows])
+    # NAV = 1531 + 1603 + 6866 cash = 10000, so the shared NAV-basis helper
+    # yields the 15.31% / 16.03% weights this fixture was written around.
     result = optimizer.run_layered_optimizer([
         {"symbol": "BH.BK", "shares": 1531, "current_price": 1, "signal": "HOLD", "sector": "Healthcare"},
         {"symbol": "MICRON01.BK", "shares": 1603, "current_price": 1, "signal": "HOLD", "sector": "Technology"},

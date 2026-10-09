@@ -43,6 +43,7 @@ export function primarySchedulingReason(result: OptimizerResult): string {
 
 export function intentReviewSummary(result: OptimizerResult): string {
   const review = result.advisory_intent_review;
+  if (!review && result.advisory_intent_review_status !== "EVIDENCE_INVALID") return "Intent review not captured";
   if (!review || result.advisory_intent_review_status === "EVIDENCE_INVALID") return "Intent review unavailable";
   const conflicts = review.positions.reduce((n, p) => n + (p.review.final.outcome === "CONFLICT" ? 1 : 0)
     + p.review.retained.filter((r) => r.review.outcome === "CONFLICT").length, 0);

@@ -232,7 +232,11 @@ def get_report_card(db: Session, portfolio_id: int, snapshot_id: int) -> dict[st
     if inputs is None:
         plan_section = {"status": "unavailable", "reason": "no_target_allocations"}
     else:
-        plan = derive_full_plan(inputs["target_allocations"], inputs["cash_available"], inputs["violations"])
+        # Report Card only: provenance-aware classification (same canonical
+        # classifier as the optimizer page). Grades and other analytics keep the
+        # legacy derivation.
+        plan = derive_full_plan(inputs["target_allocations"], inputs["cash_available"], inputs["violations"],
+                                policy_provenance=inputs.get("policy_provenance"))
         eo = plan["execution_optimization"]
         plan_section = {
             "status": "ok",

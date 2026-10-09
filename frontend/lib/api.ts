@@ -2155,6 +2155,18 @@ export type TradeReason =
 
 export type ExecutionRole = "STANDALONE" | "FUNDING_SOURCE" | "NOT_NEEDED_TODAY";
 
+/** Provenance of an optimizer trade's Reason/Necessity (execution_optimizer.py).
+ *  VERIFIED_NAV: NAV-basis policy evidence verified. LEGACY_RECORDED_UNVERIFIED:
+ *  a stored run reproduced under its original rule, never NAV-verified.
+ *  UNVERIFIED: a concentration claim failed verification (not Required).
+ *  SECTOR_EQUITY_BASIS: sector limits stay on the existing equity-only basis. */
+export type TradeEvidenceStatus =
+  | "NOT_APPLICABLE"
+  | "VERIFIED_NAV"
+  | "UNVERIFIED"
+  | "LEGACY_RECORDED_UNVERIFIED"
+  | "SECTOR_EQUITY_BASIS";
+
 export interface OptimizedTrade {
   symbol: string;
   action: "SELL" | "REDUCE";
@@ -2166,6 +2178,8 @@ export interface OptimizedTrade {
   full_recommended_amount: number;
   executed_amount: number;
   note: string;
+  evidence_status?: TradeEvidenceStatus;
+  evidence_detail?: string | null;
 }
 
 export interface ExecutionOptimizationResult {
@@ -3414,10 +3428,12 @@ export const listExecutionDecisions = (
   portfolioId?: number,
   decision?: ExecutionDecisionType,
   limit = 50,
+  recommendationSnapshotId?: number,
 ) => {
   const params = new URLSearchParams({ limit: String(limit) });
   if (portfolioId) params.set("portfolio_id", String(portfolioId));
   if (decision) params.set("decision", decision);
+  if (recommendationSnapshotId !== undefined) params.set("recommendation_snapshot_id", String(recommendationSnapshotId));
   return apiFetch<ExecutionDecision[]>(`/optimizer/decisions?${params}`);
 };
 

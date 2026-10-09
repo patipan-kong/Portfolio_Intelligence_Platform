@@ -65,6 +65,61 @@ beforeEach(() => {
   recordDecisionBySnapshot.mockReset();
 });
 
+describe("DecisionActionPanel snapshot-specific lookup", () => {
+  test("asks the server for exactly this portfolio + snapshot, with no pagination window", async () => {
+    listExecutionDecisions.mockResolvedValue([]);
+    render(<DecisionActionPanel snapshotId={175} portfolioId={4} />);
+    await screen.findByRole("button", { name: /Approve Recommendation/ });
+    expect(listExecutionDecisions).toHaveBeenCalledWith(4, undefined, 1, 175);
+  });
+
+  test("a verified empty filtered answer means no decision recorded, however many other decisions exist", async () => {
+    listExecutionDecisions.mockResolvedValue([]);                       // snapshot 175: the history-219 case
+    render(<DecisionActionPanel snapshotId={175} portfolioId={4} />);
+    expect(await screen.findByRole("button", { name: /Approve Recommendation/ })).toBeInTheDocument();
+    expect(screen.queryByText(/Owner decision status unavailable/)).not.toBeInTheDocument();
+  });
+
+  test("a row for another snapshot (older backend ignoring the filter) is unavailable, not 'none'", async () => {
+    listExecutionDecisions.mockResolvedValue([baseDecision({ recommendation_snapshot_id: 99, portfolio_id: 4 })]);
+    render(<DecisionActionPanel snapshotId={175} portfolioId={4} />);
+    await screen.findByText(/Owner decision status unavailable/);
+    expect(screen.queryByRole("button", { name: /Approve/ })).not.toBeInTheDocument();
+  });
+
+  test("a row for another portfolio is unavailable", async () => {
+    listExecutionDecisions.mockResolvedValue([baseDecision({ recommendation_snapshot_id: 175, portfolio_id: 9 })]);
+    render(<DecisionActionPanel snapshotId={175} portfolioId={4} />);
+    await screen.findByText(/Owner decision status unavailable/);
+  });
+
+  test("a malformed response is unavailable", async () => {
+    listExecutionDecisions.mockResolvedValue({ detail: "oops" });
+    render(<DecisionActionPanel snapshotId={175} portfolioId={4} />);
+    await screen.findByText(/Owner decision status unavailable/);
+  });
+
+  test("an exact matching decision is found and recording stays closed", async () => {
+    listExecutionDecisions.mockResolvedValue([baseDecision({ recommendation_snapshot_id: 175, portfolio_id: 4 })]);
+    getExecutionDecision.mockResolvedValue(decisionDetail({ recommendation_snapshot_id: 175, portfolio_id: 4 }));
+    render(<DecisionActionPanel snapshotId={175} portfolioId={4} />);
+    await waitFor(() => expect(screen.queryByText(/Checking recorded owner decision/)).not.toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: /Approve Recommendation/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Owner decision status unavailable/)).not.toBeInTheDocument();
+  });
+
+  test("post-submit read-back uses the same exact lookup and an empty answer stays closed", async () => {
+    listExecutionDecisions.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    recordDecisionBySnapshot.mockResolvedValue({});
+    render(<DecisionActionPanel snapshotId={175} portfolioId={4} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Approve Recommendation/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Confirm/ }));
+    await screen.findByText(/Owner decision status unavailable/);
+    expect(listExecutionDecisions).toHaveBeenNthCalledWith(2, 4, undefined, 1, 175);
+    expect(screen.queryByRole("button", { name: /Approve/ })).not.toBeInTheDocument();
+  });
+});
+
 describe("DecisionActionPanel goal provenance", () => {
   test("COMPLETE decision_context renders a goal chip with the goal name", async () => {
     listExecutionDecisions.mockResolvedValue([baseDecision()]);

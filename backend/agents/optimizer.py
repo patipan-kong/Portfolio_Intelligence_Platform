@@ -208,20 +208,28 @@ _DEFAULT_LAYERS: dict = {
 
 # ─── Data helpers ─────────────────────────────────────────────────────────────
 
-def _compute_portfolio_weights(portfolio_items: list[dict]) -> list[dict]:
-    """Add market_value and weight_pct (equity-only) to each portfolio item."""
-    total_mv = sum(
-        (i.get("shares") or 0) * (i.get("current_price") or i.get("avg_cost") or 0)
-        for i in portfolio_items
-    )
+def _compute_portfolio_weights(portfolio_items: list[dict], cash_balance: float = 0.0) -> list[dict]:
+    """Add market_value and NAV-basis weight_pct to each portfolio item.
+
+    ``weight_pct`` is value / NAV x 100 at full precision (NAV = positions +
+    ``cash_balance``); see services/optimizer/nav_basis.py. The legacy
+    equity-only weight is kept as ``equity_weight_pct`` for audit only.
+    """
+    from services.optimizer.nav_basis import BASIS_NAV, compute_nav_basis, item_value
+
+    basis = compute_nav_basis(portfolio_items, cash_balance)
     result = []
     for item in portfolio_items:
-        price = item.get("current_price") or item.get("avg_cost") or 0
-        mv = (item.get("shares") or 0) * price
+        value = item_value(item)
         result.append({
             **item,
-            "market_value": round(mv, 2),
-            "weight_pct": round(mv / total_mv * 100, 1) if total_mv > 0 else 0.0,
+            "market_value": round(value, 2),
+            "value_exact": value,
+            "weight_pct": (value / basis.nav * 100.0) if basis.usable else 0.0,
+            "equity_weight_pct": round(value / basis.equity * 100, 1) if basis.equity > 0 else 0.0,
+            "weight_basis": BASIS_NAV,
+            "nav_value": basis.nav,
+            "nav_cash": basis.cash,
         })
     return result
 
@@ -239,7 +247,7 @@ def _compact_p(items: list[dict]) -> list[dict]:
             "pe_ratio": i.get("pe_ratio"),
             "roe": round(i["roe"] * 100, 1) if i.get("roe") else None,
             "allow_swap": i.get("allow_swap", True),
-            "weight_pct": i.get("weight_pct", 0.0),
+            "weight_pct": round(i.get("weight_pct", 0.0), 2),
             "market_value": i.get("market_value", 0.0),
             "current_price": i.get("current_price"),
             # Phase 4C.6H.3 — timing fields
@@ -1884,7 +1892,7 @@ def run_optimizer(
     cash_balance: float = 0.0,
 ) -> dict:
     """Single-model optimizer (legacy path)."""
-    portfolio_data = _compute_portfolio_weights(portfolio_data)
+    portfolio_data = _compute_portfolio_weights(portfolio_data, cash_balance)
 
     sell_forced   = [p["symbol"] for p in portfolio_data if p.get("signal") == "SELL"]
     locked        = [p["symbol"] for p in portfolio_data if not p.get("allow_swap", True)]
@@ -1958,7 +1966,7 @@ def run_layered_optimizer(
     sell_forced   = [p["symbol"] for p in portfolio_data if p.get("signal") == "SELL"]
     locked        = [p["symbol"] for p in portfolio_data if not p.get("allow_swap", True)]
 
-    portfolio_data = _compute_portfolio_weights(portfolio_data)
+    portfolio_data = _compute_portfolio_weights(portfolio_data, cash_balance)
     total_equity = sum(i.get("market_value", 0) for i in portfolio_data)
     total_value = total_equity + cash_balance
 

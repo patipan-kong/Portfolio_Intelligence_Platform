@@ -131,6 +131,10 @@ class PolicyEnvelope:
     violations: list[str]                  # existing policy violations in current portfolio
     # Phase 3B.5 — per-sector resolved limits (populated when EffectiveEnvelope is available)
     resolved_sector_limits: dict[str, float] = field(default_factory=dict)
+    # Additive, independently derivable evidence for concentration violations
+    # (NAV basis, unrounded). Presence of the key — even as [] — marks a run
+    # that can be verified; see detect_concentration_evidence().
+    violation_evidence: list[dict] = field(default_factory=list)
 
 
 # ─── Emergency detection ──────────────────────────────────────────────────────
@@ -328,6 +332,47 @@ def _norm_sector(raw: str | None) -> str:
     if "Financial" in s or "Bank" in s:
         return "Financial"
     return "Other"
+
+
+POLICY_EVIDENCE_VERSION = "wealth.policy-evidence.v1"
+RULE_MAX_SINGLE_POSITION = "hard_constraints.max_single_position_pct"
+
+
+def detect_concentration_evidence(
+    portfolio_data: list[dict],
+    hard: HardConstraints,
+) -> list[dict]:
+    """Structured, unrounded evidence for each genuine single-position breach.
+
+    Only items carrying the NAV basis marker (see services/optimizer/nav_basis.py)
+    can produce evidence; anything else yields none (fail closed). The numbers
+    are raw (position value, NAV) so a verifier can re-derive the percentage
+    without trusting ``observed_pct``.
+    """
+    evidence: list[dict] = []
+    for item in portfolio_data:
+        if item.get("weight_basis") != "NAV":
+            continue
+        nav = float(item.get("nav_value") or 0)
+        value = item.get("value_exact")
+        if nav <= 0 or value is None:
+            continue
+        observed = float(value) / nav * 100.0
+        if observed > hard.max_single_position_pct:
+            evidence.append({
+                "evidence_version": POLICY_EVIDENCE_VERSION,
+                "type": "CONCENTRATION_BREACH",
+                "scope": "SINGLE_POSITION",
+                "rule": RULE_MAX_SINGLE_POSITION,
+                "symbol": item.get("symbol"),
+                "basis": "NAV",
+                "position_value": float(value),
+                "nav": nav,
+                "cash": float(item.get("nav_cash") or 0),
+                "observed_pct": observed,
+                "limit_pct": float(hard.max_single_position_pct),
+            })
+    return evidence
 
 
 def _detect_violations(
@@ -612,6 +657,7 @@ def compute_policy(
         rebal_aggr = min(rebal_aggr, 0.12)
 
     violations = _detect_violations(portfolio_data, hard, resolved_sector_limits or None)
+    violation_evidence = detect_concentration_evidence(portfolio_data, hard)
     narrative  = _narrative(bias, strictness, hard, tilts, emergency, emergency_reason,
                             disc, persona_label, regime)
 
@@ -636,6 +682,7 @@ def compute_policy(
         confidence_discount      = disc,
         violations               = violations,
         resolved_sector_limits   = dict(resolved_sector_limits),
+        violation_evidence       = violation_evidence,
     )
 
 
@@ -907,5 +954,6 @@ def envelope_to_dict(env: PolicyEnvelope) -> dict:
         "violations":               env.violations,
         # Phase 3B.5 — resolved per-sector limits (empty dict when resolver not run)
         "resolved_sector_limits":   env.resolved_sector_limits,
+        "violation_evidence":       env.violation_evidence,
         "prompt_block":             build_policy_prompt_block(env),
     }

@@ -144,10 +144,23 @@ describe("AdvisoryIntentReviewCard", () => {
   it("reports missing and invalid history evidence without recomputing", () => {
     const { rerender } = render(<AdvisoryIntentReviewCard result={result({ advisory_intent_review: null,
       advisory_intent_review_status: "NOT_CAPTURED" })} />);
-    expect(screen.getByText("No intent review was captured for this run.")).toBeInTheDocument();
+    expect(screen.getByText(/^Intent review not captured for this run\./)).toBeInTheDocument();
     rerender(<AdvisoryIntentReviewCard result={result({ advisory_intent_review: null,
       advisory_intent_review_status: "EVIDENCE_INVALID" })} />);
     expect(screen.getByText(/could not be verified/)).toBeInTheDocument();
+  });
+
+  it("a persisted run with no review evidence says so and never implies Intent was respected", () => {
+    render(<AdvisoryIntentReviewCard result={result({ history_id: 219 })} />);
+    expect(screen.getByText(/Intent review not captured for this run\./)).toBeInTheDocument();
+    expect(screen.getByText(/saved Intent was not evaluated/)).toBeInTheDocument();
+    expect(screen.queryByText(/respects your intent/i)).toBeNull();
+    expect(screen.queryByText(/conflict/i)).toBeNull();
+  });
+
+  it("an unsaved result with no history id stays quiet", () => {
+    const { container } = render(<AdvisoryIntentReviewCard result={result({})} />);
+    expect(container).toBeEmptyDOMElement();
   });
 
   it("notes intent changed since the run without rewriting the review", () => {

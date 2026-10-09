@@ -1,0 +1,436 @@
+{
+ "_comment": "Derived, trimmed copies of stored optimizer_history rows 217/218/219 (read-only extract, 2026-10-09). inputs219 holdings prices are reconstructed to reproduce the stored equity weights, sector values and NAV.",
+ "recorded": {
+  "217": {
+   "status": "NO_REBALANCE_REQUIRED",
+   "total_value": 983162.72,
+   "cash_balance": 286562.71755,
+   "swap_suggestions": [
+    {
+     "sell_symbol": "MICRON01.BK",
+     "buy_symbol": null,
+     "reason": "One targeted reduction repairs conservatively classified individual and aggregate DR concentration.",
+     "score_improvement": 3.5,
+     "sector": "Other",
+     "type": "REDUCE"
+    }
+   ],
+   "target_allocations": [
+    {
+     "symbol": "AAPL01.BK",
+     "current_weight": 6.71,
+     "target_weight": 6.71,
+     "action": "HOLD",
+     "allocation_change_percent": 0,
+     "estimated_amount": 0,
+     "sector": "Technology",
+     "reason": "Strong momentum supports retention; elevated valuation limits additional conviction.",
+     "asset_type": "EQUITY"
+    },
+    {
+     "symbol": "BH.BK",
+     "current_weight": 15.26,
+     "target_weight": 15.26,
+     "action": "HOLD",
+     "allocation_change_percent": 0,
+     "estimated_amount": 0,
+     "sector": "Healthcare",
+     "reason": "Retain profitable healthcare exposure; no increase proposed under owner's restriction.",
+     "asset_type": "EQUITY"
+    },
+    {
+     "symbol": "GOOGL01.BK",
+     "current_weight": 7.02,
+     "target_weight": 7.02,
+     "action": "HOLD",
+     "allocation_change_percent": 0,
+     "estimated_amount": 0,
+     "sector": "Communication Services",
+     "reason": "Strong fundamentals and moderate valuation support retention despite sideways momentum.",
+     "asset_type": "EQUITY"
+    },
+    {
+     "symbol": "MICRON01.BK",
+     "current_weight": 15.31,
+     "target_weight": 11.8,
+     "action": "REDUCE",
+     "allocation_change_percent": -3.51,
+     "estimated_amount": -34509,
+     "sector": "Technology",
+     "reason": "One targeted reduction repairs conservatively classified individual and aggregate DR concentration.",
+     "asset_type": "EQUITY"
+    },
+    {
+     "symbol": "NVDA01.BK",
+     "current_weight": 14.4,
+     "target_weight": 14.4,
+     "action": "HOLD",
+     "allocation_change_percent": 0,
+     "estimated_amount": 0,
+     "sector": "Technology",
+     "reason": "Retain strong growth-momentum exposure, consistent with owner's keep preference.",
+     "asset_type": "EQUITY"
+    },
+    {
+     "symbol": "GULF.BK",
+     "current_weight": 12.15,
+     "target_weight": 12.15,
+     "action": "HOLD",
+     "allocation_change_percent": 0,
+     "estimated_amount": 0,
+     "sector": "Utilities",
+     "reason": "Weak momentum discourages additions; evidence does not justify a costly replacement.",
+     "asset_type": "EQUITY"
+    },
+    {
+     "symbol": "META01.BK",
+     "current_weight": 0,
+     "target_weight": 0,
+     "action": "WATCH",
+     "allocation_change_percent": 0,
+     "estimated_amount": 0,
+     "sector": "Communication Services",
+     "reason": "Best strategist growth-momentum candidate; monitor for a demonstrable replacement advantage.",
+     "asset_type": "EQUITY"
+    },
+    {
+     "symbol": "MSFT01.BK",
+     "current_weight": 0,
+     "target_weight": 0,
+     "action": "WATCH",
+     "allocation_change_percent": 0,
+     "estimated_amount": 0,
+     "sector": "Technology",
+     "reason": "Quality growth and strong momentum merit monitoring; gradual DR entry would be essential.",
+     "asset_type": "DR"
+    },
+    {
+     "symbol": "COM7.BK",
+     "current_weight": 0,
+     "target_weight": 0,
+     "action": "WATCH",
+     "allocation_change_percent": 0,
+     "estimated_amount": 0,
+     "sector": "Consumer Cyclical",
+     "reason": "Strong momentum and profitability offer domestic diversification without increasing DR exposure.",
+     "asset_type": "EQUITY"
+    },
+    {
+     "symbol": "TOP.BK",
+     "current_weight": 0,
+     "target_weight": 0,
+     "action": "WATCH",
+     "allocation_change_percent": 0,
+     "estimated_amount": 0,
+     "sector": "Energy",
+     "reason": "Positive momentum offers energy diversification, but cyclical earnings weaken structural growth conviction.",
+     "asset_type": "EQUITY"
+    },
+    {
+     "symbol": "CATL01.BK",
+     "current_weight": 0,
+     "target_weight": 0,
+     "action": "WATCH",
+     "allocation_change_percent": 0,
+     "estimated_amount": 0,
+     "sector": "Industrials",
+     "reason": "Battery-growth diversification and attractive supplied fundamentals warrant continued monitoring.",
+     "asset_type": "DR"
+    }
+   ],
+   "active_policy": {
+    "hard_constraints": {
+     "max_single_position_pct": 25
+    },
+    "violations": []
+   },
+   "has_advisory_intent_review": true
+  },
+  "218": {
+   "status": "NO_ACTION",
+   "total_value": 995562.72,
+   "cash_balance": 286562.71755,
+   "swap_suggestions": [],
+   "target_allocations": [
+    {
+     "symbol": "AAPL01.BK",
+     "current_weight": 6.73,
+     "target_weight": 6.73,
+     "action": "HOLD",
+     "allocation_change_percent": 0,
+     "estimated_amount": 0,
+     "sector": "Technology",
+     "reason": "Strong momentum supports retention; elevated valuation limits conviction for additional capital.",
+     "asset_type": "DR"
+    },
+    {
+     "symbol": "BH.BK",
+     "current_weight": 15.31,
+     "target_weight": 15.31,
+     "action": "HOLD",
+     "allocation_change_percent": 0,
+     "estimated_amount": 0,
+     "sector": "Healthcare",
+     "reason": "Maintain quantity under owner's no-increase restriction; deferred entry timing also discourages additions.",
+     "asset_type": "EQUITY"
+    },
+    {
+     "symbol": "GOOGL01.BK",
+     "current_weight": 6.98,
+     "target_weight": 6.98,
+     "action": "HOLD",
+     "allocation_change_percent": 0,
+     "estimated_amount": 0,
+     "sector": "Communication Services",
+     "reason": "Attractive fundamentals support retention, but sideways momentum weakens the case for aggressive additions.",
+     "asset_type": "DR"
+    },
+    {
+     "symbol": "MICRON01.BK",
+     "current_weight": 16.03,
+     "target_weight": 16.03,
+     "action": "HOLD",
+     "allocation_change_percent": 0,
+     "estimated_amount": 0,
+     "sector": "Technology",
+     "reason": "Preserve shares under owner's no-decrease restriction; conflicting technical indicators argue against adding.",
+     "asset_type": "DR"
+    },
+    {
+     "symbol": "NVDA01.BK",
+     "current_weight": 14.16,
+     "target_weight": 14.16,
+     "action": "HOLD",
+     "allocation_change_percent": 0,
+     "estimated_amount": 0,
+     "sector": "Technology",
+     "reason": "Retain strong momentum exposure; remaining execution-cap headroom is below the 3% minimum adjustment.",
+     "asset_type": "DR"
+    },
+    {
+     "symbol": "GULF.BK",
+     "current_weight": 12,
+     "target_weight": 12,
+     "action": "HOLD",
+     "allocation_change_percent": 0,
+     "estimated_amount": 0,
+     "sector": "Utilities",
+     "reason": "Weak momentum warrants monitoring, but no sufficiently superior replacement establishes a cost-adjusted rotation benefit.",
+     "asset_type": "EQUITY"
+    },
+    {
+     "symbol": "META01.BK",
+     "current_weight": 0,
+     "target_weight": 0,
+     "action": "WATCH",
+     "allocation_change_percent": 0,
+     "estimated_amount": 0,
+     "sector": "Communication Services",
+     "reason": "Strong momentum and favorable timing merit review after instrument verification and revenue-growth validation.",
+     "asset_type": "EQUITY"
+    },
+    {
+     "symbol": "MSFT01.BK",
+     "current_weight": 0,
+     "target_weight": 0,
+     "action": "WATCH",
+     "allocation_change_percent": 0,
+     "estimated_amount": 0,
+     "sector": "Technology",
+     "reason": "Quality and momentum fit the persona; require verified execution facts and incremental portfolio benefit.",
+     "asset_type": "DR"
+    },
+    {
+     "symbol": "TOP.BK",
+     "current_weight": 0,
+     "target_weight": 0,
+     "action": "WATCH",
+     "allocation_change_percent": 0,
+     "estimated_amount": 0,
+     "sector": "Energy",
+     "reason": "Positive momentum offers energy diversification, but cyclical valuation alone does not establish durable growth.",
+     "asset_type": "EQUITY"
+    }
+   ],
+   "active_policy": {
+    "hard_constraints": {
+     "max_single_position_pct": 25
+    },
+    "violations": []
+   },
+   "has_advisory_intent_review": true
+  },
+  "219": {
+   "status": "REBALANCE",
+   "total_value": 987962.72,
+   "cash_balance": 286562.71755,
+   "swap_suggestions": [
+    {
+     "sell_symbol": "MICRON01.BK",
+     "buy_symbol": null,
+     "reason": "Address mandated concentration remediation while retaining meaningful growth participation.",
+     "score_improvement": 9.7,
+     "sector": "Other",
+     "type": "REDUCE"
+    }
+   ],
+   "target_allocations": [
+    {
+     "symbol": "AAPL01.BK",
+     "current_weight": 9.6,
+     "target_weight": 9.6,
+     "action": "HOLD",
+     "allocation_change_percent": 0,
+     "estimated_amount": 0,
+     "sector": "Technology",
+     "reason": "Preserve strong momentum; elevated valuation does not justify additional capital.",
+     "asset_type": "DR"
+    },
+    {
+     "symbol": "BH.BK",
+     "current_weight": 21.4,
+     "target_weight": 21.4,
+     "action": "HOLD",
+     "allocation_change_percent": 0,
+     "estimated_amount": 0,
+     "sector": "Healthcare",
+     "reason": "Retain healthcare diversification; deferred entry timing argues against accumulation.",
+     "asset_type": "EQUITY"
+    },
+    {
+     "symbol": "GOOGL01.BK",
+     "current_weight": 9.8,
+     "target_weight": 9.8,
+     "action": "HOLD",
+     "allocation_change_percent": 0,
+     "estimated_amount": 0,
+     "sector": "Communication Services",
+     "reason": "Maintain attractive valuation and profitability exposure without unnecessary turnover.",
+     "asset_type": "DR"
+    },
+    {
+     "symbol": "MICRON01.BK",
+     "current_weight": 22.2,
+     "target_weight": 12.5,
+     "action": "REDUCE",
+     "allocation_change_percent": -9.7,
+     "estimated_amount": -95832,
+     "sector": "Technology",
+     "reason": "Address mandated concentration remediation while retaining meaningful growth participation.",
+     "asset_type": "DR"
+    },
+    {
+     "symbol": "NVDA01.BK",
+     "current_weight": 19.8,
+     "target_weight": 19.8,
+     "action": "HOLD",
+     "allocation_change_percent": 0,
+     "estimated_amount": 0,
+     "sector": "Technology",
+     "reason": "Preserve strong momentum and profitability; target remains below the execution cap.",
+     "asset_type": "DR"
+    },
+    {
+     "symbol": "GULF.BK",
+     "current_weight": 17.3,
+     "target_weight": 17.3,
+     "action": "HOLD",
+     "allocation_change_percent": 0,
+     "estimated_amount": 0,
+     "sector": "Utilities",
+     "reason": "Maintain utility diversification; weak momentum provides no accumulation case.",
+     "asset_type": "EQUITY"
+    },
+    {
+     "symbol": "MSFT01.BK",
+     "current_weight": 0,
+     "target_weight": 0,
+     "action": "WATCH",
+     "allocation_change_percent": 0,
+     "estimated_amount": 0,
+     "sector": "Technology",
+     "reason": "Strong timing and profitability, but no demonstrated score advantage sufficient to justify replacement.",
+     "asset_type": "DR"
+    },
+    {
+     "symbol": "AMZN01.BK",
+     "current_weight": 0,
+     "target_weight": 0,
+     "action": "WATCH",
+     "allocation_change_percent": 0,
+     "estimated_amount": 0,
+     "sector": "Consumer Cyclical",
+     "reason": "Attractive fundamentals; await momentum improvement and verified execution classification before deployment.",
+     "asset_type": "EQUITY"
+    }
+   ],
+   "active_policy": {
+    "hard_constraints": {
+     "max_single_position_pct": 22
+    },
+    "violations": [
+     "CONCENTRATION_BREACH: MICRON01.BK at 22.2% exceeds 22% single-position policy limit"
+    ]
+   },
+   "has_advisory_intent_review": false
+  }
+ },
+ "inputs219": {
+  "nav": 987962.72,
+  "cash": 286562.71755,
+  "limit_pct": 22,
+  "sector_note": "Technology is AAPL+MICRON+NVDA",
+  "holdings": [
+   {
+    "symbol": "AAPL01.BK",
+    "shares": 2000,
+    "price": 33.5,
+    "sector": "Technology"
+   },
+   {
+    "symbol": "BH.BK",
+    "shares": 800,
+    "price": 188,
+    "sector": "Healthcare"
+   },
+   {
+    "symbol": "GOOGL01.BK",
+    "shares": 2000,
+    "price": 34.5,
+    "sector": "Other"
+   },
+   {
+    "symbol": "MICRON01.BK",
+    "shares": 7000,
+    "price": 22.2,
+    "sector": "Technology"
+   },
+   {
+    "symbol": "NVDA01.BK",
+    "shares": 6000,
+    "price": 23.1,
+    "sector": "Technology"
+   },
+   {
+    "symbol": "GULF.BK",
+    "shares": 2000,
+    "price": 60.5,
+    "sector": "Utilities"
+   }
+  ],
+  "stored_equity_weights": {
+   "AAPL01.BK": 9.6,
+   "BH.BK": 21.4,
+   "GOOGL01.BK": 9.8,
+   "MICRON01.BK": 22.2,
+   "NVDA01.BK": 19.8,
+   "GULF.BK": 17.3
+  },
+  "stored_micron": {
+   "current_weight": 22.2,
+   "target_weight": 12.5,
+   "allocation_change_percent": -9.7,
+   "estimated_amount": -95832
+  }
+ }
+}
