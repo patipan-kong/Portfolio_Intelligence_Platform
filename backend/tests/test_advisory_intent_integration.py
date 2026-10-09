@@ -202,8 +202,9 @@ def test_disabled_is_legacy_prompts_response_and_persistence(monkeypatch, disabl
         outputs.append((ai.prompts, response, stored))
         assert "advisory_intent_review" not in response and "advisory_intent_review" not in stored
         assert "OWNER INVESTOR INTENT" not in json.dumps(ai.prompts)
-        # Legacy weights: equity-only current weight (each holding is 20% of equity).
-        assert next(a for a in stored["target_allocations"] if a["symbol"] == "AAA")["current_weight"] == 20.0
+        # NAV-basis hotfix: flag-off weights are also value / NAV (500,000 / 5,000,000),
+        # no longer the equity-only 20%.
+        assert next(a for a in stored["target_allocations"] if a["symbol"] == "AAA")["current_weight"] == 10.0
     assert outputs[0] == outputs[1]
 
 
@@ -256,9 +257,9 @@ def test_stale_quote_preserves_legacy_advice_and_is_unresolved(monkeypatch, enab
     response = run(db, p)
     envelope = response["advisory_intent_review"]
     assert envelope["valuation"]["status"] == "UNRESOLVED" and "QUOTE_STALE" in envelope["valuation"]["reasons"]
-    # Legacy (equity-only) weights stand when the canonical basis is unresolved.
+    # The shared NAV-basis weights (live quotes) stand when the frozen canonical basis is unresolved.
     rows = {a["symbol"]: a for a in response["target_allocations"]}
-    assert rows["AAA"]["current_weight"] == 20.0 and rows["AAA"]["action"] == "REDUCE"
+    assert rows["AAA"]["current_weight"] == 10.0 and rows["AAA"]["action"] == "REDUCE"
     aaa = position(envelope, "AAA")
     assert aaa["review"]["final"]["outcome"] == "UNRESOLVED"
     assert "VALUATION_BASIS_UNRESOLVED" in aaa["review"]["final"]["reasons"]

@@ -14,7 +14,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import {
-  listExecutionDecisions, getExecutionDecision, getExecutionDetail,
+  getExecutionDecision, getExecutionDetail,
   getShadowPerformanceSummary, recordDecisionBySnapshot,
 } from "@/lib/api";
 import type {
@@ -22,6 +22,7 @@ import type {
   ShadowPerformanceSummary, ExecutionAnalysis, DecisionGoalContext,
   DecisionGoalContextGoal,
 } from "@/lib/api";
+import { lookupSnapshotDecision } from "@/lib/decisionLookup";
 import {
   isOpportunityCostEligibleDecision,
   opportunityCostHref,
@@ -158,14 +159,11 @@ export function DecisionActionPanel({
     setExisting(undefined);
     setDecisionLoadFailed(false);
     setConfirming(null);
-    listExecutionDecisions(portfolioId, undefined, 50)
-      .then((ds) => {
-        if (cancelled) return;
-        const match = ds.find((d) => d.recommendation_snapshot_id === snapshotId);
-        if (!match && ds.length >= 50) { setDecisionLoadFailed(true); return; }
-        setExisting(match ?? null);
-      })
-      .catch(() => { if (!cancelled) setDecisionLoadFailed(true); });
+    lookupSnapshotDecision(portfolioId, snapshotId).then((lookup) => {
+      if (cancelled) return;
+      if (lookup.status === "unavailable") { setDecisionLoadFailed(true); return; }
+      setExisting(lookup.status === "found" ? lookup.decision : null);
+    });
     return () => { cancelled = true; };
   }, [snapshotId, portfolioId, decisionLoadAttempt]);
 
@@ -230,14 +228,11 @@ export function DecisionActionPanel({
       // The write succeeded. A failed/incomplete read-back must not reopen
       // recording controls as though no owner decision exists.
       setExisting(undefined);
-      try {
-        const ds = await listExecutionDecisions(portfolioId, undefined, 50);
-        const match = ds.find((d) => d.recommendation_snapshot_id === snapshotId);
-        if (match) setExisting(match);
-        else setDecisionLoadFailed(true);
-      } catch {
-        setDecisionLoadFailed(true);
-      }
+      // A just-written decision must read back as "found"; "none" or
+      // "unavailable" both keep recording closed.
+      const lookup = await lookupSnapshotDecision(portfolioId, snapshotId);
+      if (lookup.status === "found") setExisting(lookup.decision);
+      else setDecisionLoadFailed(true);
       window.dispatchEvent(new CustomEvent("execution-decision-recorded", {
         detail: { portfolioId, snapshotId, decision: confirming },
       }));

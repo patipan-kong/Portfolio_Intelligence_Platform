@@ -6,6 +6,7 @@ import type {
   ExecutionRole,
   NoActionReason,
   TargetAllocation,
+  TradeEvidenceStatus,
   TradeExecutionState,
   TradeNecessity,
   TradeReason,
@@ -66,6 +67,10 @@ export interface ExecutionTrade {
   optimizerReason: TradeReason | null;
   executionRole: ExecutionRole | null;
   note: string | null;
+  /** Provenance of optimizerReason/necessity — separates "as recorded" from
+   *  "currently verified" (see TradeEvidenceStatus). Null when unavailable. */
+  evidenceStatus: TradeEvidenceStatus | null;
+  evidenceDetail: string | null;
 }
 
 export interface ExecutionPlan {
@@ -137,6 +142,8 @@ export function deriveExecutionPlan(
         optimizerReason: optimized?.reason ?? null,
         executionRole: optimized?.execution_role ?? null,
         note: optimized?.note ?? null,
+        evidenceStatus: optimized?.evidence_status ?? null,
+        evidenceDetail: optimized?.evidence_detail ?? null,
       };
 
       if (optimized?.execution_state === "DEFERRED") {

@@ -4,6 +4,7 @@ import Link from "next/link";
 import SignalBadge from "@/components/SignalBadge";
 import type { OptimizerResult, TradeReason } from "@/lib/api";
 import { executionEvidenceAvailable } from "@/lib/optimizerPresentation";
+import { provenanceQualifier, requiredLabel } from "@/lib/tradeProvenance";
 import {
   deriveExecutionPlan,
   NO_ACTION_REASON_LABELS,
@@ -107,12 +108,16 @@ function resolveNoTradeReasons(result: OptimizerResult): NoTradeReason[] {
 function NecessityBadge({ trade }: { trade: ExecutionTrade }) {
   if (!trade.necessity) return null;
   if (trade.necessity === "NECESSARY") {
+    // Anything other than a NAV-verified (or non-concentration) Required is shown
+    // visibly qualified: as-recorded legacy, or equity-basis sector policy.
+    const qualified = provenanceQualifier(trade.evidenceStatus) !== null;
     return (
       <span
-        className="text-[9px] font-bold px-1.5 py-0.5 rounded-full border bg-gray-800 border-gray-800 text-white"
-        title={trade.note ?? undefined}
+        className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${qualified
+          ? "bg-white border-gray-800 text-gray-800" : "bg-gray-800 border-gray-800 text-white"}`}
+        title={qualified ? (provenanceQualifier(trade.evidenceStatus) ?? undefined) : (trade.note ?? undefined)}
       >
-        Required
+        {requiredLabel(trade.evidenceStatus)}
       </span>
     );
   }
@@ -129,6 +134,10 @@ function NecessityBadge({ trade }: { trade: ExecutionTrade }) {
   return null;
 }
 
+function evidenceQualifier(trade: ExecutionTrade): string | null {
+  return provenanceQualifier(trade.evidenceStatus);
+}
+
 /** Structured Reason/Execution Role for sell/reduce trades — surfaces the
  *  same execution_optimizer.py classification the Report Card already
  *  renders historically (frontend/app/ai-analytics/(hub)/recommendations/[id]/page.tsx),
@@ -141,6 +150,11 @@ function TradeReasonLine({ trade }: { trade: ExecutionTrade }) {
       <span className="text-[10px] text-gray-400">
         Reason: {TRADE_REASON_LABELS[trade.optimizerReason]}
       </span>
+      {evidenceQualifier(trade) && (
+        <span className="text-[10px] text-amber-700" data-testid="evidence-qualifier">
+          {evidenceQualifier(trade)}
+        </span>
+      )}
       {trade.executionRole === "FUNDING_SOURCE" && (
         <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full border bg-blue-50 border-blue-200 text-blue-700">
           Funding source

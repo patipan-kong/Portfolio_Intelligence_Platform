@@ -162,9 +162,13 @@ def read_snapshot_plan_inputs(db: Session, snap: Any) -> dict[str, Any] | None:
     cash_available = 0.0
     portfolio_assessment = None
     no_action_summary = None
+    run_total_value = None
+    run_cash_balance = None
     if oh and oh.result_json:
         try:
             stored = json.loads(oh.result_json)
+            run_total_value = stored.get("total_value")
+            run_cash_balance = stored.get("cash_balance")
             cash_available = float(stored.get("cash_balance") or 0.0)
             portfolio_assessment = stored.get("portfolio_assessment")
             no_action_summary = stored.get("no_action_summary")
@@ -178,6 +182,16 @@ def read_snapshot_plan_inputs(db: Session, snap: Any) -> dict[str, Any] | None:
         "cash_available": cash_available,
         "portfolio_assessment": portfolio_assessment,
         "no_action_summary": no_action_summary,
+        # Additive, presentation-only: what the canonical classifier needs to
+        # verify (or qualify) a stored run's policy claims. compute_plan_grade
+        # does not read it. ``violation_evidence`` is None for runs stored
+        # before NAV-basis evidence existed.
+        "policy_provenance": {
+            "violation_evidence": active_policy.get("violation_evidence"),
+            "max_single_position_pct": (active_policy.get("hard_constraints") or {}).get("max_single_position_pct"),
+            "total_value": run_total_value,
+            "cash_balance": run_cash_balance,
+        },
     }
 
 
@@ -185,6 +199,7 @@ def derive_full_plan(
     target_allocations: list[dict],
     cash_available: float,
     violations: list[str] | None = None,
+    policy_provenance: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Re-derive the complete day-0 plan: buy-side trades + the resolved
     SELL/REDUCE ExecutionOptimizationResult. Single source of truth for
@@ -195,15 +210,41 @@ def derive_full_plan(
     (build_action_summary, optimize_execution) — adds zero new trade-
     selection or funding logic (Working Agreement #5: execution_optimizer.py
     is read-only this phase).
+
+    ``policy_provenance`` (from ``read_snapshot_plan_inputs``) is passed ONLY by
+    the Report Card, so its Required/provenance labels come from the same
+    canonical classifier as the optimizer page (``optimize_execution_for_payload``).
+    Without it the legacy string rule applies, unchanged — which is what the
+    plan grade, funding-order analytics, opportunity cost, execution ledger and
+    plan-vs-actual analyzer still use (they must stay reproducible from the
+    stored arguments; see compute_plan_grade).
     """
-    from services.optimizer.execution_optimizer import optimize_execution
+    from services.optimizer.execution_optimizer import optimize_execution, optimize_execution_for_payload
 
     action_summary, buy_trades, total_buy_deployment = _derive_action_summary_and_buys(
         target_allocations
     )
-    eo = optimize_execution(
-        action_summary, target_allocations or [], cash_available, violations=violations
-    )
+    if policy_provenance is not None:
+        active_policy: dict[str, Any] = {
+            "violations": violations or [],
+            "hard_constraints": {"max_single_position_pct": policy_provenance.get("max_single_position_pct")},
+        }
+        if policy_provenance.get("violation_evidence") is not None:
+            active_policy["violation_evidence"] = policy_provenance["violation_evidence"]
+        eo = optimize_execution_for_payload(
+            {
+                "active_policy": active_policy,
+                "target_allocations": target_allocations or [],
+                "total_value": policy_provenance.get("total_value"),
+                "cash_balance": policy_provenance.get("cash_balance"),
+            },
+            action_summary,
+            cash_available=cash_available,
+        )
+    else:
+        eo = optimize_execution(
+            action_summary, target_allocations or [], cash_available, violations=violations
+        )
     return {
         "buy_trades": buy_trades,
         "total_buy_deployment": total_buy_deployment,

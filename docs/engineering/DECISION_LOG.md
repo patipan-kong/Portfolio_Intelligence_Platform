@@ -3596,3 +3596,15 @@ importance that the captured evidence cannot establish.
   - Converting the policy engines to the NAV is deferred to a later slice.
 
 **Disposition:** `IMPLEMENTED BEHIND FLAG — NOT COMMITTED`
+
+
+## Optimizer NAV-Basis Correctness Hotfix (history 219 / snapshot 175)
+
+**Date:** 2026-10-09
+**Problem:** Run 219 reported MICRON01.BK at 22.2% (above the 22% single-position limit) while it was 15.73% of NAV. `weight_pct` divided by invested equity only; L2 targets, `total_value` and every amount are NAV based, so `target − current` mixed denominators (−9.7pp, −฿95,832 instead of −3.23pp, −฿31,911) and the false `CONCENTRATION_BREACH` string made the trade `POLICY_ENFORCEMENT` / `NECESSARY`. The flag-on path only re-based prompt/row weights (the Slice 1 "temporary mixed-basis boundary"), so the defect was not flag-specific. Separately, the decision panel treated a full 50-row page without a match as a failed lookup, and run 219 (flag off) showed no Intent review state at all.
+**Decision (owner, 2026-10-09):** Convert single-position policy, concentration breach severity, stabilization inputs, allocation deltas and execution amounts to a NAV denominator that includes cash, **including flag-OFF runs**. Thresholds unchanged. Sector policy keeps its existing equity-only basis for now. DR buy-only cap and the advisory DR basket guidance are unchanged. Investor Intent stays advisory.
+**Implementation:** `services/optimizer/nav_basis.py` is the one weight source (`_compute_portfolio_weights(items, cash_balance)`); `weight_pct` is unrounded value / NAV, rows keep their established 2 dp. `policy_engine.detect_concentration_evidence` emits additive `active_policy.violation_evidence` (raw position value, NAV, cash, limit, `basis: "NAV"`). `execution_optimizer.verify_position_evidence` re-derives the percentage from raw value / NAV, requires valuation (NAV, cash) to match the same payload, a strict unrounded breach and consistency with the allocation's `current_weight`; otherwise the trade is not Required (`evidence_status: UNVERIFIED`). Stored runs without `violation_evidence` keep their recorded classification, qualified `LEGACY_RECORDED_UNVERIFIED` (never silently relabeled, never given current evidence or current Intent). `GET /optimizer/decisions` gains an optional exact `recommendation_snapshot_id` filter; the UI helper `lookupSnapshotDecision` returns found / none / unavailable and verifies portfolio + snapshot identity. Runs without Intent review evidence render "Intent review not captured".
+**Impact:** Cash-holding portfolios see lower position weights and fewer false breaches; flag-off output is no longer byte-identical to pre-hotfix. Stored histories 217/218/219 are untouched. See `docs/implementation/NAV_BASIS_HOTFIX.md`.
+**Remaining limitation:** current/projected sector weights and sector limits are still equity-only while L2 targets are NAV based; sector breach classification is qualified `SECTOR_EQUITY_BASIS`. `plan_grader.derive_full_plan` still re-derives funding order with the legacy string rule (evaluation only).
+
+**Disposition:** `IMPLEMENTED — NOT COMMITTED`

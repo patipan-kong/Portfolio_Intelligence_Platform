@@ -93,19 +93,25 @@ function PositionDetail({ position }: { position: AdvisoryPositionReview }) {
   );
 }
 
+export const NOT_CAPTURED_TEXT =
+  "Intent review not captured for this run. Your saved Intent was not evaluated against this "
+  + "recommendation, so this is not a statement that the plan respects it.";
+
 export default function AdvisoryIntentReviewCard({ result }: { result: OptimizerResult }) {
   const status: AdvisoryIntentReviewStatus | undefined = result.advisory_intent_review_status;
   const review = result.advisory_intent_review ?? null;
-  if (!review && !status) return null;   // feature off: nothing to show
+  // A persisted run (it has a history id) with neither review nor status was produced
+  // without Intent review evidence — say so. A pre-run draft with no history stays quiet.
+  if (!review && !status && result.history_id == null) return null;
 
   if (!review) {
     return (
       <section className="bg-white border rounded-xl p-4 shadow-sm" aria-labelledby="intent-review-heading">
         <h2 id="intent-review-heading" className="text-sm font-semibold text-gray-700">Your intent</h2>
-        <p className="text-xs text-gray-500 mt-1">
+        <p className="text-xs text-gray-600 mt-1">
           {status === "EVIDENCE_INVALID"
             ? "The intent review saved with this run could not be verified, so it is not shown."
-            : "No intent review was captured for this run."}
+            : NOT_CAPTURED_TEXT}
         </p>
       </section>
     );

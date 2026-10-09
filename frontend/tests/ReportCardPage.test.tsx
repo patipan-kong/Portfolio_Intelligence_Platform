@@ -60,6 +60,64 @@ beforeEach(() => {
   portfolioState = { currentSelection: 1, reportUnresolvedPortfolio: vi.fn() };
 });
 
+function planWithTrade(trade: Record<string, unknown>) {
+  return reportCard({
+    plan: {
+      status: "ok", buy_trades: [], cash_available: 0, funding_gap: 0,
+      sell_reduce_trades: [{
+        symbol: "MICRON01.BK", action: "REDUCE", reason: "POLICY_ENFORCEMENT", necessity: "NECESSARY",
+        execution_role: "STANDALONE", execution_state: "FULL", full_recommended_amount: 95832,
+        executed_amount: 95832, note: "", ...trade,
+      }],
+    } as unknown as RecommendationReportCard["plan"],
+  });
+}
+
+describe("Report Card — execution provenance of Required trades", () => {
+  test("history 219: the recorded Required trade is shown as recorded and qualified, never plain Required", async () => {
+    getRecommendationReportCard.mockResolvedValue(planWithTrade({
+      evidence_status: "LEGACY_RECORDED_UNVERIFIED",
+      evidence_detail: "Recorded before NAV-basis evidence existed; weights were equity-only and cannot be verified.",
+    }));
+    render(<ReportCardPage />);
+    expect(await screen.findByTestId("report-required-tag")).toHaveTextContent("Required (as recorded)");
+    expect(screen.getByTestId("report-evidence-qualifier")).toHaveTextContent(/not NAV-verified/);
+    expect(screen.queryByText("Required")).not.toBeInTheDocument();
+    expect(screen.getByText(/Reason: policy enforcement/)).toBeInTheDocument();      // recorded reason preserved
+  });
+
+  test("a NAV-verified Required trade shows plain Required and no qualifier", async () => {
+    getRecommendationReportCard.mockResolvedValue(planWithTrade({ evidence_status: "VERIFIED_NAV" }));
+    render(<ReportCardPage />);
+    expect(await screen.findByTestId("report-required-tag")).toHaveTextContent(/^Required$/);
+    expect(screen.queryByTestId("report-evidence-qualifier")).not.toBeInTheDocument();
+  });
+
+  test("a sector Required trade is labelled equity-basis with its explanation", async () => {
+    getRecommendationReportCard.mockResolvedValue(planWithTrade({ evidence_status: "SECTOR_EQUITY_BASIS" }));
+    render(<ReportCardPage />);
+    expect(await screen.findByTestId("report-required-tag")).toHaveTextContent("Required (equity-basis)");
+    expect(screen.getByTestId("report-evidence-qualifier")).toHaveTextContent(/equity-only denominator/);
+  });
+
+  test("an unverified concentration claim is not Required and says why", async () => {
+    getRecommendationReportCard.mockResolvedValue(planWithTrade({
+      reason: "PORTFOLIO_IMPROVEMENT", necessity: "DISCRETIONARY", evidence_status: "UNVERIFIED",
+    }));
+    render(<ReportCardPage />);
+    expect(await screen.findByTestId("report-evidence-qualifier")).toHaveTextContent(/could not be verified against NAV/);
+    expect(screen.queryByTestId("report-required-tag")).not.toBeInTheDocument();
+  });
+
+  test("a payload without provenance (older API) adds no Required tag or qualifier", async () => {
+    getRecommendationReportCard.mockResolvedValue(planWithTrade({ necessity: "DISCRETIONARY", reason: "PORTFOLIO_IMPROVEMENT" }));
+    render(<ReportCardPage />);
+    await screen.findByText(/Reason: portfolio improvement/);
+    expect(screen.queryByTestId("report-required-tag")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("report-evidence-qualifier")).not.toBeInTheDocument();
+  });
+});
+
 describe("Report Card — Execution Detail navigation (Slice 4, Behavior 3)", () => {
   test("links to Execution Detail using execution.decision_id when a decision exists", async () => {
     getRecommendationReportCard.mockResolvedValue(reportCard());

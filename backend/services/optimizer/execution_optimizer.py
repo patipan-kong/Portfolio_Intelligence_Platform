@@ -78,6 +78,7 @@ class FundingCandidate(BaseModel):
     action: str                 # "SELL" | "REDUCE"
     sector: str | None = None
     full_amount: float          # this trade's own full recommended release, before any scaling
+    current_weight: float | None = None   # the allocation row's current_weight (NAV basis), for evidence verification
 
 
 class OptimizedTrade(BaseModel):
@@ -91,6 +92,11 @@ class OptimizedTrade(BaseModel):
     full_recommended_amount: float
     executed_amount: float
     note: str
+    # Provenance of ``reason``/``necessity`` (additive). evidence_status is one of
+    # NOT_APPLICABLE | VERIFIED_NAV | UNVERIFIED | LEGACY_RECORDED_UNVERIFIED |
+    # SECTOR_EQUITY_BASIS — see ReasonProvenance.
+    evidence_status: str = "NOT_APPLICABLE"
+    evidence_detail: str | None = None
 
 
 class ExecutionOptimizationResult(BaseModel):
@@ -103,26 +109,150 @@ class ExecutionOptimizationResult(BaseModel):
 
 # ── Reason / Necessity classification ────────────────────────────────────────
 
-def classify_reason(symbol: str, action: str, sector: str | None, violations: list[str] | None) -> str:
-    """Assign a durable Reason to a candidate SELL/REDUCE trade.
+# ── Evidence provenance ──────────────────────────────────────────────────────
 
-    Belief-free by construction (§7): only reuses the action already chosen
-    upstream and this trade's own presence in an already-computed violations
-    list — never scores a stock, never forecasts return, never invents a
-    reason the Belief Engine didn't already imply through its own action.
+EVIDENCE_NOT_APPLICABLE = "NOT_APPLICABLE"
+EVIDENCE_VERIFIED_NAV = "VERIFIED_NAV"
+EVIDENCE_UNVERIFIED = "UNVERIFIED"
+EVIDENCE_LEGACY_RECORDED = "LEGACY_RECORDED_UNVERIFIED"
+EVIDENCE_SECTOR_EQUITY = "SECTOR_EQUITY_BASIS"
 
-    Checks both breach shapes policy_engine._detect_violations() emits:
-    position-level ("CONCENTRATION_BREACH: {symbol} at ...") and sector-level
-    ("SECTOR_BREACH: {sector} at ..."). Matching sector alone missed live
-    single-position breaches, silently downgrading them to discretionary
-    Portfolio Improvement — the fix caught during design review.
+# Tolerances: valuation values are persisted at 2 dp; the allocation row's
+# current_weight is an established 2 dp output (and, flag ON, a frozen-quote
+# canonical weight), so it is compared with a small display-level tolerance.
+_VALUATION_TOL = 0.011
+_WEIGHT_TOL_PCT = 0.05
+_RECOMPUTE_TOL_PCT = 1e-6
+
+
+class ReasonProvenance(BaseModel):
+    status: str = EVIDENCE_NOT_APPLICABLE
+    detail: str | None = None
+
+
+def verify_position_evidence(
+    symbol: str,
+    evidence: list[dict[str, Any]] | None,
+    *,
+    current_weight: float | None,
+    limit_pct: float | None,
+    valuation: dict[str, Any] | None,
+) -> tuple[bool, str]:
+    """Verify NAV-basis single-position breach evidence. Returns (ok, detail).
+
+    Re-derives the percentage from the raw position value and NAV instead of
+    trusting ``observed_pct``, and compares unrounded values against the
+    threshold. Any missing or inconsistent input fails closed.
+    """
+    from math import isfinite
+
+    entries = [
+        e for e in (evidence or [])
+        if isinstance(e, dict) and e.get("symbol") == symbol
+        and e.get("type") == "CONCENTRATION_BREACH" and e.get("scope") == "SINGLE_POSITION"
+    ]
+    if not entries:
+        return False, "NO_EVIDENCE"
+    e = entries[0]
+    if e.get("evidence_version") != "wealth.policy-evidence.v1":
+        return False, "EVIDENCE_VERSION"
+    if e.get("rule") != "hard_constraints.max_single_position_pct":
+        return False, "RULE_MISMATCH"
+    if e.get("basis") != "NAV":
+        return False, "BASIS_NOT_NAV"
+    try:
+        value, nav = float(e["position_value"]), float(e["nav"])
+        cash, ev_limit = float(e["cash"]), float(e["limit_pct"])
+        observed = float(e["observed_pct"])
+    except (KeyError, TypeError, ValueError):
+        return False, "EVIDENCE_MALFORMED"
+    if not all(isfinite(x) for x in (value, nav, cash, ev_limit, observed)) or nav <= 0 or value < 0:
+        return False, "EVIDENCE_MALFORMED"
+    if valuation is None or valuation.get("nav") is None or valuation.get("cash") is None:
+        return False, "VALUATION_UNAVAILABLE"
+    try:
+        run_nav, run_cash = float(valuation["nav"]), float(valuation["cash"])
+    except (TypeError, ValueError):
+        return False, "VALUATION_UNAVAILABLE"
+    if abs(nav - run_nav) > _VALUATION_TOL or abs(cash - run_cash) > _VALUATION_TOL:
+        return False, "VALUATION_MISMATCH"
+    recomputed = value / nav * 100.0
+    if abs(recomputed - observed) > _RECOMPUTE_TOL_PCT:
+        return False, "EVIDENCE_INCONSISTENT"
+    if limit_pct is None or abs(float(limit_pct) - ev_limit) > 1e-9:
+        return False, "LIMIT_MISMATCH"
+    if not recomputed > ev_limit:
+        return False, "NOT_A_BREACH"
+    if current_weight is None or abs(float(current_weight) - recomputed) > _WEIGHT_TOL_PCT:
+        return False, "WEIGHT_MISMATCH"
+    return True, "VERIFIED"
+
+
+def classify_reason_with_provenance(
+    symbol: str,
+    action: str,
+    sector: str | None,
+    violations: list[str] | None,
+    *,
+    evidence: list[dict[str, Any]] | None = None,
+    legacy_recorded: bool = False,
+    current_weight: float | None = None,
+    limit_pct: float | None = None,
+    valuation: dict[str, Any] | None = None,
+) -> tuple[str, ReasonProvenance]:
+    """Assign Reason plus the provenance that authorizes it.
+
+    * SELL -> Mandatory Risk Reduction (action-derived, unchanged).
+    * A single-position POLICY_ENFORCEMENT needs verified NAV-basis evidence
+      (``verify_position_evidence``). A violation string alone never
+      authorizes it; failing verification downgrades to Portfolio
+      Improvement and records why (fail closed).
+    * Sector breaches keep their existing behavior (documented equity-only
+      sector basis) and are qualified as such.
+    * ``legacy_recorded``: a stored run that predates ``violation_evidence``.
+      The original string rule is reproduced so the recorded classification is
+      not silently relabeled, but it is marked LEGACY_RECORDED_UNVERIFIED.
     """
     if action == "SELL":
-        return REASON_MANDATORY_RISK_REDUCTION
+        return REASON_MANDATORY_RISK_REDUCTION, ReasonProvenance()
     violations = violations or []
-    if any("BREACH" in v and (symbol in v or (sector and sector in v)) for v in violations):
-        return REASON_POLICY_ENFORCEMENT
-    return REASON_PORTFOLIO_IMPROVEMENT
+
+    if legacy_recorded:
+        if any("BREACH" in v and (symbol in v or (sector and sector in v)) for v in violations):
+            return REASON_POLICY_ENFORCEMENT, ReasonProvenance(
+                status=EVIDENCE_LEGACY_RECORDED,
+                detail="Recorded before NAV-basis evidence existed; weights were equity-only and cannot be verified.",
+            )
+        return REASON_PORTFOLIO_IMPROVEMENT, ReasonProvenance()
+
+    position_claimed = any(v.startswith("CONCENTRATION_BREACH") and symbol in v for v in violations)
+    has_evidence = any(isinstance(e, dict) and e.get("symbol") == symbol for e in (evidence or []))
+    if position_claimed or has_evidence:
+        ok, detail = verify_position_evidence(
+            symbol, evidence, current_weight=current_weight, limit_pct=limit_pct, valuation=valuation,
+        )
+        if ok:
+            return REASON_POLICY_ENFORCEMENT, ReasonProvenance(status=EVIDENCE_VERIFIED_NAV, detail=detail)
+        return REASON_PORTFOLIO_IMPROVEMENT, ReasonProvenance(status=EVIDENCE_UNVERIFIED, detail=detail)
+
+    if sector and any(v.startswith("SECTOR_BREACH") and sector in v for v in violations):
+        return REASON_POLICY_ENFORCEMENT, ReasonProvenance(
+            status=EVIDENCE_SECTOR_EQUITY,
+            detail="Sector limits are evaluated on the existing equity-only basis.",
+        )
+    return REASON_PORTFOLIO_IMPROVEMENT, ReasonProvenance()
+
+
+def classify_reason(symbol: str, action: str, sector: str | None, violations: list[str] | None) -> str:
+    """Reason from the violation list alone — the legacy string rule.
+
+    Kept for callers/tests that have no evidence context. It is NOT used by
+    the live or history execution paths, which call
+    ``classify_reason_with_provenance``.
+    """
+    return classify_reason_with_provenance(
+        symbol, action, sector, violations, legacy_recorded=True,
+    )[0]
 
 
 def necessity_for(reason: str) -> str:
@@ -145,6 +275,11 @@ def resolve_funding_gap(
     cash_available: float,
     total_buy_deployment: float,
     violations: list[str] | None = None,
+    *,
+    evidence: list[dict[str, Any]] | None = None,
+    legacy_recorded: bool = True,
+    limit_pct: float | None = None,
+    valuation: dict[str, Any] | None = None,
 ) -> ExecutionOptimizationResult:
     """Implement OPTIMIZER_PHILOSOPHY.md §10's funding sequence deterministically.
 
@@ -173,8 +308,14 @@ def resolve_funding_gap(
     """
     reasoned: list[dict[str, Any]] = []
     for c in candidates:
-        reason = classify_reason(c.symbol, c.action, c.sector, violations)
+        reason, prov = classify_reason_with_provenance(
+            c.symbol, c.action, c.sector, violations,
+            evidence=evidence, legacy_recorded=legacy_recorded,
+            current_weight=c.current_weight, limit_pct=limit_pct, valuation=valuation,
+        )
         reasoned.append({
+            "evidence_status": prov.status,
+            "evidence_detail": prov.detail,
             "symbol": c.symbol,
             "action": c.action,
             "sector": c.sector,
@@ -200,6 +341,7 @@ def resolve_funding_gap(
         trades.append(OptimizedTrade(
             symbol=c["symbol"], action=c["action"], sector=c["sector"],
             reason=c["reason"], necessity=c["necessity"],
+            evidence_status=c["evidence_status"], evidence_detail=c["evidence_detail"],
             execution_role=ROLE_STANDALONE, execution_state=STATE_FULL,
             full_recommended_amount=round(c["full_amount"], 2),
             executed_amount=round(c["full_amount"], 2),
@@ -218,6 +360,7 @@ def resolve_funding_gap(
             trades.append(OptimizedTrade(
                 symbol=c["symbol"], action=c["action"], sector=c["sector"],
                 reason=c["reason"], necessity=c["necessity"],
+                evidence_status=c["evidence_status"], evidence_detail=c["evidence_detail"],
                 execution_role=ROLE_NOT_NEEDED_TODAY, execution_state=STATE_DEFERRED,
                 full_recommended_amount=round(c["full_amount"], 2),
                 executed_amount=0.0,
@@ -233,6 +376,7 @@ def resolve_funding_gap(
             trades.append(OptimizedTrade(
                 symbol=c["symbol"], action=c["action"], sector=c["sector"],
                 reason=c["reason"], necessity=c["necessity"],
+                evidence_status=c["evidence_status"], evidence_detail=c["evidence_detail"],
                 execution_role=ROLE_FUNDING_SOURCE, execution_state=STATE_FULL,
                 full_recommended_amount=round(c["full_amount"], 2),
                 executed_amount=round(c["full_amount"], 2),
@@ -245,6 +389,7 @@ def resolve_funding_gap(
             trades.append(OptimizedTrade(
                 symbol=c["symbol"], action=c["action"], sector=c["sector"],
                 reason=c["reason"], necessity=c["necessity"],
+                evidence_status=c["evidence_status"], evidence_detail=c["evidence_detail"],
                 execution_role=ROLE_FUNDING_SOURCE, execution_state=STATE_SCALED,
                 full_recommended_amount=full_amt,
                 executed_amount=executed,
@@ -274,6 +419,11 @@ def optimize_execution(
     target_allocations: list[dict[str, Any]],
     cash_available: float,
     violations: list[str] | None = None,
+    *,
+    evidence: list[dict[str, Any]] | None = None,
+    legacy_recorded: bool = True,
+    limit_pct: float | None = None,
+    valuation: dict[str, Any] | None = None,
 ) -> ExecutionOptimizationResult:
     """Build funding candidates from the already-computed action_summary +
     target_allocations (main.py's optimizer-page surface) and resolve them.
@@ -304,6 +454,40 @@ def optimize_execution(
                 action=action,
                 sector=alloc.get("sector"),
                 full_amount=abs(float(alloc.get("estimated_amount") or 0.0)),
+                current_weight=alloc.get("current_weight"),
             ))
 
-    return resolve_funding_gap(candidates, cash_available, total_buy_deployment, violations=violations)
+    return resolve_funding_gap(
+        candidates, cash_available, total_buy_deployment, violations=violations,
+        evidence=evidence, legacy_recorded=legacy_recorded, limit_pct=limit_pct, valuation=valuation,
+    )
+
+
+def optimize_execution_for_payload(
+    payload: dict[str, Any],
+    action_summary: dict[str, Any],
+    cash_available: float | None = None,
+) -> ExecutionOptimizationResult:
+    """Run execution optimization for a live result or a stored one.
+
+    Evidence-aware runs carry ``active_policy.violation_evidence`` (even when
+    empty) and are classified strictly. A stored run without that key predates
+    the NAV basis: its original rule is reproduced and qualified as
+    LEGACY_RECORDED_UNVERIFIED, never silently relabeled and never presented
+    as verified. Nothing here reads current Intent or current policy.
+    """
+    policy = payload.get("active_policy") or {}
+    evidence = policy.get("violation_evidence")
+    legacy = evidence is None
+    hard = policy.get("hard_constraints") or {}
+    cash = float(payload.get("cash_balance") or 0.0) if cash_available is None else float(cash_available)
+    return optimize_execution(
+        action_summary,
+        payload.get("target_allocations", []),
+        cash_available=cash,
+        violations=policy.get("violations", []),
+        evidence=evidence if isinstance(evidence, list) else [],
+        legacy_recorded=legacy,
+        limit_pct=hard.get("max_single_position_pct"),
+        valuation={"nav": payload.get("total_value"), "cash": payload.get("cash_balance")},
+    )

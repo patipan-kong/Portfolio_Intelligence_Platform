@@ -136,13 +136,9 @@ def apply_response_views(response: dict, run: AdvisoryIntentRun | None, log) -> 
         log.warning("analyze_optimizer: action_summary failed — continuing: %s", _as_exc)
 
     try:
-        from services.optimizer.execution_optimizer import optimize_execution
-        _violations = (response.get("active_policy") or {}).get("violations", [])
-        response["execution_optimization"] = optimize_execution(
-            response.get("action_summary", {}),
-            response.get("target_allocations", []),
-            cash_available=float(response.get("cash_balance") or 0.0),
-            violations=_violations,
+        from services.optimizer.execution_optimizer import optimize_execution_for_payload
+        response["execution_optimization"] = optimize_execution_for_payload(
+            response, response.get("action_summary", {}),
         ).model_dump()
     except Exception as _eo_exc:
         log.warning("analyze_optimizer: execution_optimization failed — continuing: %s", _eo_exc)

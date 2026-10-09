@@ -4773,7 +4773,7 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
         from services.optimizer.policy_engine import compute_policy, envelope_to_dict as _env_to_dict
         from agents.optimizer import _compute_portfolio_weights
         # compute_policy needs holdings enriched with weight_pct (market-value based)
-        pd_with_weights = _compute_portfolio_weights(portfolio_data)
+        pd_with_weights = _compute_portfolio_weights(portfolio_data, portfolio.cash_balance or 0.0)
         _policy_env = compute_policy(
             persona_ctx, regime_ctx, pd_with_weights,
             consensus=None, max_sector_pct=max_sector_pct,
@@ -5310,13 +5310,11 @@ async def get_optimizer_history_detail(history_id: int, db: Session = Depends(ge
             _log.warning("get_optimizer_history_detail: action_summary backfill failed — continuing: %s", _as_exc)
     if "execution_optimization" not in payload:
         try:
-            from services.optimizer.execution_optimizer import optimize_execution
-            _violations = (payload.get("active_policy") or {}).get("violations", [])
-            payload["execution_optimization"] = optimize_execution(
-                payload.get("action_summary", {}),
-                payload.get("target_allocations", []),
-                cash_available=float(payload.get("cash_balance") or 0.0),
-                violations=_violations,
+            # Stored runs that predate NAV-basis evidence are reproduced under their
+            # original rule and qualified LEGACY_RECORDED_UNVERIFIED — never relabeled.
+            from services.optimizer.execution_optimizer import optimize_execution_for_payload
+            payload["execution_optimization"] = optimize_execution_for_payload(
+                payload, payload.get("action_summary", {}),
             ).model_dump()
         except Exception as _eo_exc:
             _log.warning("get_optimizer_history_detail: execution_optimization backfill failed — continuing: %s", _eo_exc)
@@ -7957,13 +7955,22 @@ async def list_execution_decisions(
     portfolio_id: int | None = None,
     decision: str | None = None,
     limit: int = 50,
+    recommendation_snapshot_id: int | None = None,
     db: Session = Depends(get_db),
 ) -> list[dict]:
-    """List user execution decisions, optionally filtered by portfolio or decision type."""
+    """List user execution decisions, optionally filtered by portfolio, decision type
+    or exact recommendation snapshot.
+
+    ``recommendation_snapshot_id`` is an exact filter applied before ``limit``, so a
+    snapshot-specific lookup is never truncated by unrelated newer decisions.
+    Without it the behavior is unchanged.
+    """
     ws = _ws_id(db)
     q = db.query(UserExecutionDecision).filter(UserExecutionDecision.workspace_id == ws)
     if portfolio_id:
         q = q.filter(UserExecutionDecision.portfolio_id == portfolio_id)
+    if recommendation_snapshot_id is not None:
+        q = q.filter(UserExecutionDecision.recommendation_snapshot_id == recommendation_snapshot_id)
     if decision:
         q = q.filter(UserExecutionDecision.decision == decision.upper())
     rows = q.order_by(UserExecutionDecision.executed_at.desc()).limit(min(limit, 200)).all()

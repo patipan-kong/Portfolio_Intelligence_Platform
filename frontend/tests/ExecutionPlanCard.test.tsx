@@ -123,6 +123,45 @@ describe("ExecutionPlanCard structured trade reason", () => {
     expect(screen.getByText(/Reason: Portfolio improvement/)).toBeInTheDocument();
   });
 
+  test("a legacy recorded Required action is kept but visibly qualified, not shown as verified", () => {
+    render(<ExecutionPlanCard result={resultWithSellTrade({
+      action: "REDUCE", reason: "POLICY_ENFORCEMENT", necessity: "NECESSARY",
+      evidence_status: "LEGACY_RECORDED_UNVERIFIED",
+      evidence_detail: "Recorded before NAV-basis evidence existed; weights were equity-only and cannot be verified.",
+    })} />);
+    expect(screen.getByText("Required (as recorded)")).toBeInTheDocument();
+    expect(screen.getByText(/Reason: Policy enforcement/)).toBeInTheDocument();       // recorded label preserved
+    expect(screen.getByTestId("evidence-qualifier")).toHaveTextContent(/not NAV-verified/);
+    expect(screen.queryByText("Required")).not.toBeInTheDocument();
+  });
+
+  test("a sector Required action reads 'Required (equity-basis)' with the denominator explanation", () => {
+    render(<ExecutionPlanCard result={resultWithSellTrade({
+      action: "REDUCE", reason: "POLICY_ENFORCEMENT", necessity: "NECESSARY", evidence_status: "SECTOR_EQUITY_BASIS",
+    })} />);
+    expect(screen.getByText("Required (equity-basis)")).toBeInTheDocument();
+    expect(screen.getByTestId("evidence-qualifier")).toHaveTextContent(/equity-only denominator, not NAV/);
+    expect(screen.queryByText("Required")).not.toBeInTheDocument();
+    expect(screen.queryByText(/NAV-verified/)).not.toBeInTheDocument();
+  });
+
+  test("a NAV-verified Required action shows plain Required with no qualifier", () => {
+    render(<ExecutionPlanCard result={resultWithSellTrade({
+      reason: "POLICY_ENFORCEMENT", necessity: "NECESSARY", evidence_status: "VERIFIED_NAV",
+    })} />);
+    expect(screen.getByText("Required")).toBeInTheDocument();
+    expect(screen.queryByTestId("evidence-qualifier")).not.toBeInTheDocument();
+  });
+
+  test("an unverified concentration claim says it was not treated as required", () => {
+    render(<ExecutionPlanCard result={resultWithSellTrade({
+      action: "REDUCE", reason: "PORTFOLIO_IMPROVEMENT", necessity: "DISCRETIONARY", execution_role: "FUNDING_SOURCE",
+      evidence_status: "UNVERIFIED", evidence_detail: "NO_EVIDENCE",
+    })} />);
+    expect(screen.getByTestId("evidence-qualifier")).toHaveTextContent(/could not be verified against NAV/);
+    expect(screen.queryByText("Required")).not.toBeInTheDocument();
+  });
+
   test("FUNDING_SOURCE execution role renders a Funding Source indicator", () => {
     render(<ExecutionPlanCard result={resultWithSellTrade({ execution_role: "FUNDING_SOURCE" })} />);
     expect(screen.getByText("Funding source")).toBeInTheDocument();

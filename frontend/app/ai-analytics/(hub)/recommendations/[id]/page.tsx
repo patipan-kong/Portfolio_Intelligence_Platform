@@ -19,6 +19,7 @@ import AsOfStamp from "@/components/evaluation/AsOfStamp";
 import TransactionEvidenceLinks from "@/components/evaluation/TransactionEvidenceLinks";
 import ReviewOutcomeBadge from "@/components/evaluation/ReviewOutcomeBadge";
 import RecommendationComparisonCard from "@/components/evaluation/RecommendationComparisonCard";
+import { provenanceQualifier, requiredLabel } from "@/lib/tradeProvenance";
 
 function pct(n: number | null | undefined, decimals = 1): string {
   if (n == null) return "—";
@@ -93,7 +94,18 @@ function PlanSection({ plan }: { plan: RecommendationReportCard["plan"] }) {
                   Reason: {String(t.reason ?? "—").replace(/_/g, " ").toLowerCase()}
                   {deferred ? " · deferred" : ""}
                 </span>
+                {necessity === "NECESSARY" && (
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full border bg-white border-gray-800 text-gray-800"
+                    data-testid="report-required-tag">
+                    {requiredLabel(t.evidence_status as string | undefined)}
+                  </span>
+                )}
                 {Boolean(t.note) && <span className="text-xs text-gray-400 italic">— {String(t.note)}</span>}
+                {provenanceQualifier(t.evidence_status as string | undefined) && (
+                  <span className="basis-full text-[11px] text-amber-700" data-testid="report-evidence-qualifier">
+                    {provenanceQualifier(t.evidence_status as string | undefined)}
+                  </span>
+                )}
               </div>
             );
           })}
