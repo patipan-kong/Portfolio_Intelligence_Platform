@@ -164,6 +164,7 @@ def read_snapshot_plan_inputs(db: Session, snap: Any) -> dict[str, Any] | None:
     no_action_summary = None
     run_total_value = None
     run_cash_balance = None
+    stored = {}
     if oh and oh.result_json:
         try:
             stored = json.loads(oh.result_json)
@@ -182,12 +183,15 @@ def read_snapshot_plan_inputs(db: Session, snap: Any) -> dict[str, Any] | None:
         "cash_available": cash_available,
         "portfolio_assessment": portfolio_assessment,
         "no_action_summary": no_action_summary,
-        # Additive, presentation-only: what the canonical classifier needs to
-        # verify (or qualify) a stored run's policy claims. compute_plan_grade
-        # does not read it. ``violation_evidence`` is None for runs stored
-        # before NAV-basis evidence existed.
+        # The Report Card uses the frozen schedule for new runs and qualifies
+        # the recorded classification for older runs.
         "policy_provenance": {
             "violation_evidence": active_policy.get("violation_evidence"),
+            **{key: active_policy[key] for key in ("concentration", "scheduled_execution")
+               if key in active_policy},
+            **{key: stored[key] for key in ("execution_policy_version", "scheduled_execution")
+               if isinstance(stored, dict) and key in stored},
+            "hard_constraints": active_policy.get("hard_constraints"),
             "max_single_position_pct": (active_policy.get("hard_constraints") or {}).get("max_single_position_pct"),
             "total_value": run_total_value,
             "cash_balance": run_cash_balance,
@@ -206,18 +210,9 @@ def derive_full_plan(
     "what the plan says," shared by compute_plan_grade (below) and
     services/evaluation/execution_analyzer.py's plan-vs-actual comparison.
 
-    Delegates entirely to already-existing, already-tested pure functions
-    (build_action_summary, optimize_execution) — adds zero new trade-
-    selection or funding logic (Working Agreement #5: execution_optimizer.py
-    is read-only this phase).
-
-    ``policy_provenance`` (from ``read_snapshot_plan_inputs``) is passed ONLY by
-    the Report Card, so its Required/provenance labels come from the same
-    canonical classifier as the optimizer page (``optimize_execution_for_payload``).
-    Without it the legacy string rule applies, unchanged — which is what the
-    plan grade, funding-order analytics, opportunity cost, execution ledger and
-    plan-vs-actual analyzer still use (they must stay reproducible from the
-    stored arguments; see compute_plan_grade).
+    Provenance-aware callers use the same classifier or frozen schedule as
+    the optimizer page. Older grade and analytics callers retain their
+    original derivation when provenance is absent.
     """
     from services.optimizer.execution_optimizer import optimize_execution, optimize_execution_for_payload
 
@@ -227,7 +222,11 @@ def derive_full_plan(
     if policy_provenance is not None:
         active_policy: dict[str, Any] = {
             "violations": violations or [],
-            "hard_constraints": {"max_single_position_pct": policy_provenance.get("max_single_position_pct")},
+            "hard_constraints": policy_provenance.get("hard_constraints") or {
+                "max_single_position_pct": policy_provenance.get("max_single_position_pct"),
+            },
+            **{key: policy_provenance[key] for key in ("concentration", "scheduled_execution")
+               if key in policy_provenance},
         }
         if policy_provenance.get("violation_evidence") is not None:
             active_policy["violation_evidence"] = policy_provenance["violation_evidence"]
@@ -237,6 +236,7 @@ def derive_full_plan(
                 "target_allocations": target_allocations or [],
                 "total_value": policy_provenance.get("total_value"),
                 "cash_balance": policy_provenance.get("cash_balance"),
+                "execution_policy_version": policy_provenance.get("execution_policy_version"),
             },
             action_summary,
             cash_available=cash_available,
@@ -245,6 +245,13 @@ def derive_full_plan(
         eo = optimize_execution(
             action_summary, target_allocations or [], cash_available, violations=violations
         )
+    if eo.scheduled_buys is not None:
+        by_symbol = {row["symbol"]: row for row in target_allocations}
+        buy_trades = [
+            {"symbol": symbol, "action": by_symbol.get(symbol, {}).get("action", "BUY"), "planned_amount": amount}
+            for symbol, amount in eo.scheduled_buys.items()
+        ]
+        total_buy_deployment = eo.total_buy_deployment
     return {
         "buy_trades": buy_trades,
         "total_buy_deployment": total_buy_deployment,
@@ -259,6 +266,7 @@ def compute_plan_grade(
     violation_details: list[dict] | None = None,
     portfolio_assessment: str | None = None,
     no_action_summary: str | None = None,
+    policy_provenance: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Pure function: the day-0 plan composite. No DB, no AI — fully
     reproducible from the four stored arguments (asserted in tests)."""
@@ -268,7 +276,7 @@ def compute_plan_grade(
         STATE_DEFERRED,
     )
 
-    plan = derive_full_plan(target_allocations, cash_available, violations)
+    plan = derive_full_plan(target_allocations, cash_available, violations, policy_provenance)
     eo = plan["execution_optimization"]
     trades = eo.trades
 
@@ -283,8 +291,11 @@ def compute_plan_grade(
         necessity_score = 100.0
 
     # ── Funding efficiency: the BH-incident metric ──
-    discretionary = [t for t in trades if t.necessity == NECESSITY_DISCRETIONARY]
-    total_discretionary_recommended = sum(t.full_recommended_amount for t in discretionary)
+    total_discretionary_recommended = sum(
+        (trade.discretionary_amount if trade.discretionary_amount is not None else
+         trade.full_recommended_amount if trade.necessity == NECESSITY_DISCRETIONARY else 0)
+        for trade in trades
+    )
     if total_discretionary_recommended <= 0:
         funding_efficiency_score = 100.0
     else:
@@ -298,13 +309,13 @@ def compute_plan_grade(
         (v for v in (violation_details or []) if v.get("violation_type") == "TURNOVER_BREACH"),
         None,
     )
-    if not turnover_viol:
-        turnover_score = 100.0
-    else:
-        proposed = float(turnover_viol.get("proposed_pct") or 0.0)
-        allowed = float(turnover_viol.get("allowed_pct") or 1.0) or 1.0
-        overshoot_ratio = max(0.0, (proposed - allowed) / allowed)
-        turnover_score = max(0.0, round(100.0 - overshoot_ratio * 100, 2))
+    proposed = eo.scheduled_turnover_pct
+    allowed = eo.effective_turnover_cap_pct
+    if proposed is None:
+        proposed = float((turnover_viol or {}).get("proposed_pct") or 0.0)
+        allowed = float((turnover_viol or {}).get("allowed_pct") or 1.0)
+    overshoot_ratio = max(0.0, (proposed - (allowed or 0.0)) / (allowed or 1.0))
+    turnover_score = max(0.0, round(100.0 - overshoot_ratio * 100, 2))
 
     # ── Explanation completeness ──
     if trades:
@@ -388,11 +399,14 @@ def grade_pending_plans(db: Session, portfolio_id: int | None = None) -> dict[st
                 skipped.append({"snapshot_id": snap.id, "reason": reason})
                 continue
 
+            provenance = inputs["policy_provenance"]
+            versioned_plan = "execution_policy_version" in provenance or "concentration" in provenance
             result = compute_plan_grade(
                 inputs["target_allocations"], inputs["cash_available"],
                 inputs["violations"], inputs["violation_details"],
                 portfolio_assessment=inputs["portfolio_assessment"],
                 no_action_summary=inputs["no_action_summary"],
+                policy_provenance=provenance if versioned_plan else None,
             )
 
             grade = RecommendationGrade(

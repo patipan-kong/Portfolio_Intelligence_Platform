@@ -1443,7 +1443,9 @@ function PortfolioMetricsBar({ result }: { result: OptimizerResult }) {
       )}
       {turnover !== undefined && (
         <div>
-          <span className="text-xs text-gray-500">Est. Turnover</span>
+          <span className="text-xs text-gray-500">
+            {result.execution_policy_version ? "Proposed Turnover" : "Est. Turnover"}
+          </span>
           <p className={`font-semibold ${turnover > 30 ? "text-amber-600" : "text-gray-700"}`}>{turnover.toFixed(1)}%</p>
         </div>
       )}

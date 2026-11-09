@@ -107,6 +107,48 @@ function resultWithSellTrade(tradeOverrides: Partial<OptimizedTrade> = {}): Opti
   });
 }
 
+test("shows the supported repair, discretionary excess, and scheduled residual at the exact cap", () => {
+  const evidence = {
+    evidence_id: "healthcare",
+    sector: "Healthcare",
+    basis: "EQUITY" as const,
+    numerator: 27_000,
+    denominator: 100_000,
+    observed_pct: 27,
+    limit_pct: 24.5,
+    binding_source: "REGIME_POLICY",
+    breach_pp: 2.5,
+    breach_amount: 2_500,
+  };
+  const result = resultWithSellTrade({
+    reason: "POLICY_ENFORCEMENT",
+    evidence_status: "VERIFIED_POLICY_REPAIR",
+    execution_state: "SCALED",
+    executed_amount: 15_000,
+    required_amount: 15_000,
+    discretionary_amount: 35_000,
+    policy_evidence: [{
+      current_breach: evidence,
+      without_trade: evidence,
+      with_trade: evidence,
+      with_required_portion: evidence,
+      repair: "PARTIAL_REPAIR",
+    }],
+  });
+  Object.assign(result.execution_optimization!, {
+    policy_review_reasons: ["INFEASIBLE_SECTOR_CAPS", "RESIDUAL_SECTOR_BREACH"],
+    scheduled_sector_evaluation: {
+      denominator: 100_000, applicable: true, sectors: [evidence],
+      occupied_cap_sum_pct: 95.5, infeasible_within_occupied_sectors: true, estimated_symbols: [],
+    },
+  });
+  render(<ExecutionPlanCard result={result} />);
+  expect(screen.getByText(/15,000 for policy repair.*35,000 discretionary excess/)).toBeInTheDocument();
+  expect(screen.getByText(/effective cap 24.5%.*partial repair.*residual 2.50 pp/)).toBeInTheDocument();
+  expect(screen.getByText("Human Review")).toBeInTheDocument();
+  expect(screen.getByText(/occupied sectors total 95.50%/)).toBeInTheDocument();
+});
+
 describe("ExecutionPlanCard structured trade reason", () => {
   test("MANDATORY_RISK_REDUCTION renders its user-facing reason", () => {
     render(<ExecutionPlanCard result={resultWithSellTrade({ reason: "MANDATORY_RISK_REDUCTION" })} />);

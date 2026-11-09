@@ -195,17 +195,11 @@ def test_legacy_derivation_is_identical_with_and_without_provenance(history_id):
     assert legacy["execution_optimization"] == provenance["execution_optimization"]
 
 
-def test_plan_grade_does_not_read_the_provenance_contract():
-    import inspect
-    assert list(inspect.signature(compute_plan_grade).parameters) == [
-        "target_allocations", "cash_available", "violations", "violation_details",
-        "portfolio_assessment", "no_action_summary"]
+def test_legacy_plan_grade_preserves_recorded_necessity():
     r = recorded_payload(219)
-    a = compute_plan_grade(r["target_allocations"], float(r["cash_balance"]), r["active_policy"]["violations"], [])
-    b = compute_plan_grade(r["target_allocations"], float(r["cash_balance"]), r["active_policy"]["violations"], [])
-    assert a == b
-    # the 219 grade still sees the recorded Required trade (legacy derivation, unchanged)
-    assert a["score"] is not None
+    grade = compute_plan_grade(r["target_allocations"], float(r["cash_balance"]),
+                               r["active_policy"]["violations"], [])
+    assert grade["necessity_score"] > 0
 
 
 def test_snapshot_inputs_keep_every_existing_key_and_add_provenance(db, book):

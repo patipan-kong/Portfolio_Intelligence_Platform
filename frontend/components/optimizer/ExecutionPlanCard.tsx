@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import SignalBadge from "@/components/SignalBadge";
-import type { OptimizerResult, TradeReason } from "@/lib/api";
+import type { ExecutionOptimizationResult, OptimizerResult, TradeReason } from "@/lib/api";
 import { executionEvidenceAvailable } from "@/lib/optimizerPresentation";
 import { provenanceQualifier, requiredLabel } from "@/lib/tradeProvenance";
 import {
@@ -155,10 +155,70 @@ function TradeReasonLine({ trade }: { trade: ExecutionTrade }) {
           {evidenceQualifier(trade)}
         </span>
       )}
+      {trade.requiredAmount != null && trade.requiredAmount > 0 && (
+        <span className="basis-full text-xs text-gray-700">
+          ฿{trade.requiredAmount.toLocaleString("th-TH")} for policy repair
+          {trade.discretionaryAmount ? ` · ฿${trade.discretionaryAmount.toLocaleString("th-TH")} discretionary excess` : ""}
+        </span>
+      )}
+      {trade.policyEvidence?.map(({ current_breach: current, with_trade: after, with_required_portion: portion }) => (
+        <span key={current.evidence_id} className="basis-full text-xs text-gray-600">
+          {current.sector ?? current.symbol} · {current.basis === "EQUITY" ? "Invested equity" : "NAV"}
+          {" · "}effective cap {current.limit_pct}% · {portion.breach_pp ? "partial repair" : "full repair"}
+          {" · "}scheduled residual {after.breach_pp.toFixed(2)} pp
+        </span>
+      ))}
       {trade.executionRole === "FUNDING_SOURCE" && (
         <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full border bg-blue-50 border-blue-200 text-blue-700">
           Funding source
         </span>
+      )}
+    </div>
+  );
+}
+
+const POLICY_REVIEW_LABELS: Record<string, string> = {
+  AMBIGUOUS_REPAIR_AMOUNT: "A repair amount could not be verified against the scheduled portfolio.",
+  BUY_FUNDING_OR_TURNOVER: "Proposed buys were deferred under the cash or turnover limits.",
+  BUY_POLICY: "Proposed buys were deferred under sector policy or the emergency buy freeze.",
+  ESTIMATED_PRICES: "Market prices were missing for part of the evaluation.",
+  MISSING_POLICY_EVIDENCE: "Frozen policy evidence is incomplete.",
+  NO_INVESTED_EQUITY_AFTER_SCHEDULE: "The schedule would leave no invested equity to evaluate.",
+  RESIDUAL_POSITION_BREACH: "Position breaches remain.",
+  RESIDUAL_SECTOR_BREACH: "Sector breaches remain.",
+  WORSENS_OTHER_SECTOR_BREACH: "A scheduled trade worsens another sector breach.",
+};
+
+function ScheduledPolicyReview({ execution }: { execution?: ExecutionOptimizationResult | null }) {
+  const sector = execution?.scheduled_sector_evaluation;
+  const reasons = execution?.policy_review_reasons;
+  if (!sector && !reasons?.length) return null;
+  const residual = [
+    ...(sector?.sectors.filter((row) => row.breach_pp > 0) ?? []),
+    ...(execution?.scheduled_position_breaches ?? []),
+  ];
+  return (
+    <div className="px-4 py-2 border-b text-xs text-gray-700 space-y-1">
+      {reasons?.length ? <p className="font-semibold text-amber-800">Human Review</p> : null}
+      {sector && <p>{sector.applicable
+        ? `Scheduled sector basis · ฿${sector.denominator.toLocaleString("th-TH")} invested equity`
+        : "Scheduled sector basis · no invested equity"}.</p>}
+      {sector?.infeasible_within_occupied_sectors && (
+        <p>Caps for the occupied sectors total {sector.occupied_cap_sum_pct?.toFixed(2)}%. They cannot all be met within those sectors.</p>
+      )}
+      {sector?.estimated_symbols.length ? <p>Missing market prices · {sector.estimated_symbols.join(", ")}.</p> : null}
+      {residual.map((row) => (
+        <p key={row.evidence_id}>
+          {row.sector ?? row.symbol} · {row.observed_pct?.toFixed(2)}% of {row.basis === "EQUITY" ? "invested equity" : "NAV"}
+          {" · "}cap {row.limit_pct}% · residual {row.breach_pp.toFixed(2)} pp
+        </p>
+      ))}
+      {reasons?.filter((reason) => reason in POLICY_REVIEW_LABELS).map((reason) => (
+        <p key={reason}>{POLICY_REVIEW_LABELS[reason]}</p>
+      ))}
+      {execution?.scheduled_turnover_pct != null && (
+        <p>Scheduled turnover · {execution.scheduled_turnover_pct.toFixed(2)}% of NAV
+          {execution.effective_turnover_cap_pct != null ? ` · cap ${execution.effective_turnover_cap_pct}%` : ""}.</p>
       )}
     </div>
   );
@@ -320,6 +380,8 @@ export default function ExecutionPlanCard({
           </a>
         </div>
       )}
+
+      <ScheduledPolicyReview execution={result.execution_optimization} />
 
       {plan.hasTrades ? (
         <>

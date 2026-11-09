@@ -149,22 +149,24 @@ def test_cash_heavy_book_has_no_false_breach():
     weighted = one_position(80.0, cash=630.0, others=290.0)
     assert weighted[0]["equity_weight_pct"] == pytest.approx(21.6, abs=0.1)
     assert weighted[0]["weight_pct"] == pytest.approx(8.0)
-    assert _detect_violations(weighted, hard(7.9)) != [] and _detect_violations(weighted, hard(8.1)) == []
-    assert _detect_violations(weighted, hard(22.0)) == []
+    assert any(v.startswith("CONCENTRATION_BREACH") for v in _detect_violations(weighted, hard(7.9)))
+    for position_cap in (8.1, 22.0):
+        assert not any(v.startswith("CONCENTRATION_BREACH")
+                       for v in _detect_violations(weighted, hard(position_cap)))
 
 
 def test_unrounded_boundary_around_the_threshold():
     exactly = one_position(22.0, cash=0.0, others=78.0)
     assert exactly[0]["weight_pct"] == 22.0
-    assert _detect_violations(exactly, hard(22.0)) == [] and detect_concentration_evidence(exactly, hard(22.0)) == []
+    assert _detect_violations(exactly, hard(22.0), {"Financial": 100}) == [] and detect_concentration_evidence(exactly, hard(22.0)) == []
     # 21.96% displays as "22.0" but is NOT above 22 — no breach, no evidence.
     below = one_position(21.96, cash=0.0, others=78.04)
     assert f"{below[0]['weight_pct']:.1f}" == "22.0"
-    assert _detect_violations(below, hard(22.0)) == [] and detect_concentration_evidence(below, hard(22.0)) == []
+    assert _detect_violations(below, hard(22.0), {"Financial": 100}) == [] and detect_concentration_evidence(below, hard(22.0)) == []
     # 22.04% is above 22 although a 1 dp view would say 22.0.
     above = one_position(22.04, cash=0.0, others=77.96)
     assert f"{above[0]['weight_pct']:.1f}" == "22.0"
-    assert len(_detect_violations(above, hard(22.0))) == 1 and len(detect_concentration_evidence(above, hard(22.0))) == 1
+    assert len(_detect_violations(above, hard(22.0), {"Financial": 100})) == 1 and len(detect_concentration_evidence(above, hard(22.0))) == 1
     just = one_position(22.000001, cash=0.0, others=77.999999)
     assert len(detect_concentration_evidence(just, hard(22.0))) == 1
 
@@ -390,8 +392,8 @@ def test_e2e_219_negative_control_reproduces_the_defect_and_fails_closed(monkeyp
     trade = micron_trade(response)
     assert trade is not None
     # The string alone no longer authorizes a Required trade.
-    assert (trade["reason"], trade["necessity"], trade["evidence_status"], trade["evidence_detail"]) == (
-        "PORTFOLIO_IMPROVEMENT", "DISCRETIONARY", "UNVERIFIED", "NO_EVIDENCE")
+    assert (trade["reason"], trade["necessity"]) == ("PORTFOLIO_IMPROVEMENT", "DISCRETIONARY")
+    assert trade["required_amount"] == 0 and trade["policy_evidence"] == []
 
 
 def test_e2e_flag_on_and_off_agree_on_deterministic_nav_calculations(monkeypatch):
@@ -410,9 +412,13 @@ def test_e2e_flag_on_and_off_agree_on_deterministic_nav_calculations(monkeypatch
 
 
 def test_e2e_genuine_breach_with_intent_conflict_is_verified_but_still_advisory(monkeypatch):
+    from models.database import RecommendationSnapshot
+    from services.decision_memory.snapshot_writer import write_recommendation_snapshot
+    from services.evaluation.plan_grader import derive_full_plan, read_snapshot_plan_inputs
+
     monkeypatch.setenv(FLAG, "true")
     ai = FakeAI(plan(AAA=(15, "REDUCE")))
-    patch_pipeline(monkeypatch, ai)
+    patch_pipeline(monkeypatch, ai, snapshot_writer=write_recommendation_snapshot)
     db = session()
     # AAA 27,000 sh x 50 = 1.35M of NAV 5.85M = 23.08% > 22% cap.
     p = seed(db, book(AAA=(27_000, True)), cash=CASH)
@@ -424,11 +430,27 @@ def test_e2e_genuine_breach_with_intent_conflict_is_verified_but_still_advisory(
     assert ev["basis"] == "NAV" and ev["observed_pct"] > ev["limit_pct"]
     trade = next(t for t in response["execution_optimization"]["trades"] if t["symbol"] == "AAA")
     assert (trade["reason"], trade["necessity"], trade["evidence_status"]) == (
-        "POLICY_ENFORCEMENT", "NECESSARY", "VERIFIED_NAV")
+        "POLICY_ENFORCEMENT", "NECESSARY", "VERIFIED_POLICY_REPAIR")
+    [repair] = trade["policy_evidence"]
+    assert repair["current_breach"]["basis"] == "EQUITY"
+    assert repair["current_breach"]["sector"] == "Technology"
     review = position(response["advisory_intent_review"], "AAA")["review"]
     assert review["final"]["outcome"] == "CONFLICT" and review["requires_owner_decision"] is True
     assert response["advisory_intent_review"]["review"]["allocations_changed_by_review"] is False
-    assert trade["executed_amount"] == trade["full_recommended_amount"] > 0     # advisory: not blocked
+    assert 63000 < trade["executed_amount"] == trade["required_amount"] < trade["full_recommended_amount"]
+    assert trade["discretionary_amount"] == pytest.approx(trade["full_recommended_amount"] - trade["required_amount"])
+
+    stored = json.loads(db.get(OptimizerHistory, response["history_id"]).result_json)
+    snapshot = db.get(RecommendationSnapshot, response["recommendation_snapshot_id"])
+    live_plan = response["execution_optimization"]
+    assert stored["active_policy"]["scheduled_execution"] == live_plan
+    assert eo.optimize_execution_for_payload(stored, {}).model_dump() == live_plan
+    history = asyncio.run(main.get_optimizer_history_detail(response["history_id"], db))
+    assert history["execution_optimization"] == live_plan
+    inputs = read_snapshot_plan_inputs(db, snapshot)
+    report_plan = derive_full_plan(inputs["target_allocations"], inputs["cash_available"],
+                                   policy_provenance=inputs["policy_provenance"])
+    assert report_plan["execution_optimization"].model_dump() == live_plan
 
 
 def test_e2e_no_breach_on_the_standard_book(monkeypatch):

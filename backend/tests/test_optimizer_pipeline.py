@@ -48,7 +48,6 @@ def test_shared_hard_enforcement_preserves_buy_hold_reduce_semantics():
     for allocation in allocations:
         allocation["allocation_change_percent"] = allocation["target_weight"] - allocation["current_weight"]
         allocation["estimated_amount"] = 0
-    envelope = _effective_envelope()
     policy = {
         "hard_constraints": {"max_single_position_pct": 20, "min_cash_pct": 10},
         "emergency_override": False,
@@ -56,13 +55,6 @@ def test_shared_hard_enforcement_preserves_buy_hold_reduce_semantics():
     }
     _enforce_hard_policy(
         allocations, total_value=1000, policy_context=policy, regime_context=None,
-        effective_envelope=envelope,
-        portfolio_data=[
-            {"symbol": "BUY", "sector": "Technology"},
-            {"symbol": "HOLD", "sector": "Financial"},
-            {"symbol": "REDUCE", "sector": "Energy"},
-        ],
-        watchlist_data=[],
     )
     _reconcile_allocation_actions(allocations)
     by_symbol = {a["symbol"]: a for a in allocations}
@@ -80,8 +72,7 @@ def test_shared_hard_enforcement_emergency_cash_sector_and_reconciliation():
         emergency, total_value=1000,
         policy_context={"hard_constraints": {"max_single_position_pct": 20, "min_cash_pct": 10},
                         "emergency_override": True, "deployment_bias": "DEFENSIVE"},
-        regime_context=None, effective_envelope=_effective_envelope(),
-        portfolio_data=[{"symbol": "A", "sector": "Technology"}], watchlist_data=[],
+        regime_context=None,
     )
     _reconcile_allocation_actions(emergency)
     assert emergency[0]["action"] == "HOLD"
@@ -97,9 +88,7 @@ def test_shared_hard_enforcement_emergency_cash_sector_and_reconciliation():
         allocations, total_value=1000,
         policy_context={"hard_constraints": {"max_single_position_pct": 20, "min_cash_pct": 60},
                         "emergency_override": False, "deployment_bias": "SELECTIVE"},
-        regime_context=None, effective_envelope=_effective_envelope(),
-        portfolio_data=[{"symbol": "A", "sector": "Technology"}, {"symbol": "B", "sector": "Technology"}],
-        watchlist_data=[],
+        regime_context=None,
     )
     _reconcile_allocation_actions(allocations)
     assert sum(a["target_weight"] for a in allocations) <= 40
@@ -149,13 +138,13 @@ def test_policy_safe_fallback_enforces_cap_and_preserves_marker(monkeypatch):
         ],
         wc=[], sell_forced=[], locked=[],
         portfolio_data=[
-            {"symbol": "BUY", "sector": "Technology"},
-            {"symbol": "HOLD", "sector": "Financial"},
-            {"symbol": "REDUCE", "sector": "Energy"},
+            {"symbol": "BUY", "sector": "Technology", "shares": 1, "current_price": 50},
+            {"symbol": "HOLD", "sector": "Financial", "shares": 1, "current_price": 300},
+            {"symbol": "REDUCE", "sector": "Energy", "shares": 1, "current_price": 250},
         ],
         current_sector_weights={}, pc_map={"BUY": 5, "HOLD": 30, "REDUCE": 25},
         max_stocks=12, max_sector_pct=40, sector_limits={}, total_value=1000,
-        cash_balance=100, fallback_provider="test", fallback_model="test",
+        cash_balance=400, fallback_provider="test", fallback_model="test",
         portfolio_name="P", portfolio_count=3, max_reached=False,
         policy_context={
             "hard_constraints": {"max_single_position_pct": 20, "min_cash_pct": 0},

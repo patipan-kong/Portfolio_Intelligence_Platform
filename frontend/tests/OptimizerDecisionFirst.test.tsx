@@ -76,6 +76,18 @@ beforeEach(() => {
 });
 
 describe("Selected historical journeys", () => {
+  it.each([
+    [undefined, "Est. Turnover"],
+    ["wealth.policy-evidence.v2", "Proposed Turnover"],
+  ])("labels headline turnover for version %s", async (version, label) => {
+    api.getOptimizerHistory.mockResolvedValue({
+      ...fixture(218), execution_policy_version: version, portfolio_turnover_percent: 21.96,
+    });
+    render(<OptimizerPage />);
+    const headline = await screen.findByText(label, { selector: "span" });
+    expect(headline.parentElement).toHaveTextContent("22.0%");
+  });
+
   it("puts the supported HOLD decision before controls, preserves 64, and synchronizes selection/reload", async () => {
     const { container, unmount } = render(<OptimizerPage />);
     await screen.findByText("Keep held positions unchanged");

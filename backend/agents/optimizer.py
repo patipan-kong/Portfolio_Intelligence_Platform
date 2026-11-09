@@ -6,9 +6,14 @@ funding arithmetic happen downstream, deterministically.
 """
 import json
 import logging
+from math import floor
 from typing import Callable
 from services.ai_client import call_ai
 from services.json_utils import safe_parse_json
+from services.optimizer.sector_policy import (
+    attach_target_evaluation, current_values, evaluate_sectors, freeze_concentration,
+    freeze_positions, project_targets, sector_weights,
+)
 from services.optimizer.risk_flags import investment_risk_flags
 from services.optimizer.auditor_claims import build_claim_evidence, validate_auditor_claims
 from services.optimizer.strategy_profiles import build_persona_context, get_profile  # noqa: F401
@@ -22,7 +27,6 @@ from services.optimizer.policy_engine import (  # noqa: F401
 )
 from services.optimizer.constraint_resolver import (  # noqa: F401
     EffectiveEnvelope as _EffectiveEnvelope,
-    effective_sector_cap as _effective_sector_cap,
     envelope_to_dict as _eff_env_to_dict,
 )
 from services.advisory_intent_context import (
@@ -181,6 +185,9 @@ def _make_envelope_from_dict(d: dict) -> _PolicyEnvelope:
         policy_narrative        = d.get("policy_narrative", ""),
         confidence_discount     = float(d.get("confidence_discount", 0.0)),
         violations              = list(d.get("violations", [])),
+        resolved_sector_limits  = d.get("resolved_sector_limits", {}),
+        sector_limit_sources    = d.get("sector_limit_sources", {}),
+        position_limit_source   = d.get("position_limit_source", "POLICY_ENGINE"),
     )
 
 
@@ -264,6 +271,7 @@ def _compact_w(items: list[dict]) -> list[dict]:
     return [
         {
             "symbol": i["symbol"],
+            "current_price": i.get("current_price"),
             "sector": i.get("sector") or "Other",
             "signal": i.get("signal", "HOLD"),
             "combined_score": i.get("combined_score", 0),
@@ -486,20 +494,8 @@ def normalize_sector(raw: str | None) -> str:
 # ─── Sector weight helpers ────────────────────────────────────────────────────
 
 def calculate_current_sector_weights(portfolio_items: list[dict]) -> dict:
-    """Actual sector weights by market value (shares × current_price)."""
-    sector_values: dict[str, float] = {}
-    for item in portfolio_items:
-        sector = normalize_sector(item.get("sector"))
-        price = item.get("current_price") or item.get("avg_cost") or 0
-        mv = (item.get("shares") or 0) * price
-        sector_values[sector] = sector_values.get(sector, 0.0) + mv
-    total = sum(sector_values.values())
-    if total == 0:
-        return {}
-    return {
-        s: {"value": round(v, 2), "weight_pct": round(v / total * 100, 1)}
-        for s, v in sorted(sector_values.items(), key=lambda x: -x[1])
-    }
+    positions = freeze_positions(portfolio_items)
+    return sector_weights(evaluate_sectors(positions, current_values(positions), {}, 100, "CURRENT"))
 
 
 def calculate_projected_sector_weights(portfolio_items: list[dict], swaps: list[dict]) -> dict:
@@ -536,38 +532,9 @@ def calculate_projected_sector_weights_from_allocations(
     allocations: list[dict],
     total_value: float,
 ) -> dict:
-    """Compute projected sector weights from target_allocations."""
-    holdings: dict[str, dict] = {}
-    for item in portfolio_items:
-        sector = normalize_sector(item.get("sector"))
-        price = item.get("current_price") or item.get("avg_cost") or 0
-        mv = (item.get("shares") or 0) * price
-        holdings[item["symbol"]] = {"sector": sector, "value": mv}
-
-    for alloc in allocations:
-        sym = alloc.get("symbol", "")
-        action = alloc.get("action", "HOLD")
-        target_weight = float(alloc.get("target_weight") or 0)
-        if action == "SELL":
-            holdings.pop(sym, None)
-        elif action not in ("WATCH", "HOLD") and total_value > 0:
-            sector = normalize_sector(holdings.get(sym, {}).get("sector"))
-            new_mv = total_value * target_weight / 100.0
-            if sym in holdings:
-                holdings[sym]["value"] = new_mv
-            else:
-                holdings[sym] = {"sector": sector, "value": new_mv}
-
-    sector_values: dict[str, float] = {}
-    for h in holdings.values():
-        sector_values[h["sector"]] = sector_values.get(h["sector"], 0.0) + h["value"]
-    total = sum(sector_values.values())
-    if total == 0:
-        return {}
-    return {
-        s: {"value": round(v, 2), "weight_pct": round(v / total * 100, 1)}
-        for s, v in sorted(sector_values.items(), key=lambda x: -x[1])
-    }
+    positions = freeze_positions(portfolio_items)
+    values = project_targets(positions, allocations, total_value)
+    return sector_weights(evaluate_sectors(positions, values, {}, 100, "PROJECTED_TARGET"))
 
 
 def _compute_sector_warnings(
@@ -911,8 +878,8 @@ def _layer1_prompt(
 ) -> str:
     # Phase 3B.5: use resolved per-sector limits when available; fall back to raw sector_limits
     if effective_envelope is not None:
-        sl = {s: int(v) for s, v in effective_envelope.effective_sector_limits.items()}
-        sl.setdefault("default", int(effective_envelope.global_sector_cap.effective))
+        sl = dict(effective_envelope.effective_sector_limits)
+        sl.setdefault("default", effective_envelope.global_sector_cap.effective)
     else:
         sl = sector_limits or {"default": max_sector_pct}
 
@@ -1019,7 +986,7 @@ STABILIZATION MANDATE — quality over quantity. Every proposed change must clea
 - PREFER holding well-positioned assets over constant micro-rotation.
 
 EVALUATE ALL FIVE — but only act if improvement is material:
-1. Sector concentration: any sector at or above its limit? → propose meaningful rebalancing swap (≥5% shift)
+1. Evaluate sector limits against invested equity market value excluding cash. Recommend measured repairs and flag infeasible limits for human review.
 2. Watchlist opportunities: BUY/ACCUMULATE candidate with clear edge over current holdings? → rank in top_buys
 3. Overweight positions: swap-eligible stock >25%? → consider REDUCE, but only if drift ≥ 3%
 4. Low-score holdings: weak fa+ta vs watchlist with 10+ score advantage? → consider swap
@@ -1243,14 +1210,11 @@ def _layer3_prompt(
     # Use resolved position cap for CRITICAL threshold — eliminates hardcoded 30% magic number
     if effective_envelope is not None:
         resolved_max_pos    = effective_envelope.effective_single_position_pct
-        resolved_sector_cap = int(effective_envelope.global_sector_cap.effective)
     elif policy_context:
         hc = policy_context.get("hard_constraints", {})
         resolved_max_pos    = float(hc.get("max_single_position_pct", 22.0))
-        resolved_sector_cap = int(hc.get("max_sector_pct", max_sector_pct))
     else:
         resolved_max_pos    = 30.0   # legacy: was hardcoded
-        resolved_sector_cap = max_sector_pct
 
     # CRITICAL threshold: any position > resolved max + 8pp buffer, or resolved position cap + 8pp
     critical_pos_threshold = min(30.0, resolved_max_pos + max(5.0, resolved_max_pos * 0.25))
@@ -1274,7 +1238,7 @@ def _layer3_prompt(
             f"\nActive Policy Governance ({bias} mode — strictness: {policy_context.get('strictness_level','NORMAL')}):\n"
             f"  Cash mandate: ≥{hc.get('min_cash_pct', 5):.0f}%  "
             f"  Max position: {hc.get('max_single_position_pct', 22):.0f}%  "
-            f"  Max sector: {hc.get('max_sector_pct', 40):.0f}%\n"
+            f"  Default sector cap: {hc.get('max_sector_pct', 40):g}% of invested equity, excluding cash\n"
             "Flag POLICY_VIOLATION for cash < mandate, CONCENTRATION_BREACH for position > cap,\n"
             "OVER_AGGRESSION for excessive buys in defensive mode, REGIME_MISMATCH for emergency violations.\n"
         )
@@ -1316,9 +1280,9 @@ Disagreements: {json.dumps(l2.get("disagreements", []))}
 Allocations: {json.dumps(l2_allocs, indent=2)}
 
 Check for (use exact resolved severity thresholds — derived from active policy, not hardcoded):
-- CRITICAL : sector > {resolved_sector_cap}% OR single stock > {critical_pos_threshold:.0f}% OR SELL signal kept in portfolio
+- CRITICAL : sector above its effective cap in the evidence contract OR single stock > {critical_pos_threshold:.0f}% of NAV
 - HIGH     : single stock {high_pos_threshold:.0f}–{critical_pos_threshold:.0f}% OR weak fundamentals on large position
-- MEDIUM   : sector {int(resolved_sector_cap * 0.6)}–{int(resolved_sector_cap * 0.8)}% of limit OR conflicting allocation math
+- MEDIUM   : conflicting allocation math
 - LOW      : minor concentration risk, suboptimal but acceptable
 
 Only flag positions that actually cross a threshold above — do not add a LOW-severity row for every position that
@@ -1347,9 +1311,6 @@ def _enforce_hard_policy(
     total_value: float,
     policy_context: dict | None,
     regime_context: dict | None,
-    effective_envelope: "_EffectiveEnvelope | None",
-    portfolio_data: list[dict],
-    watchlist_data: list[dict],
     observer=None,
 ) -> None:
     """Apply the existing Goal-agnostic deterministic hard-policy sequence.
@@ -1486,52 +1447,38 @@ def _enforce_hard_policy(
                 min_cash_pct, regime_context.get("regime"),
             )
 
-    if effective_envelope is not None:
-        sector_by_symbol = {
-            item["symbol"]: normalize_sector(item.get("sector", "Other"))
-            for item in (portfolio_data + watchlist_data)
-        }
-        projected: dict[str, float] = {}
-        for allocation in allocations:
-            if allocation.get("action") == "SELL":
-                continue
-            sector = sector_by_symbol.get(allocation.get("symbol", ""), "Other")
-            projected[sector] = projected.get(sector, 0.0) + float(
-                allocation.get("target_weight") or 0,
-            )
-        for sector, projected_pct in projected.items():
-            limit = _effective_sector_cap(effective_envelope, sector)
-            if projected_pct <= limit:
-                continue
-            excess = projected_pct - limit
-            over_allocations = sorted(
-                [
-                    allocation for allocation in allocations
-                    if sector_by_symbol.get(allocation.get("symbol", ""), "Other") == sector
-                    and allocation.get("action") in ("BUY", "ACCUMULATE")
-                ],
-                key=lambda item: -item.get("target_weight", 0),
-            )
-            for allocation in over_allocations:
-                if excess <= 0:
-                    break
-                trim = min(allocation["target_weight"], excess)
-                before = _alloc_basis(allocation)
-                allocation["target_weight"] = round(allocation["target_weight"] - trim, 2)
-                allocation["allocation_change_percent"] = round(
-                    allocation["target_weight"] - allocation["current_weight"], 2,
-                )
-                allocation["estimated_amount"] = round(
-                    (allocation["allocation_change_percent"] / 100) * total_value,
-                )
-                _observe(observer, allocation["symbol"], before, allocation, stage=_STAGE_HARD_POLICY,
-                         source=_SRC_POLICY, effect=_SCALE, reason_code="SECTOR_CAP_TRIM",
-                         reason_text=f"Trimmed to the {limit:.0f}% resolved {sector} sector limit.")
-                excess -= trim
-            logger.info(
-                "[SECTOR_ENFORCE] %s sector %.1f%% > %.1f%% resolved limit — trimmed",
-                sector, projected_pct, limit,
-            )
+
+
+def _limit_sector_buys(allocations, total_value, policy_context, positions, observer=None):
+    """Reduce only proposed increases. Re-evaluate after each one-way trim."""
+    if total_value <= 0:
+        return
+    envelope = _make_envelope_from_dict(policy_context)
+    for row in sorted(allocations, key=lambda row: (-row.get("target_weight", 0), row["symbol"])):
+        if row["action"] not in ("BUY", "ACCUMULATE"):
+            continue
+        symbol = row["symbol"]
+        sector = positions.get(symbol, {}).get("sector", "Other")
+        values = project_targets(positions, allocations, total_value)
+        evaluation = evaluate_sectors(
+            positions, values, envelope.resolved_sector_limits,
+            envelope.hard_constraints.max_sector_pct, "PROJECTED_TARGET",
+        )
+        breach = next((item for item in evaluation["sectors"]
+                       if item["sector"] == sector and item["breach_pp"]), None)
+        if breach is None:
+            continue
+        current = positions.get(symbol, {}).get("value", 0.0)
+        cap_fraction = breach["limit_pct"] / 100
+        removable = breach["breach_amount"] / (1 - cap_fraction)
+        target = max(current, values[symbol] - removable)
+        before = _alloc_basis(row)
+        row["target_weight"] = max(row["current_weight"], floor(target / total_value * 10000) / 100)
+        row["allocation_change_percent"] = round(row["target_weight"] - row["current_weight"], 2)
+        row["estimated_amount"] = round(row["allocation_change_percent"] / 100 * total_value)
+        _observe(observer, symbol, before, row, stage=_STAGE_HARD_POLICY,
+                 source=_SRC_POLICY, effect=_SCALE, reason_code="SECTOR_CAP_TRIM",
+                 reason_text=f"Reduced proposed buying under the {breach['limit_pct']:g}% invested-equity cap for {sector}.")
 
 
 def _reconcile_allocation_actions(allocations: list[dict], observer=None) -> None:
@@ -1586,14 +1533,14 @@ Watchlist candidates: {json.dumps(wc, indent=2)}
 Forced exits (SELL signal): {sell_forced or "none"}
 Locked positions (no swap): {locked or "none"}
 Max portfolio stocks: {max_stocks}
-Max sector weight: {max_sector_pct}%
+Default sector cap: {max_sector_pct}% of invested equity, excluding cash
 Total portfolio value: {total_value:.0f}, Cash balance: {cash_balance:.0f}
 
 {intent_block}HARD RULES — you MUST follow all of these:
 1. Forced exit symbols MUST appear with action=SELL and target_weight=0.0
 2. Locked symbols MUST appear with action=HOLD and unchanged target_weight
 3. Total unique stocks after rebalancing (HOLD/BUY/ACCUMULATE/REDUCE combined) MUST NOT exceed {max_stocks}
-4. No single sector may exceed {max_sector_pct}% weight
+4. Apply effective sector caps to invested equity. Report infeasible limits for human review.
 5. target_weight values are FLAT PERCENTAGES (10.0 = 10% of portfolio), NOT monetary amounts
 6. Every existing portfolio holding must appear in allocations with an explicit action
 {effective_policy_rules}
@@ -1719,18 +1666,18 @@ def _run_single_shot_fallback(
         a["allocation_change_percent"] = round(a["target_weight"] - a["current_weight"], 2)
         a["estimated_amount"] = round((a["allocation_change_percent"] / 100) * total_value)
     _observer_kw = {"observer": advisory} if advisory is not None else {}
-    if enforce_effective_policy:
+    if enforce_effective_policy or policy_context:
         try:
             _enforce_hard_policy(
                 final_allocations,
                 total_value=total_value,
                 policy_context=policy_context,
                 regime_context=None,
-                effective_envelope=effective_envelope,
-                portfolio_data=portfolio_data,
-                watchlist_data=wc,
                 **_observer_kw,
             )
+            if policy_context:
+                _limit_sector_buys(final_allocations, total_value, policy_context,
+                                   freeze_positions(portfolio_data, wc), advisory)
             _reconcile_allocation_actions(final_allocations, **_observer_kw)
         except Exception as exc:
             raise HardPolicyEnforcementError("fallback hard-policy enforcement failed") from exc
@@ -1753,7 +1700,9 @@ def _run_single_shot_fallback(
     if policy_context:
         from services.optimizer.policy_engine import compute_policy_alignment_score
         fallback_details = compute_policy_alignment_score(final_allocations,
-            _make_envelope_from_dict(policy_context), total_value)[4]
+            _make_envelope_from_dict(policy_context), total_value,
+            effective_turnover_cap=policy_context.get("relaxed_turnover_cap"),
+            frozen_positions=freeze_positions(portfolio_data, wc))[4]
     result = validate_auditor_claims(result, build_claim_evidence(final_allocations, fallback_details, {},
         risk_inputs={p["symbol"]: p for p in [*pc, *wc]}))
     risk_flags = result.get("risk_flags", [])
@@ -1786,7 +1735,7 @@ def _run_single_shot_fallback(
         ),
     }
 
-    return {
+    output = {
         "portfolio_name": portfolio_name,
         "status": xai_status,
         "rebalance_opportunity_score": xai_score,
@@ -1797,7 +1746,7 @@ def _run_single_shot_fallback(
         "optimization_notes": consensus["recommended_action"],
         "target_allocations": final_allocations,
         "target_cash_weight": float(result.get("cash_balance_target", 0.0)),
-        "portfolio_turnover_percent": 0.0,
+        "portfolio_turnover_percent": sum(abs(a["allocation_change_percent"]) for a in final_allocations),
         "swap_suggestions": swap_suggestions,
         "watchlist_ranking": watchlist_ranking,
         "portfolio_count": portfolio_count,
@@ -1833,6 +1782,14 @@ def _run_single_shot_fallback(
         "consensus": consensus,
         "fallback_mode": True,
     }
+    if policy_context:
+        output["active_policy"] = {k: v for k, v in policy_context.items() if k != "prompt_block"}
+        output["active_policy"]["violation_details"] = fallback_details
+        output["active_policy"]["concentration"] = freeze_concentration(
+            portfolio_data, wc, output["active_policy"], total_value,
+        )
+        attach_target_evaluation(output)
+    return output
 
 
 # ─── L1 minimal-prompt retry helper ──────────────────────────────────────────
@@ -1997,6 +1954,7 @@ def run_layered_optimizer(
     score_map = _build_score_context_map(pc, wc)
     c_pc, c_wc = _compress_for_layer1(pc, wc)
 
+    frozen_positions = freeze_positions(portfolio_data, watchlist_data)
     current_sector_weights = calculate_current_sector_weights(portfolio_data)
 
     # ── Phase 3B.6 — Tier 1 breach detection for dynamic turnover relaxation ──
@@ -2033,7 +1991,7 @@ def run_layered_optimizer(
             f"TIER 1 BREACH DETECTED ({_t1_severity}): {_t1_reason}\n"
             f"PRIORITY RULE: Eliminating dangerous concentration risk takes absolute precedence "
             f"over Tier 3 turnover efficiency constraints.\n"
-            f"Effective turnover ceiling this run: {_relaxed_turn_cap:.0f}% "
+            f"Effective turnover ceiling this run: {_relaxed_turn_cap:g}% "
             f"(base {_base_turn_cap:.0f}% + {_mult_pct}% relaxation for Tier 1 remediation).\n"
             f"concentration reduction > turnover efficiency | "
             f"safety remediation > optimization friction\n"
@@ -2202,8 +2160,7 @@ def run_layered_optimizer(
             from services.optimizer.policy_engine import compute_policy_alignment_score
             proposal_details = compute_policy_alignment_score(
                 l2_result.get("target_allocations", []), _make_envelope_from_dict(policy_context),
-                total_value, sector_map={p["symbol"]: p.get("sector", "Other")
-                    for p in [*portfolio_data, *watchlist_data]},
+                total_value, frozen_positions=frozen_positions,
                 effective_turnover_cap=_relaxed_turn_cap,
             )[4]
         claim_contract = build_claim_evidence(l2_result.get("target_allocations", []),
@@ -2260,7 +2217,6 @@ def run_layered_optimizer(
         # Final allocations always come from L2 (L1 only produces swaps)
         final_allocations = l2_result.get("target_allocations", [])
         final_cash_weight = l2_result.get("target_cash_weight", 0.0)
-        final_turnover    = l2_result.get("portfolio_turnover_percent", 0.0)
         final_summary     = l2_result.get("summary", l2_result.get("portfolio_assessment", ""))
 
         # Enforce constraints regardless of AI output
@@ -2283,9 +2239,6 @@ def run_layered_optimizer(
                 total_value=total_value,
                 policy_context=policy_context,
                 regime_context=regime_context,
-                effective_envelope=effective_envelope,
-                portfolio_data=portfolio_data,
-                watchlist_data=watchlist_data,
                 **_observer_kw,
             )
         except Exception as exc:
@@ -2334,15 +2287,11 @@ def run_layered_optimizer(
         # Constraint passes (policy cap, cash floor, sector cap, DR exec cap) all
         # update target_weight + allocation_change_percent but never touch action.
         # A BUY/ACCUMULATE whose delta went negative is now a net REDUCE; fix it.
+        if policy_context:
+            _limit_sector_buys(final_allocations, total_value, policy_context, frozen_positions, advisory)
         _reconcile_allocation_actions(final_allocations, **_observer_kw)
 
         _snap_neutral_actions(final_allocations, **_observer_kw)
-
-        # Build sector_map for governance scoring (symbol → sector)
-        _sector_map_for_scoring: dict[str, str] = {
-            d["symbol"]: normalize_sector(d.get("sector", "Other"))
-            for d in (portfolio_data + watchlist_data)
-        } if effective_envelope is not None else {}
 
         # Defensive: auto-correct NO_ACTION when allocations contain real changes
         if xai_status == "NO_ACTION" and any(
@@ -2364,7 +2313,7 @@ def run_layered_optimizer(
                 final_allocations,
                 _make_envelope_from_dict(policy_context),
                 total_value,
-                sector_map=_sector_map_for_scoring or None,
+                frozen_positions=frozen_positions,
                 effective_turnover_cap=_relaxed_turn_cap,
             )
             consensus["policy_alignment_score"]  = pa_score
@@ -2445,7 +2394,7 @@ def run_layered_optimizer(
             active_policy_out["turnover_relaxation_reason"] = _t1_reason if _t1_severity != "NONE" else None
             active_policy_out["relaxed_turnover_cap"]       = _relaxed_turn_cap if _t1_severity != "NONE" else None
 
-        return {
+        output = {
             "portfolio_name": portfolio_name,
             "status": xai_status,
             "rebalance_opportunity_score": xai_score,
@@ -2456,7 +2405,9 @@ def run_layered_optimizer(
             "optimization_notes": consensus["recommended_action"],
             "target_allocations": final_allocations,
             "target_cash_weight": final_cash_weight,
-            "portfolio_turnover_percent": final_turnover,
+            "portfolio_turnover_percent": sum(
+                abs(a["allocation_change_percent"]) for a in final_allocations
+            ),
             "swap_suggestions": swap_suggestions,
             "watchlist_ranking": watchlist_ranking,
             "portfolio_count": portfolio_count,
@@ -2491,6 +2442,12 @@ def run_layered_optimizer(
             "effective_envelope": _eff_env_to_dict(effective_envelope) if effective_envelope else None,
             **persona_fields,
         }
+        if active_policy_out is not None:
+            active_policy_out["concentration"] = freeze_concentration(
+                portfolio_data, watchlist_data, active_policy_out, total_value,
+            )
+            attach_target_evaluation(output)
+        return output
 
     except HardPolicyEnforcementError:
         raise
@@ -2508,7 +2465,8 @@ def run_layered_optimizer(
             pc_map, max_stocks, max_sector_pct, sector_limits,
             total_value, cash_balance, fallback_provider, fallback_model,
             portfolio_name, portfolio_count, max_reached,
-            policy_context=policy_context,
+            policy_context=({**policy_context, "relaxed_turnover_cap": _relaxed_turn_cap}
+                            if policy_context else None),
             effective_envelope=effective_envelope,
             enforce_effective_policy=enforce_effective_policy_in_fallback,
             execution_context=execution_context,

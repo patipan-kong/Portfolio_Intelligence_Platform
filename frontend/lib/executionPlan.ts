@@ -5,6 +5,7 @@ import type {
   ExecutionOptimizationResult,
   ExecutionRole,
   NoActionReason,
+  PolicyRepairEvidence,
   TargetAllocation,
   TradeEvidenceStatus,
   TradeExecutionState,
@@ -71,6 +72,9 @@ export interface ExecutionTrade {
    *  "currently verified" (see TradeEvidenceStatus). Null when unavailable. */
   evidenceStatus: TradeEvidenceStatus | null;
   evidenceDetail: string | null;
+  requiredAmount?: number | null;
+  discretionaryAmount?: number | null;
+  policyEvidence?: PolicyRepairEvidence[] | null;
 }
 
 export interface ExecutionPlan {
@@ -124,29 +128,40 @@ export function deriveExecutionPlan(
       // allocation implied — use the actually-executed amount when known.
       let estimatedAmount = alloc ? alloc.estimated_amount : null;
       if (optimized && estimatedAmount != null) {
-        const sign = estimatedAmount < 0 ? -1 : 1;
+        const sign = optimized.required_amount != null || estimatedAmount < 0 ? -1 : 1;
         estimatedAmount = sign * optimized.executed_amount;
       }
+      const scheduledBuys = executionOptimization?.scheduled_buys;
+      const buyDeferred = !optimized && scheduledBuys != null && !scheduledBuys[e.symbol];
+      if (!optimized && scheduledBuys != null) estimatedAmount = scheduledBuys[e.symbol] ?? 0;
+      const nav = executionOptimization?.valuation_nav;
+      const scheduledAction = optimized?.required_amount != null && optimized.action === "SELL"
+        && optimized.execution_state === "SCALED"
+        ? "REDUCE" : alloc?.action ?? GROUP_FALLBACK_ACTION[group];
 
       const trade: ExecutionTrade = {
         symbol: e.symbol,
         group,
-        action: alloc?.action ?? GROUP_FALLBACK_ACTION[group],
-        allocationChangePercent: e.allocation_change_percent,
+        action: scheduledAction,
+        allocationChangePercent: nav && estimatedAmount != null
+          ? estimatedAmount / nav * 100 : e.allocation_change_percent,
         estimatedAmount,
         isNew: group === "new_position",
         timingScore: e.timing_score ?? alloc?.timing_score ?? null,
         reason: alloc?.reason ?? null,
         necessity: optimized?.necessity ?? null,
-        executionState: optimized?.execution_state ?? null,
+        executionState: optimized?.execution_state ?? (buyDeferred ? "DEFERRED" : null),
         optimizerReason: optimized?.reason ?? null,
         executionRole: optimized?.execution_role ?? null,
-        note: optimized?.note ?? null,
+        note: optimized?.note ?? (buyDeferred ? "Deferred pending policy review." : null),
         evidenceStatus: optimized?.evidence_status ?? null,
         evidenceDetail: optimized?.evidence_detail ?? null,
+        requiredAmount: optimized?.required_amount,
+        discretionaryAmount: optimized?.discretionary_amount,
+        policyEvidence: optimized?.policy_evidence,
       };
 
-      if (optimized?.execution_state === "DEFERRED") {
+      if (trade.executionState === "DEFERRED") {
         deferredTrades.push(trade);
       } else {
         trades.push(trade);
