@@ -4950,21 +4950,31 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
     consensus_block = result.get("consensus") if isinstance(result.get("consensus"), dict) else {}
     result["final_consensus_score"] = consensus_block.get("consensus_strength_score")
 
-    # ── Advisory Integration V1 — final review, then freeze, then persist ────
-    # The economic allocation (result) stays exactly as stabilization left it.
-    # Noise filter / action summary / execution optimization run ONCE, on a
-    # separate response projection; the review reads both, the frozen envelope
-    # is attached to both, and the persisted row keeps the economic rows.
-    response = result
+    # Freeze the scheduled view while retaining the economic targets for the
+    # existing history, snapshot, grading and decision workflows.
+    from services.optimizer.sector_policy import EVIDENCE_VERSION, attach_target_evaluation
+
+    active_policy = result.get("active_policy")
+    result["execution_policy_version"] = EVIDENCE_VERSION
+    attach_target_evaluation(result)
+
+    from copy import deepcopy
+    from services.advisory_intent_review import apply_response_views
+
+    response = deepcopy(result)
+    if advisory_run is not None:
+        from services.advisory_intent_review import observe_stabilization
+        observe_stabilization(advisory_run, result)
+    apply_response_views(response, advisory_run, _log)
+    if "execution_optimization" in response:
+        persisted_schedule = active_policy if isinstance(active_policy, dict) else result
+        persisted_schedule["scheduled_execution"] = response["execution_optimization"]
+        persisted_schedule["scheduled_action_summary"] = response.get("action_summary", {})
+
     if advisory_run is not None:
         from services.advisory_intent_review import (
-            ENVELOPE_KEY, READ_CAPTURED, STATUS_KEY, apply_response_views,
-            build_review_envelope, observe_stabilization,
+            ENVELOPE_KEY, READ_CAPTURED, STATUS_KEY, build_review_envelope,
         )
-        import copy as _copy
-        observe_stabilization(advisory_run, result)
-        response = _copy.deepcopy(result)
-        apply_response_views(response, advisory_run, _log)
         _review_envelope = build_review_envelope(advisory_run, result, response)
         result[ENVELOPE_KEY] = _review_envelope
         response[ENVELOPE_KEY] = _review_envelope
@@ -5197,16 +5207,6 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
         daemon=True,
     ).start()
 
-    # ── Presentation layer: noise filter → Action Summary (UX.2C) → Execution
-    # Optimization. Response-time views only: DB records (history, signal
-    # history, snapshots) were saved above with unfiltered optimizer output.
-    # Execution Optimization never re-runs L1/L2/L3 and never mutates
-    # target_allocations (OPTIMIZER_PHILOSOPHY.md §7/§9/§10). Enabled advisory
-    # runs computed these once, on the response projection, before freezing.
-    if advisory_run is None:
-        from services.advisory_intent_review import apply_response_views
-        apply_response_views(result, None, _log)
-
     # M31.3 shadow-only eligibility: all legacy optimizer output and execution
     # post-processing are complete. This emits telemetry and cannot alter the
     # response, persisted recommendation, or allocation calculations.
@@ -5316,7 +5316,9 @@ async def get_optimizer_history_detail(history_id: int, db: Session = Depends(ge
             from services.noise_filter import apply_noise_filter
             from services.optimizer_action_summary import build_action_summary
             apply_noise_filter(payload)
-            payload["action_summary"] = build_action_summary(payload.get("target_allocations", []))
+            saved_summary = (payload.get("active_policy") or payload).get("scheduled_action_summary")
+            payload["action_summary"] = (saved_summary if saved_summary is not None else
+                                         build_action_summary(payload.get("target_allocations", [])))
         except Exception as _as_exc:
             _log.warning("get_optimizer_history_detail: action_summary backfill failed — continuing: %s", _as_exc)
     if "execution_optimization" not in payload:

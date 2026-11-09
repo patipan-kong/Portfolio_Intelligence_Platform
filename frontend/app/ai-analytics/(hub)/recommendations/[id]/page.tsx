@@ -20,6 +20,7 @@ import TransactionEvidenceLinks from "@/components/evaluation/TransactionEvidenc
 import ReviewOutcomeBadge from "@/components/evaluation/ReviewOutcomeBadge";
 import RecommendationComparisonCard from "@/components/evaluation/RecommendationComparisonCard";
 import { provenanceQualifier, requiredLabel } from "@/lib/tradeProvenance";
+import type { PolicyRepairEvidence } from "@/lib/api";
 
 function pct(n: number | null | undefined, decimals = 1): string {
   if (n == null) return "—";
@@ -100,6 +101,18 @@ function PlanSection({ plan }: { plan: RecommendationReportCard["plan"] }) {
                     {requiredLabel(t.evidence_status as string | undefined)}
                   </span>
                 )}
+                {typeof t.required_amount === "number" && t.required_amount > 0 && (
+                  <span className="text-xs text-gray-600">
+                    {money(t.required_amount)} for policy repair
+                    {typeof t.discretionary_amount === "number" && t.discretionary_amount > 0
+                      ? ` · ${money(t.discretionary_amount)} discretionary excess` : ""}
+                  </span>
+                )}
+                {(t.policy_evidence as PolicyRepairEvidence[] | undefined)?.map(({ current_breach: current, with_trade: after }) => (
+                  <span className="basis-full text-xs text-gray-600" key={current.evidence_id}>
+                    {current.basis === "EQUITY" ? "Invested equity" : "NAV"} · cap {current.limit_pct}% · residual {after.breach_pp.toFixed(2)} pp
+                  </span>
+                ))}
                 {Boolean(t.note) && <span className="text-xs text-gray-400 italic">— {String(t.note)}</span>}
                 {provenanceQualifier(t.evidence_status as string | undefined) && (
                   <span className="basis-full text-[11px] text-amber-700" data-testid="report-evidence-qualifier">

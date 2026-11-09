@@ -28,6 +28,10 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass, field
+from services.optimizer.sector_policy import (
+    current_values, evaluate_sectors, freeze_positions, project_targets,
+)
+
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -135,6 +139,8 @@ class PolicyEnvelope:
     # (NAV basis, unrounded). Presence of the key — even as [] — marks a run
     # that can be verified; see detect_concentration_evidence().
     violation_evidence: list[dict] = field(default_factory=list)
+    sector_limit_sources: dict[str, str] = field(default_factory=dict)
+    position_limit_source: str = "POLICY_ENGINE"
 
 
 # ─── Emergency detection ──────────────────────────────────────────────────────
@@ -322,18 +328,6 @@ def _risk_budget(portfolio_risk: float, disc: float, bias: str, emergency: bool)
 
 # ─── Violation detection ──────────────────────────────────────────────────────
 
-def _norm_sector(raw: str | None) -> str:
-    """Lightweight sector normalizer — avoids circular import with optimizer.py."""
-    s = (raw or "Other").strip()
-    _known = {"Technology", "Financial", "Energy", "Healthcare",
-              "Consumer", "Industrial", "Real Estate", "Utilities"}
-    if s in _known:
-        return s
-    if "Financial" in s or "Bank" in s:
-        return "Financial"
-    return "Other"
-
-
 POLICY_EVIDENCE_VERSION = "wealth.policy-evidence.v1"
 RULE_MAX_SINGLE_POSITION = "hard_constraints.max_single_position_pct"
 
@@ -375,6 +369,12 @@ def detect_concentration_evidence(
     return evidence
 
 
+def _current_sectors(portfolio_data, default_cap, limits):
+    positions = freeze_positions(portfolio_data)
+    return evaluate_sectors(positions, current_values(positions), limits or {},
+                            default_cap, "CURRENT")["sectors"]
+
+
 def _detect_violations(
     portfolio_data: list[dict],
     hard: HardConstraints,
@@ -406,23 +406,12 @@ def _detect_violations(
                 f"POLICY_VIOLATION: {sym} has a SELL signal but remains held at {w:.1f}%"
             )
 
-    # ── Sector concentration checks (when resolved limits available) ──────────
-    if resolved_sector_limits:
-        total_mv = sum(d.get("market_value") or 0 for d in portfolio_data)
-        if total_mv > 0:
-            sector_weights: dict[str, float] = {}
-            for item in portfolio_data:
-                sector = _norm_sector(item.get("sector"))
-                mv     = item.get("market_value") or 0
-                sector_weights[sector] = sector_weights.get(sector, 0.0) + mv / total_mv * 100
-
-            for sector, w_pct in sector_weights.items():
-                limit = resolved_sector_limits.get(sector, hard.max_sector_pct)
-                if w_pct > limit:
-                    violations.append(
-                        f"SECTOR_BREACH: {sector} at {w_pct:.1f}% exceeds "
-                        f"{limit:.0f}% resolved sector limit"
-                    )
+    for row in _current_sectors(portfolio_data, hard.max_sector_pct, resolved_sector_limits):
+        if row["breach_pp"]:
+            violations.append(
+                f"SECTOR_BREACH: {row['sector']} at {row['observed_pct']:.1f}% exceeds "
+                f"{row['limit_pct']:g}% resolved sector limit (invested equity)"
+            )
 
     return violations
 
@@ -447,17 +436,12 @@ def compute_concentration_breach_severity(
         if w > max_position_pct:
             pos_breaches.append((sym, w, w / max_position_pct))
 
-    sector_breaches: list[tuple[str, float, float]] = []
-    total_mv = sum(float(d.get("market_value") or 0) for d in portfolio_data)
-    if total_mv > 0:
-        sw: dict[str, float] = {}
-        for item in portfolio_data:
-            sec = _norm_sector(item.get("sector"))
-            sw[sec] = sw.get(sec, 0.0) + float(item.get("market_value") or 0) / total_mv * 100
-        for sec, w_pct in sw.items():
-            limit = (resolved_sector_limits or {}).get(sec, max_sector_pct)
-            if w_pct > limit:
-                sector_breaches.append((sec, w_pct, w_pct / limit))
+    sector_breaches = [
+        (row["sector"], row["observed_pct"],
+         row["observed_pct"] / row["limit_pct"] if row["limit_pct"] else float("inf"))
+        for row in _current_sectors(portfolio_data, max_sector_pct, resolved_sector_limits)
+        if row["breach_pp"]
+    ]
 
     if not pos_breaches and not sector_breaches:
         return "NONE", ""
@@ -599,6 +583,10 @@ def compute_policy(
         base_turn_ceil  = effective_envelope.effective_turnover_max_pct
         resolved_sector_limits = effective_envelope.effective_sector_limits
         global_sector_cap = effective_envelope.global_sector_cap.effective
+        sector_limit_sources = {sector: cap.binding_source
+                                for sector, cap in effective_envelope.sector_limits.items()}
+        sector_limit_sources["default"] = effective_envelope.global_sector_cap.binding_source
+        position_limit_source = effective_envelope.single_position.binding_source
     else:
         # Legacy: compute cross-source min/max inline
         base_min_cash  = max(persona_cash_pct, regime_min_cash)
@@ -606,6 +594,13 @@ def compute_policy(
         base_turn_ceil = persona_turnover * 100 * regime_turn_mult
         resolved_sector_limits = {}
         global_sector_cap = float(max_sector_pct)
+        sector_limit_sources = {}
+        position_limit_source = "POLICY_ENGINE"
+        if emergency:
+            from services.optimizer.constraint_resolver import EMERGENCY_MAX_SECTOR
+            if global_sector_cap > EMERGENCY_MAX_SECTOR:
+                global_sector_cap = EMERGENCY_MAX_SECTOR
+                sector_limit_sources["default"] = "EMERGENCY_OVERRIDE"
 
     # Apply confidence discount on top of the resolved base values
     cash_boost = disc * 8.0                           # up to +8% more cash when uncertain
@@ -615,9 +610,11 @@ def compute_policy(
 
     max_pos = base_max_pos
     if disc > 0.38:
+        position_limit_source = "CONFIDENCE_DISCOUNT"
         max_pos = max_pos * 0.85                      # tighten by 15% when uncertain
-    if emergency:
-        max_pos = min(max_pos, 15.0)
+    if emergency and max_pos > 15.0:
+        position_limit_source = "EMERGENCY_OVERRIDE"
+        max_pos = 15.0
 
     turn_ceil = base_turn_ceil * (1 - disc * 0.40)
     if emergency:
@@ -683,6 +680,8 @@ def compute_policy(
         violations               = violations,
         resolved_sector_limits   = dict(resolved_sector_limits),
         violation_evidence       = violation_evidence,
+        sector_limit_sources     = sector_limit_sources,
+        position_limit_source    = position_limit_source,
     )
 
 
@@ -714,12 +713,11 @@ def build_policy_prompt_block(envelope: PolicyEnvelope) -> str:
     sector_block = ""
     if envelope.resolved_sector_limits:
         sector_lines = "  ".join(
-            f"{s}:{v:.0f}%" for s, v in sorted(envelope.resolved_sector_limits.items())
-            if s != "Other"
+            f"{s}:{v:g}%" for s, v in sorted(envelope.resolved_sector_limits.items())
         )
-        sector_block = f"\nRESOLVED_SECTOR_LIMITS: {sector_lines}\n"
+        sector_block = f"\nRESOLVED_SECTOR_LIMITS (% of invested equity market value): {sector_lines}\n"
     else:
-        sector_block = f"\nMAX_SECTOR_LIMIT: {hard.max_sector_pct:.0f}% per sector\n"
+        sector_block = f"\nMAX_SECTOR_LIMIT: {hard.max_sector_pct:g}% of invested equity market value per sector\n"
 
     return f"""[ACTIVE OPTIMIZATION POLICY — MANDATORY GOVERNANCE]{emergency_block}
 DEPLOYMENT_MODE:        {envelope.deployment_bias}
@@ -735,14 +733,14 @@ CONSTRAINT PRIORITY HIERARCHY (Tier 1 > Tier 2 > Tier 3):
   Tier 1 — CRITICAL (enforce first): Single position limits, sector concentration, catastrophic exposure
   Tier 2 — STRATEGIC (enforce second): Cash mandates, regime alignment, beta ceilings
   Tier 3 — EFFICIENCY (flex when needed): Turnover limits, transaction friction
-  Rule: Tier 1 breaches MUST be remediated; Tier 3 constraints may flex to achieve this.
+  Rule: Recommend measurable Tier 1 repairs within the effective turnover cap. Report residual or infeasible sector breaches for human review. Volatility alone does not require a sale.
 
 ACTIVE_FACTOR_TILT:     {tilt_str}
 {violation_block}
 Policy summary: {envelope.policy_narrative}
 
 All allocation proposals MUST comply with these constraints.
-Hard limits are enforced deterministically in Python after AI output — violating proposals will be corrected automatically.
+Python evaluates proposals deterministically. Sector limits use invested equity market value excluding cash. Keep position targets, cash and turnover on the NAV basis.
 """
 
 
@@ -752,8 +750,8 @@ def compute_policy_alignment_score(
     final_allocations: list[dict],
     envelope: PolicyEnvelope,
     total_value: float,
-    sector_map: dict[str, str] | None = None,
     effective_turnover_cap: float | None = None,
+    frozen_positions: dict | None = None,
 ) -> tuple[float, float, float, list[str], list[dict]]:
     """Score how well the final allocation plan complies with the policy envelope.
 
@@ -761,7 +759,7 @@ def compute_policy_alignment_score(
         final_allocations    : L2 target allocations after post-AI enforcement
         envelope             : resolved PolicyEnvelope
         total_value          : total portfolio value (used for sector weight projection)
-        sector_map           : {symbol → sector} for sector compliance checks (Phase 3B.5)
+        frozen_positions     : frozen holding and candidate valuations/classifications
         effective_turnover_cap: relaxed turnover ceiling when Tier 1 breaches are active (Phase 3B.6).
                                When > hard.max_turnover_pct the turnover BREACH threshold is raised so
                                minor Tier 3 overshoots do not block Tier 1 concentration remediation.
@@ -820,42 +818,30 @@ def compute_policy_alignment_score(
             })
     conc_score = max(0.0, 100.0 - conc_violations * 25)
 
-    # ── Sector concentration (Phase 3B.5 — requires sector_map) ──────────────
     sector_violations = 0
-    if sector_map and (envelope.resolved_sector_limits or hard.max_sector_pct):
-        # Compute projected sector weights from target allocations
-        proj_sector: dict[str, float] = {}
-        for a in final_allocations:
-            if a.get("action") == "SELL":
+    if frozen_positions is not None:
+        projected = project_targets(frozen_positions, final_allocations, total_value)
+        evaluation = evaluate_sectors(
+            frozen_positions, projected, envelope.resolved_sector_limits,
+            hard.max_sector_pct, "PROJECTED_TARGET", envelope.sector_limit_sources,
+        )
+        for row in evaluation["sectors"]:
+            if not row["breach_pp"]:
                 continue
-            sector = _norm_sector(sector_map.get(a.get("symbol", ""), "Other"))
-            proj_sector[sector] = proj_sector.get(sector, 0.0) + float(a.get("target_weight") or 0)
-
-        for sector, proj_pct in proj_sector.items():
-            limit = (
-                envelope.resolved_sector_limits.get(sector, hard.max_sector_pct)
-                if envelope.resolved_sector_limits
-                else hard.max_sector_pct
+            sector_violations += 1
+            flags.append(
+                f"SECTOR_LIMIT: {row['sector']} projected {row['observed_pct']:.1f}% "
+                f"> {row['limit_pct']:g}% limit (invested equity)"
             )
-            if proj_pct > limit:
-                sector_violations += 1
-                # Determine which source set this limit
-                source = "USER_PREFERENCE"
-                if envelope.resolved_sector_limits:
-                    source = "REGIME_POLICY"
-                if envelope.emergency_override:
-                    source = "EMERGENCY_OVERRIDE"
-                flags.append(
-                    f"SECTOR_LIMIT: {sector} projected {proj_pct:.1f}% > {limit:.0f}% limit"
-                )
-                violation_details.append({
-                    "violation_type":   "SECTOR_LIMIT",
-                    "sector":           sector,
-                    "proposed_pct":     round(proj_pct, 1),
-                    "allowed_pct":      round(limit, 1),
-                    "violation_source": source,
-                    "tier":             TIER1_CRITICAL,
-                })
+            violation_details.append({
+                "violation_type": "SECTOR_LIMIT",
+                "sector": row["sector"],
+                "proposed_pct": row["observed_pct"],
+                "allowed_pct": row["limit_pct"],
+                "violation_source": row["binding_source"],
+                "tier": TIER1_CRITICAL,
+                "policy_evidence": row,
+            })
     sector_score = max(0.0, 100.0 - sector_violations * 20)
 
     # ── Over-aggression in defensive modes ────────────────────────────────────
@@ -954,6 +940,8 @@ def envelope_to_dict(env: PolicyEnvelope) -> dict:
         "violations":               env.violations,
         # Phase 3B.5 — resolved per-sector limits (empty dict when resolver not run)
         "resolved_sector_limits":   env.resolved_sector_limits,
+        "sector_limit_sources":    env.sector_limit_sources,
+        "position_limit_source":   env.position_limit_source,
         "violation_evidence":       env.violation_evidence,
         "prompt_block":             build_policy_prompt_block(env),
     }

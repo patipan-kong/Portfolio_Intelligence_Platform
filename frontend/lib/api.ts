@@ -2072,6 +2072,7 @@ export interface GoalRecommendationConstraintEvidence {
 }
 
 export interface OptimizerResult {
+  execution_policy_version?: string;
   portfolio_name: string;
   status?: OptimizerStatus;
   final_consensus_score?: number | null;
@@ -2171,6 +2172,7 @@ export type ExecutionRole = "STANDALONE" | "FUNDING_SOURCE" | "NOT_NEEDED_TODAY"
 export type TradeEvidenceStatus =
   | "NOT_APPLICABLE"
   | "VERIFIED_NAV"
+  | "VERIFIED_POLICY_REPAIR"
   | "UNVERIFIED"
   | "LEGACY_RECORDED_UNVERIFIED"
   | "SECTOR_EQUITY_BASIS";
@@ -2188,6 +2190,35 @@ export interface OptimizedTrade {
   note: string;
   evidence_status?: TradeEvidenceStatus;
   evidence_detail?: string | null;
+  required_amount?: number | null;
+  discretionary_amount?: number | null;
+  policy_evidence?: PolicyRepairEvidence[] | null;
+}
+
+export interface PolicyExposureEvidence {
+  evidence_id: string;
+  evidence_version?: string;
+  rule?: string;
+  stage?: string;
+  currency?: string;
+  basis: "EQUITY" | "NAV";
+  sector?: string;
+  symbol?: string;
+  numerator: number;
+  denominator: number;
+  observed_pct: number | null;
+  limit_pct: number;
+  binding_source: string;
+  breach_pp: number;
+  breach_amount: number;
+}
+
+export interface PolicyRepairEvidence {
+  current_breach: PolicyExposureEvidence;
+  without_trade: PolicyExposureEvidence;
+  with_trade: PolicyExposureEvidence;
+  with_required_portion: PolicyExposureEvidence;
+  repair: "FULL_REPAIR" | "PARTIAL_REPAIR";
 }
 
 export interface ExecutionOptimizationResult {
@@ -2196,6 +2227,20 @@ export interface ExecutionOptimizationResult {
   funding_gap: number;
   trades: OptimizedTrade[];
   idle_cash_after: number;
+  scheduled_buys?: Record<string, number> | null;
+  scheduled_sector_evaluation?: {
+    denominator: number;
+    applicable: boolean;
+    sectors: PolicyExposureEvidence[];
+    occupied_cap_sum_pct: number | null;
+    infeasible_within_occupied_sectors: boolean;
+    estimated_symbols: string[];
+  } | null;
+  scheduled_position_breaches?: PolicyExposureEvidence[] | null;
+  scheduled_turnover_pct?: number | null;
+  effective_turnover_cap_pct?: number | null;
+  valuation_nav?: number | null;
+  policy_review_reasons?: string[] | null;
 }
 
 export interface OptimizerHistoryItem {

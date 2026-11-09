@@ -97,6 +97,9 @@ class OptimizedTrade(BaseModel):
     # SECTOR_EQUITY_BASIS — see ReasonProvenance.
     evidence_status: str = "NOT_APPLICABLE"
     evidence_detail: str | None = None
+    required_amount: float | None = None
+    discretionary_amount: float | None = None
+    policy_evidence: list[dict[str, Any]] | None = None
 
 
 class ExecutionOptimizationResult(BaseModel):
@@ -105,6 +108,15 @@ class ExecutionOptimizationResult(BaseModel):
     funding_gap: float           # max(0, total_buy_deployment - cash_available)
     trades: list[OptimizedTrade]
     idle_cash_after: float
+    scheduled_buys: dict[str, float] | None = None
+    scheduled_sector_evaluation: dict[str, Any] | None = None
+    rejected_buy_sector_evaluation: dict[str, Any] | None = None
+    scheduled_position_breaches: list[dict[str, Any]] | None = None
+    scheduled_turnover_pct: float | None = None
+    effective_turnover_cap_pct: float | None = None
+    valuation_nav: float | None = None
+    trade_effects: dict[str, list[dict[str, Any]]] | None = None
+    policy_review_reasons: list[str] | None = None
 
 
 # ── Reason / Necessity classification ────────────────────────────────────────
@@ -477,10 +489,40 @@ def optimize_execution_for_payload(
     as verified. Nothing here reads current Intent or current policy.
     """
     policy = payload.get("active_policy") or {}
+    cash = float(payload.get("cash_balance") or 0.0) if cash_available is None else float(cash_available)
+    if "concentration" in policy or payload.get("execution_policy_version"):
+        from services.optimizer.concentration_execution import optimize_concentration_execution
+        from services.optimizer.sector_policy import EVIDENCE_VERSION
+
+        frozen_plan = policy.get("scheduled_execution", payload.get("scheduled_execution"))
+        if frozen_plan is not None:
+            plan = ExecutionOptimizationResult.model_validate(frozen_plan)
+            for trade in plan.trades:
+                if trade.necessity != NECESSITY_NECESSARY:
+                    continue
+                if trade.required_amount and any(
+                    effect.get("required_amount") == trade.required_amount
+                    and (effect.get("current_breach") or {}).get("evidence_version") == EVIDENCE_VERSION
+                    and (effect.get("with_required_portion") or {}).get("evidence_id")
+                    and effect.get("repair") in ("FULL_REPAIR", "PARTIAL_REPAIR")
+                    for effect in trade.policy_evidence or []
+                ):
+                    continue
+                trade.necessity = NECESSITY_DISCRETIONARY
+                trade.reason = REASON_PORTFOLIO_IMPROVEMENT
+                trade.evidence_status = EVIDENCE_UNVERIFIED
+                trade.discretionary_amount = trade.full_recommended_amount
+                trade.required_amount = 0
+                trade.policy_evidence = []
+                trade.note = "Human Review · frozen repair evidence is incomplete."
+                plan.policy_review_reasons = sorted(
+                    {* (plan.policy_review_reasons or []), "MISSING_POLICY_EVIDENCE"}
+                )
+            return plan
+        return optimize_concentration_execution(payload, action_summary, cash)
     evidence = policy.get("violation_evidence")
     legacy = evidence is None
     hard = policy.get("hard_constraints") or {}
-    cash = float(payload.get("cash_balance") or 0.0) if cash_available is None else float(cash_available)
     return optimize_execution(
         action_summary,
         payload.get("target_allocations", []),
