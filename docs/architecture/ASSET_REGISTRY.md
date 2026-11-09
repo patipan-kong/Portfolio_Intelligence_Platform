@@ -180,6 +180,8 @@ Classification is where the Registry's authority is *curatorial* rather than *ad
 - **Mutable, unlike identity.** Classifications legitimately change — companies are re-sectored, funds change mandates, a market is reclassified between emerging and developed. The Registry updates the classification as a **dated fact against the permanent identity**, and retains the history, so that analytics computing over a past period can see the classification *as it stood then*. Identity never moves; descriptions move on the record.
 - **Confidence, not just values.** A classification sourced from three concurring high-trust providers and one confirmed by a user carry different weight than one inferred from a single feed. Stewardship tracks where each classified fact came from — the platform-wide provenance discipline, applied to descriptions.
 
+- **Sector authority.** Canonical sector resolution recognizes the exact source `steward:sector` for explicitly stewarded, current `SECTOR` facts with a non-null UTC `as_of` at or before evaluation time. Legacy `seed:sector_taxonomy`, imported labels, and provider cache entries do not confer this authority. Publish a replacement when it takes effect because the existing Registry writer supersedes the previous current row immediately. Conflicting eligible canonical sectors are unresolved. A verified DR relationship identifies which asset to classify and is separate from the evidence for its sector.
+
 ---
 
 ## 9. Relationship with Providers

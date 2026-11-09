@@ -3,6 +3,7 @@
 from math import isfinite
 
 from services.optimizer.nav_basis import item_value
+from services.portfolio_sector import SECTOR_CLASSIFICATION_VERSION
 
 EVIDENCE_VERSION = "wealth.policy-evidence.v2"
 SECTOR_RULE = "effective_sector_limits"
@@ -28,8 +29,10 @@ def freeze_positions(holdings: list[dict], candidates=()) -> dict:
         value = row.get("value_exact", row.get("market_value"))
         if value is None:
             value = item_value(row)
+        classification = row.get("sector_classification")
         positions[row["symbol"]] = {
-            "sector": normalize_policy_sector(row.get("sector")),
+            "sector": classification["sector"] if classification is not None else normalize_policy_sector(row.get("sector")),
+            **({"sector_classification": dict(classification)} if classification is not None else {}),
             "value": max(0.0, float(value)),
             "price": price if isfinite(price) and price > 0 else None,
             "held": bool(row.get("shares") or value),
@@ -140,6 +143,8 @@ def freeze_concentration(holdings: list[dict], candidates: list[dict], policy: d
         "position_source": policy.get("position_limit_source") or "POLICY_ENGINE",
         "turnover_cap": policy.get("relaxed_turnover_cap") or hard.get("max_turnover_pct", 40),
     }
+    if any("sector_classification" in row for row in positions.values()):
+        context["sector_classification_version"] = SECTOR_CLASSIFICATION_VERSION
     values = current_values(positions)
     current = evaluate_frozen_sectors(context, values, "CURRENT")
     context["current"] = current

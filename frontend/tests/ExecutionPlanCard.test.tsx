@@ -259,3 +259,19 @@ describe("ExecutionPlanCard track-record link wording (DEM-01)", () => {
     expect(screen.queryByText(/track record/i)).not.toBeInTheDocument();
   });
 });
+
+test("discloses the frozen provisional sector and why it requires human review", () => {
+  const result = resultWithSellTrade({
+    sector: "Communication Services",
+    sector_classification: {
+      sector: "Communication Services",
+      classification_source: "provider_metadata",
+      classification_status: "provisional",
+      conflict_reason: "Communication Services differs from static taxonomy: Technology",
+    },
+  });
+  result.execution_optimization!.policy_review_reasons = ["UNCERTAIN_SECTOR_CLASSIFICATION"];
+  render(<ExecutionPlanCard result={result} />);
+  expect(screen.getByText("Communication Services · provisional")).toBeInTheDocument();
+  expect(screen.getByText(/Sector concentration depends on provisional or unresolved classifications/)).toBeInTheDocument();
+});

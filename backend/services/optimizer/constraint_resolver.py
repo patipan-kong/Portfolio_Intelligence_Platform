@@ -70,6 +70,7 @@ _REGIME_SECTOR_MULTIPLIERS: dict[str, float] = {
 
 # Canonical sectors that receive individual resolution breakdowns
 _KNOWN_SECTORS = (
+    "Communication Services",
     "Technology", "Financial", "Energy", "Healthcare",
     "Consumer", "Industrial", "Real Estate", "Utilities", "Other",
 )

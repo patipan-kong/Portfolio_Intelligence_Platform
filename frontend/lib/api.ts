@@ -279,7 +279,19 @@ export const updateGoalProfile = (portfolioId: number, update: GoalProfileUpdate
 
 export type RiskLevel = "Low" | "Medium" | "High" | "Critical";
 
-export type PortfolioSectorClassificationSource = "registry_fact" | "stored_projection" | "static_taxonomy" | "unresolved";
+export interface SectorClassification {
+  sector: string;
+  classification_source: PortfolioSectorClassificationSource;
+  classification_status: "authoritative" | "provisional" | "unresolved";
+  raw_sector?: string | null;
+  observed_at?: string | null;
+  held_asset_id?: number | null;
+  classified_asset_id?: number | null;
+  conflict_reason?: string | null;
+  evidence_source?: string | null;
+}
+
+export type PortfolioSectorClassificationSource = "registry_fact" | "provider_metadata" | "stored_projection" | "static_taxonomy" | "unresolved";
 export type PortfolioSectorClassificationStatus = "authoritative" | "provisional" | "unresolved";
 
 export interface PortfolioItem {
@@ -305,6 +317,7 @@ export interface PortfolioItem {
   risk_level: RiskLevel | null;
   sector?: string | null;
   classification_source?: PortfolioSectorClassificationSource;
+  sector_classification?: SectorClassification;
   classification_status?: PortfolioSectorClassificationStatus;
   is_dr?: boolean;
   parent_symbol?: string | null;
@@ -346,6 +359,7 @@ export interface SectorBreakdownItem {
   weight_pct: number;
   stocks: string[];
   classification_sources?: PortfolioSectorClassificationSource[];
+  classification_conflicts?: string[];
   /** Provisional if any holding in this group has a provisional classification. */
   classification_status?: PortfolioSectorClassificationStatus;
   limit_pct: number;
@@ -1639,6 +1653,7 @@ export interface ExecutionContext {
 }
 
 export interface TargetAllocation {
+  sector_classification?: SectorClassification | null;
   symbol: string;
   current_weight: number;
   target_weight: number;
@@ -2178,6 +2193,7 @@ export type TradeEvidenceStatus =
   | "SECTOR_EQUITY_BASIS";
 
 export interface OptimizedTrade {
+  sector_classification?: SectorClassification | null;
   symbol: string;
   action: "SELL" | "REDUCE";
   sector?: string | null;

@@ -42,12 +42,13 @@ function LegendRow({ item }: { item: SectorBreakdownItem }) {
       <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-gray-700 font-medium">{item.sector}</span>
-        {item.classification_status === "provisional" && (
+        {(item.classification_status === "provisional" || item.classification_status === "unresolved" || !!item.classification_conflicts?.length) && (
           <span
             className="block text-[10px] text-gray-600"
-            title="Includes holdings grouped without an authoritative Registry sector fact."
+            title={item.classification_conflicts?.join("\n") || "Includes holdings grouped without an authoritative Registry sector fact."}
           >
-            Includes provisional groupings
+            {item.classification_status === "unresolved" ? "Includes unresolved holdings" :
+              item.classification_status === "provisional" ? "Includes provisional groupings" : "Includes sector conflicts"}
           </span>
         )}
       </span>

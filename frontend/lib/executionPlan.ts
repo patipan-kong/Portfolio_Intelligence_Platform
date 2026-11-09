@@ -6,6 +6,7 @@ import type {
   ExecutionRole,
   NoActionReason,
   PolicyRepairEvidence,
+  SectorClassification,
   TargetAllocation,
   TradeEvidenceStatus,
   TradeExecutionState,
@@ -75,6 +76,7 @@ export interface ExecutionTrade {
   requiredAmount?: number | null;
   discretionaryAmount?: number | null;
   policyEvidence?: PolicyRepairEvidence[] | null;
+  sectorClassification?: SectorClassification | null;
 }
 
 export interface ExecutionPlan {
@@ -159,6 +161,7 @@ export function deriveExecutionPlan(
         requiredAmount: optimized?.required_amount,
         discretionaryAmount: optimized?.discretionary_amount,
         policyEvidence: optimized?.policy_evidence,
+        sectorClassification: optimized?.sector_classification ?? alloc?.sector_classification,
       };
 
       if (trade.executionState === "DEFERRED") {

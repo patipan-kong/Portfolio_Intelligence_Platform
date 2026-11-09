@@ -72,6 +72,7 @@ from services.sector_taxonomy import (
 )
 from services.json_utils import safe_parse_json
 from services.portfolio_reference import resolve_portfolio_or_404, resolve_execution_decision_or_404
+from dataclasses import asdict
 from services.portfolio_sector import resolve_portfolio_sector
 from services.portfolio_transactions import (
     execute_buy, execute_sell,
@@ -586,6 +587,7 @@ def _enrich_holdings(
             "sector":       classification.sector,
             "classification_source": classification.classification_source,
             "classification_status": classification.classification_status,
+            "sector_classification": asdict(classification),
             "is_dr":        is_dr,
             "parent_symbol": parent_sym,
             "upside_reference_price": upside_price if is_dr else None,
@@ -3127,11 +3129,14 @@ async def get_sector_breakdown(portfolio_id: int, db: Session = Depends(get_db))
         if sector not in agg:
             agg[sector] = {
                 "value": 0.0, "stocks": [], "classification_sources": set(),
+                "classification_conflicts": [],
                 "classification_status": classification.classification_status,
             }
         agg[sector]["value"] += mv
         agg[sector]["stocks"].append(item.symbol)
         agg[sector]["classification_sources"].add(classification.classification_source)
+        if classification.conflict_reason:
+            agg[sector]["classification_conflicts"].append(f"{item.symbol}: {classification.conflict_reason}")
         if classification.classification_status == "provisional":
             agg[sector]["classification_status"] = "provisional"
 
@@ -3147,6 +3152,7 @@ async def get_sector_breakdown(portfolio_id: int, db: Session = Depends(get_db))
             "weight_pct": weight,
             "stocks": data["stocks"],
             "classification_sources": sorted(data["classification_sources"]),
+            "classification_conflicts": data["classification_conflicts"],
             "classification_status": data["classification_status"],
             "limit_pct": limit,
             "status": status,
@@ -4625,7 +4631,6 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
             "current_price": current_price,
             "target_price":  target_price,
             "upside_pct":    upside_pct,
-            "sector":        fa.get("sector") or "Other",
             "is_dr":         dr,
             "parent_symbol": parent_sym,
             "upside_reference_price": upside_price if dr else None,
@@ -4686,6 +4691,13 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
     execution_ctx["canonical_instrument_context"] = build_instrument_context(
         db, (h.symbol for h in holdings), execution_facts, execution_ctx,
     )
+
+    # Prefer held listing evidence when a symbol is also a candidate.
+    sector_inputs = {item.symbol: item for item in [*watchlist_items, *holdings]}
+    for symbol, item in sector_inputs.items():
+        if symbol in scores_map:
+            classification = resolve_portfolio_sector(db, item)
+            scores_map[symbol].update(sector=classification.sector, sector_classification=asdict(classification))
 
     portfolio_data = [
         {**scores_map[h.symbol], "shares": h.shares, "avg_cost": h.avg_cost, "allow_swap": h.allow_swap}

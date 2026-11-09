@@ -82,6 +82,7 @@ class FundingCandidate(BaseModel):
 
 
 class OptimizedTrade(BaseModel):
+    sector_classification: dict | None = None
     symbol: str
     action: str                 # "SELL" | "REDUCE"
     sector: str | None = None

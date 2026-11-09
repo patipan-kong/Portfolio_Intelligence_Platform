@@ -1,15 +1,16 @@
 """Read-only sector resolution shared by the two Portfolio endpoints."""
 
 import asyncio
+import json
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
 import main
-from models.database import Base, Portfolio, PortfolioItem, Transaction, Workspace
+from models.database import MarketDataCache, Base, Portfolio, PortfolioItem, Transaction, Workspace
 from services import registry_service
 from services.asset_domain import (
     AssetClaim,
@@ -19,7 +20,8 @@ from services.asset_domain import (
     IdentifierType,
     RelationshipType,
 )
-from services.portfolio_sector import PortfolioSectorClassification, resolve_portfolio_sector
+from services.portfolio_sector import resolve_portfolio_sector
+from services.optimizer.sector_policy import freeze_positions
 
 
 @pytest.fixture
@@ -79,11 +81,11 @@ def test_current_holdings_and_allocation_share_sector_resolution(db, caplog, und
                 )
                 registry_service.record_classification(
                     db, underlying.id, ClassificationDimension.SECTOR, underlying_sector,
-                    source="test:stewarded", as_of=datetime(2025, 1, 1),
+                    source="steward:sector", as_of=datetime(2025, 1, 1),
                 )
             if parent == "NVDA" and underlying_sector:
                 registry_service.record_classification(
-                    db, underlying.id, ClassificationDimension.SECTOR, "Technology", source="test:stewarded",
+                    db, underlying.id, ClassificationDimension.SECTOR, "Technology", source="steward:sector", as_of=datetime(2025, 1, 1),
                 )
         db.add(PortfolioItem(
             workspace_id=workspace.id, portfolio_id=portfolio_id, symbol=symbol,
@@ -109,6 +111,11 @@ def test_current_holdings_and_allocation_share_sector_resolution(db, caplog, und
         "GOOGL99.BK": "Other",
     }
     assert {row["symbol"]: row["sector"] for row in holdings} == expected
+    frozen = freeze_positions(holdings)
+    assert {symbol: row["sector"] for symbol, row in frozen.items()} == expected
+    assert frozen["GOOGL01.BK"]["sector_classification"] == next(
+        row["sector_classification"] for row in holdings if row["symbol"] == "GOOGL01.BK"
+    )
     assert {symbol: bucket["sector"] for bucket in breakdown["sectors"] for symbol in bucket["stocks"]} == expected
     provenance = {
         "GOOGL01.BK": ("registry_fact", "authoritative") if underlying_sector else ("static_taxonomy", "provisional"),
@@ -146,8 +153,7 @@ def test_current_holdings_and_allocation_share_sector_resolution(db, caplog, und
         "GOOGL01.BK", 2000, 71_519.944, "Other",
     )
     if underlying_sector:
-        assert "Registry asset" in caplog.text
-        assert "Communication Services (source test:stewarded), static taxonomy reports Technology" in caplog.text
+        assert "Communication Services differs from static taxonomy: Technology" in caplog.text
 
 
 def test_ambiguous_dr_relationship_does_not_certify_stored_or_static_sector(db):
@@ -164,6 +170,99 @@ def test_ambiguous_dr_relationship_does_not_certify_stored_or_static_sector(db):
     db.commit()
     db.execute(text("PRAGMA query_only = ON"))
 
-    assert resolve_portfolio_sector(db, holding) == PortfolioSectorClassification(
-        "Other", "unresolved", "unresolved",
+    result = resolve_portfolio_sector(db, holding)
+    assert (result.sector, result.classification_status) == ("Other", "unresolved")
+    assert result.conflict_reason == "Ambiguous Registry underlying"
+
+@pytest.mark.parametrize(
+    ("raw", "fresh", "expected", "source"),
+    [
+        ("Communication Services", True, "Communication Services", "provider_metadata"),
+        ("Communication Services", False, "Technology", "stored_projection"),
+        ("Unmapped Sector", True, "Technology", "stored_projection"),
+    ],
+)
+def test_provider_evidence_is_fresh_matched_and_provisional(db, raw, fresh, expected, source):
+    listing = _mint(db, "GOOGL01.BK")
+    underlying = _mint(db, "GOOGL", local=False)
+    registry_service.link_relationship(db, listing.id, underlying.id, RelationshipType.DEPOSITARY_RECEIPT_OF)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    registry_service.record_classification(
+        db, underlying.id, ClassificationDimension.SECTOR, "Industrial",
+        source="seed:sector_taxonomy", as_of=now - timedelta(days=1),
     )
+    for symbol, label in [("GOOGL", raw), ("GOOGL01.BK", "Financial")]:
+        db.add(MarketDataCache(
+            symbol=symbol, cache_type="fundamental", payload_json=json.dumps({"sector": label}),
+            fetched_at=now - timedelta(hours=2),
+            expires_at=now + timedelta(hours=1 if fresh else -1),
+        ))
+    db.commit()
+    db.execute(text("PRAGMA query_only = ON"))
+    result = resolve_portfolio_sector(db, PortfolioItem(
+        asset_id=listing.id, symbol="GOOGL01.BK", sector="Technology",
+    ))
+    assert (result.sector, result.classification_source, result.classification_status) == (expected, source, "provisional")
+    assert (result.held_asset_id, result.classified_asset_id) == (listing.id, underlying.id)
+    if source == "provider_metadata":
+        assert result.evidence_source == "yahoo:GOOGL"
+        assert "stored projection: Technology" in result.conflict_reason
+
+
+def test_conflicting_stewarded_facts_are_unresolved(db):
+    from models.asset import AssetClassification
+
+    listing = _mint(db, "BH.BK")
+    for value in ("Healthcare", "Technology"):
+        db.add(AssetClassification(
+            asset_id=listing.id, dimension=ClassificationDimension.SECTOR.value, value=value,
+            source="steward:sector", as_of=datetime(2025, 1, 1), is_current=True,
+        ))
+    db.commit()
+    result = resolve_portfolio_sector(db, PortfolioItem(asset_id=listing.id, symbol="BH.BK", sector="Healthcare"))
+    assert result.classification_status == "unresolved"
+    assert "Conflicting" in result.conflict_reason
+
+
+def test_googl_expiry_uses_static_fallback_and_ignores_local_provider(db):
+    listing = _mint(db, "GOOGL01.BK")
+    underlying = _mint(db, "GOOGL", local=False)
+    registry_service.link_relationship(db, listing.id, underlying.id, RelationshipType.DEPOSITARY_RECEIPT_OF)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    registry_service.record_classification(
+        db, underlying.id, ClassificationDimension.SECTOR, "Industrial",
+        source="steward:sector", as_of=now + timedelta(days=1),
+    )
+    for symbol, sector, expires_at in (
+        ("GOOGL", "Communication Services", now - timedelta(seconds=1)),
+        ("GOOGL01.BK", "Financial", now + timedelta(hours=1)),
+    ):
+        db.add(MarketDataCache(
+            symbol=symbol, cache_type="fundamental", payload_json=json.dumps({"sector": sector}),
+            fetched_at=now - timedelta(hours=2), expires_at=expires_at,
+        ))
+    db.commit()
+    db.execute(text("PRAGMA query_only = ON"))
+    result = resolve_portfolio_sector(db, PortfolioItem(asset_id=listing.id, symbol="GOOGL01.BK", sector="Other"))
+    assert (result.sector, result.classification_source, result.classification_status) == (
+        "Technology", "static_taxonomy", "provisional",
+    )
+
+
+@pytest.mark.parametrize("future_link", [False, True])
+def test_googl_requires_applicable_underlying_even_with_listing_sector(db, future_link):
+    listing = _mint(db, "GOOGL01.BK")
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    registry_service.record_classification(
+        db, listing.id, ClassificationDimension.SECTOR, "Technology",
+        source="steward:sector", as_of=now - timedelta(days=1),
+    )
+    if future_link:
+        underlying = _mint(db, "GOOGL", local=False)
+        registry_service.link_relationship(
+            db, listing.id, underlying.id, RelationshipType.DEPOSITARY_RECEIPT_OF,
+            effective_date=now + timedelta(days=1),
+        )
+    db.commit()
+    result = resolve_portfolio_sector(db, PortfolioItem(asset_id=listing.id, symbol="GOOGL01.BK", sector="Technology"))
+    assert (result.sector, result.classification_status, result.classified_asset_id) == ("Other", "unresolved", None)

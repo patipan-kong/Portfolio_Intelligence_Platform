@@ -1,4 +1,5 @@
 export const SECTOR_COLORS: Record<string, string> = {
+  "Communication Services": "#7C3AED",
   Technology:    "#185FA5",
   Financial:     "#0F6E56",
   Energy:        "#BA7517",

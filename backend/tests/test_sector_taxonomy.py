@@ -85,7 +85,7 @@ def test_normalize_sector_buckets_known_substrings():
 
 def test_normalize_sector_unmapped_raw_string_returns_other():
     assert normalize_sector("Basic Materials") == "Other"
-    assert normalize_sector("Communication Services") == "Other"
+    assert normalize_sector("Communication Services") == "Communication Services"
     assert normalize_sector(None) == "Other"
     assert normalize_sector("") == "Other"
 

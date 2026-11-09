@@ -182,6 +182,7 @@ const POLICY_REVIEW_LABELS: Record<string, string> = {
   BUY_FUNDING_OR_TURNOVER: "Proposed buys were deferred under the cash or turnover limits.",
   BUY_POLICY: "Proposed buys were deferred under sector policy or the emergency buy freeze.",
   ESTIMATED_PRICES: "Market prices were missing for part of the evaluation.",
+  UNCERTAIN_SECTOR_CLASSIFICATION: "Sector concentration depends on provisional or unresolved classifications.",
   MISSING_POLICY_EVIDENCE: "Frozen policy evidence is incomplete.",
   NO_INVESTED_EQUITY_AFTER_SCHEDULE: "The schedule would leave no invested equity to evaluate.",
   RESIDUAL_POSITION_BREACH: "Position breaches remain.",
@@ -224,6 +225,14 @@ function ScheduledPolicyReview({ execution }: { execution?: ExecutionOptimizatio
   );
 }
 
+function TradeSector({ sector }: { sector?: ExecutionTrade["sectorClassification"] }) {
+  return sector ? (
+    <div className="text-xs text-gray-500" title={sector.conflict_reason ?? undefined}>
+      {sector.sector} · {sector.classification_status}
+    </div>
+  ) : null;
+}
+
 function TradeRow({ trade }: { trade: ExecutionTrade }) {
   const chg = trade.allocationChangePercent;
   const chgCls = chg > 0 ? "text-green-600" : chg < 0 ? "text-red-500" : "text-gray-400";
@@ -243,6 +252,7 @@ function TradeRow({ trade }: { trade: ExecutionTrade }) {
             {trade.symbol.replace(".BK", "")}
             {trade.symbol.endsWith(".BK") && <span className="text-xs text-gray-400 font-normal">.BK</span>}
           </Link>
+          <TradeSector sector={trade.sectorClassification} />
           {trade.isNew && (
             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-green-100 border border-green-300 text-green-700">
               New
@@ -291,6 +301,7 @@ function DeferredTradeRow({ trade }: { trade: ExecutionTrade }) {
         <span className="text-sm font-semibold text-gray-500">
           {trade.symbol.replace(".BK", "")}
         </span>
+        <TradeSector sector={trade.sectorClassification} />
         {trade.note && <p className="text-xs text-gray-400 mt-0.5">{trade.note}</p>}
       </div>
     </div>
