@@ -27,14 +27,18 @@ function SectorBadge({ item }: { item: PortfolioItem }) {
       >
         {sector}
       </span>
-      {classification_status === "provisional" && (
+      {(classification_status === "provisional" || classification_status === "unresolved" || item.sector_classification?.conflict_reason) && (
         <span
           className="text-[10px] text-gray-600"
-          title={classification_source === "stored_projection"
-            ? "Stored Portfolio sector. No authoritative Registry sector fact applied."
-            : "Portfolio taxonomy fallback. No authoritative Registry sector fact applied."}
+          title={item.sector_classification?.conflict_reason ?? (
+            classification_source === "provider_metadata" ? "Provisional sector from provider evidence."
+              : classification_source === "stored_projection" ? "Stored Portfolio sector. No authoritative Registry sector fact applied."
+              : classification_status === "unresolved" ? "Sector classification unresolved."
+              : "Portfolio taxonomy fallback. No authoritative Registry sector fact applied."
+          )}
         >
-          Provisional
+          {classification_status === "unresolved" ? "Unresolved" :
+            classification_status === "provisional" ? "Provisional" : "Sector conflict"}
         </span>
       )}
     </span>

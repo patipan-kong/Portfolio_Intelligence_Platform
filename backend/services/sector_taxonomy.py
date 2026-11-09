@@ -88,7 +88,7 @@ THAI_SECTOR_MAP: dict[str, str] = {
 # Canonical sector keys must match frontend/lib/sectors.ts SECTOR_COLORS
 _CANONICAL_SECTORS = frozenset({
     "Technology", "Financial", "Energy", "Healthcare",
-    "Consumer", "Industrial", "Real Estate", "Utilities", "Other",
+    "Consumer", "Industrial", "Real Estate", "Utilities", "Communication Services", "Other",
 })
 
 # ── DR Sector Master Map ──────────────────────────────────────────────────────
@@ -150,7 +150,7 @@ def normalize_sector(raw: str | None) -> str:
         return "Consumer"
     if "Industrial" in s:  # "Industrials" → "Industrial"
         return "Industrial"
-    # "Services", "Basic Materials", "Communication Services", or any unmapped → "Other"
+    # "Services", "Basic Materials", or any unmapped → "Other"
     return "Other"
 
 

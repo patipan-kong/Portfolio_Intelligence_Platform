@@ -22,7 +22,10 @@ import pytest
 import main
 import agents.optimizer as optimizer
 from agents.optimizer import _compute_portfolio_weights, _normalize_allocations
-from models.database import OptimizerHistory, Portfolio
+from models.database import OptimizerHistory, Portfolio, PortfolioItem
+from services import registry_service
+from services.asset_domain import ClassificationDimension, RelationshipType
+from tests.test_portfolio_sector_reporting import _mint
 from services.optimizer import execution_optimizer as eo
 from services.optimizer.nav_basis import compute_nav_basis
 from services.optimizer.policy_engine import (
@@ -325,7 +328,7 @@ def holdings_219_e2e(monkeypatch):
     # Sectors are spread out here so a (separately documented) equity-basis sector
     # breach cannot interfere with the single-position assertions.
     spread = {"AAPL01.BK": "Industrial", "BH.BK": "Healthcare", "GOOGL01.BK": "Consumer",
-              "MICRON01.BK": "Technology", "NVDA01.BK": "Financial", "GULF.BK": "Other"}
+              "MICRON01.BK": "Technology", "NVDA01.BK": "Financial", "GULF.BK": "Utilities"}
     for h in INPUTS["holdings"]:
         monkeypatch.setitem(H.SECTORS, h["symbol"], spread[h["symbol"]])
     holdings = {h["symbol"]: (h["shares"], True) for h in INPUTS["holdings"]}
@@ -345,6 +348,7 @@ def run_219(monkeypatch, *, flag, legacy_weights=False):
         monkeypatch.setenv(FLAG, "true")
     else:
         monkeypatch.delenv(FLAG, raising=False)
+    monkeypatch.setitem(main._DEFAULT_SECTOR_LIMITS, "Utilities", 25)
     holdings, quotes = holdings_219_e2e(monkeypatch)
     patch_pipeline(monkeypatch, FakeAI(micron_plan()), quotes=quotes)
     if legacy_weights:
@@ -357,6 +361,19 @@ def run_219(monkeypatch, *, flag, legacy_weights=False):
         monkeypatch.setattr(optimizer, "_compute_portfolio_weights", equity_only)
     db = session()
     portfolio = seed(db, holdings, cash=CASH_219)
+    parents = {"AAPL01.BK": "AAPL", "GOOGL01.BK": "GOOGL", "MICRON01.BK": "MU", "NVDA01.BK": "NVDA"}
+    for holding in db.query(PortfolioItem).filter_by(portfolio_id=portfolio.id):
+        if holding.symbol not in parents:
+            continue
+        listing = _mint(db, holding.symbol)
+        underlying = _mint(db, parents[holding.symbol], local=False)
+        registry_service.link_relationship(db, listing.id, underlying.id, RelationshipType.DEPOSITARY_RECEIPT_OF)
+        registry_service.record_classification(
+            db, underlying.id, ClassificationDimension.SECTOR, holding.sector,
+            source="steward:sector", as_of=datetime(2026, 1, 1),
+        )
+        holding.asset_id = listing.id
+    db.commit()
     return db, portfolio, run(db, portfolio)
 
 
@@ -432,12 +449,14 @@ def test_e2e_genuine_breach_with_intent_conflict_is_verified_but_still_advisory(
     assert (trade["reason"], trade["necessity"], trade["evidence_status"]) == (
         "POLICY_ENFORCEMENT", "NECESSARY", "VERIFIED_POLICY_REPAIR")
     [repair] = trade["policy_evidence"]
-    assert repair["current_breach"]["basis"] == "EQUITY"
-    assert repair["current_breach"]["sector"] == "Technology"
+    assert repair["current_breach"]["basis"] == "NAV"
+    assert repair["current_breach"]["symbol"] == "AAA"
+    assert "UNCERTAIN_SECTOR_CLASSIFICATION" in response["execution_optimization"]["policy_review_reasons"]
     review = position(response["advisory_intent_review"], "AAA")["review"]
     assert review["final"]["outcome"] == "CONFLICT" and review["requires_owner_decision"] is True
     assert response["advisory_intent_review"]["review"]["allocations_changed_by_review"] is False
-    assert 63000 < trade["executed_amount"] == trade["required_amount"] < trade["full_recommended_amount"]
+    assert trade["executed_amount"] == trade["required_amount"] == pytest.approx(63000, abs=0.01)
+    assert trade["required_amount"] < trade["full_recommended_amount"]
     assert trade["discretionary_amount"] == pytest.approx(trade["full_recommended_amount"] - trade["required_amount"])
 
     stored = json.loads(db.get(OptimizerHistory, response["history_id"]).result_json)

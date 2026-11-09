@@ -221,3 +221,65 @@ def test_only_supported_portion_of_funding_sale_is_required():
     assert evidence["with_required_portion"]["numerator"] == 50
     assert evidence["with_trade"]["numerator"] == 30
     assert "N" in plan.trade_effects
+
+def test_run_239_canonical_counterfactual_keeps_nav_repairs(replay_239):
+    from services.optimizer.constraint_resolver import resolve_constraints
+
+    resolved = resolve_constraints(
+        {"max_sector_pct": 80}, {"default": 30},
+        {"regime": "HIGH_VOLATILITY", "vol_z_score": 3.5}, None,
+    )
+    cap = resolved.sector_limits["Communication Services"]
+    assert (cap.user_pref, cap.effective, cap.binding_source) == (30, 21, "REGIME_POLICY")
+    assert resolved.global_sector_cap.effective == 25
+
+    policy = replay_239["active_policy"]
+    legacy = policy["concentration"]
+    holdings = []
+    for symbol, row in legacy["positions"].items():
+        sector = "Communication Services" if symbol == "GOOGL01.BK" else row["sector"]
+        holding_row = holding(symbol, sector, row["value"])
+        holding_row["sector_classification"] = {
+            "sector": sector, "classification_source": "provider_metadata",
+            "classification_status": "provisional",
+        }
+        holdings.append(holding_row)
+
+    policy["resolved_sector_limits"] = {**legacy["limits"], "Communication Services": cap.effective}
+    policy["sector_limit_sources"]["Communication Services"] = cap.binding_source
+    policy["concentration"] = freeze_concentration(holdings, [], policy, legacy["nav"])
+    attach_target_evaluation(replay_239)
+    canonical = policy["concentration"]
+    assert canonical["current"]["denominator"] == legacy["current"]["denominator"] == 500300
+    assert canonical["projected_target"]["denominator"] == legacy["projected_target"]["denominator"]
+    assert sectors(legacy["current"])["Other"]["numerator"] == 57000
+    assert sectors(canonical["current"])["Communication Services"]["numerator"] == 57000
+    assert canonical["current"]["occupied_cap_sum_pct"] == 95.5
+
+    plan = schedule(replay_239)
+    assert plan.scheduled_sector_evaluation["denominator"] == pytest.approx(440574.08)
+    assert "UNCERTAIN_SECTOR_CLASSIFICATION" in plan.policy_review_reasons
+    assert "INFEASIBLE_SECTOR_CAPS" in plan.policy_review_reasons
+    trades = {trade.symbol: trade for trade in plan.trades}
+    assert trades["BH.BK"].required_amount == 48012.96
+    assert trades["GULF.BK"].required_amount == 11712.96
+    nvda = trades["NVDA01.BK"]
+    assert nvda.required_amount == nvda.executed_amount == 0
+    assert nvda.discretionary_amount == 57979
+    assert nvda.execution_state == "DEFERRED"
+    scheduled_sales = {trade.symbol: trade.executed_amount for trade in plan.trades if trade.executed_amount}
+    assert scheduled_sales == {"BH.BK": 48012.96, "GULF.BK": 11712.96}
+    assert plan.scheduled_buys == {}
+    assert plan.scheduled_turnover_pct == pytest.approx(sum(scheduled_sales.values()) / legacy["nav"] * 100)
+    scheduled = sectors(plan.scheduled_sector_evaluation)
+    assert {key: row["breach_pp"] for key, row in scheduled.items() if row["breach_pp"]} == pytest.approx({
+        "Technology": 162000 / 440574.08 * 100 - 25,
+        "Healthcare": 110787.04 / 440574.08 * 100 - 24.5,
+        "Utilities": 110787.04 / 440574.08 * 100 - 25,
+    })
+    assert trades["GOOGL01.BK"].sector_classification["sector"] == "Communication Services"
+    assert {e["current_breach"]["basis"] for trade in plan.trades for e in trade.policy_evidence} == {"NAV"}
+
+    policy["scheduled_execution"] = plan.model_dump()
+    saved = json.loads(json.dumps(replay_239))
+    assert schedule(saved).model_dump() == plan.model_dump()

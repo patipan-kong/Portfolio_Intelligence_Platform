@@ -246,6 +246,7 @@ def _compact_p(items: list[dict]) -> list[dict]:
         {
             "symbol": i["symbol"],
             "sector": i.get("sector") or "Other",
+            "sector_classification": i.get("sector_classification"),
             "signal": i.get("signal", "HOLD"),
             "combined_score": i.get("combined_score", 0),
             "ta_score": i.get("ta_score", 0),
@@ -273,6 +274,7 @@ def _compact_w(items: list[dict]) -> list[dict]:
             "symbol": i["symbol"],
             "current_price": i.get("current_price"),
             "sector": i.get("sector") or "Other",
+            "sector_classification": i.get("sector_classification"),
             "signal": i.get("signal", "HOLD"),
             "combined_score": i.get("combined_score", 0),
             "ta_score": i.get("ta_score", 0),
@@ -304,7 +306,7 @@ def _build_score_context_map(pc: list[dict], wc: list[dict]) -> dict[str, dict]:
 
 # Reason UX (progressive disclosure) — deterministic fields attached to swap/allocation
 # rows by symbol lookup, mirroring the existing per_sym_exec execution-metadata join.
-_SCORE_CONTEXT_FIELDS = ("ta_score", "fa_score", "pe_ratio", "roe", "sector", "combined_score", "timing_score")
+_SCORE_CONTEXT_FIELDS = ("ta_score", "fa_score", "pe_ratio", "roe", "sector", "sector_classification", "combined_score", "timing_score")
 
 
 def _apply_score_context(row: dict, score_map: dict[str, dict] | None, symbol: str | None) -> None:
@@ -330,6 +332,7 @@ def _compress_for_layer1(pc: list[dict], wc: list[dict]) -> tuple[list[dict], li
         {
             "s": i["symbol"],
             "sec": i.get("sector", "Other"),
+            "sector_status": (i.get("sector_classification") or {}).get("classification_status"),
             "w": round(i.get("weight_pct", 0), 1),
             "mv": round(i.get("market_value", 0)),
             "fa": i.get("fa_score", 0),
@@ -347,6 +350,7 @@ def _compress_for_layer1(pc: list[dict], wc: list[dict]) -> tuple[list[dict], li
         {
             "s": w["symbol"],
             "sec": w.get("sector", "Other"),
+            "sector_status": (w.get("sector_classification") or {}).get("classification_status"),
             "fa": w.get("fa_score", 0),
             "ta": w.get("ta_score", 0),
             "sig": w.get("signal", "WATCH"),
@@ -1663,6 +1667,7 @@ def _run_single_shot_fallback(
 
     final_allocations = list(alloc_map.values())
     for a in final_allocations:
+        _apply_score_context(a, score_map, a["symbol"])
         a["allocation_change_percent"] = round(a["target_weight"] - a["current_weight"], 2)
         a["estimated_amount"] = round((a["allocation_change_percent"] / 100) * total_value)
     _observer_kw = {"observer": advisory} if advisory is not None else {}
@@ -2228,6 +2233,7 @@ def run_layered_optimizer(
 
         # Recompute change% and THB amounts in Python — never trust AI-reported monetary values
         for a in final_allocations:
+            _apply_score_context(a, score_map, a["symbol"])
             a["allocation_change_percent"] = round(a["target_weight"] - a["current_weight"], 2)
             a["estimated_amount"] = round((a["allocation_change_percent"] / 100) * total_value)
 

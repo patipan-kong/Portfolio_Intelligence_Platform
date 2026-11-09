@@ -3,7 +3,7 @@
 from math import ceil, floor
 
 from services.optimizer.sector_policy import (
-    EVIDENCE_VERSION, TOLERANCE, current_values, evaluate_exposure, evaluate_frozen_sectors,
+    EVIDENCE_VERSION, TOLERANCE, current_values, evaluate_exposure, evaluate_frozen_sectors, project_targets,
 )
 from services.optimizer.execution_optimizer import ExecutionOptimizationResult, OptimizedTrade
 
@@ -38,6 +38,16 @@ def _trade_row(row, symbol):
     return {**row, "evidence_id": f"{row['evidence_id']}:{symbol}"}
 
 
+def _uncertain_sector_membership(context, values):
+    if not context.get("sector_classification_version"):
+        return False
+    for symbol, value in values.items():
+        classification = context["positions"].get(symbol, {}).get("sector_classification") or {}
+        if value > 0 and classification.get("classification_status") != "authoritative":
+            return True
+    return False
+
+
 def _current_support(context, values):
     """Use only frozen, reproducible evidence. An estimate taints the denominator."""
     if context["current"]["estimated_symbols"]:
@@ -45,9 +55,12 @@ def _current_support(context, values):
     sector_rows = {row["sector"]: row for row in
                    evaluate_frozen_sectors(context, values, "CURRENT")["sectors"]}
     support = {}
+    uncertain_membership = _uncertain_sector_membership(context, values)
     for row in context.get("current_breaches", []):
         if row.get("basis") == "NAV":
             recomputed = _position_row(context, values, row.get("symbol"), "CURRENT")
+        elif uncertain_membership:
+            continue
         else:
             recomputed = sector_rows.get(row.get("sector"))
         if row == recomputed and row["breach_pp"] > 0:
@@ -171,6 +184,9 @@ def optimize_concentration_execution(payload, summary, cash):
     if any(symbol not in positions or positions[symbol]["price"] is None for symbol in buys):
         review.add("ESTIMATED_PRICES")
     current_breach_count = sum(row["breach_pp"] > 0 for row in context["current"]["sectors"])
+    if current_breach_count and _uncertain_sector_membership(context, values):
+        review.add("UNCERTAIN_SECTOR_CLASSIFICATION")
+        current_breach_count = 0
     current_breach_count += sum(_position_row(context, values, symbol, "CURRENT")["breach_pp"] > 0
                                 for symbol in values)
     if current_breach_count > len(support) and "ESTIMATED_PRICES" not in review:
@@ -224,6 +240,8 @@ def optimize_concentration_execution(payload, summary, cash):
                 continue
             for effect in effects.get(symbol, []):
                 before = effect["without_trade"]
+                if before["basis"] == "EQUITY" and _uncertain_sector_membership(context, scheduled):
+                    continue
                 subject = before.get("symbol") if before["basis"] == "NAV" else before["sector"]
                 row = support.get((before["basis"], subject))
                 if (row and effect["repair"] != "NO_MEASURABLE_REPAIR"
@@ -254,6 +272,13 @@ def optimize_concentration_execution(payload, summary, cash):
 
     if buys and not funded:
         review.add("BUY_POLICY" if rejected is not None else "BUY_FUNDING_OR_TURNOVER")
+    target = context.get("projected_target") or {}
+    if any(row["breach_pp"] for row in target.get("sectors", [])):
+        target_values = project_targets(positions, list(allocs.values()), context["target_nav"])
+        if _uncertain_sector_membership(context, target_values):
+            review.add("UNCERTAIN_SECTOR_CLASSIFICATION")
+    if any(row["breach_pp"] for row in evaluation["sectors"]) and _uncertain_sector_membership(context, scheduled):
+        review.add("UNCERTAIN_SECTOR_CLASSIFICATION")
     if evaluation["infeasible_within_occupied_sectors"]:
         review.add("INFEASIBLE_SECTOR_CAPS")
     if any(row["breach_pp"] for row in evaluation["sectors"]):
@@ -274,6 +299,7 @@ def optimize_concentration_execution(payload, summary, cash):
         sector = positions.get(symbol, {}).get("sector", "Other")
         trades.append(OptimizedTrade(
             symbol=symbol, action=allocs[symbol]["action"], sector=sector,
+            sector_classification=positions.get(symbol, {}).get("sector_classification"),
             reason="POLICY_ENFORCEMENT" if required else "PORTFOLIO_IMPROVEMENT",
             necessity="NECESSARY" if required else "DISCRETIONARY",
             execution_role="STANDALONE" if required else "FUNDING_SOURCE" if released else "NOT_NEEDED_TODAY",

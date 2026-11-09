@@ -107,7 +107,8 @@ def seed(db, holdings, cash, *, sell_signal=(), watch=("WWW",)):
     db.flush()
     for symbol, (shares, allow_swap) in holdings.items():
         db.add(PortfolioItem(workspace_id=ws, portfolio_id=portfolio.id, symbol=symbol, shares=shares,
-                             avg_cost=40.0, allow_swap=allow_swap, created_at=datetime(2026, 1, 5)))
+                             avg_cost=40.0, allow_swap=allow_swap, sector=SECTORS.get(symbol, "Other"),
+                             created_at=datetime(2026, 1, 5)))
     for symbol in watch:
         db.add(Watchlist(workspace_id=ws, symbol=symbol, sector="Other"))
     now = datetime.utcnow()
