@@ -27,6 +27,80 @@ def interpret(flags, evidence=None):
         "auditor_notes": "Universal 15% limit breached"}, evidence or contract())
 
 
+def test_sector_advisory_does_not_change_safer_choice_or_committee():
+    evidence = contract(action="BUY")
+    hard_flag = flag("EXECUTION_RESTRICTION", ref="execution:1")
+    baseline = interpret([hard_flag], evidence)
+    sector_ref = "PROJECTED_TARGET:effective_sector_limits:Technology"
+    evidence["sector_advisories"] = {sector_ref: {"basis": "EQUITY", "breach_pp": 40}}
+    sector_flag = {**flag("POLICY_BREACH", symbol="PORTFOLIO", ref=sector_ref), "severity": "CRITICAL"}
+    advisory = interpret([hard_flag, sector_flag], evidence)
+    assert advisory["claim_reviews"][0]["validation_status"] == "ADVISORY"
+    assert advisory["safer_choice"] == baseline["safer_choice"] == "neither"
+    assert advisory["risk_flags"] == baseline["risk_flags"]
+    assert _consensus_engine({}, {}, advisory) == _consensus_engine({}, {}, baseline)
+
+
+@pytest.mark.parametrize("model_choice", ["neither", "layer1", "layer2"])
+def test_unlinked_sector_policy_claim_cannot_change_verified_auditor_decision(model_choice):
+    evidence = {**contract(action="BUY"), "sector_advisories": {}}
+    hard_flag = flag("EXECUTION_RESTRICTION", ref="execution:1")
+    baseline = interpret([hard_flag], evidence)
+    unsupported = {
+        **flag("POLICY_BREACH", symbol="PORTFOLIO"), "severity": "CRITICAL",
+        "issue": "Technology exceeds its sector threshold",
+    }
+    advisory = validate_auditor_claims({"risk_flags": [hard_flag, unsupported], "safer_choice": model_choice}, evidence)
+    assert advisory["claim_reviews"][0]["validation_status"] == "UNSUPPORTED"
+    assert advisory["risk_flags"] == baseline["risk_flags"]
+    assert advisory["final_risk_level"] == baseline["final_risk_level"] == "high"
+    assert advisory["safer_choice"] == baseline["safer_choice"] == "neither"
+    l2 = {"target_allocations": [{"symbol": "MICRON01.BK", "action": "BUY"}]}
+    plain = _consensus_engine({}, l2, baseline, sector_advisory=True)
+    replay = _consensus_engine({}, l2, advisory, sector_advisory=True)
+    for key in ("consensus_type", "confidence", "risk_flag_count", "consensus_strength_score", "recommended"):
+        assert replay[key] == plain[key]
+
+
+@pytest.mark.parametrize("comment", [
+    "Technology exceeds the sector threshold",
+    {"basis": "SECTOR_ADVISORY", "issue": "Technology exceeds the sector threshold"},
+])
+def test_sector_only_challenger_disagreement_is_displayed_without_scoring(comment):
+    l1 = {"top_buys": ["N"]}
+    l2 = {"target_allocations": [{"symbol": "N", "action": "BUY"}]}
+    baseline = _consensus_engine(l1, l2, {}, sector_advisory=True)
+    advisory = _consensus_engine(l1, {**l2, "agrees_with_layer1": False, "disagreements": [comment]}, {}, sector_advisory=True)
+    assert advisory.pop("unscored_challenger_comments") == ["Technology exceeds the sector threshold"]
+    assert not baseline.pop("unscored_challenger_comments")
+    assert advisory == baseline
+    assert (advisory["consensus_type"], advisory["confidence"], advisory["consensus_strength_score"]) == (
+        "STRONG_CONSENSUS", "high", 91,
+    )
+
+
+@pytest.mark.parametrize("basis,issue", [
+    ("ACTION", "Hold N until the catalyst"),
+    ("SIZING", "Start with a smaller position in N"),
+    ("INVESTMENT_THESIS", "The forecast margin recovery in N is unlikely"),
+])
+def test_actionable_challenger_disagreement_still_affects_consensus(basis, issue):
+    l1 = {"top_buys": ["N"]}
+    l2 = {"target_allocations": [{"symbol": "N", "action": "BUY"}],
+          "disagreements": [{"basis": basis, "issue": issue}]}
+    result = _consensus_engine(l1, l2, {}, sector_advisory=True)
+    assert result["disagreement_reasons"] == [issue]
+    assert result["consensus_type"] == "STRATEGIC_CONFLICT"
+
+
+def test_explicit_buy_to_hold_disagreement_is_detected_without_model_agreement():
+    l1 = {"top_buys": ["N"]}
+    l2 = {"target_allocations": [{"symbol": "N", "action": "HOLD"}], "agrees_with_layer1": True}
+    result = _consensus_engine(l1, l2, {}, sector_advisory=True)
+    assert not result["challenger_agrees"]
+    assert result["consensus_type"] == "STRATEGIC_CONFLICT"
+
+
 def test_bh_has_no_execution_cap_or_universal_15_percent_limit():
     c = contract()
     assert all(e.get("symbol") != "BH.BK" for e in c["evidence"].values())

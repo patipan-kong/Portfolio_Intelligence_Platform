@@ -101,6 +101,8 @@ def compute_execution_analysis(
     violations: list[str] | None,
     recommendation_prices: dict[str, float],
     linked_transactions: list[dict],
+    *,
+    policy_provenance: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Plan-vs-actual execution analysis for one decision.
 
@@ -118,7 +120,7 @@ def compute_execution_analysis(
     from services.evaluation.plan_grader import derive_full_plan
     from services.optimizer.execution_optimizer import ROLE_FUNDING_SOURCE, STATE_DEFERRED
 
-    plan = derive_full_plan(target_allocations, cash_available, violations)
+    plan = derive_full_plan(target_allocations, cash_available, violations, policy_provenance)
     eo = plan["execution_optimization"]
 
     planned_by_symbol: dict[str, dict] = {}

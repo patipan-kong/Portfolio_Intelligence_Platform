@@ -193,7 +193,9 @@ def get_report_card(db: Session, portfolio_id: int, snapshot_id: int) -> dict[st
     from models.database import (
         RecommendationGrade, RecommendationSnapshot, UserExecutionDecision, Workspace,
     )
-    from services.evaluation.plan_grader import derive_full_plan, read_snapshot_plan_inputs
+    from services.evaluation.plan_grader import (
+        advisory_plan_provenance, derive_full_plan, read_snapshot_plan_inputs,
+    )
     from services.evaluation.verdict_composer import compose_report_card_verdict
 
     ws_row = db.query(Workspace).order_by(Workspace.id).first()
@@ -251,6 +253,14 @@ def get_report_card(db: Session, portfolio_id: int, snapshot_id: int) -> dict[st
             "portfolio_assessment": inputs["portfolio_assessment"],
             "no_action_summary": inputs["no_action_summary"],
         }
+        if provenance := advisory_plan_provenance(inputs):
+            concentration = provenance.get("concentration") or {}
+            plan_section["sector_advisory"] = {
+                "current": concentration.get("current"),
+                "projected_target": concentration.get("projected_target"),
+                "scheduled": eo.scheduled_sector_evaluation,
+                "alternatives": provenance.get("sector_alternatives") or [],
+            }
 
     decision_row = (
         db.query(UserExecutionDecision)
@@ -274,6 +284,7 @@ def get_report_card(db: Session, portfolio_id: int, snapshot_id: int) -> dict[st
                 inputs["target_allocations"], inputs["cash_available"], inputs["violations"],
                 _recommendation_prices(snap),
                 _linked_transactions(db, decision_row, known_symbols=plan_symbols),
+                policy_provenance=advisory_plan_provenance(inputs),
             )
         else:
             # Plan reconstruction unavailable (legacy/malformed snapshot) —

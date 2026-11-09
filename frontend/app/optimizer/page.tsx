@@ -19,6 +19,7 @@ import ActivePolicyEnvelopeCard from "@/components/ActivePolicyEnvelopeCard";
 import AttributionPanel from "@/components/AttributionPanel";
 import OperationsTimeline from "@/components/operations-center/quant/OperationsTimeline";
 import ExecutionPlanCard from "@/components/optimizer/ExecutionPlanCard";
+import { sectorAdvisoryFor } from "@/components/optimizer/SectorConcentrationAdvisory";
 import OptimizerDecisionSummary from "@/components/optimizer/OptimizerDecisionSummary";
 import { assessment } from "@/lib/optimizerPresentation";
 import AdvisoryIntentReviewCard from "@/components/optimizer/AdvisoryIntentReviewCard";
@@ -1067,6 +1068,14 @@ function Layer2Section({
           </ul>
         </div>
       )}
+      {!!layer.unscored_comments?.length && (
+        <div className="text-xs text-gray-600">
+          <p className="font-medium">Unscored Challenger commentary</p>
+          <ul className="list-disc pl-4">
+            {layer.unscored_comments.map((comment, i) => <li key={i}>{comment}</li>)}
+          </ul>
+        </div>
+      )}
 
       {layer.error ? (
         <p className="text-xs text-red-500">{layer.error}</p>
@@ -1966,6 +1975,9 @@ function ResultPanel({ result, loading, profiles, portfolioId, onForceRebalance,
             allocations={result.target_allocations}
             historical={!result.layer3_result?.claim_validation_version}
           />
+          {sectorAdvisoryFor(result) && <p className="text-xs text-gray-600">
+            Committee confidence describes agreement on the investment decision. Sector concentration is reviewed separately in the Execution Plan.
+          </p>}
           <CollapsibleSection
             title="Full Consensus Detail"
             summary="Alignment scores, strength matrix, and committee resolution"
@@ -2051,10 +2063,10 @@ function ResultPanel({ result, loading, profiles, portfolioId, onForceRebalance,
         )}
 
         {/* Active Policy Envelope */}
-        {result.active_policy ? (
+        {result.active_policy && !result.active_policy.hard_policy_unavailable ? (
           <CollapsibleSection
             title="Active Policy Envelope"
-            summary="🟢 Active — sector limits and position constraints"
+            summary={sectorAdvisoryFor(result) ? "Active hard controls and advisory sector thresholds" : "🟢 Active — sector limits and position constraints"}
           >
             <ActivePolicyEnvelopeCard
               policy={result.active_policy as ActivePolicy}
@@ -2071,7 +2083,7 @@ function ResultPanel({ result, loading, profiles, portfolioId, onForceRebalance,
         ) : null}
 
         {/* Sector Impact */}
-        {result.sector_warnings && result.sector_warnings.length > 0 && (
+        {!sectorAdvisoryFor(result) && result.sector_warnings && result.sector_warnings.length > 0 && (
           <CollapsibleSection
             title="Sector Impact"
             summary={sectorImpactSummary(result.sector_warnings)}

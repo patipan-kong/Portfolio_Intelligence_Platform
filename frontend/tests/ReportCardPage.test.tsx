@@ -74,6 +74,22 @@ function planWithTrade(trade: Record<string, unknown>) {
 }
 
 describe("Report Card — execution provenance of Required trades", () => {
+  test("renders frozen advisory alternatives separately from Required trades and grade", async () => {
+    getRecommendationReportCard.mockResolvedValue(reportCard({
+      plan: {
+        status: "ok", grade: { score: 62.13, detail: null },
+        sector_advisory: {
+          alternatives: [{ symbol: "NVDA01.BK", action: "REDUCE", estimated_amount: 57979, reason: "Reduce concentration" }],
+        },
+      },
+    }));
+    render(<ReportCardPage />);
+    expect(await screen.findByRole("region", { name: "Sector concentration advisory" })).toBeInTheDocument();
+    expect(screen.getByText(/Optional sector alternatives/)).toBeInTheDocument();
+    expect(screen.getByText("62/100")).toBeInTheDocument();
+    expect(screen.queryByTestId("report-required-tag")).not.toBeInTheDocument();
+  });
+
   test("history 219: the recorded Required trade is shown as recorded and qualified, never plain Required", async () => {
     getRecommendationReportCard.mockResolvedValue(planWithTrade({
       evidence_status: "LEGACY_RECORDED_UNVERIFIED",

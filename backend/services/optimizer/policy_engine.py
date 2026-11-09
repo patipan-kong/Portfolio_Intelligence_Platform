@@ -29,7 +29,7 @@ import logging
 import math
 from dataclasses import dataclass, field
 from services.optimizer.sector_policy import (
-    current_values, evaluate_sectors, freeze_positions, project_targets,
+    SECTOR_POLICY_ADVISORY, current_values, evaluate_sectors, freeze_positions, project_targets,
 )
 
 from typing import TYPE_CHECKING, Any
@@ -141,6 +141,7 @@ class PolicyEnvelope:
     violation_evidence: list[dict] = field(default_factory=list)
     sector_limit_sources: dict[str, str] = field(default_factory=dict)
     position_limit_source: str = "POLICY_ENGINE"
+    sector_policy_mode: str | None = None
 
 
 # ─── Emergency detection ──────────────────────────────────────────────────────
@@ -379,6 +380,7 @@ def _detect_violations(
     portfolio_data: list[dict],
     hard: HardConstraints,
     resolved_sector_limits: dict[str, float] | None = None,
+    *, include_sectors: bool = True,
 ) -> list[str]:
     """Check current portfolio holdings for existing policy violations."""
     violations: list[str] = []
@@ -406,7 +408,9 @@ def _detect_violations(
                 f"POLICY_VIOLATION: {sym} has a SELL signal but remains held at {w:.1f}%"
             )
 
-    for row in _current_sectors(portfolio_data, hard.max_sector_pct, resolved_sector_limits):
+    sector_rows = (_current_sectors(portfolio_data, hard.max_sector_pct, resolved_sector_limits)
+                   if include_sectors else [])
+    for row in sector_rows:
         if row["breach_pp"]:
             violations.append(
                 f"SECTOR_BREACH: {row['sector']} at {row['observed_pct']:.1f}% exceeds "
@@ -423,6 +427,7 @@ def compute_concentration_breach_severity(
     max_position_pct: float,
     max_sector_pct: float,
     resolved_sector_limits: dict[str, float] | None = None,
+    *, include_sectors: bool = True,
 ) -> tuple[str, str]:
     """Assess Tier 1 concentration breach severity from current portfolio holdings.
 
@@ -436,10 +441,12 @@ def compute_concentration_breach_severity(
         if w > max_position_pct:
             pos_breaches.append((sym, w, w / max_position_pct))
 
+    sector_rows = (_current_sectors(portfolio_data, max_sector_pct, resolved_sector_limits)
+                   if include_sectors else [])
     sector_breaches = [
         (row["sector"], row["observed_pct"],
          row["observed_pct"] / row["limit_pct"] if row["limit_pct"] else float("inf"))
-        for row in _current_sectors(portfolio_data, max_sector_pct, resolved_sector_limits)
+        for row in sector_rows
         if row["breach_pp"]
     ]
 
@@ -515,6 +522,7 @@ def compute_policy(
     consensus: dict | None = None,
     max_sector_pct: int = 40,
     effective_envelope: "EffectiveEnvelope | None" = None,
+    *, sector_policy_mode: str | None = None,
 ) -> PolicyEnvelope:
     """Build a PolicyEnvelope from persona + regime + portfolio risk + confidence state.
 
@@ -653,7 +661,10 @@ def compute_policy(
     if emergency:
         rebal_aggr = min(rebal_aggr, 0.12)
 
-    violations = _detect_violations(portfolio_data, hard, resolved_sector_limits or None)
+    violations = _detect_violations(
+        portfolio_data, hard, resolved_sector_limits or None,
+        include_sectors=sector_policy_mode != SECTOR_POLICY_ADVISORY,
+    )
     violation_evidence = detect_concentration_evidence(portfolio_data, hard)
     narrative  = _narrative(bias, strictness, hard, tilts, emergency, emergency_reason,
                             disc, persona_label, regime)
@@ -682,6 +693,7 @@ def compute_policy(
         violation_evidence       = violation_evidence,
         sector_limit_sources     = sector_limit_sources,
         position_limit_source    = position_limit_source,
+        sector_policy_mode       = sector_policy_mode,
     )
 
 
@@ -719,6 +731,11 @@ def build_policy_prompt_block(envelope: PolicyEnvelope) -> str:
     else:
         sector_block = f"\nMAX_SECTOR_LIMIT: {hard.max_sector_pct:g}% of invested equity market value per sector\n"
 
+    sector_advisory = envelope.sector_policy_mode == SECTOR_POLICY_ADVISORY
+    sector_priority = "" if sector_advisory else ", sector concentration"
+    if sector_advisory:
+        sector_block = "\nSector concentration is reviewed separately as advisory exposure.\n"
+
     return f"""[ACTIVE OPTIMIZATION POLICY — MANDATORY GOVERNANCE]{emergency_block}
 DEPLOYMENT_MODE:        {envelope.deployment_bias}
 STRICTNESS_LEVEL:       {envelope.strictness_level}
@@ -730,7 +747,7 @@ MAX_NEW_POSITIONS:      {hard.max_new_positions} new stock(s) maximum
 SUPPRESS_SPECULATIVE:   {suppress_note}
 
 CONSTRAINT PRIORITY HIERARCHY (Tier 1 > Tier 2 > Tier 3):
-  Tier 1 — CRITICAL (enforce first): Single position limits, sector concentration, catastrophic exposure
+  Tier 1 — CRITICAL (enforce first): Single position limits{sector_priority}, catastrophic exposure
   Tier 2 — STRATEGIC (enforce second): Cash mandates, regime alignment, beta ceilings
   Tier 3 — EFFICIENCY (flex when needed): Turnover limits, transaction friction
   Rule: Recommend measurable Tier 1 repairs within the effective turnover cap. Report residual or infeasible sector breaches for human review. Volatility alone does not require a sale.
@@ -819,7 +836,8 @@ def compute_policy_alignment_score(
     conc_score = max(0.0, 100.0 - conc_violations * 25)
 
     sector_violations = 0
-    if frozen_positions is not None:
+    sector_advisory = envelope.sector_policy_mode == SECTOR_POLICY_ADVISORY
+    if frozen_positions is not None and not sector_advisory:
         projected = project_targets(frozen_positions, final_allocations, total_value)
         evaluation = evaluate_sectors(
             frozen_positions, projected, envelope.resolved_sector_limits,
@@ -902,6 +920,9 @@ def compute_policy_alignment_score(
     # ── Aggregate scores ──────────────────────────────────────────────────────
     policy_alignment  = cash_score * 0.35 + conc_score * 0.30 + sector_score * 0.20 + aggr_score * 0.15
     regime_compliance = regime_mismatch_score * 0.55 + conc_score * 0.30 + sector_score * 0.15
+    if sector_advisory:
+        policy_alignment = (cash_score * 0.35 + conc_score * 0.30 + aggr_score * 0.15) / 0.80
+        regime_compliance = (regime_mismatch_score * 0.55 + conc_score * 0.30) / 0.85
     risk_governance   = policy_alignment * 0.60 + regime_compliance * 0.40
 
     return (
@@ -943,5 +964,6 @@ def envelope_to_dict(env: PolicyEnvelope) -> dict:
         "sector_limit_sources":    env.sector_limit_sources,
         "position_limit_source":   env.position_limit_source,
         "violation_evidence":       env.violation_evidence,
+        **({"sector_policy_mode": env.sector_policy_mode} if env.sector_policy_mode else {}),
         "prompt_block":             build_policy_prompt_block(env),
     }

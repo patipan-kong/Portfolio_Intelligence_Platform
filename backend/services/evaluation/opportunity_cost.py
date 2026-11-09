@@ -69,7 +69,9 @@ def _divergence_type(dec: Any) -> str | None:
 
 def _system_deferrals(db: Session, ws: int, portfolio_id: int, cutoff: datetime) -> list[dict[str, Any]]:
     from models.database import RecommendationSnapshot
-    from services.evaluation.plan_grader import derive_full_plan, read_snapshot_plan_inputs
+    from services.evaluation.plan_grader import (
+        advisory_plan_provenance, derive_full_plan, read_snapshot_plan_inputs,
+    )
     from services.optimizer.execution_optimizer import STATE_DEFERRED
 
     snaps = (
@@ -88,7 +90,8 @@ def _system_deferrals(db: Session, ws: int, portfolio_id: int, cutoff: datetime)
         inputs = read_snapshot_plan_inputs(db, snap)
         if inputs is None:
             continue
-        plan = derive_full_plan(inputs["target_allocations"], inputs["cash_available"], inputs["violations"])
+        plan = derive_full_plan(inputs["target_allocations"], inputs["cash_available"], inputs["violations"],
+                                advisory_plan_provenance(inputs))
         for t in plan["execution_optimization"].trades:
             if t.execution_state != STATE_DEFERRED:
                 continue

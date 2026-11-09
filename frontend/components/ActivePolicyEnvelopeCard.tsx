@@ -348,7 +348,7 @@ export default function ActivePolicyEnvelopeCard({
       <div className="grid grid-cols-3 gap-3 mb-3 p-2.5 bg-gray-50 rounded-lg">
         <Stat label="Cash Floor" value={`${hc.min_cash_pct.toFixed(0)}%`} note="minimum undeployed" />
         <Stat label="Max Position" value={`${hc.max_single_position_pct.toFixed(0)}%`} note="single stock" />
-        <Stat label="Max Sector" value={`${hc.max_sector_pct.toFixed(0)}%`} note="concentration" />
+        <Stat label={policy.sector_policy_mode ? "Advisory sector threshold" : "Max Sector"} value={`${hc.max_sector_pct.toFixed(0)}%`} note="concentration" />
         <Stat label="Turnover Cap" value={`${hc.max_turnover_pct.toFixed(0)}%`} note="per rebalance" />
         <Stat label="New Positions" value={hc.max_new_positions} note="max this run" />
         <Stat

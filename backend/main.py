@@ -4791,6 +4791,7 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
         _log.warning("analyze_optimizer: constraint_resolver failed — continuing without: %s", _cre)
 
     # ── Phase 3B.4 — Build unified Policy Envelope ────────────────────────────
+    from services.optimizer.sector_policy import SECTOR_POLICY_ADVISORY
     policy_ctx: dict | None = None
     try:
         from services.optimizer.policy_engine import compute_policy, envelope_to_dict as _env_to_dict
@@ -4801,6 +4802,7 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
             persona_ctx, regime_ctx, pd_with_weights,
             consensus=None, max_sector_pct=max_sector_pct,
             effective_envelope=effective_env,
+            sector_policy_mode=SECTOR_POLICY_ADVISORY,
         )
         policy_ctx = _env_to_dict(_policy_env)
     except Exception as _pe:
@@ -4836,6 +4838,7 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
             execution_ctx,
             on_stage=partial(mark_stage, body.portfolio_id),
             enforce_effective_policy_in_fallback=goal_constraint_candidate is not None,
+            sector_policy_mode=SECTOR_POLICY_ADVISORY,
             **({"advisory": advisory_run} if advisory_run is not None else {}),
         )
     except Exception as _optimizer_exc:
