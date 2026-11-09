@@ -176,6 +176,14 @@ def read_snapshot_plan_inputs(db: Session, snap: Any) -> dict[str, Any] | None:
         except Exception:
             pass
 
+    stored_policy = (stored.get("active_policy") or {}) if isinstance(stored, dict) else {}
+    from services.optimizer.sector_policy import sector_caps_are_advisory
+
+    if sector_caps_are_advisory(stored_policy):
+        # The run and snapshot normally contain the same frozen policy. Use the
+        # run as a fallback if the snapshot lacks its captured fields.
+        active_policy = {**stored_policy, **active_policy}
+
     return {
         "target_allocations": target_allocations,
         "violations": active_policy.get("violations") or [],
@@ -189,6 +197,9 @@ def read_snapshot_plan_inputs(db: Session, snap: Any) -> dict[str, Any] | None:
             "violation_evidence": active_policy.get("violation_evidence"),
             **{key: active_policy[key] for key in ("concentration", "scheduled_execution")
                if key in active_policy},
+            **{key: active_policy[key] for key in ("sector_policy_mode", "sector_alternatives",
+                                                "scheduled_action_summary", "hard_policy_unavailable", "emergency_override")
+               if sector_caps_are_advisory(active_policy) and key in active_policy},
             **{key: stored[key] for key in ("execution_policy_version", "scheduled_execution")
                if isinstance(stored, dict) and key in stored},
             "hard_constraints": active_policy.get("hard_constraints"),
@@ -197,6 +208,14 @@ def read_snapshot_plan_inputs(db: Session, snap: Any) -> dict[str, Any] | None:
             "cash_balance": run_cash_balance,
         },
     }
+
+
+def advisory_plan_provenance(inputs: dict[str, Any]) -> dict[str, Any] | None:
+    """Use the frozen plan for new consumers while preserving legacy derivations."""
+    from services.optimizer.sector_policy import sector_caps_are_advisory
+
+    provenance = inputs.get("policy_provenance")
+    return provenance if sector_caps_are_advisory(provenance) else None
 
 
 def derive_full_plan(
@@ -225,7 +244,8 @@ def derive_full_plan(
             "hard_constraints": policy_provenance.get("hard_constraints") or {
                 "max_single_position_pct": policy_provenance.get("max_single_position_pct"),
             },
-            **{key: policy_provenance[key] for key in ("concentration", "scheduled_execution")
+            **{key: policy_provenance[key] for key in ("concentration", "scheduled_execution", "sector_policy_mode",
+                                                     "hard_policy_unavailable", "emergency_override")
                if key in policy_provenance},
         }
         if policy_provenance.get("violation_evidence") is not None:
@@ -238,7 +258,7 @@ def derive_full_plan(
                 "cash_balance": policy_provenance.get("cash_balance"),
                 "execution_policy_version": policy_provenance.get("execution_policy_version"),
             },
-            action_summary,
+            policy_provenance.get("scheduled_action_summary", action_summary),
             cash_available=cash_available,
         )
     else:
@@ -400,7 +420,8 @@ def grade_pending_plans(db: Session, portfolio_id: int | None = None) -> dict[st
                 continue
 
             provenance = inputs["policy_provenance"]
-            versioned_plan = "execution_policy_version" in provenance or "concentration" in provenance
+            versioned_plan = any(key in provenance for key in
+                                 ("execution_policy_version", "concentration", "sector_policy_mode"))
             result = compute_plan_grade(
                 inputs["target_allocations"], inputs["cash_available"],
                 inputs["violations"], inputs["violation_details"],

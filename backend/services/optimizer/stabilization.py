@@ -28,6 +28,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from services.optimizer.risk_flags import investment_risk_flags
+from services.optimizer.sector_policy import sector_caps_are_advisory
 
 log = logging.getLogger(__name__)
 
@@ -204,20 +205,24 @@ def detect_cooldown_overrides(
     if (policy_context or {}).get("emergency_override"):
         overrides.append(OVERRIDE_DRAWDOWN_EVENT)
 
+    sector_advisory = sector_caps_are_advisory(policy_context)
+
     # Active policy violations
     violations: list[str] = (policy_context or {}).get("violations", [])
     for v in violations:
         if "CONCENTRATION_BREACH" in v or "SINGLE_POSITION" in v:
             if OVERRIDE_POSITION_BREACH not in overrides:
                 overrides.append(OVERRIDE_POSITION_BREACH)
-        if "SECTOR_BREACH" in v:
+        if not sector_advisory and "SECTOR_BREACH" in v:
             if OVERRIDE_SECTOR_BREACH not in overrides:
                 overrides.append(OVERRIDE_SECTOR_BREACH)
 
     # Risk / governance flags
     gov_flags: list[str] = (policy_context or {}).get("governance_flags", [])
     for f in gov_flags:
-        if any(kw in f for kw in ("POLICY_VIOLATION", "CONCENTRATION_BREACH", "SECTOR_LIMIT")):
+        if any(kw in f for kw in ("POLICY_VIOLATION", "CONCENTRATION_BREACH")) or (
+            not sector_advisory and "SECTOR_LIMIT" in f
+        ):
             if OVERRIDE_RISK_VIOLATION not in overrides:
                 overrides.append(OVERRIDE_RISK_VIOLATION)
 
@@ -433,7 +438,10 @@ def apply_stabilization(
     overrides_active = cooldown.override_reasons.copy()
 
     has_sell            = any((a.get("action") or "").upper() == "SELL" for a in target_allocations)
-    has_violations      = bool((policy_context or {}).get("violations"))
+    has_violations      = any(
+        not sector_caps_are_advisory(policy_context) or not violation.startswith("SECTOR_BREACH:")
+        for violation in ((policy_context or {}).get("violations") or [])
+    )
     has_risk_flags      = any(
         (f.get("severity") or "").upper() in ("HIGH", "CRITICAL")
         for f in investment_risk_flags((result.get("layer3_result") or {}).get("risk_flags", []) or [])

@@ -1736,6 +1736,7 @@ export interface Layer1Result {
 export interface Layer2Result {
   agrees_with_layer1: boolean;
   disagreements?: string[];
+  unscored_comments?: string[];
   target_allocations?: TargetAllocation[];
   target_cash_weight?: number;
   portfolio_turnover_percent?: number;
@@ -1928,6 +1929,10 @@ export interface PolicyHardConstraints {
 }
 
 export interface ActivePolicy {
+  sector_policy_mode?: string;
+  hard_policy_unavailable?: boolean;
+  concentration?: Pick<SectorAdvisoryEvidence, "current" | "projected_target">;
+  sector_alternatives?: SectorAdvisoryEvidence["alternatives"];
   hard_constraints: PolicyHardConstraints;
   soft_factor_tilts: Record<string, number>;
   deployment_bias: DeploymentBias;
@@ -2175,7 +2180,8 @@ export interface OptimizerResult {
 export type TradeReason =
   | "MANDATORY_RISK_REDUCTION"
   | "POLICY_ENFORCEMENT"
-  | "PORTFOLIO_IMPROVEMENT";
+  | "PORTFOLIO_IMPROVEMENT"
+  | "INVESTMENT_THESIS";
 
 export type ExecutionRole = "STANDALONE" | "FUNDING_SOURCE" | "NOT_NEEDED_TODAY";
 
@@ -2227,6 +2233,23 @@ export interface PolicyExposureEvidence {
   binding_source: string;
   breach_pp: number;
   breach_amount: number;
+  members?: Array<{ symbol: string } & Partial<SectorClassification>>;
+}
+
+export interface SectorExposureEvaluation {
+  denominator: number;
+  applicable: boolean;
+  sectors: PolicyExposureEvidence[];
+  occupied_cap_sum_pct: number | null;
+  infeasible_within_occupied_sectors: boolean;
+  estimated_symbols: string[];
+}
+
+export interface SectorAdvisoryEvidence {
+  current?: SectorExposureEvaluation | null;
+  projected_target?: SectorExposureEvaluation | null;
+  scheduled?: SectorExposureEvaluation | null;
+  alternatives?: Array<{ symbol: string; action: "SELL" | "REDUCE"; reason: string; estimated_amount: number }>;
 }
 
 export interface PolicyRepairEvidence {
@@ -2244,14 +2267,7 @@ export interface ExecutionOptimizationResult {
   trades: OptimizedTrade[];
   idle_cash_after: number;
   scheduled_buys?: Record<string, number> | null;
-  scheduled_sector_evaluation?: {
-    denominator: number;
-    applicable: boolean;
-    sectors: PolicyExposureEvidence[];
-    occupied_cap_sum_pct: number | null;
-    infeasible_within_occupied_sectors: boolean;
-    estimated_symbols: string[];
-  } | null;
+  scheduled_sector_evaluation?: SectorExposureEvaluation | null;
   scheduled_position_breaches?: PolicyExposureEvidence[] | null;
   scheduled_turnover_pct?: number | null;
   effective_turnover_cap_pct?: number | null;
@@ -4660,6 +4676,7 @@ export const getRecommendationsLedger = (portfolioId: number, limit = 50, offset
   );
 
 export interface ReportCardPlanSection {
+  sector_advisory?: SectorAdvisoryEvidence;
   status: "ok" | "unavailable";
   reason?: string;
   buy_trades?: Array<{ symbol: string; action: string; planned_amount: number }>;

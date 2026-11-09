@@ -4,7 +4,7 @@ import ExecutionPlanCard from "@/components/optimizer/ExecutionPlanCard";
 import type {
   OptimizerResult, ActionSummary, ActionSummaryEntry, TargetAllocation,
   OptimizedTrade, ExecutionOptimizationResult,
-  StabilizationMeta,
+  StabilizationMeta, ActivePolicy, SectorExposureEvaluation,
 } from "@/lib/api";
 
 // Decision Explainability Polish — Slice 2 (A): ExecutionPlanCard already
@@ -64,6 +64,37 @@ function baseResult(overrides: Partial<OptimizerResult> = {}): OptimizerResult {
     ...overrides,
   };
 }
+
+test("advisory sector residual and optional trim are visible with no scheduled trades", () => {
+  const exposure: SectorExposureEvaluation = {
+    denominator: 100_000, applicable: true, occupied_cap_sum_pct: 25,
+    infeasible_within_occupied_sectors: true, estimated_symbols: [],
+    sectors: [{
+      evidence_id: "technology", basis: "EQUITY", sector: "Technology",
+      numerator: 100_000, denominator: 100_000, observed_pct: 100, limit_pct: 25,
+      binding_source: "USER_PREFERENCE", breach_pp: 75, breach_amount: 75_000,
+      members: [{ symbol: "NVDA01.BK", classification_status: "provisional", classification_source: "provider_metadata" }],
+    }],
+  };
+  render(<ExecutionPlanCard result={baseResult({
+    action_summary: actionSummary(),
+    active_policy: {
+      sector_policy_mode: "wealth.optimizer-sector-advisory.v1",
+      concentration: { current: exposure, projected_target: exposure },
+      sector_alternatives: [{ symbol: "NVDA01.BK", action: "REDUCE", reason: "Review exposure", estimated_amount: 30_000 }],
+    } as ActivePolicy,
+    execution_optimization: {
+      ...executionOptimization([]), scheduled_buys: {}, scheduled_sector_evaluation: exposure,
+      policy_review_reasons: ["RESIDUAL_SECTOR_BREACH"],
+    },
+  })} />);
+  expect(screen.getByText("No changes are scheduled for execution today")).toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "Sector concentration advisory" })).toBeInTheDocument();
+  expect(screen.getByText(/75.00 pp residual above threshold/)).toBeInTheDocument();
+  expect(screen.getByText(/Optional sector alternatives/)).toBeInTheDocument();
+  expect(screen.getAllByText(/provisional.*provider metadata/)).toHaveLength(3);
+  expect(screen.queryByText("Human Review")).not.toBeInTheDocument();
+});
 
 describe("ExecutionPlanCard structured no-trade causes", () => {
   function noTrades(within: boolean): OptimizerResult {

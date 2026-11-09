@@ -4,6 +4,7 @@ from math import ceil, floor
 
 from services.optimizer.sector_policy import (
     EVIDENCE_VERSION, TOLERANCE, current_values, evaluate_exposure, evaluate_frozen_sectors, project_targets,
+    sector_caps_are_advisory,
 )
 from services.optimizer.execution_optimizer import ExecutionOptimizationResult, OptimizedTrade
 
@@ -48,12 +49,13 @@ def _uncertain_sector_membership(context, values):
     return False
 
 
-def _current_support(context, values):
+def _current_support(context, values, *, sector_advisory=False):
     """Use only frozen, reproducible evidence. An estimate taints the denominator."""
     if context["current"]["estimated_symbols"]:
         return {}
-    sector_rows = {row["sector"]: row for row in
-                   evaluate_frozen_sectors(context, values, "CURRENT")["sectors"]}
+    sector_rows = {} if sector_advisory else {
+        row["sector"]: row for row in evaluate_frozen_sectors(context, values, "CURRENT")["sectors"]
+    }
     support = {}
     uncertain_membership = _uncertain_sector_membership(context, values)
     for row in context.get("current_breaches", []):
@@ -141,7 +143,8 @@ def _schedule(repairs, sales, buys, spendable_cash, budget):
 def optimize_concentration_execution(payload, summary, cash):
     policy = payload.get("active_policy") or {}
     context = policy.get("concentration") or {}
-    if context.get("evidence_version") != EVIDENCE_VERSION:
+    sector_advisory = sector_caps_are_advisory(policy)
+    if context.get("evidence_version") != EVIDENCE_VERSION or policy.get("hard_policy_unavailable"):
         deferred = [
             OptimizedTrade(
                 symbol=row["symbol"], action=row["action"], reason="PORTFOLIO_IMPROVEMENT",
@@ -156,6 +159,9 @@ def optimize_concentration_execution(payload, summary, cash):
             cash_available=cash, total_buy_deployment=0, funding_gap=0, trades=deferred,
             idle_cash_after=cash, policy_review_reasons=["MISSING_POLICY_EVIDENCE"],
             scheduled_buys={},
+            scheduled_sector_evaluation=(evaluate_frozen_sectors(
+                context, current_values(context["positions"]), "PROJECTED_SCHEDULED",
+            ) if sector_advisory and context.get("positions") is not None else None),
         )
     positions = context["positions"]
     values = current_values(positions)
@@ -174,7 +180,7 @@ def optimize_concentration_execution(payload, summary, cash):
             elif amount:
                 buys[symbol] = _floor_money(amount)
 
-    support = _current_support(context, values)
+    support = _current_support(context, values, sector_advisory=sector_advisory)
     budget = _floor_money(context["nav"] * context["turnover_cap"] / 100)
     cash_floor = (policy.get("hard_constraints") or {}).get("min_cash_pct", 0)
     spendable_cash = cash - context["nav"] * cash_floor / 100
@@ -186,6 +192,8 @@ def optimize_concentration_execution(payload, summary, cash):
     current_breach_count = sum(row["breach_pp"] > 0 for row in context["current"]["sectors"])
     if current_breach_count and _uncertain_sector_membership(context, values):
         review.add("UNCERTAIN_SECTOR_CLASSIFICATION")
+        current_breach_count = 0
+    if sector_advisory:
         current_breach_count = 0
     current_breach_count += sum(_position_row(context, values, symbol, "CURRENT")["breach_pp"] > 0
                                 for symbol in values)
@@ -200,26 +208,40 @@ def optimize_concentration_execution(payload, summary, cash):
         amount = min(sales[symbol], _floor_money(_supported_amount(row))) if row else 0
         repairs[symbol] = min(amount, max(0.0, budget - sum(repairs.values())))
     nav_repairs = dict(repairs)
-    sector_reserved = {}
-    for symbol, amount in repairs.items():
-        sector = positions.get(symbol, {}).get("sector")
-        sector_reserved[sector] = sector_reserved.get(sector, 0) + amount
-    for symbol in sorted(sales):
-        sector = positions.get(symbol, {}).get("sector")
-        row = support.get(("EQUITY", sector))
-        if row:
-            available = _floor_money(_supported_amount(row) - sector_reserved.get(sector, 0))
-            extra = min(sales[symbol] - repairs[symbol], available, max(0.0, budget - sum(repairs.values())))
-            repairs[symbol] += extra
-            sector_reserved[sector] = sector_reserved.get(sector, 0) + extra
+    if not sector_advisory:
+        sector_reserved = {}
+        for symbol, amount in repairs.items():
+            sector = positions.get(symbol, {}).get("sector")
+            sector_reserved[sector] = sector_reserved.get(sector, 0) + amount
+        for symbol in sorted(sales):
+            sector = positions.get(symbol, {}).get("sector")
+            row = support.get(("EQUITY", sector))
+            if row:
+                available = _floor_money(_supported_amount(row) - sector_reserved.get(sector, 0))
+                extra = min(sales[symbol] - repairs[symbol], available, max(0.0, budget - sum(repairs.values())))
+                repairs[symbol] += extra
+                sector_reserved[sector] = sector_reserved.get(sector, 0) + extra
+
+    emergency_buy_freeze = sector_advisory and bool(policy.get("emergency_override"))
+    # A structured thesis proposal or independently frozen SELL signal may
+    # fund buys. A sale with no supported basis remains visible as deferred.
+    thesis_sales = {
+        symbol for symbol in sales
+        if allocs[symbol].get("decision_basis") == "INVESTMENT_THESIS"
+        or (allocs[symbol].get("decision_basis") is None and positions.get(symbol, {}).get("sell_signal") is True)
+    } if sector_advisory else set()
+    funding_sales = {symbol: sales[symbol] for symbol in thesis_sales} if sector_advisory else sales
 
     def evaluate(repair_amounts):
-        changes, funded = _schedule(repair_amounts, sales, buys, spendable_cash, budget)
+        eligible_buys = {} if emergency_buy_freeze else buys
+        changes, funded = _schedule(repair_amounts, funding_sales, eligible_buys, spendable_cash, budget)
+        if emergency_buy_freeze and buys:
+            funded = False
         scheduled = {**values, **{symbol: values.get(symbol, 0) + change
                                  for symbol, change in changes.items()}}
         evaluation = evaluate_frozen_sectors(context, scheduled, "PROJECTED_SCHEDULED")
         rejected_buy_evaluation = None
-        if buys and funded:
+        if buys and funded and not sector_advisory:
             repair_only = {**values, **{symbol: values[symbol] - amount
                                         for symbol, amount in repair_amounts.items() if amount}}
             baseline = evaluate_frozen_sectors(context, repair_only, "REPAIRS_ONLY")
@@ -271,7 +293,10 @@ def optimize_concentration_execution(payload, summary, cash):
             changes, funded, scheduled, evaluation, effects, verified, rejected = evaluate(repairs)
 
     if buys and not funded:
-        review.add("BUY_POLICY" if rejected is not None else "BUY_FUNDING_OR_TURNOVER")
+        if emergency_buy_freeze:
+            review.add("EMERGENCY_BUY_FREEZE")
+        else:
+            review.add("BUY_POLICY" if rejected is not None else "BUY_FUNDING_OR_TURNOVER")
     target = context.get("projected_target") or {}
     if any(row["breach_pp"] for row in target.get("sectors", [])):
         target_values = project_targets(positions, list(allocs.values()), context["target_nav"])
@@ -300,7 +325,9 @@ def optimize_concentration_execution(payload, summary, cash):
         trades.append(OptimizedTrade(
             symbol=symbol, action=allocs[symbol]["action"], sector=sector,
             sector_classification=positions.get(symbol, {}).get("sector_classification"),
-            reason="POLICY_ENFORCEMENT" if required else "PORTFOLIO_IMPROVEMENT",
+            reason=("POLICY_ENFORCEMENT" if required else
+                    "INVESTMENT_THESIS" if symbol in thesis_sales
+                    else "PORTFOLIO_IMPROVEMENT"),
             necessity="NECESSARY" if required else "DISCRETIONARY",
             execution_role="STANDALONE" if required else "FUNDING_SOURCE" if released else "NOT_NEEDED_TODAY",
             execution_state="DEFERRED" if not released else "FULL" if released >= planned else "SCALED",

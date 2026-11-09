@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import SignalBadge from "@/components/SignalBadge";
+import SectorConcentrationAdvisory, { sectorAdvisoryFor } from "@/components/optimizer/SectorConcentrationAdvisory";
 import type { ExecutionOptimizationResult, OptimizerResult, TradeReason } from "@/lib/api";
 import { executionEvidenceAvailable } from "@/lib/optimizerPresentation";
 import { provenanceQualifier, requiredLabel } from "@/lib/tradeProvenance";
@@ -14,12 +15,12 @@ import {
 // Structured trade classification (execution_optimizer.py) rendered as
 // product-facing copy — wording mirrors the historical Recommendation
 // Report Card (AI Evaluation S3) so the same decision reads the same way
-// whether viewed live or after the fact. No new taxonomy: this is a fixed
-// mapping over the existing three canonical reason values.
+// whether viewed live or after the fact.
 const TRADE_REASON_LABELS: Record<TradeReason, string> = {
   MANDATORY_RISK_REDUCTION: "Mandatory risk reduction",
   POLICY_ENFORCEMENT: "Policy enforcement",
   PORTFOLIO_IMPROVEMENT: "Portfolio improvement",
+  INVESTMENT_THESIS: "Investment thesis",
 };
 
 // ─── No-trade reason resolution ──────────────────────────────────────────────
@@ -181,6 +182,7 @@ const POLICY_REVIEW_LABELS: Record<string, string> = {
   AMBIGUOUS_REPAIR_AMOUNT: "A repair amount could not be verified against the scheduled portfolio.",
   BUY_FUNDING_OR_TURNOVER: "Proposed buys were deferred under the cash or turnover limits.",
   BUY_POLICY: "Proposed buys were deferred under sector policy or the emergency buy freeze.",
+  EMERGENCY_BUY_FREEZE: "Proposed buys were deferred under the emergency buy freeze.",
   ESTIMATED_PRICES: "Market prices were missing for part of the evaluation.",
   UNCERTAIN_SECTOR_CLASSIFICATION: "Sector concentration depends on provisional or unresolved classifications.",
   MISSING_POLICY_EVIDENCE: "Frozen policy evidence is incomplete.",
@@ -190,10 +192,22 @@ const POLICY_REVIEW_LABELS: Record<string, string> = {
   WORSENS_OTHER_SECTOR_BREACH: "A scheduled trade worsens another sector breach.",
 };
 
-function ScheduledPolicyReview({ execution }: { execution?: ExecutionOptimizationResult | null }) {
-  const sector = execution?.scheduled_sector_evaluation;
-  const reasons = execution?.policy_review_reasons;
-  if (!sector && !reasons?.length) return null;
+const SECTOR_REVIEW_REASONS = new Set([
+  "INFEASIBLE_SECTOR_CAPS", "RESIDUAL_SECTOR_BREACH", "WORSENS_OTHER_SECTOR_BREACH",
+  "NO_INVESTED_EQUITY_AFTER_SCHEDULE", "UNCERTAIN_SECTOR_CLASSIFICATION",
+]);
+
+function ScheduledPolicyReview({ execution, sectorAdvisory }: {
+  execution?: ExecutionOptimizationResult | null;
+  sectorAdvisory: boolean;
+}) {
+  const sector = sectorAdvisory ? null : execution?.scheduled_sector_evaluation;
+  const reasons = execution?.policy_review_reasons?.filter(
+    (reason) => !sectorAdvisory || !SECTOR_REVIEW_REASONS.has(reason),
+  );
+  if (!sector && !reasons?.length && (!sectorAdvisory || (
+    !execution?.scheduled_position_breaches?.length && execution?.scheduled_turnover_pct == null
+  ))) return null;
   const residual = [
     ...(sector?.sectors.filter((row) => row.breach_pp > 0) ?? []),
     ...(execution?.scheduled_position_breaches ?? []),
@@ -332,10 +346,12 @@ export default function ExecutionPlanCard({
   result: OptimizerResult;
   portfolioId?: number;
 }) {
+  const sectorAdvisory = sectorAdvisoryFor(result);
   if (!executionEvidenceAvailable(result)) return (
     <section className="bg-white border rounded-xl p-4 shadow-sm" aria-label="Execution Plan">
       <h3 className="text-sm font-bold">Execution Plan</h3>
       <p className="text-sm text-gray-600 mt-2">Scheduled trades unavailable — execution evidence is missing or incomplete. This does not confirm zero trades.</p>
+      {sectorAdvisory && <SectorConcentrationAdvisory evidence={sectorAdvisory} />}
     </section>
   );
   const plan = deriveExecutionPlan(
@@ -392,7 +408,10 @@ export default function ExecutionPlanCard({
         </div>
       )}
 
-      <ScheduledPolicyReview execution={result.execution_optimization} />
+      {sectorAdvisory && <div className="px-4 py-3 border-b">
+        <SectorConcentrationAdvisory evidence={sectorAdvisory} />
+      </div>}
+      <ScheduledPolicyReview execution={result.execution_optimization} sectorAdvisory={!!sectorAdvisory} />
 
       {plan.hasTrades ? (
         <>

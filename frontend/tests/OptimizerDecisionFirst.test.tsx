@@ -176,6 +176,23 @@ describe("Selected historical journeys", () => {
 });
 
 describe("Unavailable evidence and action safety", () => {
+  it("shows unscored sector commentary separately from Challenger agreement", async () => {
+    const r = fixture(218);
+    r.layer2_result = {
+      ...r.layer2_result,
+      agrees_with_layer1: true,
+      disagreements: [],
+      unscored_comments: ["Technology exceeds the sector threshold"],
+    };
+    api.getOptimizerHistory.mockResolvedValue(r);
+    render(<OptimizerPage />);
+    fireEvent.click(await screen.findByRole("button", { name: /AI reasoning and evidence/ }));
+    const commentary = screen.getByText("Unscored Challenger commentary").parentElement!;
+    expect(within(commentary).getByText("Technology exceeds the sector threshold")).toBeInTheDocument();
+    expect(screen.getByText("✓ Agrees")).toBeInTheDocument();
+    expect(screen.queryByText("Challenger disagrees with Strategist")).not.toBeInTheDocument();
+  });
+
   it("does not imply reductions were suggested for a HOLD-only result at the position limit", async () => {
     const r = fixture(218); r.max_reached = true;
     api.getOptimizerHistory.mockResolvedValue(r); render(<OptimizerPage />);

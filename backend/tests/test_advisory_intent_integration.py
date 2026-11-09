@@ -209,6 +209,126 @@ def test_disabled_is_legacy_prompts_response_and_persistence(monkeypatch, disabl
     assert outputs[0] == outputs[1]
 
 
+@pytest.mark.parametrize("path", ["layered", "fallback", "degraded"])
+def test_sector_warning_allows_no_action(monkeypatch, disabled, path):
+    from services.optimizer import policy_engine
+    from services.optimizer.sector_policy import SECTOR_POLICY_ADVISORY
+
+    proposal = l2({**alloc("AAA", 5, "REDUCE"), "decision_basis": "SECTOR_ADVISORY"}, status="NO_ACTION")
+    proposal["rebalance_opportunity_score"] = 10
+    proposal["blocked_opportunities"] = [{"symbol": "WWW", "reason": "sector_limit_exceeded"}]
+    proposal["agrees_with_layer1"] = False
+    proposal["disagreements"] = ["Technology exceeds the sector threshold"]
+    ai = FakeAI(proposal, fallback=proposal, fail=("layer2",) if path == "fallback" else ())
+    patch_pipeline(monkeypatch, ai)
+    if path == "degraded":
+        def unavailable(*args, **kwargs):
+            raise RuntimeError("policy unavailable")
+        monkeypatch.setattr(policy_engine, "compute_policy", unavailable)
+    db = session()
+    p = seed(db, {"AAA": (10000, True)}, cash=4500000)
+    result = run(db, p)
+
+    assert result["status"] == "NO_ACTION"
+    assert result["target_allocations"][0]["action"] == "HOLD"
+    assert result["blocked_opportunities"] == []
+    policy = result["active_policy"]
+    assert policy["sector_policy_mode"] == SECTOR_POLICY_ADVISORY
+    assert policy["concentration"]["current"]["sectors"][0]["breach_pp"] > 0
+    assert policy["sector_alternatives"][0]["estimated_amount"] == 250000
+    assert not any(flag.startswith("SECTOR_") for flag in policy.get("violations", []))
+    assert not policy.get("turnover_relaxation_active")
+    assert result["execution_optimization"]["trades"] == []
+    assert result["execution_optimization"]["scheduled_sector_evaluation"]["sectors"][0]["breach_pp"] > 0
+    if path == "layered":
+        assert result["consensus"]["consensus_type"] == "NO_ACTION_CONSENSUS"
+        assert "sector_advisories" in ai.prompts["layer3"][0]
+    elif path == "fallback":
+        assert result["fallback_mode"]
+        assert "Sector caps are advisory" in ai.prompts["fallback"][0]
+    else:
+        assert policy["hard_policy_unavailable"]
+        assert "MISSING_POLICY_EVIDENCE" in result["execution_optimization"]["policy_review_reasons"]
+    if path != "fallback":
+        assert result["layer2_result"]["agrees_with_layer1"]
+        assert result["layer2_result"]["unscored_comments"] == proposal["disagreements"]
+
+
+@pytest.mark.parametrize("path", ["layered", "fallback"])
+def test_sector_tagged_reduction_reaches_nav_scheduler(monkeypatch, disabled, path):
+    proposal = l2({**alloc("AAA", 10, "REDUCE"), "decision_basis": "SECTOR_ADVISORY"})
+    ai = FakeAI(proposal, fallback=proposal, fail=("layer2",) if path == "fallback" else ())
+    patch_pipeline(monkeypatch, ai)
+    db = session()
+    p = seed(db, {"AAA": (10000, True)}, cash=500000)
+    result = run(db, p)
+
+    [trade] = result["execution_optimization"]["trades"]
+    assert trade["symbol"] == "AAA"
+    assert 0 < trade["required_amount"] == trade["executed_amount"] < trade["full_recommended_amount"]
+    assert trade["discretionary_amount"] == trade["full_recommended_amount"] - trade["required_amount"]
+    assert [evidence["current_breach"]["basis"] for evidence in trade["policy_evidence"]] == ["NAV"]
+
+
+def test_sector_advisory_history_snapshot_report_card_and_actual_use_frozen_schedule(monkeypatch, disabled):
+    from models.database import UserExecutionDecision
+    from services.decision_memory.snapshot_writer import write_recommendation_snapshot
+    from services.evaluation.plan_grader import grade_pending_plans
+    from services.evaluation.recommendation_ledger import get_report_card
+    from services.optimizer.sector_policy import SECTOR_POLICY_ADVISORY
+
+    ai = FakeAI(l2(alloc("AAA", 15, "ACCUMULATE")))
+    patch_pipeline(monkeypatch, ai)
+    db = session()
+    p = seed(db, {"AAA": (10000, True)}, cash=4500000)
+    result = run(db, p)
+    assert result["target_allocations"][0]["action"] == "ACCUMULATE"
+    frozen = result["execution_optimization"]
+    assert frozen["scheduled_buys"] == {"AAA": 250000}
+    history = db.query(OptimizerHistory).one()
+    payload = json.loads(history.result_json)
+    assert payload["active_policy"]["sector_policy_mode"] == SECTOR_POLICY_ADVISORY
+    assert payload["active_policy"]["scheduled_execution"] == frozen
+    snap_id = write_recommendation_snapshot(
+        db, workspace_id=p.workspace_id, portfolio_id=p.id, optimizer_history_id=history.id,
+        optimizer_result=payload, persona=None, total_portfolio_value=500000,
+        scores_map={"AAA": {"current_price": 50}},
+    )
+    snap = db.get(RecommendationSnapshot, snap_id)
+    assert json.loads(snap.active_policy_json)["sector_policy_mode"] == SECTOR_POLICY_ADVISORY
+    grade_pending_plans(db, portfolio_id=p.id)
+    db.add(UserExecutionDecision(
+        workspace_id=p.workspace_id, portfolio_id=p.id, recommendation_snapshot_id=snap_id,
+        optimizer_history_id=history.id, decision="APPROVED",
+    ))
+    db.commit()
+    history_result = asyncio.run(main.get_optimizer_history_detail(history.id, db))
+    assert history_result["execution_optimization"] == frozen
+    report = get_report_card(db, p.id, snap_id)
+    assert report["plan"]["grade"]["score"] is not None
+    assert report["plan"]["buy_trades"][0]["planned_amount"] == 250000
+    assert report["plan"]["sector_advisory"]["scheduled"] == frozen["scheduled_sector_evaluation"]
+    assert report["execution"]["analysis"]["symbols"]["AAA"]["planned_amount"] == 250000
+
+
+def test_sector_advisory_does_not_override_cooldown_or_change_hard_scores():
+    from services.optimizer.policy_engine import compute_policy, compute_policy_alignment_score
+    from services.optimizer.sector_policy import SECTOR_POLICY_ADVISORY, freeze_positions
+    from services.optimizer.stabilization import check_cooldown, detect_cooldown_overrides
+
+    holdings = [{"symbol": "AAA", "sector": "Technology", "weight_pct": 10, "market_value": 10000}]
+    policy = compute_policy(None, None, holdings, sector_policy_mode=SECTOR_POLICY_ADVISORY)
+    cooldown = check_cooldown(datetime.utcnow())
+    advisory_policy = {"sector_policy_mode": SECTOR_POLICY_ADVISORY,
+                       "violations": ["SECTOR_BREACH: Technology"], "governance_flags": ["SECTOR_LIMIT: Technology"]}
+    assert not detect_cooldown_overrides(cooldown, advisory_policy).overridden
+    policy.resolved_sector_limits = {"Technology": 25}
+    first = compute_policy_alignment_score([], policy, 100000, frozen_positions=freeze_positions(holdings))
+    policy.resolved_sector_limits = {"Technology": 100}
+    second = compute_policy_alignment_score([], policy, 100000, frozen_positions=freeze_positions(holdings))
+    assert first == second == (100.0, 100.0, 100.0, [], [])
+
+
 def test_disabled_flag_values(monkeypatch):
     from services.advisory_intent_flag import advisory_intent_review_enabled
     for value, expected in ((None, False), ("false", False), ("1", False), ("TRUE", True), ("true", True)):

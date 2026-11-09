@@ -5,11 +5,11 @@ import json
 import pytest
 
 from agents.optimizer import _limit_sector_buys, _make_envelope_from_dict
-from services.evaluation.plan_grader import derive_full_plan
+from services.evaluation.plan_grader import compute_plan_grade, derive_full_plan
 from services.optimizer.execution_optimizer import optimize_execution_for_payload
 from services.optimizer.policy_engine import compute_policy, compute_policy_alignment_score
 from services.optimizer.sector_policy import (
-    attach_target_evaluation, current_values, evaluate_frozen_sectors, freeze_concentration,
+    SECTOR_POLICY_ADVISORY, attach_target_evaluation, current_values, evaluate_frozen_sectors, freeze_concentration,
     project_targets,
 )
 from services.optimizer_action_summary import build_action_summary
@@ -27,7 +27,7 @@ def allocation(symbol, action, target, current, amount):
 
 
 def run(holdings, allocations=(), *, cash=0, caps=None, candidates=(), position=100,
-        turnover=100, cash_floor=0, emergency=False):
+        turnover=100, cash_floor=0, emergency=False, sector_advisory=False):
     nav = cash + sum(row["avg_cost"] for row in holdings)
     policy = {
         "hard_constraints": {"max_sector_pct": 100, "max_single_position_pct": position,
@@ -36,6 +36,8 @@ def run(holdings, allocations=(), *, cash=0, caps=None, candidates=(), position=
         "sector_limit_sources": {"Technology": "EMERGENCY_OVERRIDE", "Healthcare": "REGIME_POLICY"},
         "emergency_override": emergency,
     }
+    if sector_advisory:
+        policy["sector_policy_mode"] = SECTOR_POLICY_ADVISORY
     policy["concentration"] = freeze_concentration(holdings, candidates, policy, nav)
     result = {"active_policy": policy, "total_value": nav, "cash_balance": cash,
               "target_allocations": list(allocations)}
@@ -221,6 +223,144 @@ def test_only_supported_portion_of_funding_sale_is_required():
     assert evidence["with_required_portion"]["numerator"] == 50
     assert evidence["with_trade"]["numerator"] == 30
     assert "N" in plan.trade_effects
+
+
+def test_advisory_replay_239_keeps_only_nav_repairs(replay_239):
+    historical = schedule(replay_239).model_dump()
+    policy = replay_239["active_policy"]
+    policy["sector_policy_mode"] = SECTOR_POLICY_ADVISORY
+    plan = schedule(replay_239)
+    trades = {trade.symbol: trade for trade in plan.trades}
+    assert {symbol: trade.required_amount for symbol, trade in trades.items()} == {
+        "BH.BK": 48012.96, "GULF.BK": 11712.96, "NVDA01.BK": 0, "GOOGL01.BK": 0,
+    }
+    assert trades["NVDA01.BK"].executed_amount == 0
+    assert plan.scheduled_turnover_pct == pytest.approx(8.08658536)
+    assert plan.scheduled_sector_evaluation["denominator"] == pytest.approx(440574.08)
+    assert sectors(plan.scheduled_sector_evaluation)["Technology"]["observed_pct"] == pytest.approx(36.7702067)
+    assert "RESIDUAL_SECTOR_BREACH" in plan.policy_review_reasons
+    policy.pop("sector_policy_mode")
+    policy["scheduled_execution"] = historical
+    assert schedule(replay_239).model_dump() == historical
+
+
+def test_run_239_v1_plan_grade_preserves_recorded_formula(replay_239):
+    allocations = replay_239["target_allocations"]
+    sector_by_symbol = replay_239["active_policy"]["concentration"]["positions"]
+    for row in allocations:
+        row["sector"] = sector_by_symbol[row["symbol"]]["sector"]
+    grade = compute_plan_grade(
+        allocations, replay_239["cash_balance"],
+        ["CONCENTRATION_BREACH: BH.BK", "CONCENTRATION_BREACH: GULF.BK", "SECTOR_BREACH: Technology"],
+        [{"violation_type": "TURNOVER_BREACH", "proposed_pct": 22.0, "allowed_pct": 21.6}],
+    )
+    assert grade["necessity_score"] == 75
+    assert grade["score"] == 62.13
+
+
+@pytest.mark.parametrize("with_holdings", [False, True])
+@pytest.mark.parametrize("gate", ["eligible", "emergency", "cash", "turnover"])
+def test_advisory_buy_still_obeys_hard_gates(with_holdings, gate):
+    holdings = [holding("T", "Technology", 10000), holding("U", "Utilities", 30000)] if with_holdings else []
+    cash = 60000 if with_holdings else 100000
+    result = run(holdings, [allocation("N", "BUY", 10, 0, 10000)], cash=cash,
+                 candidates=[{"symbol": "N", "sector": "Technology", "current_price": 100}],
+                 caps={"Technology": 24.5}, sector_advisory=True, emergency=gate == "emergency",
+                 turnover=5 if gate == "turnover" else 100,
+                 cash_floor=(55 if with_holdings else 95) if gate == "cash" else 0)
+    plan = schedule(result)
+    assert plan.scheduled_buys == ({"N": 10000} if gate == "eligible" else {})
+    assert plan.rejected_buy_sector_evaluation is None
+    if gate == "eligible":
+        tech = sectors(plan.scheduled_sector_evaluation)["Technology"]
+        assert tech["observed_pct"] == (40 if with_holdings else 100)
+        assert tech["breach_pp"] > 0
+    elif gate == "emergency":
+        assert "EMERGENCY_BUY_FREEZE" in plan.policy_review_reasons
+    else:
+        assert "BUY_FUNDING_OR_TURNOVER" in plan.policy_review_reasons
+
+
+def test_sector_only_trim_cannot_fund_buy_but_thesis_trade_can():
+    sell = allocation("T", "SELL", 0, 60, -60000)
+    sell["reason"] = "Reduce Technology to its sector threshold"
+    result = run([holding("T", "Technology", 60000), holding("U", "Utilities", 40000)],
+                 [sell, allocation("N", "BUY", 10, 0, 10000)],
+                 candidates=[{"symbol": "N", "sector": "Financial", "current_price": 100}],
+                 caps={"Technology": 25}, sector_advisory=True)
+    assert schedule(result).scheduled_buys == {}
+    sell["reason"] = "Weakening business outlook"
+    assert schedule(result).scheduled_buys == {}
+    sell["decision_basis"] = "SECTOR_ADVISORY"
+    assert schedule(result).scheduled_buys == {}
+    sell["decision_basis"] = "INVESTMENT_THESIS"
+    plan = schedule(result)
+    assert plan.scheduled_buys == {"N": 10000}
+    [trade] = plan.trades
+    assert (trade.reason, trade.necessity, trade.executed_amount, trade.required_amount) == (
+        "INVESTMENT_THESIS", "DISCRETIONARY", 10000, 0,
+    )
+
+
+def test_untagged_sale_can_fund_buy_with_frozen_sell_signal():
+    holdings = [{**holding("T", "Technology", 60000), "signal": "SELL"},
+                holding("U", "Utilities", 40000)]
+    result = run(holdings, [allocation("T", "SELL", 0, 60, -60000), allocation("N", "BUY", 10, 0, 10000)],
+                 candidates=[{"symbol": "N", "sector": "Financial", "current_price": 100}],
+                 caps={"Technology": 25}, sector_advisory=True)
+    plan = schedule(result)
+    assert plan.scheduled_buys == {"N": 10000}
+    assert plan.trades[0].reason == "INVESTMENT_THESIS"
+
+
+def test_run_239_sector_tag_cannot_remove_bh_nav_repair(replay_239):
+    replay_239["active_policy"]["sector_policy_mode"] = SECTOR_POLICY_ADVISORY
+    replay_239["target_allocations"][0]["decision_basis"] = "SECTOR_ADVISORY"
+    plan = schedule(replay_239)
+    bh = next(trade for trade in plan.trades if trade.symbol == "BH.BK")
+    assert (bh.required_amount, bh.executed_amount, bh.discretionary_amount) == (48012.96, 48012.96, 11073.04)
+    assert [evidence["current_breach"]["basis"] for evidence in bh.policy_evidence] == ["NAV"]
+
+
+@pytest.mark.parametrize("reduction,turnover,nav_evidence,expected", [
+    (15000, 100, True, 10000),
+    (5000, 100, True, 5000),
+    (15000, 5, True, 5000),
+    (15000, 100, False, 0),
+])
+def test_sector_tagged_nav_repair_bounds_and_discretionary_funding(reduction, turnover, nav_evidence, expected):
+    result = run([holding("T", "Technology", 60000), holding("U", "Utilities", 40000)],
+                 [{**allocation("T", "REDUCE", 60 - reduction / 1000, 60, -reduction),
+                   "decision_basis": "SECTOR_ADVISORY"}, allocation("N", "BUY", 12, 0, 12000)],
+                 candidates=[{"symbol": "N", "sector": "Financial", "current_price": 100}],
+                 caps={"Technology": 25}, position=50, turnover=turnover, sector_advisory=True)
+    if not nav_evidence:
+        result["active_policy"]["concentration"]["current_breaches"][0]["breach_amount"] += 1
+    plan = schedule(result)
+    [trade] = plan.trades
+    assert trade.required_amount == trade.executed_amount == expected
+    assert trade.discretionary_amount == reduction - expected
+    assert not plan.scheduled_buys
+
+
+@pytest.mark.parametrize("status", ["provisional", "unresolved"])
+@pytest.mark.parametrize("quoted", [False, True])
+def test_advisory_classification_is_visible_and_does_not_authorize_required(status, quoted):
+    tech = holding("T", "Technology", 60000, quoted)
+    tech["sector_classification"] = {
+        "sector": "Technology", "classification_source": "provider_metadata",
+        "classification_status": status,
+    }
+    result = run([tech, holding("U", "Utilities", 40000)],
+                 [allocation("T", "REDUCE", 30, 60, -30000)], caps={"Technology": 25},
+                 sector_advisory=True)
+    plan = schedule(result)
+    [trade] = plan.trades
+    assert trade.required_amount == 0
+    row = sectors(plan.scheduled_sector_evaluation)["Technology"]
+    assert row["members"][0]["classification_status"] == status
+    assert row["breach_pp"] == pytest.approx(35)
+    assert ("ESTIMATED_PRICES" in plan.policy_review_reasons) == (not quoted)
 
 def test_run_239_canonical_counterfactual_keeps_nav_repairs(replay_239):
     from services.optimizer.constraint_resolver import resolve_constraints

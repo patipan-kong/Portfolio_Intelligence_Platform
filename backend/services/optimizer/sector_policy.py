@@ -6,9 +6,14 @@ from services.optimizer.nav_basis import item_value
 from services.portfolio_sector import SECTOR_CLASSIFICATION_VERSION
 
 EVIDENCE_VERSION = "wealth.policy-evidence.v2"
+SECTOR_POLICY_ADVISORY = "wealth.optimizer-sector-advisory.v1"
 SECTOR_RULE = "effective_sector_limits"
 POSITION_RULE = "hard_constraints.max_single_position_pct"
 TOLERANCE = 1e-8
+
+
+def sector_caps_are_advisory(policy: dict | None) -> bool:
+    return (policy or {}).get("sector_policy_mode") == SECTOR_POLICY_ADVISORY
 
 
 def normalize_policy_sector(raw: str | None) -> str:
@@ -145,10 +150,18 @@ def freeze_concentration(holdings: list[dict], candidates: list[dict], policy: d
     }
     if any("sector_classification" in row for row in positions.values()):
         context["sector_classification_version"] = SECTOR_CLASSIFICATION_VERSION
+    sector_advisory = sector_caps_are_advisory(policy)
+    if sector_advisory:
+        context["sector_policy_mode"] = SECTOR_POLICY_ADVISORY
+        for holding in holdings:
+            if holding.get("signal") == "SELL":
+                positions[holding["symbol"]]["sell_signal"] = True
     values = current_values(positions)
     current = evaluate_frozen_sectors(context, values, "CURRENT")
     context["current"] = current
-    context["current_breaches"] = [row for row in current["sectors"] if row["breach_pp"]]
+    context["current_breaches"] = [
+        row for row in current["sectors"] if row["breach_pp"] and not sector_advisory
+    ]
     for symbol, value in values.items():
         row = evaluate_exposure(symbol, value, context["nav"], context["position_cap"], "CURRENT",
                                 "NAV", context["position_source"])
@@ -158,8 +171,16 @@ def freeze_concentration(holdings: list[dict], candidates: list[dict], policy: d
 
 
 def evaluate_frozen_sectors(context: dict, values: dict, stage: str) -> dict:
-    return evaluate_sectors(context["positions"], values, context["limits"],
-                            context["default_cap"], stage, context["sources"])
+    evaluation = evaluate_sectors(context["positions"], values, context["limits"],
+                                  context["default_cap"], stage, context["sources"])
+    if sector_caps_are_advisory(context):
+        for row in evaluation["sectors"]:
+            row["members"] = [
+                {"symbol": symbol, **(position.get("sector_classification") or {})}
+                for symbol, position in sorted(context["positions"].items())
+                if position["sector"] == row["sector"] and values.get(symbol, 0) > 0
+            ]
+    return evaluation
 
 
 def attach_target_evaluation(result: dict) -> None:

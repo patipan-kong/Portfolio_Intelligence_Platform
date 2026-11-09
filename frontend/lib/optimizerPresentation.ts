@@ -1,6 +1,8 @@
 import type { OptimizerResult } from "./api";
 import { deriveExecutionPlan, NO_ACTION_REASON_LABELS } from "./executionPlan";
 
+export const SECTOR_POLICY_ADVISORY = "wealth.optimizer-sector-advisory.v1";
+
 export function assessment(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
@@ -8,6 +10,8 @@ export function assessment(value: unknown): number | null {
 // Availability only: scheduling and trade classification stay owned by the
 // backend. Never turn an absent/partial summary into a confirmed empty plan.
 export function executionEvidenceAvailable(result: OptimizerResult): boolean {
+  if (result.active_policy?.sector_policy_mode === SECTOR_POLICY_ADVISORY
+      && result.execution_optimization?.scheduled_buys == null) return false;
   const summary = result.action_summary;
   if (!summary || ![summary.sell, summary.reduce, summary.accumulate, summary.new_position, summary.hold]
     .every((group) => Array.isArray(group) && group.every((row) => row != null && typeof row.symbol === "string" && row.symbol.trim()))) return false;

@@ -11,8 +11,8 @@ from typing import Callable
 from services.ai_client import call_ai
 from services.json_utils import safe_parse_json
 from services.optimizer.sector_policy import (
-    attach_target_evaluation, current_values, evaluate_sectors, freeze_concentration,
-    freeze_positions, project_targets, sector_weights,
+    SECTOR_POLICY_ADVISORY, attach_target_evaluation, current_values, evaluate_frozen_sectors,
+    evaluate_sectors, freeze_concentration, freeze_positions, project_targets, sector_weights,
 )
 from services.optimizer.risk_flags import investment_risk_flags
 from services.optimizer.auditor_claims import build_claim_evidence, validate_auditor_claims
@@ -123,6 +123,9 @@ def _apply_forced_and_locked(
             before = _alloc_basis(alloc_map[sym])
             alloc_map[sym]["action"] = "SELL"
             alloc_map[sym]["target_weight"] = 0.0
+            if alloc_map[sym].get("decision_basis") == "SECTOR_ADVISORY":
+                alloc_map[sym].pop("decision_basis")
+                alloc_map[sym]["reason"] = "Forced exit: SELL signal."
             if (before["action"], before["target_weight"]) != ("SELL", 0.0):
                 _observe(advisory, sym, before, alloc_map[sym], stage=_STAGE_FORCED_SELL, source=_SRC_SYSTEM,
                          effect=_REPLACE, reason_code="FORCED_EXIT_SELL_SIGNAL",
@@ -188,6 +191,7 @@ def _make_envelope_from_dict(d: dict) -> _PolicyEnvelope:
         resolved_sector_limits  = d.get("resolved_sector_limits", {}),
         sector_limit_sources    = d.get("sector_limit_sources", {}),
         position_limit_source   = d.get("position_limit_source", "POLICY_ENGINE"),
+        sector_policy_mode      = d.get("sector_policy_mode"),
     )
 
 
@@ -423,9 +427,86 @@ def _normalize_allocations(
             "estimated_amount": 0,  # filled in by caller once total_value is known
             "reason": str(a.get("reason") or a.get("r") or ""),
         }
+        if a.get("decision_basis") in ("SECTOR_ADVISORY", "INVESTMENT_THESIS"):
+            row["decision_basis"] = a["decision_basis"]
         _apply_score_context(row, score_map, sym)
         result.append(row)
     return [a for a in result if a["symbol"]]
+
+
+def _separate_sector_alternatives(model_result, allocations, holdings, nav, concentration):
+    """Keep concentration-only ideas out of investment decisions and funding."""
+    nav_repairs = {
+        row["symbol"] for row in concentration["current_breaches"] if row["basis"] == "NAV"
+    } if concentration and not concentration["current"]["estimated_symbols"] else set()
+    optional = []
+    raw_alternatives = model_result.get("sector_alternatives")
+    if isinstance(raw_alternatives, list):
+        for idea in raw_alternatives[:5]:
+            if not isinstance(idea, dict):
+                continue
+            try:
+                optional.extend(_normalize_allocations([idea], holdings))
+            except (TypeError, ValueError):
+                continue
+    for row in allocations:
+        if row["action"] in ("SELL", "REDUCE") and row.get("decision_basis") == "SECTOR_ADVISORY":
+            # The scheduler needs the proposed sale to verify and reserve any
+            # independent NAV repair. Its sector-tagged remainder cannot fund buys.
+            if row["symbol"] in nav_repairs:
+                continue
+            optional.append(dict(row))
+            row.update(action="HOLD", target_weight=row["current_weight"], allocation_change_percent=0,
+                       reason="Sector concentration alternative available for review.")
+    model_result["blocked_opportunities"] = [
+        item for item in model_result.get("blocked_opportunities", []) or []
+        if not isinstance(item, dict) or item.get("reason") != "sector_limit_exceeded"
+    ]
+    alternatives = {}
+    for row in optional:
+        symbol = row["symbol"]
+        target = 0 if row["action"] == "SELL" else row["target_weight"]
+        if row["action"] in ("SELL", "REDUCE") and 0 <= target < holdings.get(symbol, 0):
+            alternatives[symbol] = {
+                "symbol": symbol, "action": row["action"], "reason": row["reason"],
+                "estimated_amount": round(nav * (holdings[symbol] - target) / 100),
+            }
+    return list(alternatives.values())
+
+
+def _degraded_sector_policy(limits, default_cap, effective_envelope):
+    if effective_envelope is not None:
+        return {
+            "sector_policy_mode": SECTOR_POLICY_ADVISORY,
+            "resolved_sector_limits": effective_envelope.effective_sector_limits,
+            "sector_limit_sources": {
+                **{sector: cap.binding_source for sector, cap in effective_envelope.sector_limits.items()},
+                "default": effective_envelope.global_sector_cap.binding_source,
+            },
+            "hard_constraints": {"max_sector_pct": effective_envelope.global_sector_cap.effective},
+            "hard_policy_unavailable": True,
+        }
+    limits = limits or {}
+    return {
+        "sector_policy_mode": SECTOR_POLICY_ADVISORY,
+        "resolved_sector_limits": limits,
+        "sector_limit_sources": dict.fromkeys([*limits, "default"], "WORKSPACE_THRESHOLD_FALLBACK"),
+        "hard_constraints": {"max_sector_pct": limits.get("default", default_cap)},
+        "hard_policy_unavailable": True,
+    }
+
+
+def _capture_sector_policy(output, policy, mode, portfolio, candidates, nav, degraded_policy, alternatives):
+    if mode == SECTOR_POLICY_ADVISORY:
+        if policy is None:
+            # Exposure remains measurable when hard-policy evidence is unavailable.
+            policy = degraded_policy
+        policy["sector_policy_mode"] = mode
+        policy["sector_alternatives"] = alternatives
+    if policy is not None:
+        output["active_policy"] = policy
+        policy["concentration"] = freeze_concentration(portfolio, candidates, policy, nav)
+        attach_target_evaluation(output)
 
 
 def _snap_neutral_actions(allocations: list[dict], observer=None) -> None:
@@ -648,12 +729,28 @@ _CONSENSUS_LEGACY_AGREES: dict[str, bool] = {
 }
 
 
-def _consensus_engine(l1: dict, l2: dict, l3: dict) -> dict:
+def _consensus_engine(l1: dict, l2: dict, l3: dict, *, sector_advisory: bool = False) -> dict:
     """Classify optimizer output into one of 7 consensus types with alignment scoring."""
 
     # ── L2 inputs ─────────────────────────────────────────────────────────────
     agrees            = bool(l2.get("agrees_with_layer1", True))
     disagreements     = list(l2.get("disagreements", []) or [])
+    advisory_comments = []
+    if sector_advisory:
+        actionable = []
+        for item in disagreements:
+            issue = item.get("issue") if isinstance(item, dict) else item
+            if not isinstance(issue, str) or not issue.strip():
+                continue
+            if isinstance(item, dict) and item.get("basis") in ("ACTION", "SIZING", "INVESTMENT_THESIS", "HARD_POLICY"):
+                actionable.append(issue)
+            else:
+                advisory_comments.append(issue)
+        disagreements = actionable
+        if l2.get("strategist_parse_failed"):
+            disagreements.insert(0, "L1_PARSE_FAILURE: Strategist output could not be parsed.")
+        if l2.get("error"):
+            disagreements.insert(0, "L2_PARSE_FAILURE: Challenger output could not be parsed.")
     xai_status        = l2.get("status", "REBALANCE")
     xai_score         = int(l2.get("rebalance_opportunity_score") or 50)
     no_action_reason  = l2.get("no_action_reason")
@@ -677,6 +774,10 @@ def _consensus_engine(l1: dict, l2: dict, l3: dict) -> dict:
 
     l2_buy_syms  = {a["symbol"] for a in l2_allocs if a.get("action") in ("BUY", "ACCUMULATE")}
     l2_sell_syms = {a["symbol"] for a in l2_allocs if a.get("action") in ("SELL", "REDUCE")}
+    if sector_advisory:
+        l2_symbols = {a["symbol"] for a in l2_allocs}
+        action_conflict = (l1_buys & (l2_symbols - l2_buy_syms)) or (l1_sells & (l2_symbols - l2_sell_syms))
+        agrees = not (disagreements or action_conflict)
 
     buy_union    = l1_buys | l2_buy_syms
     sell_union   = l1_sells | l2_sell_syms
@@ -767,10 +868,15 @@ def _consensus_engine(l1: dict, l2: dict, l3: dict) -> dict:
     if consensus_type in ("NO_ACTION_CONSENSUS", "NO_REBALANCE_CONSENSUS"):
         refinement_summary = (
             no_action_summary
-            or "All layers independently concluded the portfolio is well-balanced with insufficient edge for rebalancing."
+            or ("The committee found insufficient investment rationale for rebalancing."
+                if sector_advisory else
+                "All layers independently concluded the portfolio is well-balanced with insufficient edge for rebalancing.")
         )
     elif consensus_type == "STRONG_CONSENSUS":
-        refinement_summary = "All layers agree on a clear rebalancing path with strong conviction and acceptable risk."
+        refinement_summary = (
+            "The layers agree on the investment decision. Sector exposure is reviewed separately."
+            if sector_advisory else "All layers agree on a clear rebalancing path with strong conviction and acceptable risk."
+        )
     elif consensus_type == "REFINED_CONSENSUS":
         if disagreements:
             d_text = "; ".join(disagreements[:2])
@@ -849,6 +955,7 @@ def _consensus_engine(l1: dict, l2: dict, l3: dict) -> dict:
         "strategist_alignment_score": strategist_alignment_score,
         "risk_alignment_score":       risk_alignment_score,
         "disagreement_reasons":       disagreements,
+        **({"challenger_agrees": agrees, "unscored_challenger_comments": advisory_comments} if sector_advisory else {}),
         "refinement_summary":         refinement_summary,
         # Legacy fields (backward compat)
         "agrees":             _CONSENSUS_LEGACY_AGREES.get(consensus_type, agrees),
@@ -879,6 +986,7 @@ def _layer1_prompt(
     t1_breach_note: str = "",
     execution_context: dict | None = None,
     intent_block: str = "",
+    sector_advisory: bool = False,
 ) -> str:
     # Phase 3B.5: use resolved per-sector limits when available; fall back to raw sector_limits
     if effective_envelope is not None:
@@ -976,7 +1084,7 @@ No explanation. No prose. Only valid JSON output.
 {violation_note}
 Portfolio: {json.dumps(c_pc)}
 Watchlist: {json.dumps(c_wc)}
-Sector limits: {json.dumps(sl)}
+{"" if sector_advisory else f"Sector limits: {json.dumps(sl)}"}
 Swap eligible: {swap_eligible or "none"}
 Forced sells: {sell_forced or "none"}
 
@@ -990,14 +1098,14 @@ STABILIZATION MANDATE — quality over quantity. Every proposed change must clea
 - PREFER holding well-positioned assets over constant micro-rotation.
 
 EVALUATE ALL FIVE — but only act if improvement is material:
-1. Evaluate sector limits against invested equity market value excluding cash. Recommend measured repairs and flag infeasible limits for human review.
+1. Flag sector exposure above advisory thresholds on invested equity excluding cash. Keep it separate from swaps, buys and the investment decision.
 2. Watchlist opportunities: BUY/ACCUMULATE candidate with clear edge over current holdings? → rank in top_buys
 3. Overweight positions: swap-eligible stock >25%? → consider REDUCE, but only if drift ≥ 3%
 4. Low-score holdings: weak fa+ta vs watchlist with 10+ score advantage? → consider swap
-5. Policy violations: active CONCENTRATION_BREACH or SECTOR_BREACH? → propose remediation (mandatory)
+5. Policy violations: active hard single-position CONCENTRATION_BREACH? → propose remediation (mandatory)
 
 priority="no_action" when ALL of the following are true:
-- No sector breach or position limit breach
+- No hard position limit breach. A sector warning alone permits no_action.
 - No watchlist candidate has a clearly superior score (10+ advantage) over current holdings
 - All current positions are within 3% of their ideal weight
 - No urgent regime or policy signal
@@ -1039,6 +1147,7 @@ def _layer2_prompt(
     t1_breach_note: str = "",
     execution_context: dict | None = None,
     intent_block: str = "",
+    sector_advisory: bool = False,
 ) -> str:
     role_line = f"Your role: {role}\n\n" if role else ""
 
@@ -1052,7 +1161,7 @@ def _layer2_prompt(
         regime_block = build_regime_prompt_block(regime_context) + "\n"
     l1_swaps    = l1.get("swap_suggestions", l1.get("swaps", []))
     l1_top_buys = l1.get("top_buys", [])
-    l1_flags    = l1.get("sector_flags", [])
+    l1_flags    = [] if sector_advisory else l1.get("sector_flags", [])
     l1_priority = l1.get("priority", "balanced")
 
     strategy_block = ""
@@ -1091,10 +1200,19 @@ Factor weighting, position sizing, and stock selection must all reflect this per
         from services.optimizer.execution_penalty import build_execution_prompt_block
         execution_block = build_execution_prompt_block(execution_context)
 
-    timing_challenge_block = """[TIMING AWARENESS — CHALLENGER]
+    timing_disagreement = (
+        "Record material timing disagreements with basis=INVESTMENT_THESIS and include the symbol and timing evidence."
+        if sector_advisory else
+        'Add to disagreements[]: "TIMING_CONCERN: [SYM] poor entry timing (ts=[N], priority=DEFER) — waiting 2-4 weeks may improve entry."'
+    )
+    disagreement_example = (
+        '{"basis":"ACTION|SIZING|INVESTMENT_THESIS|HARD_POLICY|SECTOR_ADVISORY","issue":"<20 words>"}'
+        if sector_advisory else '"<20 words each>"'
+    )
+    timing_challenge_block = f"""[TIMING AWARENESS — CHALLENGER]
 Each symbol carries timing_score and execution_priority.
 Challenge BUY/ACCUMULATE recommendations where execution_priority=DEFER or timing_score<40.
-Add to disagreements[]: "TIMING_CONCERN: [SYM] poor entry timing (ts=[N], priority=DEFER) — waiting 2-4 weeks may improve entry."
+{timing_disagreement}
 Timing does not invalidate a fundamentally attractive stock — document the concern, do not block.
 
 """
@@ -1114,7 +1232,7 @@ Timing does not invalidate a fundamentally attractive stock — document the con
 - Priority: {l1_priority}
 - Swaps: {json.dumps(l1_swaps, indent=2)}
 - Top watchlist picks: {l1_top_buys}
-- Sector flags: {l1_flags}
+{"" if sector_advisory else f"- Sector observations: {l1_flags}"}
 
 Full portfolio data for your analysis:
 {json.dumps(pc, indent=2)}
@@ -1130,13 +1248,13 @@ Unnecessary portfolio churn destroys value through transaction costs, tax drag, 
 
 BEFORE proposing any rebalancing, apply this 3-step discipline:
 1. DRIFT TEST: Is any allocation change < 3%? If yes, suppress it — noise, not signal.
-2. CONVICTION TEST: Does the proposed change have a clear, measurable benefit (10+ score advantage or breach repair)?
+2. CONVICTION TEST: Does the proposed change have a clear, measurable benefit (10+ score advantage or hard-policy breach repair)?
 3. COST TEST: Will the expected portfolio improvement exceed the ~0.15% trading cost per 1% NAV traded?
 
 status="NO_ACTION" with rebalance_opportunity_score below 25 is STRONGLY ENCOURAGED when:
 - All positions are within 3% of their natural weight (drift tolerance band)
 - No watchlist candidate has a compelling 10+ score advantage over existing holdings
-- No policy violations or sector concentration breaches exist
+- No hard-policy violations exist. A sector warning can coexist with NO_ACTION.
 - Market conditions are uncertain or data is insufficient to justify rebalancing
 
 PREFER large, high-conviction changes over many small adjustments.
@@ -1164,12 +1282,17 @@ ALLOCATIONS ARRAY:
 - "r" = one reason, under 20 words. State each idea once — do not repeat it in "r", disagreements, and
   portfolio_assessment.
 
-If a watchlist symbol with BUY/ACCUMULATE signal was evaluated but rejected (sector limit, cash constraint,
+If a watchlist symbol with BUY/ACCUMULATE signal was evaluated but rejected (cash constraint,
 portfolio count cap), list it in blocked_opportunities — but only the highest-priority rejections, max 5.
-Keep each "reason" under 10 words (e.g. "sector_limit_exceeded").
+Keep each "reason" under 10 words (e.g. "insufficient_cash").
+Sector thresholds alone cannot block BUY/ACCUMULATE or justify a SELL/REDUCE.
+Put optional sector-only reductions in sector_alternatives, using the same allocation row format.
+Keep the actionable allocation HOLD unless independently justified. Mark thesis-driven SELL/REDUCE
+with decision_basis=INVESTMENT_THESIS. Judge agreement and opportunity only on actionable decisions.
 
 disagreements[]: only material disagreements with Layer 1 (wrong signal, missed breach, constraint conflict).
-Skip informational observations. Max 5 entries, each under 20 words.
+{"Use SECTOR_ADVISORY for concentration-only comments. Other bases must identify the actionable disagreement." if sector_advisory else "Skip informational observations."}
+Max 5 entries, each under 20 words.
 
 portfolio_assessment: 2-3 sentences max — a decision summary, not an essay.
 
@@ -1180,9 +1303,9 @@ Return JSON only. No markdown fences, no prose outside the JSON.
   "rebalance_opportunity_score": 50,
   "no_action_reason": "WELL_BALANCED|LOW_CONFIDENCE|HIGH_DISAGREEMENT|CONSTRAINT_BLOCKED|MARKET_UNCERTAINTY|INSUFFICIENT_EDGE|null",
   "no_action_summary": "<20 words, null if REBALANCE",
-  "blocked_opportunities": [{{"symbol":"X","signal":"BUY","reason":"sector_limit_exceeded|insufficient_cash|portfolio_count_cap"}}],
+  "blocked_opportunities": [{{"symbol":"X","signal":"BUY","reason":"insufficient_cash|portfolio_count_cap"}}],
   "agrees_with_layer1": true,
-  "disagreements": ["<20 words each"],
+  "disagreements": [{disagreement_example}],
   "portfolio_assessment": "2-3 sentences",
   "cash_balance_target": 0.0,
   "allocations": [
@@ -1261,6 +1384,8 @@ Do NOT escalate to HIGH or CRITICAL for timing alone — timing cautions, it doe
 
 [AUTHORITATIVE POLICY CLAIM CONTRACT]
 {json.dumps(claim_contract or {}, sort_keys=True)}
+Sector advisories in the contract are informational and excluded from risk_flags and safer_choice.
+An optional sector comment can use SECTOR_ADVISORY with its exact evidence_ref.
 Every risk flag must include claim_kind. POLICY_BREACH and EXECUTION_RESTRICTION must
 reference an exact evidence_ref from this contract, with the same symbol (PORTFOLIO for
 portfolio-wide evidence). Missing or mismatched evidence is unscored, unsupported model output.
@@ -1284,7 +1409,7 @@ Disagreements: {json.dumps(l2.get("disagreements", []))}
 Allocations: {json.dumps(l2_allocs, indent=2)}
 
 Check for (use exact resolved severity thresholds — derived from active policy, not hardcoded):
-- CRITICAL : sector above its effective cap in the evidence contract OR single stock > {critical_pos_threshold:.0f}% of NAV
+- CRITICAL : single stock > {critical_pos_threshold:.0f}% of NAV
 - HIGH     : single stock {high_pos_threshold:.0f}–{critical_pos_threshold:.0f}% OR weak fundamentals on large position
 - MEDIUM   : conflicting allocation math
 - LOW      : minor concentration risk, suboptimal but acceptable
@@ -1302,7 +1427,7 @@ must be a separate INVESTMENT_RISK flag. Never disguise investment risk as Inten
 Return JSON only. No markdown fences.
 
 {{
-  "risk_flags": [{{"symbol":"...","issue":"...","severity":"LOW|MEDIUM|HIGH|CRITICAL","category":"INVESTMENT_RISK|OWNER_INTENT_REVIEW","claim_kind":"POLICY_BREACH|EXECUTION_RESTRICTION|EXISTING_EXPOSURE|ADVISORY_CONCERN|INVESTMENT_JUDGMENT","evidence_ref":"exact contract key or null"}}],
+  "risk_flags": [{{"symbol":"...","issue":"...","severity":"LOW|MEDIUM|HIGH|CRITICAL","category":"INVESTMENT_RISK|OWNER_INTENT_REVIEW","claim_kind":"POLICY_BREACH|EXECUTION_RESTRICTION|EXISTING_EXPOSURE|ADVISORY_CONCERN|SECTOR_ADVISORY|INVESTMENT_JUDGMENT","evidence_ref":"exact contract key or null"}}],
   "safer_choice": "layer1|layer2|neither",
   "final_risk_level": "low|medium|high",
   "auditor_notes": "1-2 sentences."
@@ -1528,6 +1653,7 @@ def _fallback_prompt(
     cash_balance: float,
     effective_policy_rules: str = "",
     intent_block: str = "",
+    sector_advisory: bool = False,
 ) -> str:
     return f"""You are an emergency portfolio analyst. The multi-layer optimizer pipeline failed.
 Produce a complete, compliant capital allocation plan in a single response.
@@ -1537,17 +1663,22 @@ Watchlist candidates: {json.dumps(wc, indent=2)}
 Forced exits (SELL signal): {sell_forced or "none"}
 Locked positions (no swap): {locked or "none"}
 Max portfolio stocks: {max_stocks}
-Default sector cap: {max_sector_pct}% of invested equity, excluding cash
+{"" if sector_advisory else f"Default sector threshold: {max_sector_pct}% of invested equity, excluding cash"}
 Total portfolio value: {total_value:.0f}, Cash balance: {cash_balance:.0f}
 
 {intent_block}HARD RULES — you MUST follow all of these:
 1. Forced exit symbols MUST appear with action=SELL and target_weight=0.0
 2. Locked symbols MUST appear with action=HOLD and unchanged target_weight
 3. Total unique stocks after rebalancing (HOLD/BUY/ACCUMULATE/REDUCE combined) MUST NOT exceed {max_stocks}
-4. Apply effective sector caps to invested equity. Report infeasible limits for human review.
 5. target_weight values are FLAT PERCENTAGES (10.0 = 10% of portfolio), NOT monetary amounts
 6. Every existing portfolio holding must appear in allocations with an explicit action
 {effective_policy_rules}
+
+Sector caps are advisory. Allow HOLD and NO_ACTION with a concentration warning.
+Never block a buy or propose an actionable sale solely because of sector exposure.
+Put optional sector-only SELL/REDUCE ideas in sector_alternatives using the same allocation row format.
+Keep the actionable allocation HOLD unless independently justified. Mark thesis-driven reductions
+with decision_basis=INVESTMENT_THESIS.
 
 OUTPUT CONTRACT — this JSON is read by software; do not spend output tokens on prose. Watchlist symbols you are
 not recommending (no BUY/ACCUMULATE) do NOT need an allocations row — omit them, except up to 5 WATCH rows for
@@ -1569,7 +1700,7 @@ Return ONLY valid JSON without markdown fences:
   "rebalance_opportunity_score": 50,
   "no_action_reason": "WELL_BALANCED|LOW_CONFIDENCE|HIGH_DISAGREEMENT|CONSTRAINT_BLOCKED|MARKET_UNCERTAINTY|INSUFFICIENT_EDGE|null",
   "no_action_summary": "<20 words, null if REBALANCE",
-  "blocked_opportunities": [{{"symbol":"X","signal":"BUY","reason":"sector_limit_exceeded|insufficient_cash|portfolio_count_cap"}}],
+  "blocked_opportunities": [{{"symbol":"X","signal":"BUY","reason":"insufficient_cash|portfolio_count_cap"}}],
   "portfolio_assessment": "1-2 sentence summary of the plan",
   "cash_balance_target": 5.0,
   "allocations": [
@@ -1604,12 +1735,15 @@ def _run_single_shot_fallback(
     enforce_effective_policy: bool = False,
     advisory=None,
     execution_context: dict | None = None,
+    sector_policy_mode: str | None = None,
 ) -> dict:
     """Single-shot emergency fallback when the 3-layer pipeline fails completely.
 
     advisory: the SAME frozen Advisory Integration V1 run as the primary path
     (substitutes for L2, so it receives hard + soft context).
     """
+    sector_advisory = sector_policy_mode == SECTOR_POLICY_ADVISORY
+    degraded_policy = _degraded_sector_policy(sector_limits, max_sector_pct, effective_envelope) if sector_advisory else None
     score_map = _build_score_context_map(pc, wc)
     effective_policy_rules = ""
     if enforce_effective_policy:
@@ -1623,21 +1757,14 @@ def _run_single_shot_fallback(
             effective_envelope.effective_cash_min_pct if effective_envelope else 5.0,
         ))
         emergency = bool((policy_context or {}).get("emergency_override", False))
-        sector_caps = {}
-        if effective_envelope is not None:
-            sector_caps = {
-                "default": effective_envelope.global_sector_cap.effective,
-                **dict(effective_envelope.effective_sector_limits),
-            }
         effective_policy_rules = (
             f"7. Effective maximum single-position weight is {max_position:.1f}%\n"
             f"8. Effective minimum cash weight is {min_cash:.1f}%\n"
-            f"9. Effective sector caps: {json.dumps(sector_caps, sort_keys=True)}\n"
             + ("10. Emergency policy prohibits BUY and ACCUMULATE\n" if emergency else "")
         )
     prompt = _fallback_prompt(
         pc, wc, sell_forced, locked, max_stocks, max_sector_pct,
-        total_value, cash_balance, effective_policy_rules,
+        total_value, cash_balance, effective_policy_rules, sector_advisory=sector_advisory,
         **({"intent_block": _intent_block(advisory, _LAYER_FALLBACK)} if advisory is not None else {}),
     )
     from services.optimizer.execution_penalty import build_execution_prompt_block
@@ -1656,6 +1783,10 @@ def _run_single_shot_fallback(
 
     raw_allocs = result.pop("allocations", None) or []
     allocations = _normalize_allocations(raw_allocs, pc_map, score_map)
+    sector_alternatives = []
+    if sector_advisory:
+        concentration = freeze_concentration(portfolio_data, wc, policy_context, total_value) if policy_context else None
+        sector_alternatives = _separate_sector_alternatives(result, allocations, pc_map, total_value, concentration)
     for a in allocations:
         a["estimated_amount"] = round((a["allocation_change_percent"] / 100) * total_value)
         _observe(advisory, a["symbol"], None, a, stage=_STAGE_FALLBACK, source=_SRC_ADVISORY,
@@ -1680,7 +1811,7 @@ def _run_single_shot_fallback(
                 regime_context=None,
                 **_observer_kw,
             )
-            if policy_context:
+            if policy_context and not sector_advisory:
                 _limit_sector_buys(final_allocations, total_value, policy_context,
                                    freeze_positions(portfolio_data, wc), advisory)
             _reconcile_allocation_actions(final_allocations, **_observer_kw)
@@ -1708,8 +1839,11 @@ def _run_single_shot_fallback(
             _make_envelope_from_dict(policy_context), total_value,
             effective_turnover_cap=policy_context.get("relaxed_turnover_cap"),
             frozen_positions=freeze_positions(portfolio_data, wc))[4]
-    result = validate_auditor_claims(result, build_claim_evidence(final_allocations, fallback_details, {},
-        risk_inputs={p["symbol"]: p for p in [*pc, *wc]}))
+    claim_contract = build_claim_evidence(final_allocations, fallback_details, {},
+        risk_inputs={p["symbol"]: p for p in [*pc, *wc]})
+    if sector_advisory:
+        claim_contract["sector_advisories"] = {}
+    result = validate_auditor_claims(result, claim_contract)
     risk_flags = result.get("risk_flags", [])
     final_risk_level = result.get("final_risk_level", "medium")
     auditor_notes = result.get("auditor_notes", "Fallback mode — single-shot analysis.")
@@ -1787,13 +1921,10 @@ def _run_single_shot_fallback(
         "consensus": consensus,
         "fallback_mode": True,
     }
-    if policy_context:
-        output["active_policy"] = {k: v for k, v in policy_context.items() if k != "prompt_block"}
-        output["active_policy"]["violation_details"] = fallback_details
-        output["active_policy"]["concentration"] = freeze_concentration(
-            portfolio_data, wc, output["active_policy"], total_value,
-        )
-        attach_target_evaluation(output)
+    policy_output = ({**{k: v for k, v in policy_context.items() if k != "prompt_block"},
+                      "violation_details": fallback_details} if policy_context else None)
+    _capture_sector_policy(output, policy_output, sector_policy_mode, portfolio_data, wc,
+                           total_value, degraded_policy, sector_alternatives)
     return output
 
 
@@ -1821,7 +1952,8 @@ def _retry_l1_with_schema(
         f"Watchlist candidates: {json.dumps(c_wc)}\n"
         f"Swap-eligible: {swap_eligible or 'none'}\n"
         f"Forced exits: {sell_forced or 'none'}\n\n"
-        "Propose up to 3 swap / reduce actions and rank the top watchlist buys.\n"
+        "Propose up to 3 independently justified swap / reduce actions and rank the top watchlist buys.\n"
+        "Sector concentration is advisory and cannot by itself justify a trade.\n"
         "Required output (fill in real values, \"r\" = reason under 12 words):\n"
         '{"swaps":[{"sell":"SYM_OR_NULL","buy":"SYM_OR_NULL","score_delta":0.0,'
         '"sector":"Other","type":"SWAP","r":"<12 words"}],"top_buys":["SYM"],'
@@ -1906,6 +2038,7 @@ def run_layered_optimizer(
     on_stage: Callable[[str], None] | None = None,
     enforce_effective_policy_in_fallback: bool = False,
     advisory=None,
+    sector_policy_mode: str | None = None,
 ) -> dict:
     """3-layer Dynamic Capital Allocation Engine with global single-shot fallback.
 
@@ -1918,6 +2051,10 @@ def run_layered_optimizer(
     common-NAV current weights for held positions when that basis resolves,
     and proposal-transition capture. It never changes an allocation decision.
     """
+    sector_policy_mode = sector_policy_mode or (policy_context or {}).get("sector_policy_mode")
+    sector_advisory = sector_policy_mode == SECTOR_POLICY_ADVISORY
+    degraded_policy = _degraded_sector_policy(sector_limits, max_sector_pct, effective_envelope) if sector_advisory else None
+    sector_alternatives = []
     if layers is None:
         layers = _DEFAULT_LAYERS
 
@@ -1979,6 +2116,7 @@ def run_layered_optimizer(
             _pe_for_t1.hard_constraints.max_single_position_pct,
             _pe_for_t1.hard_constraints.max_sector_pct,
             dict(policy_context.get("resolved_sector_limits") or {}),
+            include_sectors=not sector_advisory,
         )
         _relaxed_turn_cap = get_relaxed_turnover_cap(_base_turn_cap, _t1_severity)
         if _t1_severity != "NONE":
@@ -2009,7 +2147,7 @@ def run_layered_optimizer(
             f"SAFE AUTHORIZED STATES (do NOT escalate to REVIEW / flag HIGH or CRITICAL):\n"
             f"  • Turnover Relaxation Active    — controlled Tier 3 flex for Tier 1 remediation\n"
             f"  • Temporary Cash Deployment Override — transient, for forced exits\n"
-            f"  • Controlled Sector Rotation    — rebalancing within resolved sector limits\n"
+            f"  • Sector Exposure Advisory     — review concentration separately from the trade decision\n"
             f"\n"
             f"DANGEROUS FAILURE STATES (flag HIGH/CRITICAL, warrant REVIEW or REJECT):\n"
             f"  • Concentration breach UNRESOLVED after proposed rebalancing\n"
@@ -2027,13 +2165,16 @@ def run_layered_optimizer(
         )
 
     try:
+        sector_context = (freeze_concentration(
+            portfolio_data, watchlist_data, policy_context or degraded_policy, total_value,
+        ) if sector_advisory else None)
         # Layer 1 — Strategist
         _emit_stage(on_stage, "LAYER1_PROPOSAL")
         l1_parse_failed = False
         try:
             l1_prompt = _layer1_prompt(
                 c_pc, c_wc, sell_forced, swap_eligible,
-                max_sector_pct=max_sector_pct, sector_limits=sector_limits,
+                max_sector_pct=max_sector_pct, sector_limits=sector_limits, sector_advisory=sector_advisory,
                 max_stocks=max_stocks, current_count=portfolio_count,
                 persona_context=persona_context,
                 regime_context=regime_context,
@@ -2056,7 +2197,10 @@ def run_layered_optimizer(
                 l1_cfg["provider"], l1_cfg["model"], len(raw_l1_text), l1_latency_ms,
             )
             l1_result = safe_parse_json(raw_l1_text)
-            _l1_swaps = _normalize_l1_swaps(l1_result.get("swaps", []), score_map)
+            _l1_swaps = _normalize_l1_swaps(
+                [s for s in l1_result.get("swaps", [])
+                 if not sector_advisory or s.get("decision_basis") != "SECTOR_ADVISORY"], score_map,
+            )
             l1_result["swap_suggestions"] = _postprocess_swaps(_l1_swaps, sell_forced, locked)
             _note_prompt(advisory, _LAYER_L1, "SUCCESS")
             _note_l1_proposals(advisory, _l1_swaps, locked)
@@ -2077,7 +2221,10 @@ def run_layered_optimizer(
                     execution_context=execution_context,
                     **({"intent_block": _intent_block(advisory, _LAYER_L1_RETRY)} if advisory is not None else {}),
                 )
-                _l1_swaps = _normalize_l1_swaps(l1_result.get("swaps", []), score_map)
+                _l1_swaps = _normalize_l1_swaps(
+                    [s for s in l1_result.get("swaps", [])
+                     if not sector_advisory or s.get("decision_basis") != "SECTOR_ADVISORY"], score_map,
+                )
                 l1_result["swap_suggestions"] = _postprocess_swaps(_l1_swaps, sell_forced, locked)
                 l1_parse_failed = False
                 _note_prompt(advisory, _LAYER_L1_RETRY, "SUCCESS")
@@ -2098,7 +2245,7 @@ def run_layered_optimizer(
         try:
             l2_raw = call_ai(
                 _layer2_prompt(pc, wc, l1_result, l2_cfg.get("role", ""),
-                               cash_balance=cash_balance, total_value=total_value,
+                               cash_balance=cash_balance, total_value=total_value, sector_advisory=sector_advisory,
                                persona_context=persona_context,
                                regime_context=regime_context,
                                policy_context=policy_context,
@@ -2121,6 +2268,10 @@ def run_layered_optimizer(
             if raw_allocs is None:
                 raw_allocs = l2_result.pop("target_allocations", [])
             l2_allocs = _normalize_allocations(raw_allocs, pc_map, score_map)
+            if sector_advisory:
+                sector_alternatives = _separate_sector_alternatives(
+                    l2_result, l2_allocs, pc_map, total_value, sector_context if policy_context else None,
+                )
             for a in l2_allocs:
                 a["estimated_amount"] = round((a["allocation_change_percent"] / 100) * total_value)
             _note_prompt(advisory, _LAYER_L2, "SUCCESS")
@@ -2135,9 +2286,10 @@ def run_layered_optimizer(
             # If L1 failed, L2 cannot meaningfully agree with it — mark disagreement
             if l1_parse_failed:
                 l2_result["agrees_with_layer1"] = False
-                l2_result.setdefault("disagreements", []).insert(
-                    0, "L1_PARSE_FAILURE: Strategist output could not be parsed — treating as disagreement."
-                )
+                if not sector_advisory:
+                    l2_result.setdefault("disagreements", []).insert(
+                        0, "L1_PARSE_FAILURE: Strategist output could not be parsed — treating as disagreement."
+                    )
                 l2_result["strategist_parse_failed"] = True
             logger.info(
                 "[L2_DEBUG] status=%s allocs_count=%d agrees_with_layer1=%s strategist_parse_failed=%s",
@@ -2151,7 +2303,7 @@ def run_layered_optimizer(
             _note_prompt(advisory, _LAYER_L2, "FAILED")
             l2_result = {
                 "error": str(e), "agrees_with_layer1": False,
-                "disagreements": ["L2_PARSE_FAILURE: Challenger output could not be parsed."],
+                "disagreements": [] if sector_advisory else ["L2_PARSE_FAILURE: Challenger output could not be parsed."],
                 "target_allocations": [],
             }
             l2_latency_ms = 0
@@ -2171,7 +2323,16 @@ def run_layered_optimizer(
         claim_contract = build_claim_evidence(l2_result.get("target_allocations", []),
                                               proposal_details, execution_context,
                                               risk_inputs={p["symbol"]: p for p in [*portfolio_data, *watchlist_data]})
-        claim_contract["general_policy_limits"] = (policy_context or {}).get("hard_constraints", {})
+        claim_contract["general_policy_limits"] = dict((policy_context or {}).get("hard_constraints", {}))
+        if sector_advisory:
+            claim_contract["general_policy_limits"].pop("max_sector_pct", None)
+            projected = project_targets(frozen_positions, l2_result.get("target_allocations", []), total_value)
+            target = evaluate_frozen_sectors(sector_context, projected, "PROJECTED_TARGET")
+            claim_contract["sector_advisories"] = {
+                row["evidence_id"]: row
+                for evaluation in (sector_context["current"], target)
+                for row in evaluation["sectors"] if row["breach_pp"]
+            }
         try:
             l3_raw = call_ai(
                 _layer3_prompt(l1_result, l2_result, l3_cfg.get("role", ""), max_sector_pct=max_sector_pct,
@@ -2205,7 +2366,11 @@ def run_layered_optimizer(
                 f"L2 allocation plan empty after all layers attempted. L2 error: {l2_result.get('error')}"
             )
 
-        consensus = _consensus_engine(l1_result, l2_result, l3_result)
+        consensus = _consensus_engine(l1_result, l2_result, l3_result, sector_advisory=sector_advisory)
+        if sector_advisory:
+            l2_result["agrees_with_layer1"] = consensus.pop("challenger_agrees")
+            l2_result["disagreements"] = consensus["disagreement_reasons"]
+            l2_result["unscored_comments"] = consensus.pop("unscored_challenger_comments")
 
         # ── Policy governance scoring (3B.4) ───────────────────────────────────
         # Populated after final_allocations are known; policy_context may be None.
@@ -2237,7 +2402,7 @@ def run_layered_optimizer(
             a["allocation_change_percent"] = round(a["target_weight"] - a["current_weight"], 2)
             a["estimated_amount"] = round((a["allocation_change_percent"] / 100) * total_value)
 
-        # ── Policy / regime / resolved-sector hard constraints ────────────────
+        # ── Policy and regime hard constraints ────────────────
         _observer_kw = {"observer": advisory} if advisory is not None else {}
         try:
             _enforce_hard_policy(
@@ -2290,10 +2455,10 @@ def run_layered_optimizer(
                     a["slippage_est_pct"]   = per_sym_exec[sym].get("slippage_cost_est_pct")
 
         # ── Post-enforcement action label reconciliation ──────────────────────
-        # Constraint passes (policy cap, cash floor, sector cap, DR exec cap) all
+        # Constraint passes (policy cap, cash floor, DR exec cap and legacy sector cap) all
         # update target_weight + allocation_change_percent but never touch action.
         # A BUY/ACCUMULATE whose delta went negative is now a net REDUCE; fix it.
-        if policy_context:
+        if policy_context and not sector_advisory:
             _limit_sector_buys(final_allocations, total_value, policy_context, frozen_positions, advisory)
         _reconcile_allocation_actions(final_allocations, **_observer_kw)
 
@@ -2448,11 +2613,8 @@ def run_layered_optimizer(
             "effective_envelope": _eff_env_to_dict(effective_envelope) if effective_envelope else None,
             **persona_fields,
         }
-        if active_policy_out is not None:
-            active_policy_out["concentration"] = freeze_concentration(
-                portfolio_data, watchlist_data, active_policy_out, total_value,
-            )
-            attach_target_evaluation(output)
+        _capture_sector_policy(output, active_policy_out, sector_policy_mode, portfolio_data, watchlist_data,
+                               total_value, degraded_policy, sector_alternatives)
         return output
 
     except HardPolicyEnforcementError:
@@ -2475,6 +2637,7 @@ def run_layered_optimizer(
                             if policy_context else None),
             effective_envelope=effective_envelope,
             enforce_effective_policy=enforce_effective_policy_in_fallback,
+            sector_policy_mode=sector_policy_mode,
             execution_context=execution_context,
             **({"advisory": advisory} if advisory is not None else {}),
         )

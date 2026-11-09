@@ -52,6 +52,7 @@ _REASON_LABELS = {
     "MANDATORY_RISK_REDUCTION": "Mandatory Risk Reduction",
     "POLICY_ENFORCEMENT": "Policy Enforcement",
     "PORTFOLIO_IMPROVEMENT": "Portfolio Improvement",
+    "INVESTMENT_THESIS": "Portfolio Improvement",
 }
 
 
@@ -162,7 +163,7 @@ def _linked_transactions(db: Session, decision: Any, known_symbols: list[str] | 
 
 def _decision_analysis(db: Session, decision: Any, snap: Any) -> dict[str, Any]:
     from services.evaluation.execution_analyzer import compute_execution_analysis
-    from services.evaluation.plan_grader import read_snapshot_plan_inputs
+    from services.evaluation.plan_grader import advisory_plan_provenance, read_snapshot_plan_inputs
 
     inputs = read_snapshot_plan_inputs(db, snap)
     if inputs is None:
@@ -173,6 +174,7 @@ def _decision_analysis(db: Session, decision: Any, snap: Any) -> dict[str, Any]:
     return compute_execution_analysis(
         inputs["target_allocations"], inputs["cash_available"], inputs["violations"],
         _recommendation_prices(snap), _linked_transactions(db, decision, known_symbols=plan_symbols),
+        policy_provenance=advisory_plan_provenance(inputs),
     )
 
 
@@ -206,7 +208,9 @@ def _recording_progress_fields(decision: Any, analysis: dict[str, Any]) -> dict[
 def list_execution_ledger(db: Session, portfolio_id: int, period_days: int = 90) -> dict[str, Any]:
     """Decision ledger + class-segmented acceptance summary (UX S4)."""
     from models.database import RecommendationGrade, UserExecutionDecision, Workspace
-    from services.evaluation.plan_grader import derive_full_plan, read_snapshot_plan_inputs
+    from services.evaluation.plan_grader import (
+        advisory_plan_provenance, derive_full_plan, read_snapshot_plan_inputs,
+    )
     from services.execution_review import is_reviewable
     from services.optimizer.execution_optimizer import STATE_DEFERRED
 
@@ -252,7 +256,8 @@ def list_execution_ledger(db: Session, portfolio_id: int, period_days: int = 90)
 
         inputs = read_snapshot_plan_inputs(db, snap)
         if inputs is not None:
-            plan = derive_full_plan(inputs["target_allocations"], inputs["cash_available"], inputs["violations"])
+            plan = derive_full_plan(inputs["target_allocations"], inputs["cash_available"], inputs["violations"],
+                                    advisory_plan_provenance(inputs))
             accepted = dec.decision in _ACCEPTED_DECISIONS
             for t in plan["execution_optimization"].trades:
                 if t.execution_state == STATE_DEFERRED:

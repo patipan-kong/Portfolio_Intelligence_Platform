@@ -491,9 +491,11 @@ def optimize_execution_for_payload(
     """
     policy = payload.get("active_policy") or {}
     cash = float(payload.get("cash_balance") or 0.0) if cash_available is None else float(cash_available)
-    if "concentration" in policy or payload.get("execution_policy_version"):
+    from services.optimizer.sector_policy import EVIDENCE_VERSION, POSITION_RULE, sector_caps_are_advisory
+
+    sector_advisory = sector_caps_are_advisory(policy)
+    if sector_advisory or "concentration" in policy or payload.get("execution_policy_version"):
         from services.optimizer.concentration_execution import optimize_concentration_execution
-        from services.optimizer.sector_policy import EVIDENCE_VERSION
 
         frozen_plan = policy.get("scheduled_execution", payload.get("scheduled_execution"))
         if frozen_plan is not None:
@@ -504,6 +506,10 @@ def optimize_execution_for_payload(
                 if trade.required_amount and any(
                     effect.get("required_amount") == trade.required_amount
                     and (effect.get("current_breach") or {}).get("evidence_version") == EVIDENCE_VERSION
+                    and (not sector_advisory or (
+                        (effect.get("current_breach") or {}).get("basis") == "NAV"
+                        and (effect.get("current_breach") or {}).get("rule") == POSITION_RULE
+                    ))
                     and (effect.get("with_required_portion") or {}).get("evidence_id")
                     and effect.get("repair") in ("FULL_REPAIR", "PARTIAL_REPAIR")
                     for effect in trade.policy_evidence or []

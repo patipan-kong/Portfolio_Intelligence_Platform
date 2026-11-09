@@ -63,6 +63,7 @@ def validate_auditor_claims(result, contract):
     """Return a new interpretation; never mutate frozen input or model evidence."""
     output = deepcopy(result)
     accepted, review, seen = [], [], set()
+    sector_review_count = 0
     for raw in result.get("risk_flags", []) or []:
         if not isinstance(raw, dict):
             review.append({"symbol": "UNKNOWN", "issue": "Malformed model flag", "severity": "LOW",
@@ -70,6 +71,15 @@ def validate_auditor_claims(result, contract):
             continue
         flag = deepcopy(raw)
         kind = flag.get("claim_kind")
+        ref = flag.get("evidence_ref")
+        sector_advisories = contract.get("sector_advisories")
+        sector_evidence = (sector_advisories or {}).get(ref) if isinstance(ref, str) else None
+        if sector_evidence is not None or (sector_advisories is not None and kind == "SECTOR_ADVISORY"):
+            flag.update(validation_status="ADVISORY", scoring_eligible=False,
+                        provenance=deepcopy(sector_evidence))
+            review.append(flag)
+            sector_review_count += 1
+            continue
         if flag.get("category") == "OWNER_INTENT_REVIEW":
             flag.update(validation_status="OWNER_REVIEW", scoring_eligible=False)
             accepted.append(flag)
@@ -111,7 +121,12 @@ def validate_auditor_claims(result, contract):
     output["final_risk_level"] = ("high" if any(f.get("severity") in ("HIGH", "CRITICAL") for f in scored)
                                   else "medium" if scored else "low")
     # Free-form notes/choice may restate rejected premises; retain only as raw evidence.
-    output["auditor_notes"] = f"{len(scored)} scored observations; {len(review)} unscored claims for review."
-    if review or not scored:
+    decision_review_count = len(review) - sector_review_count
+    output["auditor_notes"] = f"{len(scored)} scored observations; {decision_review_count} unscored claims for review."
+    if "sector_advisories" in contract:
+        # A free-form preference can restate even an unlinked claim. Only
+        # independently scored evidence can change the actionable preference.
+        output["safer_choice"] = "neither" if output["final_risk_level"] == "high" else "layer2"
+    elif decision_review_count or not scored:
         output["safer_choice"] = "layer2"
     return output

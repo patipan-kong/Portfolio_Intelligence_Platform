@@ -19,6 +19,7 @@ import AsOfStamp from "@/components/evaluation/AsOfStamp";
 import TransactionEvidenceLinks from "@/components/evaluation/TransactionEvidenceLinks";
 import ReviewOutcomeBadge from "@/components/evaluation/ReviewOutcomeBadge";
 import RecommendationComparisonCard from "@/components/evaluation/RecommendationComparisonCard";
+import SectorConcentrationAdvisory from "@/components/optimizer/SectorConcentrationAdvisory";
 import { provenanceQualifier, requiredLabel } from "@/lib/tradeProvenance";
 import type { PolicyRepairEvidence } from "@/lib/api";
 
@@ -58,6 +59,8 @@ function PlanSection({ plan }: { plan: RecommendationReportCard["plan"] }) {
     <>
       {plan.no_action_summary && <p className="text-sm text-gray-700">{plan.no_action_summary}</p>}
       {plan.portfolio_assessment && <p className="text-xs text-gray-500">{plan.portfolio_assessment}</p>}
+
+      {plan.sector_advisory && <SectorConcentrationAdvisory evidence={plan.sector_advisory} />}
 
       {buys.length > 0 && (
         <div className="space-y-1">
