@@ -279,6 +279,9 @@ export const updateGoalProfile = (portfolioId: number, update: GoalProfileUpdate
 
 export type RiskLevel = "Low" | "Medium" | "High" | "Critical";
 
+export type PortfolioSectorClassificationSource = "registry_fact" | "stored_projection" | "static_taxonomy" | "unresolved";
+export type PortfolioSectorClassificationStatus = "authoritative" | "provisional" | "unresolved";
+
 export interface PortfolioItem {
   id: number;
   portfolio_id: number;
@@ -301,6 +304,8 @@ export interface PortfolioItem {
   upside_pct: number | null;
   risk_level: RiskLevel | null;
   sector?: string | null;
+  classification_source?: PortfolioSectorClassificationSource;
+  classification_status?: PortfolioSectorClassificationStatus;
   is_dr?: boolean;
   parent_symbol?: string | null;
   upside_reference_price?: number | null;
@@ -340,6 +345,9 @@ export interface SectorBreakdownItem {
   value: number;
   weight_pct: number;
   stocks: string[];
+  classification_sources?: PortfolioSectorClassificationSource[];
+  /** Provisional if any holding in this group has a provisional classification. */
+  classification_status?: PortfolioSectorClassificationStatus;
   limit_pct: number;
   status: "OK" | "WARNING" | "EXCEEDS";
 }

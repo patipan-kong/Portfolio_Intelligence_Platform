@@ -110,3 +110,24 @@ describe("Stale-price data-trust indicator", () => {
     expect(screen.queryByTitle(/Live price unavailable/)).not.toBeInTheDocument();
   });
 });
+
+test("qualifies provisional holding sectors and leaves authoritative labels unqualified", () => {
+  render(
+    <PortfolioTable
+      rows={[
+        holding({ symbol: "GOOGL01.BK", sector: "Technology", classification_source: "static_taxonomy", classification_status: "provisional" }),
+        holding({ id: 105, symbol: "NVDA01.BK", sector: "Technology", classification_source: "stored_projection", classification_status: "provisional" }),
+        holding({ id: 106, symbol: "BH.BK", sector: "Healthcare", classification_source: "registry_fact", classification_status: "authoritative" }),
+      ]}
+      onRemove={vi.fn(async () => {})}
+      onReanalyze={vi.fn(async () => {})}
+      onToggleSwap={vi.fn(async () => {})}
+    />
+  );
+
+  expect(screen.getAllByTitle(/Portfolio taxonomy fallback/)[0]).toHaveTextContent("Provisional");
+  expect(screen.getAllByTitle(/Stored Portfolio sector/)[0]).toHaveTextContent("Provisional");
+  for (const badge of screen.getAllByText("Healthcare")) {
+    expect(badge.parentElement).not.toHaveTextContent("Provisional");
+  }
+});

@@ -40,7 +40,17 @@ function LegendRow({ item }: { item: SectorBreakdownItem }) {
   return (
     <div className="flex items-center gap-2 text-xs">
       <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
-      <span className="text-gray-700 font-medium truncate flex-1">{item.sector}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-gray-700 font-medium">{item.sector}</span>
+        {item.classification_status === "provisional" && (
+          <span
+            className="block text-[10px] text-gray-600"
+            title="Includes holdings grouped without an authoritative Registry sector fact."
+          >
+            Includes provisional groupings
+          </span>
+        )}
+      </span>
       <span className="text-gray-600">{item.weight_pct.toFixed(1)}%</span>
       <span className="text-gray-400">/{item.limit_pct}%</span>
       {badgeCls && (

@@ -72,6 +72,7 @@ from services.sector_taxonomy import (
 )
 from services.json_utils import safe_parse_json
 from services.portfolio_reference import resolve_portfolio_or_404, resolve_execution_decision_or_404
+from services.portfolio_sector import resolve_portfolio_sector
 from services.portfolio_transactions import (
     execute_buy, execute_sell,
     execute_deposit, execute_withdraw,
@@ -532,6 +533,7 @@ def _latest_day_consensus(symbols: list[str], ws: int, db: Session) -> dict[str,
 
 
 def _enrich_holdings(
+    db: Session,
     items: list[PortfolioItem],
     prices: list[dict],
     cached: dict,
@@ -539,13 +541,14 @@ def _enrich_holdings(
     parent_prices: dict | None = None,
     consensus_map: dict | None = None,
 ) -> list[dict]:
-    """sector is read directly from the DB column on each PortfolioItem."""
+    """Attach reporting sectors and analysis context to holdings."""
     def _c(sym: str, attr: str, default=None):
         return getattr(cached[sym], attr, default) if sym in cached else default
 
     result = []
     for item, price in zip(items, prices):
         sym = item.symbol
+        classification = resolve_portfolio_sector(db, item)
         ta_score = _c(sym, "ta_score")
         fa_score = _c(sym, "fa_score")
         info = (fa_info or {}).get(sym, {})
@@ -580,7 +583,9 @@ def _enrich_holdings(
             "target_price": target_price,
             "upside_pct":   upside_pct,
             "risk_level":   _risk_level(ta_score, fa_score),
-            "sector":       item.sector or "Other",
+            "sector":       classification.sector,
+            "classification_source": classification.classification_source,
+            "classification_status": classification.classification_status,
             "is_dr":        is_dr,
             "parent_symbol": parent_sym,
             "upside_reference_price": upside_price if is_dr else None,
@@ -2990,7 +2995,6 @@ async def list_holdings(portfolio_id: int, db: Session = Depends(get_db)) -> lis
 
     Price fields (current_price, previous_close, change_percent, last_updated, upside_pct) are
     returned as null and filled in by a follow-up call to /prices.
-    This makes the endpoint respond in < 500 ms regardless of portfolio size.
     """
     ws = _ws_id(db)
     p = resolve_portfolio_or_404(db, portfolio_id, ws)
@@ -3024,7 +3028,7 @@ async def list_holdings(portfolio_id: int, db: Session = Depends(get_db)) -> lis
             pass
     consensus_map = _latest_day_consensus(symbols, ws, db)
     # No parent prices — upside_pct will be null until /prices responds
-    return _enrich_holdings(items, null_prices, cached, fa_info, {}, consensus_map)
+    return _enrich_holdings(db, items, null_prices, cached, fa_info, {}, consensus_map)
 
 
 @app.get("/portfolios/{portfolio_id}/prices")
@@ -3104,9 +3108,7 @@ async def get_portfolio_prices(portfolio_id: int, db: Session = Depends(get_db))
 async def get_sector_breakdown(portfolio_id: int, db: Session = Depends(get_db)) -> dict:
     """Return sector allocation from DB only — no yfinance calls.
 
-    Uses cost basis (avg_cost × shares) as the value proxy so sector weights
-    are available instantly.  Sector column is read directly from DB (populated
-    at add-time), so this endpoint is pure SQL and responds in < 50 ms.
+    Uses cost basis (avg_cost × shares) and the same reporting sectors as holdings.
     """
     ws = _ws_id(db)
     p = resolve_portfolio_or_404(db, portfolio_id, ws)
@@ -3120,11 +3122,18 @@ async def get_sector_breakdown(portfolio_id: int, db: Session = Depends(get_db))
     agg: dict[str, dict] = {}
     for item in items:
         mv = item.shares * item.avg_cost  # cost basis — pure DB, no yfinance
-        sector = normalize_sector(item.sector)
+        classification = resolve_portfolio_sector(db, item)
+        sector = classification.sector
         if sector not in agg:
-            agg[sector] = {"value": 0.0, "stocks": []}
+            agg[sector] = {
+                "value": 0.0, "stocks": [], "classification_sources": set(),
+                "classification_status": classification.classification_status,
+            }
         agg[sector]["value"] += mv
         agg[sector]["stocks"].append(item.symbol)
+        agg[sector]["classification_sources"].add(classification.classification_source)
+        if classification.classification_status == "provisional":
+            agg[sector]["classification_status"] = "provisional"
 
     total_value = sum(d["value"] for d in agg.values())
     result = []
@@ -3137,6 +3146,8 @@ async def get_sector_breakdown(portfolio_id: int, db: Session = Depends(get_db))
             "value": round(data["value"], 2),
             "weight_pct": weight,
             "stocks": data["stocks"],
+            "classification_sources": sorted(data["classification_sources"]),
+            "classification_status": data["classification_status"],
             "limit_pct": limit,
             "status": status,
         })

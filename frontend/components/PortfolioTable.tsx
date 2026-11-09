@@ -15,15 +15,28 @@ import SignalBadge from "./SignalBadge";
 import type { PortfolioItem, RiskLevel } from "@/lib/api";
 import { sectorColor } from "@/lib/sectors";
 
-function SectorBadge({ sector }: { sector?: string | null }) {
+function SectorBadge({ item }: { item: PortfolioItem }) {
+  const { sector, classification_source, classification_status } = item;
   if (!sector) return <span className="text-gray-300 text-xs">—</span>;
   const color = sectorColor(sector);
   return (
-    <span
-      className="inline-block text-xs font-semibold px-1.5 py-0.5 rounded whitespace-nowrap"
-      style={{ color, backgroundColor: `${color}20`, border: `1px solid ${color}60` }}
-    >
-      {sector}
+    <span className="inline-flex flex-wrap items-center gap-1">
+      <span
+        className="inline-block text-xs font-semibold px-1.5 py-0.5 rounded whitespace-nowrap"
+        style={{ color, backgroundColor: `${color}20`, border: `1px solid ${color}60` }}
+      >
+        {sector}
+      </span>
+      {classification_status === "provisional" && (
+        <span
+          className="text-[10px] text-gray-600"
+          title={classification_source === "stored_projection"
+            ? "Stored Portfolio sector. No authoritative Registry sector fact applied."
+            : "Portfolio taxonomy fallback. No authoritative Registry sector fact applied."}
+        >
+          Provisional
+        </span>
+      )}
     </span>
   );
 }
@@ -233,7 +246,7 @@ export default function PortfolioTable({
       columnHelper.accessor("sector", {
         header: "Sector",
         enableSorting: false,
-        cell: ({ getValue }) => <SectorBadge sector={getValue()} />,
+        cell: ({ row }) => <SectorBadge item={row.original} />,
       }),
       columnHelper.accessor("shares", { header: "Shares", sortingFn: "basic" }),
       columnHelper.accessor("avg_cost", {
@@ -449,7 +462,7 @@ export default function PortfolioTable({
                     {sym.replace(".BK", "")}
                     {sym.endsWith(".BK") && <span className="ml-1 text-xs text-gray-400">.BK</span>}
                   </Link>
-                  <SectorBadge sector={item.sector} />
+                  <SectorBadge item={item} />
                 </div>
                 {item.latest_signal
                   ? <SignalBadge signal={item.latest_signal} />
