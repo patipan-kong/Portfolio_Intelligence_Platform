@@ -117,10 +117,15 @@ def _compute_muji_plan_grade(
         allocations = {a["symbol"]: a for a in target_allocations}
         if len(allocations) != len(target_allocations):
             raise ValueError("Duplicate allocation symbols")
-        if not all(isfinite(float(v)) and float(v) >= 0 for v in
-                   (plan.cash_available, plan.idle_cash_after, *buys.values(), *costs.values())):
+        if not isfinite(float(cash_available)) or not all(isfinite(v) and v >= 0 for v in (
+            plan.cash_available, plan.idle_cash_after, plan.total_buy_deployment, plan.funding_gap,
+            plan.scheduled_turnover_pct, plan.effective_turnover_cap_pct,
+            *buys.values(), *costs.values(),
+        )):
             raise ValueError("Invalid monetary value")
-        if not all(isfinite(float(v)) for v in changes.values()):
+        if plan.valuation_nav is not None and (not isfinite(plan.valuation_nav) or plan.valuation_nav < 0):
+            raise ValueError("Invalid valuation NAV")
+        if not all(isfinite(v) for v in changes.values()):
             raise ValueError("Invalid scheduled change")
         if abs(plan.cash_available - cash_available) > 0.011:
             raise ValueError("Frozen cash disagrees with run")
@@ -134,6 +139,11 @@ def _compute_muji_plan_grade(
         if len(sales) != len(plan.trades):
             raise ValueError("Duplicate frozen SELL")
         for symbol, trade in sales.items():
+            if not all(isfinite(v) and v >= 0 for v in
+                       (trade.full_recommended_amount, trade.executed_amount)):
+                raise ValueError("Invalid frozen SELL amount")
+            if trade.scheduled_cash_impact is not None and not isfinite(trade.scheduled_cash_impact):
+                raise ValueError("Invalid frozen SELL cash impact")
             if allocations[symbol]["action"] not in ("SELL", "REDUCE") or trade.action != allocations[symbol]["action"]:
                 raise ValueError("Invalid frozen SELL direction")
             if trade.executed_amount < 0 or abs(changes.get(symbol, 0) + trade.executed_amount) > 0.011:
@@ -151,6 +161,10 @@ def _compute_muji_plan_grade(
         if abs(expected_cash - plan.idle_cash_after) > 0.021:
             raise ValueError("Frozen cash does not reconcile")
         cash_floor_pct = (provenance.get("hard_constraints") or {}).get("min_cash_pct")
+        if cash_floor_pct is not None and not isfinite(float(cash_floor_pct)):
+            raise ValueError("Invalid frozen cash floor")
+        if provenance.get("total_value") is not None and not isfinite(float(provenance["total_value"])):
+            raise ValueError("Invalid frozen total value")
         if cash_floor_pct and provenance.get("total_value") is not None and (
             plan.idle_cash_after + 0.021 < float(provenance["total_value"]) * float(cash_floor_pct) / 100
         ):
@@ -160,8 +174,6 @@ def _compute_muji_plan_grade(
         if any(cost < 0 or abs(cost - ceil(abs(changes[symbol]) * 0.0015 * 100 - 1e-8) / 100) > 0.011
                for symbol, cost in costs.items()):
             raise ValueError("Frozen trading friction does not reconcile")
-        if plan.scheduled_turnover_pct < 0 or plan.effective_turnover_cap_pct < 0:
-            raise ValueError("Invalid turnover evidence")
         if plan.valuation_nav and abs(plan.scheduled_turnover_pct -
                                       sum(abs(value) for value in changes.values()) / plan.valuation_nav * 100) > 0.011:
             raise ValueError("Frozen turnover does not reconcile")
