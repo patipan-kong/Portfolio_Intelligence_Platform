@@ -101,6 +101,11 @@ class OptimizedTrade(BaseModel):
     required_amount: float | None = None
     discretionary_amount: float | None = None
     policy_evidence: list[dict[str, Any]] | None = None
+    funding_basis: str | None = None
+    original_action: str | None = None
+    original_rationale: str | None = None
+    scheduled_cash_impact: float | None = None
+    deferral_reason: str | None = None
 
 
 class ExecutionOptimizationResult(BaseModel):
@@ -118,6 +123,9 @@ class ExecutionOptimizationResult(BaseModel):
     valuation_nav: float | None = None
     trade_effects: dict[str, list[dict[str, Any]]] | None = None
     policy_review_reasons: list[str] | None = None
+    scheduled_changes: dict[str, float] | None = None
+    estimated_trade_costs: dict[str, float] | None = None
+    funding_assumptions: list[str] | None = None
 
 
 # ── Reason / Necessity classification ────────────────────────────────────────

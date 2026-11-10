@@ -497,7 +497,7 @@ def apply_stabilization(
         )
         log.info("[STABILIZATION] COOLDOWN_ACTIVE — %d days remaining", cooldown.days_remaining)
 
-    elif not has_sell and not has_violations and not has_risk_flags and min_impact.suppressed:
+    elif not muji_v2 and not has_sell and not has_violations and not has_risk_flags and min_impact.suppressed:
         # Net benefit does not justify transaction friction
         stabilized_status = STATUS_NO_REBALANCE
         stabilization_reason = (
@@ -585,6 +585,7 @@ def apply_stabilization(
             "override_reasons": cooldown.override_reasons,
         },
         "minimum_impact": {
+            **({"advisory_only": True} if muji_v2 else {}),
             "expected_improvement_pct": min_impact.expected_improvement_pct,
             "estimated_cost_pct": min_impact.estimated_cost_pct,
             "net_benefit_pct": min_impact.net_benefit_pct,

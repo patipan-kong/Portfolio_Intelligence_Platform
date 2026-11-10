@@ -1,16 +1,48 @@
 """Size and verify concentration repairs on the scheduled recommendation."""
 
-from math import ceil, floor
+from math import ceil, floor, isfinite
 
 from services.optimizer.sector_policy import (
     EVIDENCE_VERSION, OPTIMIZER_POLICY_MUJI_V2, TOLERANCE, current_values, evaluate_exposure,
     evaluate_frozen_sectors, optimizer_policy_mode, project_targets, sector_caps_are_advisory,
 )
 from services.optimizer.execution_optimizer import ExecutionOptimizationResult, OptimizedTrade
+from services.optimizer.stabilization import EST_TRADE_COST_BPS_PER_PCT
+
+_ADVISORY_COST_RATE = EST_TRADE_COST_BPS_PER_PCT
 
 
 def _floor_money(amount: float) -> float:
     return floor(max(0.0, amount) * 100 + TOLERANCE) / 100
+
+
+def _muji_schedule(sales, buys, verified_sales, values, cash, spendable_cash, budget, emergency_buy_freeze):
+    """Schedule independently evidenced sales before sizing funded purchases."""
+    changes = {}
+    remaining_turnover = budget
+    costs = {}
+    for symbol in sorted(verified_sales):
+        amount = min(sales[symbol], remaining_turnover)
+        if amount > TOLERANCE:
+            changes[symbol] = -amount
+            costs[symbol] = ceil(amount * _ADVISORY_COST_RATE * 100 - TOLERANCE) / 100
+            remaining_turnover = _floor_money(remaining_turnover - amount)
+    available = _floor_money(max(0.0, spendable_cash) + sum(-change - costs[symbol]
+                                                           for symbol, change in changes.items()))
+    scheduled_buys = {}
+    if not emergency_buy_freeze:
+        for symbol in sorted(buys):
+            amount = min(buys[symbol], remaining_turnover,
+                         _floor_money(available / (1 + _ADVISORY_COST_RATE)))
+            while amount > 0 and amount + ceil(amount * _ADVISORY_COST_RATE * 100 - TOLERANCE) / 100 > available + TOLERANCE:
+                amount = _floor_money(amount - 0.01)
+            if amount > TOLERANCE:
+                scheduled_buys[symbol] = amount
+                changes[symbol] = amount
+                costs[symbol] = ceil(amount * _ADVISORY_COST_RATE * 100 - TOLERANCE) / 100
+                available = _floor_money(available - amount - costs[symbol])
+                remaining_turnover = _floor_money(remaining_turnover - amount)
+    return changes, scheduled_buys, costs, round(cash - sum(changes.values()) - sum(costs.values()), 2)
 
 
 def _position_row(context, values, symbol, stage):
@@ -170,23 +202,50 @@ def optimize_concentration_execution(payload, summary, cash):
     allocs = {row["symbol"]: row for row in payload.get("target_allocations", [])}
     sales = {}
     buys = {}
+    invalid_directions = set()
     for group in ("sell", "reduce", "new_position", "accumulate"):
         for entry in summary.get(group, []):
             symbol = entry["symbol"]
             row = allocs[symbol]
-            amount = abs(float(row.get("estimated_amount") or 0))
+            if not muji_v2:
+                amount = abs(float(row.get("estimated_amount") or 0))
+                if group == "sell":
+                    sales[symbol] = _floor_money(values.get(symbol, 0.0))
+                elif group == "reduce":
+                    sales[symbol] = _floor_money(min(amount, values.get(symbol, 0.0)))
+                elif amount:
+                    buys[symbol] = _floor_money(amount)
+                continue
+            try:
+                signed_amount = float(row.get("estimated_amount") or 0)
+            except (TypeError, ValueError):
+                signed_amount = float("nan")
+            if not isfinite(signed_amount):
+                invalid_directions.add(symbol)
+                continue
+            amount = abs(signed_amount)
             if group == "sell":
-                sales[symbol] = _floor_money(values.get(symbol, 0.0))
+                if values.get(symbol, 0.0) > 0 and signed_amount < 0:
+                    sales[symbol] = _floor_money(values[symbol])
+                else:
+                    invalid_directions.add(symbol)
             elif group == "reduce":
-                sales[symbol] = _floor_money(min(amount, values.get(symbol, 0.0)))
-            elif amount:
+                if signed_amount < 0 and values.get(symbol, 0.0) > 0:
+                    sales[symbol] = _floor_money(min(amount, values[symbol]))
+                else:
+                    invalid_directions.add(symbol)
+            elif signed_amount > 0:
                 buys[symbol] = _floor_money(amount)
+            else:
+                invalid_directions.add(symbol)
 
     support = _current_support(context, values, sector_advisory=sector_advisory)
     budget = _floor_money(context["nav"] * context["turnover_cap"] / 100)
     cash_floor = (policy.get("hard_constraints") or {}).get("min_cash_pct", 0)
     spendable_cash = cash - context["nav"] * cash_floor / 100
     review = set()
+    if muji_v2 and invalid_directions:
+        review.add("INVALID_TRADE_DIRECTION_OR_AMOUNT")
     if context["current"]["estimated_symbols"]:
         review.add("ESTIMATED_PRICES")
     if any(symbol not in positions or positions[symbol]["price"] is None for symbol in buys):
@@ -213,9 +272,7 @@ def optimize_concentration_execution(payload, summary, cash):
     # Allocate NAV repairs first. Sector sizing starts from the isolated current
     # repair amount and is validated against the complete scheduled plan below.
     repairs = {}
-    for symbol in sorted(sales):
-        if muji_v2 and symbol not in verified_sales:
-            continue
+    for symbol in sorted(sales) if not muji_v2 else ():
         row = support.get(("NAV", symbol))
         amount = min(sales[symbol], _floor_money(_supported_amount(row))) if row else 0
         repairs[symbol] = min(amount, max(0.0, budget - sum(repairs.values())))
@@ -294,6 +351,20 @@ def optimize_concentration_execution(payload, summary, cash):
         return changes, funded, scheduled, evaluation, effects, verified, rejected_buy_evaluation
 
     changes, funded, scheduled, evaluation, effects, verified, rejected = evaluate(repairs)
+    muji_buys = None
+    muji_costs = {}
+    muji_cash = None
+    if muji_v2:
+        changes, muji_buys, muji_costs, muji_cash = _muji_schedule(
+            sales, buys, verified_sales, values, cash, spendable_cash, budget, emergency_buy_freeze,
+        )
+        funded = not buys or sum(muji_buys.values()) >= sum(buys.values()) - TOLERANCE
+        scheduled = {**values, **{symbol: values.get(symbol, 0) + change for symbol, change in changes.items()}}
+        evaluation = evaluate_frozen_sectors(context, scheduled, "PROJECTED_SCHEDULED")
+        effects = {symbol: _effects(context, values, scheduled, symbol, change)
+                   for symbol, change in changes.items()}
+        verified = {}
+        rejected = None
     if any(amount > 0 and symbol not in verified for symbol, amount in repairs.items()):
         # Interacting repairs can make the isolated estimate ambiguous. Use a
         # bounded fallback and leave the unresolved size for human review.
@@ -330,9 +401,11 @@ def optimize_concentration_execution(payload, summary, cash):
         review.add("NO_INVESTED_EQUITY_AFTER_SCHEDULE")
 
     trades = []
-    for symbol, planned in sales.items():
+    sale_rows = sales if not muji_v2 else {**{symbol: 0.0 for symbol in invalid_directions
+                                              if allocs.get(symbol, {}).get("action") in ("SELL", "REDUCE")}, **sales}
+    for symbol, planned in sale_rows.items():
         released = -changes.get(symbol, 0)
-        required = repairs.get(symbol, 0) if symbol in verified else 0
+        required = 0 if muji_v2 else repairs.get(symbol, 0) if symbol in verified else 0
         sector = positions.get(symbol, {}).get("sector", "Other")
         trades.append(OptimizedTrade(
             symbol=symbol, action=allocs[symbol]["action"], sector=sector,
@@ -341,25 +414,36 @@ def optimize_concentration_execution(payload, summary, cash):
                     "INVESTMENT_THESIS" if symbol in thesis_sales
                     else "PORTFOLIO_IMPROVEMENT"),
             necessity="NECESSARY" if required else "DISCRETIONARY",
-            execution_role="STANDALONE" if required else "FUNDING_SOURCE" if released else "NOT_NEEDED_TODAY",
+            execution_role="STANDALONE" if (required or (muji_v2 and released and
+                            sum(buys.values()) <= max(0.0, spendable_cash) + TOLERANCE)) else "FUNDING_SOURCE" if released else "NOT_NEEDED_TODAY",
             execution_state="DEFERRED" if not released else "FULL" if released >= planned else "SCALED",
             full_recommended_amount=planned, executed_amount=round(released, 2),
             required_amount=round(required, 2), discretionary_amount=round(planned - required, 2),
             policy_evidence=verified.get(symbol, []),
             evidence_status=("UNVERIFIED" if muji_v2 and symbol not in verified_sales
                              else "VERIFIED_POLICY_REPAIR" if required else "NOT_APPLICABLE"),
-            note=("Investment evidence unverified. Deferred for human review."
+            funding_basis=("INDEPENDENT_FROZEN_SELL_SIGNAL" if muji_v2 and released else
+                           "UNVERIFIED" if muji_v2 else None),
+            original_action=allocs[symbol].get("original_action", allocs[symbol].get("action")) if muji_v2 else None,
+            original_rationale=allocs[symbol].get("reason") if muji_v2 else None,
+            scheduled_cash_impact=round(released - muji_costs.get(symbol, 0), 2) if muji_v2 else None,
+            deferral_reason=("INVALID_TRADE_DIRECTION_OR_AMOUNT" if symbol in invalid_directions else
+                             "UNVERIFIED_SELL_EVIDENCE" if symbol not in verified_sales else
+                             "TURNOVER_LIMIT") if muji_v2 and not released else None,
+            note=("Invalid or opposite-side trade amount. Deferred for human review."
+                  if muji_v2 and symbol in invalid_directions else
+                  "Investment evidence unverified. Deferred for human review."
                   if muji_v2 and symbol not in verified_sales
                   else "Policy repair amount for human review." if required
                   else "Funding supported by a frozen SELL signal." if muji_v2 and released
                   else "Discretionary funding for proposed buys." if released else "Deferred for human review."),
         ))
-    scheduled_buys = buys if funded else {}
+    scheduled_buys = muji_buys if muji_v2 else buys if funded else {}
     deployment = sum(scheduled_buys.values())
     return ExecutionOptimizationResult(
         cash_available=round(cash, 2), total_buy_deployment=round(deployment, 2),
-        funding_gap=round(max(0, deployment - spendable_cash), 2) if deployment else 0,
-        trades=trades, idle_cash_after=round(cash - sum(changes.values()), 2),
+        funding_gap=round(max(0, deployment - spendable_cash - sum(-change for change in changes.values() if change < 0)), 2) if muji_v2 else round(max(0, deployment - spendable_cash), 2) if deployment else 0,
+        trades=trades, idle_cash_after=muji_cash if muji_v2 else round(cash - sum(changes.values()), 2),
         scheduled_buys=scheduled_buys, trade_effects=effects, scheduled_sector_evaluation=evaluation,
         rejected_buy_sector_evaluation=rejected,
         scheduled_position_breaches=position_breaches,
@@ -368,4 +452,9 @@ def optimize_concentration_execution(payload, summary, cash):
         scheduled_turnover_pct=sum(abs(change) for change in changes.values()) / context["nav"] * 100
         if context["nav"] > 0 else 0,
         policy_review_reasons=sorted(review),
+        scheduled_changes={symbol: round(change, 2) for symbol, change in changes.items()} if muji_v2 else None,
+        estimated_trade_costs=muji_costs if muji_v2 else None,
+        funding_assumptions=(["Advisory THB monetary plan; estimated trading friction is 0.15% of gross value per side, not a broker fee quote.",
+                              "Settlement and currency availability are unverified; no order has been executed."]
+                             if muji_v2 else None),
     )

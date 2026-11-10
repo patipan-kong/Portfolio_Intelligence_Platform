@@ -828,10 +828,14 @@ function StabilizationCard({
         {impact && (
           <>
             <div className="bg-white/70 rounded-lg p-3">
-              <p className="text-xs text-gray-400 mb-0.5">Est. Net Benefit</p>
-              <p className={`text-sm font-bold ${impact.net_benefit_pct >= impact.threshold_pct ? "text-green-700" : "text-red-600"}`}>
-                {impact.net_benefit_pct >= 0 ? "+" : ""}{impact.net_benefit_pct.toFixed(3)}%
-              </p>
+              <p className="text-xs text-gray-400 mb-0.5">{impact.advisory_only ? "Est. Trading Cost" : "Est. Net Benefit"}</p>
+              {impact.advisory_only ? (
+                <p className="text-sm font-bold text-gray-700">{impact.estimated_cost_pct.toFixed(4)}%</p>
+              ) : (
+                <p className={`text-sm font-bold ${impact.net_benefit_pct >= impact.threshold_pct ? "text-green-700" : "text-red-600"}`}>
+                  {impact.net_benefit_pct >= 0 ? "+" : ""}{impact.net_benefit_pct.toFixed(3)}%
+                </p>
+              )}
             </div>
             <div className="bg-white/70 rounded-lg p-3">
               <p className="text-xs text-gray-400 mb-0.5">Est. Turnover</p>
@@ -879,7 +883,7 @@ function StabilizationCard({
       )}
 
       {/* Impact breakdown */}
-      {impact && (
+      {impact && !impact.advisory_only && (
         <div className="bg-white/70 rounded-lg px-4 py-3">
           <p className="text-xs font-semibold text-gray-500 mb-2">Cost-Benefit Analysis</p>
           <div className="grid grid-cols-3 gap-2 text-center text-xs">

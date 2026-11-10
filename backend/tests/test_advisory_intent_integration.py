@@ -655,9 +655,9 @@ def test_locked_forced_sell_final_consistent_retained_conflict(monkeypatch, enab
     assert {a["symbol"]: a for a in response["target_allocations"]}["AAA"]["action"] == "HOLD"
 
 
-def test_policy_trim_reversing_buy_to_reduce(monkeypatch, enabled):
-    # Targets sum to 111% → the policy cash floor trims the only BUY (AAA 21%)
-    # below its 10% current weight; reconciliation relabels it REDUCE.
+def test_policy_trim_defers_buy_without_reversing_direction(monkeypatch, enabled):
+    # The cash floor may trim a BUY below its current weight, but MUJI V2
+    # must preserve the original recommendation and schedule no opposite sale.
     ai = FakeAI(plan(AAA=(21, "BUY"), CCC=(22.5, "HOLD"), EEE=(22.5, "HOLD"),
                      FFF=(22.5, "HOLD"), GGG=(22.5, "HOLD")))
     patch_pipeline(monkeypatch, ai)
@@ -665,34 +665,19 @@ def test_policy_trim_reversing_buy_to_reduce(monkeypatch, enabled):
     p = seed(db, book(), cash=CASH)
     set_intent(db, p, "AAA", inc=True)
     response = run(db, p)
+    assert response["active_policy"]["optimizer_policy_mode"] == OPTIMIZER_POLICY_MUJI_V2
     row = {a["symbol"]: a for a in response["target_allocations"]}["AAA"]
-    assert row["action"] == "REDUCE" and row["target_weight"] < row["current_weight"] == 10.0
+    assert row["action"] == "HOLD" and row["original_action"] == "BUY"
+    assert row["target_weight"] == row["current_weight"] == 10.0
+    assert row["estimated_amount"] == 0
+    assert response["execution_optimization"]["trades"] == []
     aaa = position(response["advisory_intent_review"], "AAA")
-    assert [(t["source"], t["stage"], t["effect"], t["reason_code"]) for t in aaa["provenance"]] == [
-        ("ADVISORY", "L2_ALLOCATION", "ORIGINATE", "L2_ALLOCATION"),
-        ("POLICY_RISK", "HARD_POLICY", "REPLACE", "CASH_FLOOR_TRIM"),     # reversal ⇒ new proposal
-        ("SYSTEM_RULE", "ACTION_RECONCILIATION", "RELABEL", "ACTION_RECONCILE"),
-        # A discretionary REDUCE with nothing to fund is scheduled later, not dropped.
-        ("SYSTEM_RULE", "EXECUTION_SCHEDULING", "DEFER", "EXECUTION_NOT_NEEDED_TODAY"),
-    ]
+    assert any(t["reason_code"] == "ACTION_RECONCILE" for t in aaa["provenance"])
     final = aaa["proposal"]["final_effective"]
-    expected_shares = Decimal(str(row["target_weight"])) * 5_000_000 / 100 / 50
-    assert final["direction"] == "DECREASE" and Decimal(final["proposed_shares"]) == expected_shares
-    assert aaa["review"]["final"]["outcome"] == "CONSISTENT"           # do-not-increase vs a decrease
-    [retained] = aaa["review"]["retained"]
-    assert (retained["source"], retained["action"], retained["disposition"]) == ("ADVISORY", "BUY", "REPLACED")
-    assert retained["review"]["outcome"] == "CONFLICT"                  # the advisory saw a reason to increase
-    # A deterministic policy reversal is on the material path: it still needs the owner.
-    assert retained["materiality"] == "MATERIAL"
-    assert aaa["review"]["requires_owner_decision"] is True
-    assert response["advisory_intent_review"]["coverage"]["retained_conflict_positions"] == ["AAA"]
-    # Mixed-basis evidence: the target is the legacy policy rule's output,
-    # projected onto the frozen common NAV for review only.
-    assert final["basis_evidence"] == {
-        "projection_basis": "COMMON_NAV_FROZEN_QUOTES", "target_origin_stage": "HARD_POLICY",
-        "target_origin_semantics": "LEGACY_POLICY_RULE", "row_current_weight_basis": "COMMON_NAV_FROZEN_QUOTES"}
+    assert final["direction"] != "DECREASE"
     trim = next(t for t in aaa["provenance"] if t["stage"] == "HARD_POLICY")
     assert trim["rule_semantics"] == "LEGACY_POLICY_RULE"
+    [retained] = aaa["review"]["retained"]
     assert retained["projection"]["basis_evidence"]["target_origin_semantics"] == "ADVISORY_MODEL_OUTPUT"
     boundary = response["advisory_intent_review"]["valuation"]["basis_boundary"]
     assert boundary["name"] == "SLICE1_TEMPORARY_MIXED_BASIS"

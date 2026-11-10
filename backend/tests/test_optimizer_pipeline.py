@@ -147,6 +147,35 @@ def test_muji_cooldown_and_drift_are_independent(mode):
         assert stabilized["stabilization"]["cooldown"]["overridden"]
 
 
+@pytest.mark.parametrize("mode,expected", [(None, "NO_REBALANCE_REQUIRED"),
+                                             (SECTOR_POLICY_ADVISORY, "NO_REBALANCE_REQUIRED"),
+                                             (OPTIMIZER_POLICY_MUJI_V2, "REBALANCE")])
+def test_minimum_impact_is_advisory_for_muji_only(mode, expected):
+    policy = {}
+    if mode:
+        policy["sector_policy_mode"] = SECTOR_POLICY_ADVISORY
+    if mode == OPTIMIZER_POLICY_MUJI_V2:
+        policy["optimizer_policy_mode"] = mode
+    result = {"status": "REBALANCE", "rebalance_opportunity_score": 40,
+              "active_policy": policy,
+              "target_allocations": [{"symbol": "AAA", "action": "REDUCE", "current_weight": 15.31,
+                                      "target_weight": 11.8, "allocation_change_percent": -3.51}]}
+    stabilized = apply_stabilization(result, None)
+    assert stabilized["status"] == expected
+    assert stabilized["stabilization"]["minimum_impact"]["suppressed"]
+
+
+@pytest.mark.parametrize("action,delta", [("BUY", -5), ("ACCUMULATE", -2), ("SELL", 3), ("REDUCE", 2)])
+def test_muji_reconciliation_never_reverses_direction(action, delta):
+    row = {"symbol": "AAA", "action": action, "current_weight": 10,
+           "target_weight": 10 + delta, "allocation_change_percent": delta,
+           "estimated_amount": delta * 100}
+    _reconcile_allocation_actions([row], muji_v2=True)
+    assert row["action"] == "HOLD"
+    assert row["estimated_amount"] == 0
+    assert row["target_weight"] == 10
+
+
 def test_muji_cannot_be_inferred_from_unknown_or_conflicting_policy(monkeypatch):
     monkeypatch.setattr(optimizer_module, "call_ai", lambda *a, **k: pytest.fail("invalid policy reached model"))
     resolved = _effective_envelope()

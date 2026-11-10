@@ -1818,6 +1818,7 @@ export interface StabilizationCooldown {
 }
 
 export interface StabilizationMinimumImpact {
+  advisory_only?: boolean;
   expected_improvement_pct: number;
   estimated_cost_pct: number;
   net_benefit_pct: number;

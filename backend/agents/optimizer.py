@@ -1675,13 +1675,25 @@ def _limit_sector_buys(allocations, total_value, policy_context, positions, obse
                  reason_text=f"Reduced proposed buying under the {breach['limit_pct']:g}% invested-equity cap for {sector}.")
 
 
-def _reconcile_allocation_actions(allocations: list[dict], observer=None) -> None:
+def _reconcile_allocation_actions(allocations: list[dict], observer=None, *, muji_v2=False) -> None:
     """Reconcile action labels after deterministic target-weight changes."""
     for allocation in allocations:
         delta = allocation.get("allocation_change_percent", 0)
         action = (allocation.get("action") or "HOLD").upper()
         before = _alloc_basis(allocation)
-        if action in ("BUY", "ACCUMULATE") and delta < -1.0:
+        if muji_v2 and action in ("BUY", "ACCUMULATE") and delta <= 0:
+            allocation.setdefault("original_action", action)
+            allocation["action"] = "HOLD"
+            allocation["allocation_change_percent"] = 0
+            allocation["estimated_amount"] = 0
+            allocation["target_weight"] = allocation["current_weight"]
+        elif muji_v2 and action in ("SELL", "REDUCE") and delta >= 0:
+            allocation.setdefault("original_action", action)
+            allocation["action"] = "HOLD"
+            allocation["allocation_change_percent"] = 0
+            allocation["estimated_amount"] = 0
+            allocation["target_weight"] = allocation["current_weight"]
+        elif action in ("BUY", "ACCUMULATE") and delta < -1.0:
             allocation["action"] = "REDUCE"
             logger.info(
                 "[ACTION_RECONCILE] %s %s→REDUCE (delta=%.1f%% after constraint enforcement)",
@@ -2574,7 +2586,7 @@ def run_layered_optimizer(
         # A BUY/ACCUMULATE whose delta went negative is now a net REDUCE; fix it.
         if policy_context and not sector_advisory:
             _limit_sector_buys(final_allocations, total_value, policy_context, frozen_positions, advisory)
-        _reconcile_allocation_actions(final_allocations, **_observer_kw)
+        _reconcile_allocation_actions(final_allocations, muji_v2=muji_v2, **_observer_kw)
 
         _snap_neutral_actions(final_allocations, **_observer_kw)
 
