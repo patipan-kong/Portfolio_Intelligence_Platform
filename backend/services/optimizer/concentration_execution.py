@@ -3,8 +3,8 @@
 from math import ceil, floor
 
 from services.optimizer.sector_policy import (
-    EVIDENCE_VERSION, TOLERANCE, current_values, evaluate_exposure, evaluate_frozen_sectors, project_targets,
-    sector_caps_are_advisory,
+    EVIDENCE_VERSION, OPTIMIZER_POLICY_MUJI_V2, TOLERANCE, current_values, evaluate_exposure,
+    evaluate_frozen_sectors, optimizer_policy_mode, project_targets, sector_caps_are_advisory,
 )
 from services.optimizer.execution_optimizer import ExecutionOptimizationResult, OptimizedTrade
 
@@ -144,12 +144,14 @@ def optimize_concentration_execution(payload, summary, cash):
     policy = payload.get("active_policy") or {}
     context = policy.get("concentration") or {}
     sector_advisory = sector_caps_are_advisory(policy)
+    muji_v2 = optimizer_policy_mode(policy) == OPTIMIZER_POLICY_MUJI_V2
     if context.get("evidence_version") != EVIDENCE_VERSION or policy.get("hard_policy_unavailable"):
         deferred = [
             OptimizedTrade(
                 symbol=row["symbol"], action=row["action"], reason="PORTFOLIO_IMPROVEMENT",
                 necessity="DISCRETIONARY", execution_role="NOT_NEEDED_TODAY", execution_state="DEFERRED",
                 full_recommended_amount=abs(float(row.get("estimated_amount") or 0)), executed_amount=0,
+                evidence_status="UNVERIFIED" if muji_v2 else "NOT_APPLICABLE",
                 note="Human Review · frozen policy evidence unavailable.",
             )
             for row in payload.get("target_allocations", [])
@@ -200,10 +202,20 @@ def optimize_concentration_execution(payload, summary, cash):
     if current_breach_count > len(support) and "ESTIMATED_PRICES" not in review:
         review.add("MISSING_POLICY_EVIDENCE")
 
+    # MUJI V2 can verify an upstream SELL signal from frozen holdings. A model
+    # label or explanation cannot verify its own investment evidence.
+    verified_sales = {
+        symbol for symbol in sales
+        if positions.get(symbol, {}).get("sell_signal") is True
+        and allocs[symbol].get("decision_basis") not in ("SECTOR_ADVISORY", "CONCENTRATION_ADVISORY")
+    } if muji_v2 else set()
+
     # Allocate NAV repairs first. Sector sizing starts from the isolated current
     # repair amount and is validated against the complete scheduled plan below.
     repairs = {}
     for symbol in sorted(sales):
+        if muji_v2 and symbol not in verified_sales:
+            continue
         row = support.get(("NAV", symbol))
         amount = min(sales[symbol], _floor_money(_supported_amount(row))) if row else 0
         repairs[symbol] = min(amount, max(0.0, budget - sum(repairs.values())))
@@ -225,7 +237,7 @@ def optimize_concentration_execution(payload, summary, cash):
     emergency_buy_freeze = sector_advisory and bool(policy.get("emergency_override"))
     # A structured thesis proposal or independently frozen SELL signal may
     # fund buys. A sale with no supported basis remains visible as deferred.
-    thesis_sales = {
+    thesis_sales = verified_sales if muji_v2 else {
         symbol for symbol in sales
         if allocs[symbol].get("decision_basis") == "INVESTMENT_THESIS"
         or (allocs[symbol].get("decision_basis") is None and positions.get(symbol, {}).get("sell_signal") is True)
@@ -334,8 +346,12 @@ def optimize_concentration_execution(payload, summary, cash):
             full_recommended_amount=planned, executed_amount=round(released, 2),
             required_amount=round(required, 2), discretionary_amount=round(planned - required, 2),
             policy_evidence=verified.get(symbol, []),
-            evidence_status="VERIFIED_POLICY_REPAIR" if required else "NOT_APPLICABLE",
-            note=("Policy repair amount for human review." if required
+            evidence_status=("UNVERIFIED" if muji_v2 and symbol not in verified_sales
+                             else "VERIFIED_POLICY_REPAIR" if required else "NOT_APPLICABLE"),
+            note=("Investment evidence unverified. Deferred for human review."
+                  if muji_v2 and symbol not in verified_sales
+                  else "Policy repair amount for human review." if required
+                  else "Funding supported by a frozen SELL signal." if muji_v2 and released
                   else "Discretionary funding for proposed buys." if released else "Deferred for human review."),
         ))
     scheduled_buys = buys if funded else {}

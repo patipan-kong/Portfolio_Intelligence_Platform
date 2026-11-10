@@ -157,3 +157,20 @@ def test_empty_and_missing_target_allocations():
     apply_noise_filter({})
     apply_noise_filter({"target_allocations": []})
     apply_noise_filter({"target_allocations": None})
+
+
+@pytest.mark.parametrize("drift_advisory, expected", [(False, "HOLD"), (True, "BUY")])
+def test_muji_history_preserves_recorded_drift_behavior(drift_advisory, expected):
+    from services.optimizer.sector_policy import OPTIMIZER_POLICY_MUJI_V2, SECTOR_POLICY_ADVISORY
+
+    result = _make_result([_alloc("BUY", drift=0.8, amount=15_000)])
+    result["active_policy"] = {
+        "optimizer_policy_mode": OPTIMIZER_POLICY_MUJI_V2,
+        "sector_policy_mode": SECTOR_POLICY_ADVISORY,
+    }
+    if drift_advisory:
+        result["stabilization"] = {"drift_advisory": True}
+
+    apply_noise_filter(result, replay=True)
+
+    assert result["target_allocations"][0]["action"] == expected

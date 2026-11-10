@@ -5308,12 +5308,12 @@ async def get_optimizer_history_detail(history_id: int, db: Session = Depends(ge
     # Noise filter + action_summary are response-time views, applied after
     # result_json is committed — stored rows carry neither. Recompute them here
     # (display-only, row untouched) so history views render the same Execution
-    # Plan as live runs. Filter thresholds are current-day, not run-day.
+    # Plan as live runs, using the recorded drift policy when available.
     if "action_summary" not in payload:
         try:
             from services.noise_filter import apply_noise_filter
             from services.optimizer_action_summary import build_action_summary
-            apply_noise_filter(payload)
+            apply_noise_filter(payload, replay=True)
             saved_summary = (payload.get("active_policy") or payload).get("scheduled_action_summary")
             payload["action_summary"] = (saved_summary if saved_summary is not None else
                                          build_action_summary(payload.get("target_allocations", [])))

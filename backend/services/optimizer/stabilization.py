@@ -28,7 +28,9 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from services.optimizer.risk_flags import investment_risk_flags
-from services.optimizer.sector_policy import sector_caps_are_advisory
+from services.optimizer.sector_policy import (
+    OPTIMIZER_POLICY_MUJI_V2, optimizer_policy_mode, sector_caps_are_advisory,
+)
 
 log = logging.getLogger(__name__)
 
@@ -55,6 +57,8 @@ OVERRIDE_MANUAL              = "MANUAL_OVERRIDE"
 STATUS_REBALANCE_REQUIRED    = "REBALANCE_REQUIRED"
 STATUS_NO_REBALANCE          = "NO_REBALANCE_REQUIRED"
 STATUS_COOLDOWN_ACTIVE       = "COOLDOWN_ACTIVE"
+
+_CONCENTRATION_FLAG_PREFIXES = ("CONCENTRATION_BREACH:", "SINGLE_POSITION_LIMIT:", "SECTOR_BREACH:", "SECTOR_LIMIT:")
 STATUS_OPTIMAL               = "OPTIMAL"
 
 
@@ -206,11 +210,12 @@ def detect_cooldown_overrides(
         overrides.append(OVERRIDE_DRAWDOWN_EVENT)
 
     sector_advisory = sector_caps_are_advisory(policy_context)
+    muji_v2 = optimizer_policy_mode(policy_context or {}) == OPTIMIZER_POLICY_MUJI_V2
 
     # Active policy violations
     violations: list[str] = (policy_context or {}).get("violations", [])
     for v in violations:
-        if "CONCENTRATION_BREACH" in v or "SINGLE_POSITION" in v:
+        if not muji_v2 and ("CONCENTRATION_BREACH" in v or "SINGLE_POSITION" in v):
             if OVERRIDE_POSITION_BREACH not in overrides:
                 overrides.append(OVERRIDE_POSITION_BREACH)
         if not sector_advisory and "SECTOR_BREACH" in v:
@@ -220,6 +225,8 @@ def detect_cooldown_overrides(
     # Risk / governance flags
     gov_flags: list[str] = (policy_context or {}).get("governance_flags", [])
     for f in gov_flags:
+        if muji_v2 and f.startswith(_CONCENTRATION_FLAG_PREFIXES):
+            continue
         if any(kw in f for kw in ("POLICY_VIOLATION", "CONCENTRATION_BREACH")) or (
             not sector_advisory and "SECTOR_LIMIT" in f
         ):
@@ -415,6 +422,9 @@ def apply_stabilization(
     regime_context     = result.get("market_regime")
     xai_score          = int(result.get("rebalance_opportunity_score") or 0)
     original_status    = result.get("status", "REBALANCE")
+    muji_v2 = optimizer_policy_mode(
+        policy_context or {}, effective_envelope=result.get("effective_envelope"),
+    ) == OPTIMIZER_POLICY_MUJI_V2
 
     # ── 1. Drift analysis ────────────────────────────────────────────────────
     drift_analysis    = compute_drift_analysis(target_allocations, drift_threshold_pct)
@@ -438,9 +448,13 @@ def apply_stabilization(
     overrides_active = cooldown.override_reasons.copy()
 
     has_sell            = any((a.get("action") or "").upper() == "SELL" for a in target_allocations)
-    has_violations      = any(
-        not sector_caps_are_advisory(policy_context) or not violation.startswith("SECTOR_BREACH:")
-        for violation in ((policy_context or {}).get("violations") or [])
+    advisory_prefixes = ()
+    if muji_v2:
+        advisory_prefixes = _CONCENTRATION_FLAG_PREFIXES
+    elif sector_caps_are_advisory(policy_context):
+        advisory_prefixes = ("SECTOR_BREACH:",)
+    has_violations = any(
+        not violation.startswith(advisory_prefixes) for violation in ((policy_context or {}).get("violations") or [])
     )
     has_risk_flags      = any(
         (f.get("severity") or "").upper() in ("HIGH", "CRITICAL")
@@ -462,7 +476,7 @@ def apply_stabilization(
         # AI already said no action — keep that decision, just enrich metadata
         stabilized_status = original_status
 
-    elif all_within_tol and not has_violations and not has_risk_flags:
+    elif not muji_v2 and all_within_tol and not has_violations and not has_risk_flags:
         # Every position already within tolerance and portfolio is clean
         stabilized_status = STATUS_NO_REBALANCE
         stabilization_reason = (
@@ -503,7 +517,7 @@ def apply_stabilization(
     # other action, including WATCH, gets tagged so the table and the
     # Portfolio Drift card never disagree about the same position.
     drift_by_symbol = {d.symbol: d.allocation_drift for d in drift_analysis}
-    if stabilized_status == "REBALANCE":
+    if stabilized_status == "REBALANCE" and not muji_v2:
         for a in target_allocations:
             sym = a.get("symbol")
             if sym in suppressed_syms and (a.get("action") or "HOLD").upper() != "HOLD":
@@ -528,7 +542,7 @@ def apply_stabilization(
                 result["no_action_reason"] = "COOLDOWN_ACTIVE"
             elif stabilized_status == STATUS_NO_REBALANCE:
                 result["no_action_reason"] = (
-                    "WELL_BALANCED" if all_within_tol else "INSUFFICIENT_EDGE"
+                    "WELL_BALANCED" if all_within_tol and not muji_v2 else "INSUFFICIENT_EDGE"
                 )
             if not result.get("optimization_notes") or original_status == "REBALANCE":
                 result["optimization_notes"] = (
@@ -542,6 +556,7 @@ def apply_stabilization(
         "original_optimizer_status": original_status,
         "reason": stabilization_reason,
         "drift_threshold_pct": drift_threshold_pct,
+        **({"drift_advisory": True} if muji_v2 else {}),
         "cooldown_days": cooldown_days,
         "net_benefit_threshold_pct": net_benefit_threshold,
         "positions_within_tolerance": len(within_tol),

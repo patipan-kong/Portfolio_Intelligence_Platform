@@ -1840,6 +1840,7 @@ export interface StabilizationMeta {
   original_optimizer_status: OptimizerStatus;
   reason: string | null;
   drift_threshold_pct: number;
+  drift_advisory?: boolean;
   cooldown_days: number;
   net_benefit_threshold_pct: number;
   positions_within_tolerance: number;

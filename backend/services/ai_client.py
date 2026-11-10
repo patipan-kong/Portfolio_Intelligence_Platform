@@ -40,6 +40,16 @@ class _Layer1Response(BaseModel):
     priority: str = "balanced"
 
 
+class _MujiSwapItem(_SwapItem):
+    r: str = ""
+    decision_basis: str | None = None
+
+
+class MujiLayer1Response(_Layer1Response):
+    swaps: list[_MujiSwapItem] = []
+    summary: str = ""
+
+
 class _BlockedOpportunity(BaseModel):
     symbol: str = ""
     signal: str = ""
@@ -163,7 +173,7 @@ def call_ai(
     provider: str,
     model: str,
     max_tokens: int = 4096,
-    use_schema: bool = False,
+    use_schema: bool | type[BaseModel] = False,
     usage_operation: str = "other",
     usage_layer: str | None = None,
     timeout: float | None = None,
@@ -225,10 +235,11 @@ def call_ai(
             "3. No trailing commas. No JavaScript literals (NaN, Infinity, undefined).\n"
             "4. Start your response with '{' and end with '}'."
         )
-        if use_schema:
+        response_schema = _Layer1Response if use_schema is True else use_schema
+        if response_schema:
             gen_config = genai_types.GenerateContentConfig(
                 response_mime_type="application/json",
-                response_schema=_Layer1Response,
+                response_schema=response_schema,
                 temperature=0.1,
                 max_output_tokens=max_tokens,
             )
@@ -273,9 +284,14 @@ def call_ai(
                         "Rules: no markdown, no prose, no trailing commas, strings must be properly escaped.\n"
                         f"Failed response to correct (first 400 chars):\n{text[:400]}"
                     )
+                    if response_schema is not _Layer1Response:
+                        _corr_prompt = (
+                            prompt + "\n\nReturn the corrected JSON under the same investment and output rules. "
+                            + f"Invalid response to correct: {text[:400]}"
+                        )
                     _corr_cfg = genai_types.GenerateContentConfig(
                         response_mime_type="application/json",
-                        response_schema=_Layer1Response,
+                        response_schema=response_schema,
                         temperature=0.0,
                         max_output_tokens=min(max_tokens, 1024),
                     )

@@ -72,7 +72,7 @@ function resolveNoTradeReasons(result: OptimizerResult): NoTradeReason[] {
       linkLabel: "View Committee Decision",
     });
   }
-  if (stab?.all_within_tolerance === true) {
+  if (stab?.all_within_tolerance === true && !stab.drift_advisory) {
     reasons.push({
       headline: `Portfolio already within ${stab.drift_threshold_pct}% drift tolerance`,
       href: "#portfolio-drift",

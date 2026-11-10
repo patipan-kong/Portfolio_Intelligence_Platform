@@ -8,6 +8,7 @@ raw-response → parser → orchestrator without silent loss or status corruptio
 import sys
 import os
 import json
+from datetime import datetime
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -24,7 +25,169 @@ from agents.optimizer import (
     _postprocess_swaps,
 )
 from services.optimizer.constraint_resolver import resolve_constraints
+from services.optimizer.policy_engine import compute_policy, envelope_to_dict
+from services.optimizer.sector_policy import (
+    OPTIMIZER_POLICY_MUJI_V2, SECTOR_POLICY_ADVISORY, UnsupportedOptimizerPolicyEvidence,
+)
+from services.optimizer.stabilization import apply_stabilization
+from services.noise_filter import apply_noise_filter
 import agents.optimizer as optimizer_module
+
+
+@pytest.mark.parametrize("failure", [None, "layer1", "layer2", "layer3"])
+def test_muji_thresholds_do_not_change_strategy_or_scores(monkeypatch, failure):
+    prompts = {}
+    proposal = {
+        "allocations": [
+            {"s": "AAA", "tw": 20.8, "sig": "BUY", "decision_basis": "INVESTMENT_THESIS",
+             "r": "Strong margins at a discount to normalized earnings"},
+            {"s": "BBB", "tw": 30, "sig": "HOLD"},
+        ],
+        "status": "REBALANCE",
+        "rebalance_opportunity_score": 90,
+        "agrees_with_layer1": False,
+        "disagreements": [{"basis": "CONCENTRATION_ADVISORY", "issue": "BBB is above threshold"}],
+    }
+    audit = {"risk_flags": [
+        {"symbol": "AAA", "issue": "position exceeds cap", "severity": "CRITICAL",
+         "category": "INVESTMENT_RISK", "claim_kind": "POLICY_BREACH", "evidence_ref": "policy:0"},
+    ], "safer_choice": "neither", "final_risk_level": "high"}
+    strategist = {"top_buys": ["AAA"], "swaps": [
+        {"sell": "BBB", "type": "REDUCE", "decision_basis": "CONCENTRATION_ADVISORY"},
+    ]}
+    replies = {"layer1": strategist, "layer1_retry": strategist,
+               "layer2": proposal, "layer3": audit, "fallback": {**proposal, **audit}}
+
+    def fake_ai(prompt, *args, usage_layer, **kwargs):
+        prompts[usage_layer] = prompt
+        payload = "not JSON" if usage_layer == failure else json.dumps(replies[usage_layer])
+        return {"text": payload, "latency_ms": 1}
+
+    monkeypatch.setattr(optimizer_module, "call_ai", fake_ai)
+    holdings = [
+        {"symbol": "AAA", "shares": 2000, "current_price": 100, "sector": "Technology"},
+        {"symbol": "BBB", "shares": 3000, "current_price": 100, "sector": "Technology"},
+    ]
+    regime = {"regime": "SIDEWAYS", "confidence": .9}
+    results = []
+    for position_cap, sector_cap in [(15, 30), (35, 100)]:
+        resolved = _effective_envelope(position_cap)
+        resolved.effective_single_position_pct = position_cap
+        resolved.effective_sector_limits = {"Technology": sector_cap}
+        env = compute_policy(
+            None, regime, optimizer_module._compute_portfolio_weights(holdings, 500000),
+            effective_envelope=resolved, sector_policy_mode=SECTOR_POLICY_ADVISORY,
+            optimizer_policy_mode=OPTIMIZER_POLICY_MUJI_V2,
+        )
+        result = optimizer_module.run_layered_optimizer(
+            holdings, [], "P", cash_balance=500000, policy_context=envelope_to_dict(env),
+            effective_envelope=resolved, regime_context=regime, enforce_effective_policy_in_fallback=True,
+        )
+        apply_noise_filter(result)
+        policy = result["active_policy"]
+        assert policy["optimizer_policy_mode"] == OPTIMIZER_POLICY_MUJI_V2
+        assert not policy.get("turnover_relaxation_active")
+        assert not policy.get("relaxed_turnover_cap")
+        assert not policy["violations"]
+        assert not policy["violation_details"]
+        assert not result["layer3_result"]["risk_flags"]
+        assert result["layer3_result"]["final_risk_level"] == "low"
+        buy, hold = result["target_allocations"]
+        assert (buy["action"], buy["target_weight"], buy["estimated_amount"]) == ("BUY", 20.8, 8000)
+        assert (hold["action"], hold["target_weight"]) == ("HOLD", 30)
+        results.append(result)
+
+    assert results[0]["active_policy"]["concentration"]["current_breaches"]
+    assert not results[1]["active_policy"]["concentration"]["current_breaches"]
+    assert results[0]["consensus"] == results[1]["consensus"]
+    assert results[0]["target_allocations"] == results[1]["target_allocations"]
+    for layer in ("layer1", "layer1_retry", "layer2", "fallback"):
+        if layer in prompts:
+            assert "allocation drift are advisory diagnostics" in prompts[layer]
+            assert "Tier 1" not in prompts[layer]
+            assert "MINIMUM DRIFT" not in prompts[layer]
+            assert "Effective maximum single-position" not in prompts[layer]
+    assert "max_single_position_pct" not in prompts["layer3"]
+    if failure == "layer1":
+        assert "layer1_retry" in prompts
+    elif failure == "layer2":
+        assert results[0]["fallback_mode"]
+    elif failure == "layer3":
+        assert results[0]["layer3_result"]["error"]
+    else:
+        assert results[0]["layer3_result"]["claim_reviews"][0]["validation_status"] == "UNSUPPORTED"
+        assert results[0]["consensus"]["consensus_type"] == "STRONG_CONSENSUS"
+        assert not results[0]["consensus"]["disagreement_reasons"]
+        assert not results[0]["layer1_result"]["swap_suggestions"]
+
+
+@pytest.mark.parametrize("mode", [None, SECTOR_POLICY_ADVISORY, OPTIMIZER_POLICY_MUJI_V2])
+def test_muji_cooldown_and_drift_are_independent(mode):
+    policy = {"violations": ["CONCENTRATION_BREACH: AAA at 20%"],
+              "governance_flags": ["CONCENTRATION_BREACH: AAA target 20.8%"]}
+    if mode:
+        policy["sector_policy_mode"] = SECTOR_POLICY_ADVISORY
+    muji = mode == OPTIMIZER_POLICY_MUJI_V2
+    if muji:
+        policy["optimizer_policy_mode"] = mode
+    result = {
+        "status": "REBALANCE", "rebalance_opportunity_score": 90, "active_policy": policy,
+        "target_allocations": [{"symbol": "AAA", "action": "BUY", "current_weight": 20,
+                                "target_weight": 20.8, "allocation_change_percent": .8}],
+    }
+    recent = datetime.utcnow()
+    stabilized = apply_stabilization(result, recent)
+    assert stabilized["status"] == ("COOLDOWN_ACTIVE" if muji else "REBALANCE")
+    assert stabilized["stabilization"]["cooldown"]["overridden"] is not muji
+    assert stabilized["stabilization"]["drift_analysis"][0]["within_tolerance"]
+    assert result["target_allocations"][0].get("within_drift_tolerance", False) is not muji
+    if muji:
+        policy["emergency_override"] = True
+        stabilized = apply_stabilization(result, recent)
+        assert stabilized["stabilization"]["cooldown"]["overridden"]
+
+
+def test_muji_cannot_be_inferred_from_unknown_or_conflicting_policy(monkeypatch):
+    monkeypatch.setattr(optimizer_module, "call_ai", lambda *a, **k: pytest.fail("invalid policy reached model"))
+    resolved = _effective_envelope()
+    resolved.optimizer_policy_mode = OPTIMIZER_POLICY_MUJI_V2
+    for policy, envelope in [
+        ({"sector_policy_mode": SECTOR_POLICY_ADVISORY, "optimizer_policy_mode": "wealth.optimizer-muji.v3"}, None),
+        ({"sector_policy_mode": SECTOR_POLICY_ADVISORY}, resolved),
+    ]:
+        with pytest.raises(UnsupportedOptimizerPolicyEvidence):
+            optimizer_module.run_layered_optimizer([], [], "P", policy_context=policy, effective_envelope=envelope)
+
+
+def test_muji_unverified_trim_does_not_count_toward_action_overlap():
+    l1 = {"swap_suggestions": [{"sell_symbol": "AAA"}]}
+    l2 = {"target_allocations": [
+        {"symbol": "AAA", "action": "REDUCE", "thesis_evidence_status": "UNVERIFIED"},
+    ]}
+    baseline = _consensus_engine({}, {}, {}, sector_advisory=True, muji_v2=True)
+    assert _consensus_engine(l1, l2, {}, sector_advisory=True, muji_v2=True) == baseline
+
+
+@pytest.mark.parametrize("sector_mode", [None, SECTOR_POLICY_ADVISORY])
+def test_legacy_position_cap_remains_binding(monkeypatch, sector_mode):
+    replies = {"layer1": {}, "layer2": {"allocations": [{"s": "AAA", "tw": 23, "sig": "BUY"}]}, "layer3": {}}
+    monkeypatch.setattr(optimizer_module, "call_ai", lambda *a, usage_layer, **k: {
+        "text": json.dumps(replies[usage_layer]), "latency_ms": 1,
+    })
+    holdings = [{"symbol": "AAA", "shares": 2000, "current_price": 100, "sector": "Technology"}]
+    resolved = _effective_envelope(15)
+    resolved.effective_sector_limits = {"Technology": 100}
+    policy = compute_policy(
+        None, None, optimizer_module._compute_portfolio_weights(holdings, 800000),
+        effective_envelope=resolved, sector_policy_mode=sector_mode,
+    )
+    result = optimizer_module.run_layered_optimizer(
+        holdings, [], "P", cash_balance=800000, policy_context=envelope_to_dict(policy),
+    )
+    [allocation] = result["target_allocations"]
+    assert (allocation["action"], allocation["target_weight"]) == ("REDUCE", 15)
+    assert result["active_policy"]["turnover_relaxation_active"]
+    assert any(flag.startswith("CONCENTRATION_BREACH:") for flag in result["active_policy"]["violations"])
 
 
 def _effective_envelope(max_position=20.0):

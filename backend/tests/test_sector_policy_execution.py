@@ -278,7 +278,7 @@ def test_unsupported_policy_cannot_schedule_or_replay(replay_239, markers):
         schedule(replay_239)
 
 
-def test_muji_slice_one_keeps_sector_advisory_schedule_and_grade(replay_239):
+def test_muji_frozen_slice_one_keeps_sector_advisory_schedule_and_grade(replay_239):
     policy = replay_239["active_policy"]
     policy["sector_policy_mode"] = SECTOR_POLICY_ADVISORY
     old_schedule = schedule(replay_239).model_dump()
@@ -290,7 +290,7 @@ def test_muji_slice_one_keeps_sector_advisory_schedule_and_grade(replay_239):
     assert schedule(replay_239).model_dump() == old_schedule
     assert compute_plan_grade(*grade_args, policy_provenance=policy) == old_grade
     del policy["scheduled_execution"]
-    assert schedule(replay_239).model_dump() == old_schedule
+    assert all(trade.executed_amount == trade.required_amount == 0 for trade in schedule(replay_239).trades)
 
 
 def test_run_239_v1_plan_grade_preserves_recorded_formula(replay_239):
@@ -360,6 +360,24 @@ def test_untagged_sale_can_fund_buy_with_frozen_sell_signal():
     plan = schedule(result)
     assert plan.scheduled_buys == {"N": 10000}
     assert plan.trades[0].reason == "INVESTMENT_THESIS"
+
+
+@pytest.mark.parametrize("signal", ["HOLD", "SELL"])
+def test_muji_mixed_rationale_only_funds_with_independent_frozen_sell_signal(signal):
+    sell = allocation("T", "SELL", 0, 60, -60000)
+    reason = "Sector exceeds threshold. Earnings are deteriorating."
+    sell.update(reason=reason, decision_basis="INVESTMENT_THESIS")
+    result = run(
+        [{**holding("T", "Technology", 60000), "signal": signal}, holding("U", "Utilities", 40000)],
+        [sell, allocation("N", "BUY", 10, 0, 10000)],
+        candidates=[{"symbol": "N", "sector": "Financial", "current_price": 100}],
+        caps={"Technology": 25}, sector_advisory=True,
+    )
+    result["active_policy"]["optimizer_policy_mode"] = OPTIMIZER_POLICY_MUJI_V2
+    plan = schedule(result)
+    assert plan.scheduled_buys == ({"N": 10000} if signal == "SELL" else {})
+    assert plan.trades[0].executed_amount == (10000 if signal == "SELL" else 0)
+    assert sell["reason"] == reason
 
 
 def test_run_239_sector_tag_cannot_remove_bh_nav_repair(replay_239):
