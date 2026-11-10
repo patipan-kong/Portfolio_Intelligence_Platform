@@ -77,6 +77,22 @@ def goal(db, workspace_id, name="Goal", target_amount=500_000.0, is_archived=Fal
     return item
 
 
+def test_v1_and_v2_goal_contexts_dispatch_exactly():
+    db = make_session()
+    ws = workspace(db)
+    selected = goal(db, ws.id)
+    v1 = build_decision_goal_context(db, ws.id, [selected.id])
+    v2 = build_decision_goal_context(db, ws.id, [selected.id], decision_input=True)
+    assert load_persisted_decision_context(json.dumps(v1))["decision_effect"] == "CONTEXT_ONLY"
+    assert load_persisted_decision_context(json.dumps(v2))["decision_effect"] == "DECISION_INPUT"
+    wrong = {**v1, "decision_effect": "DECISION_INPUT"}
+    with pytest.raises(DecisionGoalContextIntegrityError):
+        load_persisted_decision_context(json.dumps(wrong))
+    wrong = {**v2, "decision_effect": "CONTEXT_ONLY"}
+    with pytest.raises(DecisionGoalContextIntegrityError):
+        load_persisted_decision_context(json.dumps(wrong))
+
+
 def cash(db, workspace_id, name="Cash", is_archived=False, **overrides):
     item = CashAccount(workspace_id=workspace_id, name=name, currency="THB", balance=0, is_archived=is_archived, **overrides)
     db.add(item)
@@ -526,11 +542,8 @@ def test_foreign_goal_id_is_indistinguishable_from_missing(monkeypatch):
     assert db.query(OptimizerHistory).count() == 0
 
 
-def test_valid_goal_ids_leave_decision_layer_arguments_unchanged(monkeypatch):
-    """Non-influence proof: run_layered_optimizer is this codebase's actual
-    L1/L2/L3 entry point (agents.optimizer.run_layered_optimizer, invoked at
-    main.py's analyze_optimizer). Its call arguments must be identical
-    whether or not goal_ids is populated."""
+def test_selected_goals_reach_muji_decision_layer_without_changing_other_arguments(monkeypatch):
+    """Only the explicit selected-goal input differs at the agent boundary."""
     calls = []
 
     def _spy(*args, **kwargs):
@@ -564,12 +577,15 @@ def test_valid_goal_ids_leave_decision_layer_arguments_unchanged(monkeypatch):
     on_stage_without = kwargs_without.pop("on_stage")
     on_stage_with = kwargs_with.pop("on_stage")
     assert (on_stage_without.func, on_stage_without.args) == (on_stage_with.func, on_stage_with.args)
+    assert kwargs_without.pop("goal_decision_input") is None
+    selected = kwargs_with.pop("goal_decision_input")
+    assert selected["contract_version"] == "wealth.decision-goal-context.v2"
+    assert selected["decision_effect"] == "DECISION_INPUT"
+    assert selected["selected_goal_ids"] == [item.id]
     assert kwargs_without == kwargs_with
-    # the goal's own identity/name never appears anywhere in the call
-    assert "Retirement" not in repr(args_with) + repr(kwargs_with)
 
 
-def test_semantic_goal_context_construction_begins_after_recommendation_computation(monkeypatch):
+def test_semantic_goal_context_is_built_once_before_recommendation(monkeypatch):
     events = []
 
     def _optimizer(*args, **kwargs):
@@ -594,7 +610,7 @@ def test_semantic_goal_context_construction_begins_after_recommendation_computat
 
     asyncio.run(main.analyze_optimizer(main.OptimizerRequest(portfolio_id=p.id, goal_ids=[item.id]), db))
 
-    assert events == ["recommendation-complete", "goal-context-begins"]
+    assert events == ["goal-context-begins", "recommendation-complete"]
 
 
 def test_populated_goal_ids_capture_complete_context_on_snapshot(monkeypatch):
@@ -614,6 +630,7 @@ def test_populated_goal_ids_capture_complete_context_on_snapshot(monkeypatch):
     snap = db.query(RecommendationSnapshot).order_by(RecommendationSnapshot.id.desc()).first()
     assert snap is not None
     context = json.loads(snap.wealth_goal_context_json)
+    assert context["contract_version"] == "wealth.decision-goal-context.v2"
     assert context["context_state"] == COMPLETE
     assert context["goals"][0]["id"] == item.id
 
@@ -642,12 +659,11 @@ def test_omitted_goal_ids_leave_context_null_and_empty_list_captures_empty(monke
     assert json.loads(snap_empty.wealth_goal_context_json)["context_state"] == EMPTY
 
 
-def test_late_capture_failure_preserves_history_and_yields_no_snapshot_with_success(monkeypatch):
-    """Simulates persisted-data corruption discoverable only at full
-    post-run construction time. The optimizer response must still succeed;
-    OptimizerHistory must remain; no RecommendationSnapshot may be written —
-    never a post-commit 404/409."""
-    monkeypatch.setattr(main, "run_layered_optimizer", lambda *a, **k: {})
+def test_selected_goal_integrity_failure_stops_before_agents_and_history(monkeypatch):
+    def _unexpected(*a, **k):
+        raise AssertionError("agent invoked")
+
+    monkeypatch.setattr(main, "run_layered_optimizer", _unexpected)
 
     def _boom(*a, **k):
         raise GoalContextIntegrityError("simulated late corruption")
@@ -660,10 +676,10 @@ def test_late_capture_failure_preserves_history_and_yields_no_snapshot_with_succ
     item = goal(db, ws_id)
 
     body = main.OptimizerRequest(portfolio_id=p.id, goal_ids=[item.id])
-    result = asyncio.run(main.analyze_optimizer(body, db))  # must not raise
-
-    assert isinstance(result, dict)
-    assert db.query(OptimizerHistory).count() == 1
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(main.analyze_optimizer(body, db))
+    assert exc.value.status_code == 409
+    assert db.query(OptimizerHistory).count() == 0
     assert db.query(RecommendationSnapshot).count() == 0
 
 

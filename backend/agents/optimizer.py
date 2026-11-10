@@ -87,6 +87,17 @@ def _intent_block(advisory, layer: str) -> str:
     return advisory.prompt_block(layer) if advisory is not None else ""
 
 
+def _goal_decision_block(context: dict | None) -> str:
+    if context is None:
+        return ""
+    goals = [{key: goal.get(key) for key in ("id", "goal_type", "priority", "target_amount",
+              "target_date", "designated_total", "funding_gap")}
+             for goal in context.get("goals", [])]
+    return ("[OBSERVED SELECTED GOALS — decision context, not trade instructions]\n"
+            + json.dumps({"version": context["contract_version"], "goals": goals}, sort_keys=True)
+            + "\nFunding gap is not an immediate cash requirement; no success probability is available.\n")
+
+
 def _note_prompt(advisory, layer: str, outcome: str) -> None:
     if advisory is not None:
         advisory.note_prompt(layer, advisory.ledger.attempt, outcome)
@@ -1028,6 +1039,7 @@ def _layer1_prompt(
     intent_block: str = "",
     sector_advisory: bool = False,
     muji_v2: bool = False,
+    goal_decision_input: dict | None = None,
 ) -> str:
     # Phase 3B.5: use resolved per-sector limits when available; fall back to raw sector_limits
     if effective_envelope is not None:
@@ -1157,7 +1169,7 @@ priority="no_action" when ALL of the following are true:
 "r" = one reason for the swap, under 12 words (e.g. "Technology at 45% > 30% limit")."""
 
     swap_basis = ',"decision_basis":"INVESTMENT_THESIS"' if muji_v2 else ""
-    return f"""{policy_block}{regime_block}{strategy_block}{t1_breach_note}{execution_block}{timing_block}{intent_block}You are a STRATEGIST. Output swap targets in JSON only.
+    return f"""{policy_block}{regime_block}{strategy_block}{t1_breach_note}{execution_block}{timing_block}{intent_block}{_goal_decision_block(goal_decision_input) if muji_v2 else ''}You are a STRATEGIST. Output swap targets in JSON only.
 No explanation. No prose. Only valid JSON output.
 {violation_note}
 Portfolio: {json.dumps(c_pc)}
@@ -1200,6 +1212,7 @@ def _layer2_prompt(
     intent_block: str = "",
     sector_advisory: bool = False,
     muji_v2: bool = False,
+    goal_decision_input: dict | None = None,
 ) -> str:
     role_line = f"Your role: {role}\n\n" if role else ""
 
@@ -1300,7 +1313,7 @@ A portfolio with 2 targeted swaps beats one with 6 micro-adjustments."""
 
     allocation_basis = ',"decision_basis":"INVESTMENT_THESIS|CONCENTRATION_ADVISORY"' if muji_v2 else ""
     return f"""You are an independent portfolio reviewer.
-{policy_block}{regime_block}{strategy_block}{t1_breach_note}{execution_block}{timing_challenge_block}{intent_block}{role_line}The Strategist (Layer 1) proposed:
+{policy_block}{regime_block}{strategy_block}{t1_breach_note}{execution_block}{timing_challenge_block}{intent_block}{_goal_decision_block(goal_decision_input) if muji_v2 else ''}{role_line}The Strategist (Layer 1) proposed:
 - Priority: {l1_priority}
 - Swaps: {json.dumps(l1_swaps, indent=2)}
 - Top watchlist picks: {l1_top_buys}
@@ -1349,6 +1362,12 @@ Sector thresholds alone cannot block BUY/ACCUMULATE or justify a SELL/REDUCE.
 Put optional sector-only reductions in sector_alternatives, using the same allocation row format.
 Keep the actionable allocation HOLD unless independently justified. Mark thesis-driven SELL/REDUCE
 with decision_basis=INVESTMENT_THESIS. Judge agreement and opportunity only on actionable decisions.
+ If the complete allocation forms a coherent optional strategy, label strategy_family as
+ RAISE_CASH, DEFENSIVE_ROTATION or GROWTH_ROTATION; otherwise use null. Evidence refs may
+ cite only observed fields: symbol:SYM:signal, symbol:SYM:fa_score, symbol:SYM:ta_score,
+ symbol:SYM:pe_ratio, symbol:SYM:roe, symbol:SYM:timing_score, regime:regime,
+ goal:ID:target_date, goal:ID:funding_gap or goal:ID:priority. A cited fact does not
+ by itself prove the strategy is superior. Never cite a concentration threshold as support.
 
 disagreements[]: only material disagreements with Layer 1 (wrong signal, missed breach, constraint conflict).
 {f"Use {advisory_basis} for concentration-only comments. Other bases must identify the actionable disagreement." if sector_advisory else "Skip informational observations."}
@@ -1368,7 +1387,7 @@ Return JSON only. No markdown fences, no prose outside the JSON.
   "disagreements": [{disagreement_example}],
   "portfolio_assessment": "2-3 sentences",
   "cash_balance_target": 0.0,
-  "allocations": [
+{('  "strategy_family": "RAISE_CASH|DEFENSIVE_ROTATION|GROWTH_ROTATION|null", "observed_evidence_refs": ["symbol:SYM:signal"],\n') if muji_v2 else ''}  "allocations": [
     {{"s":"X","tw":0.0,"sig":"BUY|ACCUMULATE|HOLD|REDUCE|SELL|WATCH","r":"<20 words"{allocation_basis}}}
   ]
 }}"""
@@ -1387,6 +1406,7 @@ def _layer3_prompt(
     execution_context: dict | None = None,
     claim_contract: dict | None = None,
     muji_v2: bool = False,
+    goal_decision_input: dict | None = None,
 ) -> str:
     from services.optimizer.execution_penalty import build_execution_prompt_block
     execution_block = build_execution_prompt_block(execution_context or {})
@@ -1448,7 +1468,7 @@ Assess independent investment risks using the evidence contract and its severity
 - MEDIUM   : conflicting allocation math
 - LOW      : minor concentration risk, suboptimal but acceptable"""
 
-    return f"""{t1_breach_note}You are a portfolio risk auditor.
+    return f"""{t1_breach_note}{_goal_decision_block(goal_decision_input) if muji_v2 else ''}You are a portfolio risk auditor.
 {execution_block}{timing_risk_block}{policy_note}{persona_note}{intent_block}{role_line}Evaluate both allocation proposals for concentration risk and soundness.
 
 [AUTHORITATIVE POLICY CLAIM CONTRACT]
@@ -1757,7 +1777,7 @@ Total portfolio value: {total_value:.0f}, Cash balance: {cash_balance:.0f}
 Never block a buy or propose an actionable sale solely because of sector exposure.
 Put optional sector-only SELL/REDUCE ideas in sector_alternatives using the same allocation row format.
 Keep the actionable allocation HOLD unless independently justified. Mark thesis-driven reductions
-with decision_basis=INVESTMENT_THESIS.
+with decision_basis=INVESTMENT_THESIS.{('\n If this is a coherent optional strategy, return strategy_family as RAISE_CASH, DEFENSIVE_ROTATION or GROWTH_ROTATION and observed_evidence_refs using only frozen symbol:SYM:signal, symbol:SYM:fa_score, symbol:SYM:ta_score, regime:regime or goal:ID:target_date facts. Otherwise use null and an empty evidence list.') if muji_v2 else ''}
 
 OUTPUT CONTRACT — this JSON is read by software; do not spend output tokens on prose. Watchlist symbols you are
 not recommending (no BUY/ACCUMULATE) do NOT need an allocations row — omit them, except up to 5 WATCH rows for
@@ -1782,7 +1802,7 @@ Return ONLY valid JSON without markdown fences:
   "blocked_opportunities": [{{"symbol":"X","signal":"BUY","reason":"insufficient_cash|portfolio_count_cap"}}],
   "portfolio_assessment": "1-2 sentence summary of the plan",
   "cash_balance_target": 5.0,
-  "allocations": [
+{('  "strategy_family": "RAISE_CASH|DEFENSIVE_ROTATION|GROWTH_ROTATION|null", "observed_evidence_refs": ["symbol:SYM:signal"],\n') if muji_v2 else ''}  "allocations": [
     {{"s":"X","tw":0.0,"sig":"BUY|ACCUMULATE|HOLD|REDUCE|SELL|WATCH","r":"<20 words"{allocation_basis}}}
   ],
   "risk_flags": [{{"symbol":"...","issue":"<15 words","severity":"LOW|MEDIUM|HIGH|CRITICAL","category":"INVESTMENT_RISK|OWNER_INTENT_REVIEW","claim_kind":"INVESTMENT_JUDGMENT|ADVISORY_CONCERN","evidence_ref":null}}],
@@ -1817,6 +1837,8 @@ def _run_single_shot_fallback(
     sector_policy_mode: str | None = None,
     optimizer_policy_mode: str | None = None,
     muji_policy_block: str = "",
+    goal_decision_input: dict | None = None,
+    regime_context: dict | None = None,
 ) -> dict:
     """Single-shot emergency fallback when the 3-layer pipeline fails completely.
 
@@ -1853,7 +1875,9 @@ def _run_single_shot_fallback(
         **({"intent_block": _intent_block(advisory, _LAYER_FALLBACK)} if advisory is not None else {}),
     )
     from services.optimizer.execution_penalty import build_execution_prompt_block
-    prompt = build_execution_prompt_block(execution_context or {}) + prompt
+    prompt = build_execution_prompt_block(execution_context or {}) + (
+        _goal_decision_block(goal_decision_input) if muji_v2 else ""
+    ) + prompt
     try:
         raw = call_ai(
             prompt, fallback_provider, fallback_model, max_tokens=4096,
@@ -2013,6 +2037,23 @@ def _run_single_shot_fallback(
                       "violation_details": fallback_details} if policy_context else None)
     _capture_sector_policy(output, policy_output, sector_policy_mode, portfolio_data, wc,
                            total_value, degraded_policy, sector_alternatives, optimizer_policy_mode)
+    if muji_v2:
+        from services.optimizer.strategic_candidates import prepare_candidates, VERSION
+        try:
+            output["strategic_candidates"] = prepare_candidates(
+                portfolio_data, wc, cash_balance,
+                {**result, "target_allocations": final_allocations,
+                 "target_cash_weight": output["target_cash_weight"]},
+                regime=regime_context, goals=goal_decision_input,
+                source_layer="SINGLE_SHOT_FALLBACK",
+            )
+        except Exception as exc:
+            logger.exception("MUJI fallback candidate preparation unavailable: %s", exc)
+            output["strategic_candidates"] = {
+                "version": VERSION, "status": "UNAVAILABLE", "goal_context_version":
+                (goal_decision_input or {}).get("contract_version"), "candidates": [],
+                "reason": "CANDIDATE_PREPARATION_FAILED",
+            }
     return output
 
 
@@ -2028,6 +2069,7 @@ def _retry_l1_with_schema(
     execution_context: dict | None = None,
     muji_v2: bool = False,
     policy_block: str = "",
+    goal_decision_input: dict | None = None,
 ) -> dict:
     """Single-shot L1 retry with a stripped-down prompt after an initial parse failure.
 
@@ -2040,6 +2082,8 @@ def _retry_l1_with_schema(
         if muji_v2 else "Sector concentration is advisory and cannot by itself justify a trade.\n"
     )
     minimal_prompt = build_execution_prompt_block(execution_context or {}) + intent_block + policy_block + (
+        _goal_decision_block(goal_decision_input) if muji_v2 else ""
+    ) + (
         "You are a portfolio strategist. Return ONLY a valid JSON object — "
         "no markdown, no prose, just the JSON.\n\n"
         f"Current holdings: {json.dumps(c_pc)}\n"
@@ -2134,6 +2178,7 @@ def run_layered_optimizer(
     advisory=None,
     sector_policy_mode: str | None = None,
     optimizer_policy_mode: str | None = None,
+    goal_decision_input: dict | None = None,
 ) -> dict:
     """3-layer Dynamic Capital Allocation Engine with global single-shot fallback.
 
@@ -2299,6 +2344,7 @@ def run_layered_optimizer(
                 effective_envelope=effective_envelope,
                 t1_breach_note=_t1_note,
                 muji_v2=muji_v2,
+                goal_decision_input=goal_decision_input if muji_v2 else None,
                 execution_context=execution_context,
                 **({"intent_block": _intent_block(advisory, _LAYER_L1)} if advisory is not None else {}),
             )
@@ -2337,6 +2383,7 @@ def run_layered_optimizer(
                 l1_result = _retry_l1_with_schema(
                     c_pc, c_wc, sell_forced, swap_eligible, l1_cfg,
                     execution_context=execution_context, muji_v2=muji_v2,
+                    goal_decision_input=goal_decision_input if muji_v2 else None,
                     policy_block=(muji_policy_block + "\n" if muji_policy_block else ""),
                     **({"intent_block": _intent_block(advisory, _LAYER_L1_RETRY)} if advisory is not None else {}),
                 )
@@ -2369,6 +2416,7 @@ def run_layered_optimizer(
                                regime_context=regime_context,
                                policy_context=policy_context,
                                t1_breach_note=_t1_note, muji_v2=muji_v2,
+                                goal_decision_input=goal_decision_input if muji_v2 else None,
                                execution_context=execution_context,
                                **({"intent_block": _intent_block(advisory, _LAYER_L2)}
                                   if advisory is not None else {})),
@@ -2464,6 +2512,7 @@ def run_layered_optimizer(
                                policy_context=policy_context,
                                effective_envelope=effective_envelope,
                                t1_breach_note=_t1_note, muji_v2=muji_v2,
+                                goal_decision_input=goal_decision_input if muji_v2 else None,
                                **({"intent_block": _intent_block(advisory, _LAYER_L3)}
                                   if advisory is not None else {})),
                 l3_cfg["provider"], l3_cfg["model"], max_tokens=2048,
@@ -2741,6 +2790,21 @@ def run_layered_optimizer(
         }
         _capture_sector_policy(output, active_policy_out, sector_policy_mode, portfolio_data, watchlist_data,
                                total_value, degraded_policy, sector_alternatives, optimizer_policy_mode)
+        if muji_v2:
+            from services.optimizer.strategic_candidates import prepare_candidates, VERSION
+            try:
+                output["strategic_candidates"] = prepare_candidates(
+                    portfolio_data, watchlist_data, cash_balance, l2_result,
+                    regime=regime_context, goals=goal_decision_input,
+                    source_layer="CHALLENGER_DEGRADED" if l1_parse_failed or "error" in l3_result else "CHALLENGER",
+                )
+            except Exception as exc:
+                logger.exception("MUJI candidate preparation unavailable: %s", exc)
+                output["strategic_candidates"] = {
+                    "version": VERSION, "status": "UNAVAILABLE", "goal_context_version":
+                    (goal_decision_input or {}).get("contract_version"), "candidates": [],
+                    "reason": "CANDIDATE_PREPARATION_FAILED",
+                }
         return output
 
     except HardPolicyEnforcementError:
@@ -2767,5 +2831,7 @@ def run_layered_optimizer(
             optimizer_policy_mode=optimizer_policy_mode,
             execution_context=execution_context,
             muji_policy_block=muji_policy_block,
+            goal_decision_input=goal_decision_input if muji_v2 else None,
+            regime_context=regime_context if muji_v2 else None,
             **({"advisory": advisory} if advisory is not None else {}),
         )
