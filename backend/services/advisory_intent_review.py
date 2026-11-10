@@ -108,18 +108,17 @@ def apply_response_views(response: dict, run: AdvisoryIntentRun | None, log) -> 
     """
     before = {row.get("symbol"): (dict(row)) for row in response.get("target_allocations") or []} if run else {}
     try:
-        from services.noise_filter import DRIFT_THRESHOLD_PCT, apply_noise_filter
+        from services.noise_filter import DRIFT_NOISE_REASON, apply_noise_filter
         apply_noise_filter(response)
         if run is not None:
             for row in response.get("target_allocations") or []:
                 prior = before.get(row.get("symbol"))
                 if prior is None or not row.get("noise_suppressed") or prior.get("noise_suppressed"):
                     continue
-                drift = abs(prior.get("allocation_change_percent") or 0)
                 run.observe(
                     row.get("symbol", ""), stage=STAGE_NOISE_FILTER, source=SOURCE_SYSTEM_RULE,
                     effect=EFFECT_SUPPRESS,
-                    reason_code=("NOISE_DRIFT_BELOW_THRESHOLD" if drift < DRIFT_THRESHOLD_PCT
+                    reason_code=("NOISE_DRIFT_BELOW_THRESHOLD" if row.get("noise_reason") == DRIFT_NOISE_REASON
                                  else "NOISE_TRADE_VALUE_BELOW_MINIMUM"),
                     reason_text=str(row.get("noise_reason") or ""),
                     before=_row_basis(prior), after=_row_basis(row),

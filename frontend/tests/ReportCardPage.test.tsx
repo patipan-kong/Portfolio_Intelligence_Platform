@@ -74,6 +74,34 @@ function planWithTrade(trade: Record<string, unknown>) {
 }
 
 describe("Report Card — execution provenance of Required trades", () => {
+  test("V2 labels frozen plan quality and scheduled sale separately from transactions", async () => {
+    getRecommendationReportCard.mockResolvedValue(reportCard({
+      plan: {
+        status: "ok", optimizer_policy_mode: "wealth.optimizer-muji.v2",
+        recommended_actions: [
+          { symbol: "AAA.BK", action: "SELL", rationale: "Recorded thesis" },
+          { symbol: "BBB.BK", action: "BUY", rationale: "Deferred proposal" },
+        ],
+        buy_trades: [], cash_available: 1000, funding_gap: 0,
+        grade: { score: 100, detail: { grade_version: "wealth.plan-grade-muji.v2",
+          schedule_feasibility_score: 100, component_definitions: {
+            schedule_feasibility: "Frozen directions and cash reconcile.",
+          } } },
+        sell_reduce_trades: [{ symbol: "AAA.BK", action: "SELL", original_action: "SELL",
+          original_rationale: "Recorded thesis", reason: "INVESTMENT_THESIS",
+          necessity: "DISCRETIONARY", execution_role: "STANDALONE", execution_state: "FULL",
+          full_recommended_amount: 10000, executed_amount: 10000,
+          scheduled_cash_impact: 9985, note: "Frozen signal" }],
+      },
+    }));
+    render(<ReportCardPage />);
+    expect(await screen.findByText(/Advisory plan and execution quality/)).toBeInTheDocument();
+    expect(screen.getByText(/Scheduled advisory sale:/)).toHaveTextContent("9,985");
+    expect(screen.getByText(/Scheduled trades are not recorded transactions/)).toBeInTheDocument();
+    expect(screen.getByText(/BUY BBB.BK/)).toHaveTextContent("no scheduled trade");
+    expect(screen.getByText(/does not measure investment returns or goal success/)).toBeInTheDocument();
+  });
+
   test("renders frozen advisory alternatives separately from Required trades and grade", async () => {
     getRecommendationReportCard.mockResolvedValue(reportCard({
       plan: {

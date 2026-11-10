@@ -247,6 +247,28 @@ def test_gemini_path_unaffected_by_reasoning_pattern_change(monkeypatch):
     assert result["provider"] == "gemini"
 
 
+@pytest.mark.parametrize("muji_v2", [False, True])
+def test_gemini_json_correction_uses_the_selected_optimizer_schema(monkeypatch, muji_v2):
+    from google import genai as google_genai
+
+    calls = []
+
+    def generate_content(self, model, contents, config):
+        calls.append((contents, config.response_schema))
+        return _FakeGeminiResponse("invalid" if len(calls) == 1 else '{"swaps":[]}')
+
+    monkeypatch.setattr(_FakeGeminiModels, "generate_content", generate_content)
+    monkeypatch.setattr(google_genai, "Client", lambda api_key=None: _FakeGeminiClient())
+    result = ai_client.call_ai(
+        "Optimizer investment rules", "gemini", "gemini-3.8-flash",
+        use_schema=ai_client.MujiLayer1Response if muji_v2 else True,
+    )
+    expected_schema = ai_client.MujiLayer1Response if muji_v2 else ai_client._Layer1Response
+    assert result["text"] == '{"swaps":[]}'
+    assert [schema for _, schema in calls] == [expected_schema, expected_schema]
+    assert ("Optimizer investment rules" in calls[1][0]) is muji_v2
+
+
 # ─── 8. Optimizer integration: GPT-6 in L2/L3 does not trigger fallback ───
 
 def test_optimizer_layer2_layer3_gpt6_do_not_trigger_global_fallback(monkeypatch):

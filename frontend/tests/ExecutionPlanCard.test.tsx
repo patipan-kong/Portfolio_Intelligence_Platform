@@ -121,6 +121,15 @@ describe("ExecutionPlanCard structured no-trade causes", () => {
     expect(screen.getByText("Expected net benefit +0.197% is below the 0.200% cost threshold")).toBeInTheDocument();
   });
 
+  test("advisory drift is excluded from no-trade causes", () => {
+    const value = noTrades(true);
+    value.no_action_reason = "INSUFFICIENT_EDGE";
+    value.stabilization!.drift_advisory = true;
+    render(<ExecutionPlanCard result={value} />);
+    expect(screen.queryByText(/already within/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Expected net benefit/)).toBeInTheDocument();
+  });
+
   test("unknown cause never fabricates drift compliance or suppression from status alone", () => {
     const value = noTrades(false);
     delete value.no_action_reason;

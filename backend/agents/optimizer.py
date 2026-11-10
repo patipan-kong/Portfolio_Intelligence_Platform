@@ -8,11 +8,13 @@ import json
 import logging
 from math import floor
 from typing import Callable
-from services.ai_client import call_ai
+from services.ai_client import MujiLayer1Response, call_ai
 from services.json_utils import safe_parse_json
 from services.optimizer.sector_policy import (
-    SECTOR_POLICY_ADVISORY, attach_target_evaluation, current_values, evaluate_frozen_sectors,
+    OPTIMIZER_POLICY_MUJI_V2, SECTOR_POLICY_ADVISORY, UnsupportedOptimizerPolicyEvidence,
+    attach_target_evaluation, current_values, evaluate_frozen_sectors,
     evaluate_sectors, freeze_concentration, freeze_positions, project_targets, sector_weights,
+    optimizer_policy_mode as read_optimizer_policy_mode,
 )
 from services.optimizer.risk_flags import investment_risk_flags
 from services.optimizer.auditor_claims import build_claim_evidence, validate_auditor_claims
@@ -123,7 +125,7 @@ def _apply_forced_and_locked(
             before = _alloc_basis(alloc_map[sym])
             alloc_map[sym]["action"] = "SELL"
             alloc_map[sym]["target_weight"] = 0.0
-            if alloc_map[sym].get("decision_basis") == "SECTOR_ADVISORY":
+            if alloc_map[sym].get("decision_basis") in _CONCENTRATION_ADVISORY_BASES:
                 alloc_map[sym].pop("decision_basis")
                 alloc_map[sym]["reason"] = "Forced exit: SELL signal."
             if (before["action"], before["target_weight"]) != ("SELL", 0.0):
@@ -192,6 +194,7 @@ def _make_envelope_from_dict(d: dict) -> _PolicyEnvelope:
         sector_limit_sources    = d.get("sector_limit_sources", {}),
         position_limit_source   = d.get("position_limit_source", "POLICY_ENGINE"),
         sector_policy_mode      = d.get("sector_policy_mode"),
+        optimizer_policy_mode   = d.get("optimizer_policy_mode"),
     )
 
 
@@ -404,6 +407,7 @@ def _normalize_allocations(
     allocs: list,
     pc_map: dict[str, float] | None = None,
     score_map: dict[str, dict] | None = None,
+    *, muji_v2: bool = False,
 ) -> list[dict]:
     """Normalise L2 allocation objects to the internal TargetAllocation schema.
 
@@ -427,14 +431,17 @@ def _normalize_allocations(
             "estimated_amount": 0,  # filled in by caller once total_value is known
             "reason": str(a.get("reason") or a.get("r") or ""),
         }
-        if a.get("decision_basis") in ("SECTOR_ADVISORY", "INVESTMENT_THESIS"):
+        if a.get("decision_basis") in ("SECTOR_ADVISORY", "INVESTMENT_THESIS") or (
+            muji_v2 and a.get("decision_basis") == "CONCENTRATION_ADVISORY"
+        ):
             row["decision_basis"] = a["decision_basis"]
         _apply_score_context(row, score_map, sym)
         result.append(row)
     return [a for a in result if a["symbol"]]
 
 
-def _separate_sector_alternatives(model_result, allocations, holdings, nav, concentration):
+def _separate_sector_alternatives(model_result, allocations, holdings, nav, concentration, *, muji_v2=False,
+                                 sell_forced=()):
     """Keep concentration-only ideas out of investment decisions and funding."""
     nav_repairs = {
         row["symbol"] for row in concentration["current_breaches"] if row["basis"] == "NAV"
@@ -450,6 +457,15 @@ def _separate_sector_alternatives(model_result, allocations, holdings, nav, conc
             except (TypeError, ValueError):
                 continue
     for row in allocations:
+        if muji_v2 and row.get("decision_basis") in _CONCENTRATION_ADVISORY_BASES:
+            row["original_recommendation"] = {key: row[key] for key in ("action", "target_weight", "reason")}
+            if row["action"] in ("SELL", "REDUCE"):
+                optional.append(dict(row))
+            row.update(action="HOLD", target_weight=row["current_weight"], allocation_change_percent=0,
+                       reason="Concentration observation recorded for review.")
+            continue
+        if muji_v2 and row["action"] in ("SELL", "REDUCE") and row["symbol"] not in sell_forced:
+            row["thesis_evidence_status"] = "UNVERIFIED"
         if row["action"] in ("SELL", "REDUCE") and row.get("decision_basis") == "SECTOR_ADVISORY":
             # The scheduler needs the proposed sale to verify and reserve any
             # independent NAV repair. Its sector-tagged remainder cannot fund buys.
@@ -458,9 +474,15 @@ def _separate_sector_alternatives(model_result, allocations, holdings, nav, conc
             optional.append(dict(row))
             row.update(action="HOLD", target_weight=row["current_weight"], allocation_change_percent=0,
                        reason="Sector concentration alternative available for review.")
+    advisory_blocks = ("sector_limit_exceeded",)
+    if muji_v2:
+        advisory_blocks += ("position_limit_exceeded", "allocation_drift", "drift_below_threshold")
     model_result["blocked_opportunities"] = [
         item for item in model_result.get("blocked_opportunities", []) or []
-        if not isinstance(item, dict) or item.get("reason") != "sector_limit_exceeded"
+        if not isinstance(item, dict) or (
+            item.get("reason") not in advisory_blocks
+            and (not muji_v2 or item.get("decision_basis") not in _CONCENTRATION_ADVISORY_BASES)
+        )
     ]
     alternatives = {}
     for row in optional:
@@ -496,7 +518,8 @@ def _degraded_sector_policy(limits, default_cap, effective_envelope):
     }
 
 
-def _capture_sector_policy(output, policy, mode, portfolio, candidates, nav, degraded_policy, alternatives):
+def _capture_sector_policy(output, policy, mode, portfolio, candidates, nav, degraded_policy, alternatives,
+                           optimizer_policy_mode=None):
     if mode == SECTOR_POLICY_ADVISORY:
         if policy is None:
             # Exposure remains measurable when hard-policy evidence is unavailable.
@@ -504,6 +527,8 @@ def _capture_sector_policy(output, policy, mode, portfolio, candidates, nav, deg
         policy["sector_policy_mode"] = mode
         policy["sector_alternatives"] = alternatives
     if policy is not None:
+        if optimizer_policy_mode is not None:
+            policy["optimizer_policy_mode"] = optimizer_policy_mode
         output["active_policy"] = policy
         policy["concentration"] = freeze_concentration(portfolio, candidates, policy, nav)
         attach_target_evaluation(output)
@@ -729,7 +754,8 @@ _CONSENSUS_LEGACY_AGREES: dict[str, bool] = {
 }
 
 
-def _consensus_engine(l1: dict, l2: dict, l3: dict, *, sector_advisory: bool = False) -> dict:
+def _consensus_engine(l1: dict, l2: dict, l3: dict, *, sector_advisory: bool = False, muji_v2: bool = False,
+                      sell_forced=()) -> dict:
     """Classify optimizer output into one of 7 consensus types with alignment scoring."""
 
     # ── L2 inputs ─────────────────────────────────────────────────────────────
@@ -756,6 +782,9 @@ def _consensus_engine(l1: dict, l2: dict, l3: dict, *, sector_advisory: bool = F
     no_action_reason  = l2.get("no_action_reason")
     no_action_summary = l2.get("no_action_summary")
     l2_allocs         = list(l2.get("target_allocations", []) or [])
+    if muji_v2:
+        l2_allocs = [a for a in l2_allocs if a.get("decision_basis") not in _CONCENTRATION_ADVISORY_BASES
+                     and a.get("thesis_evidence_status") != "UNVERIFIED"]
 
     # ── L3 inputs ─────────────────────────────────────────────────────────────
     # Preserve all flags in layer3_result; only investment evidence is scored.
@@ -771,6 +800,8 @@ def _consensus_engine(l1: dict, l2: dict, l3: dict, *, sector_advisory: bool = F
     l1_buys  = set(l1.get("top_buys", []) or [])
     l1_swaps = list(l1.get("swap_suggestions", []) or [])
     l1_sells = {s["sell_symbol"] for s in l1_swaps if s.get("sell_symbol")}
+    if muji_v2:
+        l1_sells.intersection_update(sell_forced)
 
     l2_buy_syms  = {a["symbol"] for a in l2_allocs if a.get("action") in ("BUY", "ACCUMULATE")}
     l2_sell_syms = {a["symbol"] for a in l2_allocs if a.get("action") in ("SELL", "REDUCE")}
@@ -968,6 +999,15 @@ def _consensus_engine(l1: dict, l2: dict, l3: dict, *, sector_advisory: bool = F
     }
 
 
+_CONCENTRATION_ADVISORY_BASES = ("SECTOR_ADVISORY", "CONCENTRATION_ADVISORY")
+_MUJI_THESIS_GUIDANCE = (
+    "Position NAV concentration, sector concentration and allocation drift are advisory diagnostics. "
+    "They cannot by themselves justify or veto a trade, change its score, or rule out HOLD or NO_ACTION. "
+    "Use available market, downside, valuation, portfolio and investor-goal evidence to justify "
+    "each BUY, ACCUMULATE, REDUCE or SELL. A concentrated winner can remain a HOLD."
+)
+
+
 # ─── Prompt builders ──────────────────────────────────────────────────────────
 
 def _layer1_prompt(
@@ -987,6 +1027,7 @@ def _layer1_prompt(
     execution_context: dict | None = None,
     intent_block: str = "",
     sector_advisory: bool = False,
+    muji_v2: bool = False,
 ) -> str:
     # Phase 3B.5: use resolved per-sector limits when available; fall back to raw sector_limits
     if effective_envelope is not None:
@@ -1004,7 +1045,7 @@ def _layer1_prompt(
     if regime_context and not policy_context:
         # Only inject standalone regime block when no unified policy block is present
         from services.analytics.regime_detector import build_regime_prompt_block
-        regime_block = build_regime_prompt_block(regime_context) + "\n"
+        regime_block = build_regime_prompt_block(regime_context, concentration_advisory=muji_v2) + "\n"
 
     strategy_block = ""
     if persona_context:
@@ -1027,16 +1068,16 @@ def _layer1_prompt(
 Target Persona: {p_label}
 Current Portfolio DNA: {p_dna}
 Dominant Style: {p_dominant} → target dominant is {p_top}
-Style Drift: {p_drift_sev} ({p_drift_sc}/100) | Rebalance Urgency: {p_urgency}
+Style Drift: {p_drift_sev} ({p_drift_sc}/100) | {"Diagnostic context" if muji_v2 else f"Rebalance Urgency: {p_urgency}"}
 Factor Priority: {p_priority}
 Most Misaligned: {p_misaligned}
 Turnover Tolerance: {p_turn_lbl} ({int(p_turn * 100)}%)
 
 [STRATEGY MANDATE]
-All swap proposals MUST increase {p_top} factor alignment.
+{"Use factor alignment as one input to the investment thesis." if muji_v2 else f"All swap proposals MUST increase {p_top} factor alignment."}
 {low_turn_note}{high_turn_note}
 Stocks selected for BUY/ACCUMULATE must support the {p_label} factor profile.
-Stocks proposed for REDUCE/SELL must be misaligned with {p_label} or overweight.
+Stocks proposed for REDUCE/SELL must {"have an independent investment or risk rationale" if muji_v2 else f"be misaligned with {p_label} or overweight"}.
 
 """
 
@@ -1044,7 +1085,7 @@ Stocks proposed for REDUCE/SELL must be misaligned with {p_label} or overweight.
     # This prevents L1 from freezing when historical positions breach the limits —
     # it must actively propose REDUCE actions to resolve the breach step-by-step.
     violation_note = ""
-    if policy_context:
+    if policy_context and not muji_v2:
         hc = policy_context.get("hard_constraints", {})
         max_pos = float(hc.get("max_single_position_pct", 22.0))
         policy_violations = policy_context.get("violations", [])
@@ -1079,20 +1120,11 @@ Timing informs urgency — it does not block. A DEFER symbol with strong fundame
 
 """
 
-    return f"""{policy_block}{regime_block}{strategy_block}{t1_breach_note}{execution_block}{timing_block}{intent_block}You are a STRATEGIST. Output swap targets in JSON only.
-No explanation. No prose. Only valid JSON output.
-{violation_note}
-Portfolio: {json.dumps(c_pc)}
-Watchlist: {json.dumps(c_wc)}
-{"" if sector_advisory else f"Sector limits: {json.dumps(sl)}"}
-Swap eligible: {swap_eligible or "none"}
-Forced sells: {sell_forced or "none"}
-
-STOCK COUNT: {current_count}/{max_stocks} max unique stocks after rebalancing.
-SIGNALS: BUY=add aggressively, ACCUMULATE=add gradually, HOLD=keep, WATCH=monitor, REDUCE=trim, SELL=exit
-
-STABILIZATION MANDATE — quality over quantity. Every proposed change must clear a high bar:
-- MINIMUM DRIFT: only propose allocation changes ≥ 3%. Smaller shifts create noise with no economic value.
+    strategist_guidance = f"""{_MUJI_THESIS_GUIDANCE}
+Prefer high-conviction changes after transaction costs. Evaluate buying opportunities,
+independently justified exits or reductions, and holding the current portfolio.
+Return priority="no_action" when no investment case warrants a change.
+Put concentration observations in sector_flags and keep them out of swaps and top_buys.""" if muji_v2 else """- MINIMUM DRIFT: only propose allocation changes ≥ 3%. Smaller shifts create noise with no economic value.
 - HIGH CONVICTION: only propose swaps with strong, defensible signal quality improvement.
 - TURNOVER PENALTY: fewer trades are better. Each trade incurs real friction cost (~0.15% per 1% NAV).
 - PREFER holding well-positioned assets over constant micro-rotation.
@@ -1108,14 +1140,10 @@ priority="no_action" when ALL of the following are true:
 - No hard position limit breach. A sector warning alone permits no_action.
 - No watchlist candidate has a clearly superior score (10+ advantage) over current holdings
 - All current positions are within 3% of their ideal weight
-- No urgent regime or policy signal
+- No urgent regime or policy signal"""
 
-Output schema — nothing else. Max 550 tokens.
-swaps: max 3 (sell or buy may be null for one-sided REDUCE or ACCUMULATE from cash)
-top_buys: max 5 watchlist symbols ranked by signal quality
-sector_flags: max 3 short strings
-priority: one word only
-summary: exactly 2 sentences, written the way a strategist briefs a client — natural
+    summary_guidance = """summary: exactly 2 sentences. Explain the portfolio outlook and the evidence supporting action or HOLD.
+"r" = one independent investment reason for each swap, under 12 words.""" if muji_v2 else """summary: exactly 2 sentences, written the way a strategist briefs a client — natural
   investment language, not a status log. Sentence 1: what you reviewed and the
   overall read (e.g. "Sector weights are balanced and no position has drifted far
   from target." / "The portfolio still carries a sound risk posture heading into
@@ -1126,12 +1154,35 @@ summary: exactly 2 sentences, written the way a strategist briefs a client — n
   the same template every time. Never restate the full allocation plan, that is
   Layer 2's job. Avoid mechanical phrases like "system", "threshold triggered", or
   "no action detected" — write as an analyst, not a machine.
-"r" = one reason for the swap, under 12 words (e.g. "Technology at 45% > 30% limit").
+"r" = one reason for the swap, under 12 words (e.g. "Technology at 45% > 30% limit")."""
+
+    swap_basis = ',"decision_basis":"INVESTMENT_THESIS"' if muji_v2 else ""
+    return f"""{policy_block}{regime_block}{strategy_block}{t1_breach_note}{execution_block}{timing_block}{intent_block}You are a STRATEGIST. Output swap targets in JSON only.
+No explanation. No prose. Only valid JSON output.
+{violation_note}
+Portfolio: {json.dumps(c_pc)}
+Watchlist: {json.dumps(c_wc)}
+{"" if sector_advisory else f"Sector limits: {json.dumps(sl)}"}
+Swap eligible: {swap_eligible or "none"}
+Forced sells: {sell_forced or "none"}
+
+STOCK COUNT: {current_count}/{max_stocks} max unique stocks after rebalancing.
+SIGNALS: BUY=add aggressively, ACCUMULATE=add gradually, HOLD=keep, WATCH=monitor, REDUCE=trim, SELL=exit
+
+STABILIZATION MANDATE — quality over quantity. Every proposed change must clear a high bar:
+{strategist_guidance}
+
+Output schema — nothing else. Max 550 tokens.
+swaps: max 3 (sell or buy may be null for one-sided REDUCE or ACCUMULATE from cash)
+top_buys: max 5 watchlist symbols ranked by signal quality
+sector_flags: max 3 short strings
+priority: one word only
+{summary_guidance}
 
 If running low on output budget, prioritize in this order: (1) swaps, (2) priority,
 (3) summary, (4) top_buys, (5) sector_flags.
 
-{{"swaps":[{{"sell":"SYM|null","buy":"SYM|null","score_delta":0.0,"sector":"S","type":"SELL|SWAP|REDUCE","r":"<12 words"}}],"top_buys":["S"],"sector_flags":["S 45%>30%"],"priority":"growth","summary":"<2 natural-language sentences>"}}"""
+{{"swaps":[{{"sell":"SYM|null","buy":"SYM|null","score_delta":0.0,"sector":"S","type":"SELL|SWAP|REDUCE","r":"<12 words"{swap_basis}}}],"top_buys":["S"],"sector_flags":["S 45%>30%"],"priority":"growth","summary":"<2 natural-language sentences>"}}"""
 
 
 def _layer2_prompt(
@@ -1148,6 +1199,7 @@ def _layer2_prompt(
     execution_context: dict | None = None,
     intent_block: str = "",
     sector_advisory: bool = False,
+    muji_v2: bool = False,
 ) -> str:
     role_line = f"Your role: {role}\n\n" if role else ""
 
@@ -1158,7 +1210,7 @@ def _layer2_prompt(
     regime_block = ""
     if regime_context and not policy_context:
         from services.analytics.regime_detector import build_regime_prompt_block
-        regime_block = build_regime_prompt_block(regime_context) + "\n"
+        regime_block = build_regime_prompt_block(regime_context, concentration_advisory=muji_v2) + "\n"
     l1_swaps    = l1.get("swap_suggestions", l1.get("swaps", []))
     l1_top_buys = l1.get("top_buys", [])
     l1_flags    = [] if sector_advisory else l1.get("sector_flags", [])
@@ -1181,7 +1233,7 @@ def _layer2_prompt(
         strategy_block = f"""[STRATEGY CONTEXT — MANDATORY INVESTMENT POLICY]
 Target Persona: {p_label.upper()} — {p_desc}
 Current Portfolio DNA: {p_dna}
-Style Drift: {p_drift_sev} ({p_drift_sc}/100) | Urgency: {p_urgency}
+Style Drift: {p_drift_sev} ({p_drift_sc}/100) | {"Diagnostic context" if muji_v2 else f"Urgency: {p_urgency}"}
 Factor Priority: {p_priority}
 Turnover Tolerance: {p_turn_lbl} ({int(p_turn * 100)}%)
 Max Cash Preference: {int(p_max_cash * 100)}% of portfolio
@@ -1205,8 +1257,9 @@ Factor weighting, position sizing, and stock selection must all reflect this per
         if sector_advisory else
         'Add to disagreements[]: "TIMING_CONCERN: [SYM] poor entry timing (ts=[N], priority=DEFER) — waiting 2-4 weeks may improve entry."'
     )
+    advisory_basis = "CONCENTRATION_ADVISORY" if muji_v2 else "SECTOR_ADVISORY"
     disagreement_example = (
-        '{"basis":"ACTION|SIZING|INVESTMENT_THESIS|HARD_POLICY|SECTOR_ADVISORY","issue":"<20 words>"}'
+        f'{{"basis":"ACTION|SIZING|INVESTMENT_THESIS|HARD_POLICY|{advisory_basis}","issue":"<20 words>"}}'
         if sector_advisory else '"<20 words each>"'
     )
     timing_challenge_block = f"""[TIMING AWARENESS — CHALLENGER]
@@ -1227,6 +1280,25 @@ Timing does not invalidate a fundamentally attractive stock — document the con
         bool(policy_context),
     )
 
+    challenge_guidance = f"""{_MUJI_THESIS_GUIDANCE}
+Challenge the Strategist with an independently supported alternative or confirm the proposal.
+Compare the expected benefit and trading costs against keeping the existing portfolio.
+Use NO_ACTION when the available evidence supports keeping the portfolio.
+Keep concentration observations separate from actionable allocations and opportunity scoring.""" if muji_v2 else """BEFORE proposing any rebalancing, apply this 3-step discipline:
+1. DRIFT TEST: Is any allocation change < 3%? If yes, suppress it — noise, not signal.
+2. CONVICTION TEST: Does the proposed change have a clear, measurable benefit (10+ score advantage or hard-policy breach repair)?
+3. COST TEST: Will the expected portfolio improvement exceed the ~0.15% trading cost per 1% NAV traded?
+
+status="NO_ACTION" with rebalance_opportunity_score below 25 is STRONGLY ENCOURAGED when:
+- All positions are within 3% of their natural weight (drift tolerance band)
+- No watchlist candidate has a compelling 10+ score advantage over existing holdings
+- No hard-policy violations exist. A sector warning can coexist with NO_ACTION.
+- Market conditions are uncertain or data is insufficient to justify rebalancing
+
+PREFER large, high-conviction changes over many small adjustments.
+A portfolio with 2 targeted swaps beats one with 6 micro-adjustments."""
+
+    allocation_basis = ',"decision_basis":"INVESTMENT_THESIS|CONCENTRATION_ADVISORY"' if muji_v2 else ""
     return f"""You are an independent portfolio reviewer.
 {policy_block}{regime_block}{strategy_block}{t1_breach_note}{execution_block}{timing_challenge_block}{intent_block}{role_line}The Strategist (Layer 1) proposed:
 - Priority: {l1_priority}
@@ -1246,19 +1318,7 @@ Thai stocks end in .BK.
 STABILIZATION PHILOSOPHY:
 Unnecessary portfolio churn destroys value through transaction costs, tax drag, and operational complexity.
 
-BEFORE proposing any rebalancing, apply this 3-step discipline:
-1. DRIFT TEST: Is any allocation change < 3%? If yes, suppress it — noise, not signal.
-2. CONVICTION TEST: Does the proposed change have a clear, measurable benefit (10+ score advantage or hard-policy breach repair)?
-3. COST TEST: Will the expected portfolio improvement exceed the ~0.15% trading cost per 1% NAV traded?
-
-status="NO_ACTION" with rebalance_opportunity_score below 25 is STRONGLY ENCOURAGED when:
-- All positions are within 3% of their natural weight (drift tolerance band)
-- No watchlist candidate has a compelling 10+ score advantage over existing holdings
-- No hard-policy violations exist. A sector warning can coexist with NO_ACTION.
-- Market conditions are uncertain or data is insufficient to justify rebalancing
-
-PREFER large, high-conviction changes over many small adjustments.
-A portfolio with 2 targeted swaps beats one with 6 micro-adjustments.
+{challenge_guidance}
 
 score guide: 0-25=no action needed, 26-45=minor optimization, 46-70=moderate opportunity, 71-100=strong opportunity.
 no_action_reason enum (use null if status=REBALANCE):
@@ -1291,7 +1351,7 @@ Keep the actionable allocation HOLD unless independently justified. Mark thesis-
 with decision_basis=INVESTMENT_THESIS. Judge agreement and opportunity only on actionable decisions.
 
 disagreements[]: only material disagreements with Layer 1 (wrong signal, missed breach, constraint conflict).
-{"Use SECTOR_ADVISORY for concentration-only comments. Other bases must identify the actionable disagreement." if sector_advisory else "Skip informational observations."}
+{f"Use {advisory_basis} for concentration-only comments. Other bases must identify the actionable disagreement." if sector_advisory else "Skip informational observations."}
 Max 5 entries, each under 20 words.
 
 portfolio_assessment: 2-3 sentences max — a decision summary, not an essay.
@@ -1309,7 +1369,7 @@ Return JSON only. No markdown fences, no prose outside the JSON.
   "portfolio_assessment": "2-3 sentences",
   "cash_balance_target": 0.0,
   "allocations": [
-    {{"s":"X","tw":0.0,"sig":"BUY|ACCUMULATE|HOLD|REDUCE|SELL|WATCH","r":"<20 words"}}
+    {{"s":"X","tw":0.0,"sig":"BUY|ACCUMULATE|HOLD|REDUCE|SELL|WATCH","r":"<20 words"{allocation_basis}}}
   ]
 }}"""
 
@@ -1326,6 +1386,7 @@ def _layer3_prompt(
     intent_block: str = "",
     execution_context: dict | None = None,
     claim_contract: dict | None = None,
+    muji_v2: bool = False,
 ) -> str:
     from services.optimizer.execution_penalty import build_execution_prompt_block
     execution_block = build_execution_prompt_block(execution_context or {})
@@ -1358,7 +1419,7 @@ def _layer3_prompt(
         )
 
     policy_note = ""
-    if policy_context:
+    if policy_context and not muji_v2:
         hc = policy_context.get("hard_constraints", {})
         bias = policy_context.get("deployment_bias", "SELECTIVE")
         policy_note = (
@@ -1378,6 +1439,14 @@ Use: {"symbol":"X","issue":"Poor entry timing (ts=[N], priority=DEFER) for new p
 Do NOT escalate to HIGH or CRITICAL for timing alone — timing cautions, it does not block.
 
 """
+
+    severity_guidance = """Report position concentration and drift as ADVISORY_CONCERN. Flag genuine instrument restrictions,
+investor restrictions and evidence-quality concerns with the relevant contract evidence.
+Assess independent investment risks using the evidence contract and its severity guidance.""" if muji_v2 else f"""Check for (use exact resolved severity thresholds — derived from active policy, not hardcoded):
+- CRITICAL : single stock > {critical_pos_threshold:.0f}% of NAV
+- HIGH     : single stock {high_pos_threshold:.0f}–{critical_pos_threshold:.0f}% OR weak fundamentals on large position
+- MEDIUM   : conflicting allocation math
+- LOW      : minor concentration risk, suboptimal but acceptable"""
 
     return f"""{t1_breach_note}You are a portfolio risk auditor.
 {execution_block}{timing_risk_block}{policy_note}{persona_note}{intent_block}{role_line}Evaluate both allocation proposals for concentration risk and soundness.
@@ -1408,14 +1477,9 @@ Agrees: {l2.get("agrees_with_layer1", True)}
 Disagreements: {json.dumps(l2.get("disagreements", []))}
 Allocations: {json.dumps(l2_allocs, indent=2)}
 
-Check for (use exact resolved severity thresholds — derived from active policy, not hardcoded):
-- CRITICAL : single stock > {critical_pos_threshold:.0f}% of NAV
-- HIGH     : single stock {high_pos_threshold:.0f}–{critical_pos_threshold:.0f}% OR weak fundamentals on large position
-- MEDIUM   : conflicting allocation math
-- LOW      : minor concentration risk, suboptimal but acceptable
+{severity_guidance}
 
-Only flag positions that actually cross a threshold above — do not add a LOW-severity row for every position that
-is merely fine. Max 8 risk_flags, "issue" under 15 words each. "auditor_notes" is a 1-2 sentence verdict — do not
+{"" if muji_v2 else "Only flag positions that actually cross a threshold above — do not add a LOW-severity row for every position that\nis merely fine. "}Max 8 risk_flags, "issue" under 15 words each. "auditor_notes" is a 1-2 sentence verdict — do not
 restate the risk_flags issue text there.
 
 Every flag must have category INVESTMENT_RISK or OWNER_INTENT_REVIEW.
@@ -1441,6 +1505,7 @@ def _enforce_hard_policy(
     policy_context: dict | None,
     regime_context: dict | None,
     observer=None,
+    muji_v2: bool = False,
 ) -> None:
     """Apply the existing Goal-agnostic deterministic hard-policy sequence.
 
@@ -1470,7 +1535,7 @@ def _enforce_hard_policy(
 
         for allocation in allocations:
             if (
-                allocation.get("action") in ("BUY", "ACCUMULATE")
+                not muji_v2 and allocation.get("action") in ("BUY", "ACCUMULATE")
                 and allocation.get("target_weight", 0) > max_pos_pct
             ):
                 logger.info(
@@ -1529,7 +1594,7 @@ def _enforce_hard_policy(
         max_pos_pct = regime_constraints["max_single_position_pct"]
         for allocation in allocations:
             if (
-                allocation.get("action") in ("BUY", "ACCUMULATE")
+                not muji_v2 and allocation.get("action") in ("BUY", "ACCUMULATE")
                 and allocation.get("target_weight", 0) > max_pos_pct
             ):
                 before = _alloc_basis(allocation)
@@ -1610,13 +1675,25 @@ def _limit_sector_buys(allocations, total_value, policy_context, positions, obse
                  reason_text=f"Reduced proposed buying under the {breach['limit_pct']:g}% invested-equity cap for {sector}.")
 
 
-def _reconcile_allocation_actions(allocations: list[dict], observer=None) -> None:
+def _reconcile_allocation_actions(allocations: list[dict], observer=None, *, muji_v2=False) -> None:
     """Reconcile action labels after deterministic target-weight changes."""
     for allocation in allocations:
         delta = allocation.get("allocation_change_percent", 0)
         action = (allocation.get("action") or "HOLD").upper()
         before = _alloc_basis(allocation)
-        if action in ("BUY", "ACCUMULATE") and delta < -1.0:
+        if muji_v2 and action in ("BUY", "ACCUMULATE") and delta <= 0:
+            allocation.setdefault("original_action", action)
+            allocation["action"] = "HOLD"
+            allocation["allocation_change_percent"] = 0
+            allocation["estimated_amount"] = 0
+            allocation["target_weight"] = allocation["current_weight"]
+        elif muji_v2 and action in ("SELL", "REDUCE") and delta >= 0:
+            allocation.setdefault("original_action", action)
+            allocation["action"] = "HOLD"
+            allocation["allocation_change_percent"] = 0
+            allocation["estimated_amount"] = 0
+            allocation["target_weight"] = allocation["current_weight"]
+        elif action in ("BUY", "ACCUMULATE") and delta < -1.0:
             allocation["action"] = "REDUCE"
             logger.info(
                 "[ACTION_RECONCILE] %s %s→REDUCE (delta=%.1f%% after constraint enforcement)",
@@ -1654,7 +1731,9 @@ def _fallback_prompt(
     effective_policy_rules: str = "",
     intent_block: str = "",
     sector_advisory: bool = False,
+    muji_v2: bool = False,
 ) -> str:
+    allocation_basis = ',"decision_basis":"INVESTMENT_THESIS|CONCENTRATION_ADVISORY"' if muji_v2 else ""
     return f"""You are an emergency portfolio analyst. The multi-layer optimizer pipeline failed.
 Produce a complete, compliant capital allocation plan in a single response.
 
@@ -1674,7 +1753,7 @@ Total portfolio value: {total_value:.0f}, Cash balance: {cash_balance:.0f}
 6. Every existing portfolio holding must appear in allocations with an explicit action
 {effective_policy_rules}
 
-Sector caps are advisory. Allow HOLD and NO_ACTION with a concentration warning.
+{_MUJI_THESIS_GUIDANCE + "\n" if muji_v2 else ""}Sector caps are advisory. Allow HOLD and NO_ACTION with a concentration warning.
 Never block a buy or propose an actionable sale solely because of sector exposure.
 Put optional sector-only SELL/REDUCE ideas in sector_alternatives using the same allocation row format.
 Keep the actionable allocation HOLD unless independently justified. Mark thesis-driven reductions
@@ -1704,7 +1783,7 @@ Return ONLY valid JSON without markdown fences:
   "portfolio_assessment": "1-2 sentence summary of the plan",
   "cash_balance_target": 5.0,
   "allocations": [
-    {{"s":"X","tw":0.0,"sig":"BUY|ACCUMULATE|HOLD|REDUCE|SELL|WATCH","r":"<20 words"}}
+    {{"s":"X","tw":0.0,"sig":"BUY|ACCUMULATE|HOLD|REDUCE|SELL|WATCH","r":"<20 words"{allocation_basis}}}
   ],
   "risk_flags": [{{"symbol":"...","issue":"<15 words","severity":"LOW|MEDIUM|HIGH|CRITICAL","category":"INVESTMENT_RISK|OWNER_INTENT_REVIEW","claim_kind":"INVESTMENT_JUDGMENT|ADVISORY_CONCERN","evidence_ref":null}}],
   "final_risk_level": "low|medium|high|critical",
@@ -1736,17 +1815,23 @@ def _run_single_shot_fallback(
     advisory=None,
     execution_context: dict | None = None,
     sector_policy_mode: str | None = None,
+    optimizer_policy_mode: str | None = None,
+    muji_policy_block: str = "",
 ) -> dict:
     """Single-shot emergency fallback when the 3-layer pipeline fails completely.
 
     advisory: the SAME frozen Advisory Integration V1 run as the primary path
     (substitutes for L2, so it receives hard + soft context).
     """
+    muji_v2 = (sector_policy_mode == SECTOR_POLICY_ADVISORY
+               and optimizer_policy_mode == OPTIMIZER_POLICY_MUJI_V2)
     sector_advisory = sector_policy_mode == SECTOR_POLICY_ADVISORY
     degraded_policy = _degraded_sector_policy(sector_limits, max_sector_pct, effective_envelope) if sector_advisory else None
     score_map = _build_score_context_map(pc, wc)
     effective_policy_rules = ""
-    if enforce_effective_policy:
+    if muji_v2:
+        effective_policy_rules = muji_policy_block or (policy_context or {}).get("prompt_block", "")
+    elif enforce_effective_policy:
         hard = (policy_context or {}).get("hard_constraints", {})
         max_position = float(hard.get(
             "max_single_position_pct",
@@ -1764,7 +1849,7 @@ def _run_single_shot_fallback(
         )
     prompt = _fallback_prompt(
         pc, wc, sell_forced, locked, max_stocks, max_sector_pct,
-        total_value, cash_balance, effective_policy_rules, sector_advisory=sector_advisory,
+        total_value, cash_balance, effective_policy_rules, sector_advisory=sector_advisory, muji_v2=muji_v2,
         **({"intent_block": _intent_block(advisory, _LAYER_FALLBACK)} if advisory is not None else {}),
     )
     from services.optimizer.execution_penalty import build_execution_prompt_block
@@ -1782,11 +1867,13 @@ def _run_single_shot_fallback(
     result = safe_parse_json(raw["text"])
 
     raw_allocs = result.pop("allocations", None) or []
-    allocations = _normalize_allocations(raw_allocs, pc_map, score_map)
+    allocations = _normalize_allocations(raw_allocs, pc_map, score_map, muji_v2=muji_v2)
     sector_alternatives = []
     if sector_advisory:
         concentration = freeze_concentration(portfolio_data, wc, policy_context, total_value) if policy_context else None
-        sector_alternatives = _separate_sector_alternatives(result, allocations, pc_map, total_value, concentration)
+        sector_alternatives = _separate_sector_alternatives(
+            result, allocations, pc_map, total_value, concentration, muji_v2=muji_v2, sell_forced=sell_forced,
+        )
     for a in allocations:
         a["estimated_amount"] = round((a["allocation_change_percent"] / 100) * total_value)
         _observe(advisory, a["symbol"], None, a, stage=_STAGE_FALLBACK, source=_SRC_ADVISORY,
@@ -1809,6 +1896,7 @@ def _run_single_shot_fallback(
                 total_value=total_value,
                 policy_context=policy_context,
                 regime_context=None,
+                muji_v2=muji_v2,
                 **_observer_kw,
             )
             if policy_context and not sector_advisory:
@@ -1924,7 +2012,7 @@ def _run_single_shot_fallback(
     policy_output = ({**{k: v for k, v in policy_context.items() if k != "prompt_block"},
                       "violation_details": fallback_details} if policy_context else None)
     _capture_sector_policy(output, policy_output, sector_policy_mode, portfolio_data, wc,
-                           total_value, degraded_policy, sector_alternatives)
+                           total_value, degraded_policy, sector_alternatives, optimizer_policy_mode)
     return output
 
 
@@ -1938,6 +2026,8 @@ def _retry_l1_with_schema(
     l1_cfg: dict,
     intent_block: str = "",
     execution_context: dict | None = None,
+    muji_v2: bool = False,
+    policy_block: str = "",
 ) -> dict:
     """Single-shot L1 retry with a stripped-down prompt after an initial parse failure.
 
@@ -1945,7 +2035,11 @@ def _retry_l1_with_schema(
     to get *something* structurally valid so L2/L3 can still run with real signal.
     """
     from services.optimizer.execution_penalty import build_execution_prompt_block
-    minimal_prompt = build_execution_prompt_block(execution_context or {}) + intent_block + (
+    guidance = (
+        _MUJI_THESIS_GUIDANCE + "\nUse empty swaps and priority=no_action when appropriate.\n"
+        if muji_v2 else "Sector concentration is advisory and cannot by itself justify a trade.\n"
+    )
+    minimal_prompt = build_execution_prompt_block(execution_context or {}) + intent_block + policy_block + (
         "You are a portfolio strategist. Return ONLY a valid JSON object — "
         "no markdown, no prose, just the JSON.\n\n"
         f"Current holdings: {json.dumps(c_pc)}\n"
@@ -1953,7 +2047,7 @@ def _retry_l1_with_schema(
         f"Swap-eligible: {swap_eligible or 'none'}\n"
         f"Forced exits: {sell_forced or 'none'}\n\n"
         "Propose up to 3 independently justified swap / reduce actions and rank the top watchlist buys.\n"
-        "Sector concentration is advisory and cannot by itself justify a trade.\n"
+        f"{guidance}"
         "Required output (fill in real values, \"r\" = reason under 12 words):\n"
         '{"swaps":[{"sell":"SYM_OR_NULL","buy":"SYM_OR_NULL","score_delta":0.0,'
         '"sector":"Other","type":"SWAP","r":"<12 words"}],"top_buys":["SYM"],'
@@ -1964,7 +2058,7 @@ def _retry_l1_with_schema(
         l1_cfg["provider"],
         l1_cfg["model"],
         max_tokens=2048,
-        use_schema=True,
+        use_schema=MujiLayer1Response if muji_v2 else True,
         usage_operation="optimize",
         usage_layer="layer1_retry",
     )
@@ -2039,6 +2133,7 @@ def run_layered_optimizer(
     enforce_effective_policy_in_fallback: bool = False,
     advisory=None,
     sector_policy_mode: str | None = None,
+    optimizer_policy_mode: str | None = None,
 ) -> dict:
     """3-layer Dynamic Capital Allocation Engine with global single-shot fallback.
 
@@ -2051,8 +2146,30 @@ def run_layered_optimizer(
     common-NAV current weights for held positions when that basis resolves,
     and proposal-transition capture. It never changes an allocation decision.
     """
-    sector_policy_mode = sector_policy_mode or (policy_context or {}).get("sector_policy_mode")
+    # Keep one identity for all layer attempts, including the schema retry.
+    policy_identity = dict(policy_context or {})
+    for field, mode in (("sector_policy_mode", sector_policy_mode),
+                        ("optimizer_policy_mode", optimizer_policy_mode)):
+        if mode is not None and policy_identity.setdefault(field, mode) != mode:
+            raise UnsupportedOptimizerPolicyEvidence(f"Conflicting {field}")
+    resolver_mode = getattr(effective_envelope, "optimizer_policy_mode", None)
+    muji_v2 = read_optimizer_policy_mode(
+        policy_identity, effective_envelope={"optimizer_policy_mode": resolver_mode} if resolver_mode is not None else None,
+    ) == OPTIMIZER_POLICY_MUJI_V2
+    muji_policy_block = ""
+    if muji_v2 and policy_context:
+        from services.optimizer.policy_engine import build_policy_prompt_block
+        if policy_context.get("optimizer_policy_mode") != OPTIMIZER_POLICY_MUJI_V2 or not policy_context.get("prompt_block"):
+            policy_identity["prompt_block"] = build_policy_prompt_block(_make_envelope_from_dict(policy_identity))
+        policy_context = policy_identity
+        muji_policy_block = policy_context["prompt_block"]
+    elif muji_v2 and regime_context:
+        from services.analytics.regime_detector import build_regime_prompt_block
+        muji_policy_block = build_regime_prompt_block(regime_context, concentration_advisory=True)
+    sector_policy_mode = policy_identity.get("sector_policy_mode")
+    optimizer_policy_mode = policy_identity.get("optimizer_policy_mode")
     sector_advisory = sector_policy_mode == SECTOR_POLICY_ADVISORY
+    advisory_bases = _CONCENTRATION_ADVISORY_BASES if muji_v2 else ("SECTOR_ADVISORY",) if sector_advisory else ()
     degraded_policy = _degraded_sector_policy(sector_limits, max_sector_pct, effective_envelope) if sector_advisory else None
     sector_alternatives = []
     if layers is None:
@@ -2108,7 +2225,7 @@ def run_layered_optimizer(
     _base_turn_cap:    float = 0.0
     _relaxed_turn_cap: float | None = None
 
-    if policy_context:
+    if policy_context and not muji_v2:
         _pe_for_t1 = _make_envelope_from_dict(policy_context)
         _base_turn_cap = _pe_for_t1.hard_constraints.max_turnover_pct
         _t1_severity, _t1_reason = compute_concentration_breach_severity(
@@ -2181,13 +2298,14 @@ def run_layered_optimizer(
                 policy_context=policy_context,
                 effective_envelope=effective_envelope,
                 t1_breach_note=_t1_note,
+                muji_v2=muji_v2,
                 execution_context=execution_context,
                 **({"intent_block": _intent_block(advisory, _LAYER_L1)} if advisory is not None else {}),
             )
             logger.info(f"L1 prompt chars: {len(l1_prompt)}")
             l1_raw = call_ai(
                 l1_prompt, l1_cfg["provider"], l1_cfg["model"], max_tokens=4096,
-                use_schema=True,
+                use_schema=MujiLayer1Response if muji_v2 else True,
                 usage_operation="optimize", usage_layer="layer1",
             )
             l1_latency_ms = l1_raw["latency_ms"]
@@ -2199,7 +2317,7 @@ def run_layered_optimizer(
             l1_result = safe_parse_json(raw_l1_text)
             _l1_swaps = _normalize_l1_swaps(
                 [s for s in l1_result.get("swaps", [])
-                 if not sector_advisory or s.get("decision_basis") != "SECTOR_ADVISORY"], score_map,
+                 if s.get("decision_basis") not in advisory_bases], score_map,
             )
             l1_result["swap_suggestions"] = _postprocess_swaps(_l1_swaps, sell_forced, locked)
             _note_prompt(advisory, _LAYER_L1, "SUCCESS")
@@ -2218,12 +2336,13 @@ def run_layered_optimizer(
             try:
                 l1_result = _retry_l1_with_schema(
                     c_pc, c_wc, sell_forced, swap_eligible, l1_cfg,
-                    execution_context=execution_context,
+                    execution_context=execution_context, muji_v2=muji_v2,
+                    policy_block=(muji_policy_block + "\n" if muji_policy_block else ""),
                     **({"intent_block": _intent_block(advisory, _LAYER_L1_RETRY)} if advisory is not None else {}),
                 )
                 _l1_swaps = _normalize_l1_swaps(
                     [s for s in l1_result.get("swaps", [])
-                     if not sector_advisory or s.get("decision_basis") != "SECTOR_ADVISORY"], score_map,
+                     if s.get("decision_basis") not in advisory_bases], score_map,
                 )
                 l1_result["swap_suggestions"] = _postprocess_swaps(_l1_swaps, sell_forced, locked)
                 l1_parse_failed = False
@@ -2249,7 +2368,7 @@ def run_layered_optimizer(
                                persona_context=persona_context,
                                regime_context=regime_context,
                                policy_context=policy_context,
-                               t1_breach_note=_t1_note,
+                               t1_breach_note=_t1_note, muji_v2=muji_v2,
                                execution_context=execution_context,
                                **({"intent_block": _intent_block(advisory, _LAYER_L2)}
                                   if advisory is not None else {})),
@@ -2267,10 +2386,11 @@ def run_layered_optimizer(
             raw_allocs = l2_result.pop("allocations", None)
             if raw_allocs is None:
                 raw_allocs = l2_result.pop("target_allocations", [])
-            l2_allocs = _normalize_allocations(raw_allocs, pc_map, score_map)
+            l2_allocs = _normalize_allocations(raw_allocs, pc_map, score_map, muji_v2=muji_v2)
             if sector_advisory:
                 sector_alternatives = _separate_sector_alternatives(
                     l2_result, l2_allocs, pc_map, total_value, sector_context if policy_context else None,
+                    muji_v2=muji_v2, sell_forced=sell_forced,
                 )
             for a in l2_allocs:
                 a["estimated_amount"] = round((a["allocation_change_percent"] / 100) * total_value)
@@ -2324,6 +2444,8 @@ def run_layered_optimizer(
                                               proposal_details, execution_context,
                                               risk_inputs={p["symbol"]: p for p in [*portfolio_data, *watchlist_data]})
         claim_contract["general_policy_limits"] = dict((policy_context or {}).get("hard_constraints", {}))
+        if muji_v2:
+            claim_contract["general_policy_limits"].pop("max_single_position_pct", None)
         if sector_advisory:
             claim_contract["general_policy_limits"].pop("max_sector_pct", None)
             projected = project_targets(frozen_positions, l2_result.get("target_allocations", []), total_value)
@@ -2341,7 +2463,7 @@ def run_layered_optimizer(
                                persona_context=persona_context,
                                policy_context=policy_context,
                                effective_envelope=effective_envelope,
-                               t1_breach_note=_t1_note,
+                               t1_breach_note=_t1_note, muji_v2=muji_v2,
                                **({"intent_block": _intent_block(advisory, _LAYER_L3)}
                                   if advisory is not None else {})),
                 l3_cfg["provider"], l3_cfg["model"], max_tokens=2048,
@@ -2366,7 +2488,10 @@ def run_layered_optimizer(
                 f"L2 allocation plan empty after all layers attempted. L2 error: {l2_result.get('error')}"
             )
 
-        consensus = _consensus_engine(l1_result, l2_result, l3_result, sector_advisory=sector_advisory)
+        consensus = _consensus_engine(
+            l1_result, l2_result, l3_result, sector_advisory=sector_advisory, muji_v2=muji_v2,
+            sell_forced=sell_forced,
+        )
         if sector_advisory:
             l2_result["agrees_with_layer1"] = consensus.pop("challenger_agrees")
             l2_result["disagreements"] = consensus["disagreement_reasons"]
@@ -2410,6 +2535,7 @@ def run_layered_optimizer(
                 total_value=total_value,
                 policy_context=policy_context,
                 regime_context=regime_context,
+                muji_v2=muji_v2,
                 **_observer_kw,
             )
         except Exception as exc:
@@ -2460,7 +2586,7 @@ def run_layered_optimizer(
         # A BUY/ACCUMULATE whose delta went negative is now a net REDUCE; fix it.
         if policy_context and not sector_advisory:
             _limit_sector_buys(final_allocations, total_value, policy_context, frozen_positions, advisory)
-        _reconcile_allocation_actions(final_allocations, **_observer_kw)
+        _reconcile_allocation_actions(final_allocations, muji_v2=muji_v2, **_observer_kw)
 
         _snap_neutral_actions(final_allocations, **_observer_kw)
 
@@ -2614,7 +2740,7 @@ def run_layered_optimizer(
             **persona_fields,
         }
         _capture_sector_policy(output, active_policy_out, sector_policy_mode, portfolio_data, watchlist_data,
-                               total_value, degraded_policy, sector_alternatives)
+                               total_value, degraded_policy, sector_alternatives, optimizer_policy_mode)
         return output
 
     except HardPolicyEnforcementError:
@@ -2638,6 +2764,8 @@ def run_layered_optimizer(
             effective_envelope=effective_envelope,
             enforce_effective_policy=enforce_effective_policy_in_fallback,
             sector_policy_mode=sector_policy_mode,
+            optimizer_policy_mode=optimizer_policy_mode,
             execution_context=execution_context,
+            muji_policy_block=muji_policy_block,
             **({"advisory": advisory} if advisory is not None else {}),
         )

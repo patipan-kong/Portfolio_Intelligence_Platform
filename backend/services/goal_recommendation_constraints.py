@@ -91,7 +91,9 @@ def evaluate_goal_recommendation_constraint(
     )
 
 
-def build_goal_constraint_evidence(evaluation: GoalConstraintEvaluation, outcome=None) -> dict:
+def build_goal_constraint_evidence(
+    evaluation: GoalConstraintEvaluation, outcome=None, *, advisory: bool = False,
+) -> dict:
     """Build canonical history evidence from frozen admission and composition facts."""
     contribution = None
     if evaluation.candidate is not None:
@@ -104,7 +106,7 @@ def build_goal_constraint_evidence(evaluation: GoalConstraintEvaluation, outcome
             "pre_goal_effective_pct": None,
             "post_goal_effective_pct": None,
             "relation_to_base": "NOT_APPLICABLE",
-            "application_status": "NOT_APPLICABLE",
+            "application_status": "ADVISORY_ONLY" if advisory and contribution is not None else "NOT_APPLICABLE",
             "resulting_binding_source": None,
         }
     else:

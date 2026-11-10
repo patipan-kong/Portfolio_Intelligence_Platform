@@ -29,6 +29,7 @@ import logging
 import math
 from dataclasses import dataclass, field
 from services.optimizer.sector_policy import (
+    OPTIMIZER_POLICY_MUJI_V2,
     SECTOR_POLICY_ADVISORY, current_values, evaluate_sectors, freeze_positions, project_targets,
 )
 
@@ -142,6 +143,7 @@ class PolicyEnvelope:
     sector_limit_sources: dict[str, str] = field(default_factory=dict)
     position_limit_source: str = "POLICY_ENGINE"
     sector_policy_mode: str | None = None
+    optimizer_policy_mode: str | None = None
 
 
 # ─── Emergency detection ──────────────────────────────────────────────────────
@@ -380,7 +382,7 @@ def _detect_violations(
     portfolio_data: list[dict],
     hard: HardConstraints,
     resolved_sector_limits: dict[str, float] | None = None,
-    *, include_sectors: bool = True,
+    *, include_sectors: bool = True, include_positions: bool = True,
 ) -> list[str]:
     """Check current portfolio holdings for existing policy violations."""
     violations: list[str] = []
@@ -389,7 +391,7 @@ def _detect_violations(
     for item in portfolio_data:
         w   = item.get("weight_pct") or 0
         sym = item.get("symbol", "?")
-        if w > hard.max_single_position_pct:
+        if include_positions and w > hard.max_single_position_pct:
             violations.append(
                 f"CONCENTRATION_BREACH: {sym} at {w:.1f}% exceeds "
                 f"{hard.max_single_position_pct:.0f}% single-position policy limit"
@@ -493,11 +495,14 @@ def _narrative(
     disc: float,
     persona_label: str,
     regime: str,
+    concentration_advisory: bool = False,
 ) -> str:
+    position_cap = "" if concentration_advisory else f"position cap {hard.max_single_position_pct:.0f}%, "
     if emergency:
+        emergency_cap = "" if concentration_advisory else f"max position {hard.max_single_position_pct:.0f}%, "
         return (
             f"EMERGENCY POLICY — {emergency_reason}. "
-            f"Min cash {hard.min_cash_pct:.0f}%, max position {hard.max_single_position_pct:.0f}%, "
+            f"Min cash {hard.min_cash_pct:.0f}%, {emergency_cap}"
             "speculative assets suppressed."
         )
     dominant = max(tilts, key=lambda f: tilts[f])
@@ -507,7 +512,7 @@ def _narrative(
     )
     return (
         f"{persona_label} persona under {regime} → {bias} deployment. "
-        f"Cash ≥{hard.min_cash_pct:.0f}%, position cap {hard.max_single_position_pct:.0f}%, "
+        f"Cash ≥{hard.min_cash_pct:.0f}%, {position_cap}"
         f"dominant tilt {dominant.upper()} ({tilts[dominant]:.0%}). "
         f"Strictness: {strictness}.{disc_note}"
     )
@@ -522,7 +527,7 @@ def compute_policy(
     consensus: dict | None = None,
     max_sector_pct: int = 40,
     effective_envelope: "EffectiveEnvelope | None" = None,
-    *, sector_policy_mode: str | None = None,
+    *, sector_policy_mode: str | None = None, optimizer_policy_mode: str | None = None,
 ) -> PolicyEnvelope:
     """Build a PolicyEnvelope from persona + regime + portfolio risk + confidence state.
 
@@ -661,13 +666,17 @@ def compute_policy(
     if emergency:
         rebal_aggr = min(rebal_aggr, 0.12)
 
+    concentration_advisory = (
+        optimizer_policy_mode == OPTIMIZER_POLICY_MUJI_V2 and sector_policy_mode == SECTOR_POLICY_ADVISORY
+    )
     violations = _detect_violations(
         portfolio_data, hard, resolved_sector_limits or None,
         include_sectors=sector_policy_mode != SECTOR_POLICY_ADVISORY,
+        include_positions=not concentration_advisory,
     )
-    violation_evidence = detect_concentration_evidence(portfolio_data, hard)
+    violation_evidence = [] if concentration_advisory else detect_concentration_evidence(portfolio_data, hard)
     narrative  = _narrative(bias, strictness, hard, tilts, emergency, emergency_reason,
-                            disc, persona_label, regime)
+                            disc, persona_label, regime, concentration_advisory)
 
     log.info(
         "policy_engine: persona=%s regime=%s bias=%s strict=%s "
@@ -694,6 +703,7 @@ def compute_policy(
         sector_limit_sources     = sector_limit_sources,
         position_limit_source    = position_limit_source,
         sector_policy_mode       = sector_policy_mode,
+        optimizer_policy_mode    = optimizer_policy_mode,
     )
 
 
@@ -732,6 +742,21 @@ def build_policy_prompt_block(envelope: PolicyEnvelope) -> str:
         sector_block = f"\nMAX_SECTOR_LIMIT: {hard.max_sector_pct:g}% of invested equity market value per sector\n"
 
     sector_advisory = envelope.sector_policy_mode == SECTOR_POLICY_ADVISORY
+    if sector_advisory and envelope.optimizer_policy_mode == OPTIMIZER_POLICY_MUJI_V2:
+        return f"""[ACTIVE OPTIMIZATION POLICY — MANDATORY GOVERNANCE]{emergency_block}
+DEPLOYMENT_MODE:        {envelope.deployment_bias}
+STRICTNESS_LEVEL:       {envelope.strictness_level}
+RISK_BUDGET:            {envelope.risk_budget:.0f}/100
+CURRENT_CASH_MANDATE:   minimum {hard.min_cash_pct:.0f}% must remain undeployed
+TURNOVER_CEILING:       {hard.max_turnover_pct:.0f}% of NAV
+MAX_NEW_POSITIONS:      {hard.max_new_positions} new stock(s) maximum
+SUPPRESS_SPECULATIVE:   {suppress_note}
+ACTIVE_FACTOR_TILT:     {tilt_str}
+{violation_block}
+Policy summary: {envelope.policy_narrative}
+Observe genuine policy restrictions. Position and sector concentration and allocation drift are advisory.
+Use NAV for position targets, cash and turnover.
+"""
     sector_priority = "" if sector_advisory else ", sector concentration"
     if sector_advisory:
         sector_block = "\nSector concentration is reviewed separately as advisory exposure.\n"
@@ -791,6 +816,14 @@ def compute_policy_alignment_score(
     flags: list[str] = []
     violation_details: list[dict] = []
     hard = envelope.hard_constraints
+    sector_advisory = envelope.sector_policy_mode == SECTOR_POLICY_ADVISORY
+    concentration_advisory = sector_advisory and envelope.optimizer_policy_mode == OPTIMIZER_POLICY_MUJI_V2
+    if concentration_advisory:
+        final_allocations = [
+            {**a, "action": "HOLD", "target_weight": a.get("current_weight", 0), "allocation_change_percent": 0}
+            if a.get("thesis_evidence_status") == "UNVERIFIED" else a
+            for a in final_allocations
+        ]
 
     # ── Cash compliance ───────────────────────────────────────────────────────
     total_deployed = sum(
@@ -819,7 +852,7 @@ def compute_policy_alignment_score(
     for a in final_allocations:
         tw  = float(a.get("target_weight") or 0)
         sym = a.get("symbol", "?")
-        if tw > hard.max_single_position_pct and a.get("action") not in ("SELL",):
+        if not concentration_advisory and tw > hard.max_single_position_pct and a.get("action") != "SELL":
             conc_violations += 1
             flags.append(
                 f"CONCENTRATION_BREACH: {sym} target {tw:.1f}% > "
@@ -836,7 +869,6 @@ def compute_policy_alignment_score(
     conc_score = max(0.0, 100.0 - conc_violations * 25)
 
     sector_violations = 0
-    sector_advisory = envelope.sector_policy_mode == SECTOR_POLICY_ADVISORY
     if frozen_positions is not None and not sector_advisory:
         projected = project_targets(frozen_positions, final_allocations, total_value)
         evaluation = evaluate_sectors(
@@ -918,11 +950,15 @@ def compute_policy_alignment_score(
         })
 
     # ── Aggregate scores ──────────────────────────────────────────────────────
-    policy_alignment  = cash_score * 0.35 + conc_score * 0.30 + sector_score * 0.20 + aggr_score * 0.15
-    regime_compliance = regime_mismatch_score * 0.55 + conc_score * 0.30 + sector_score * 0.15
-    if sector_advisory:
+    if concentration_advisory:
+        policy_alignment = (cash_score * 0.35 + aggr_score * 0.15) / 0.50
+        regime_compliance = regime_mismatch_score
+    elif sector_advisory:
         policy_alignment = (cash_score * 0.35 + conc_score * 0.30 + aggr_score * 0.15) / 0.80
         regime_compliance = (regime_mismatch_score * 0.55 + conc_score * 0.30) / 0.85
+    else:
+        policy_alignment = cash_score * 0.35 + conc_score * 0.30 + sector_score * 0.20 + aggr_score * 0.15
+        regime_compliance = regime_mismatch_score * 0.55 + conc_score * 0.30 + sector_score * 0.15
     risk_governance   = policy_alignment * 0.60 + regime_compliance * 0.40
 
     return (
@@ -965,5 +1001,6 @@ def envelope_to_dict(env: PolicyEnvelope) -> dict:
         "position_limit_source":   env.position_limit_source,
         "violation_evidence":       env.violation_evidence,
         **({"sector_policy_mode": env.sector_policy_mode} if env.sector_policy_mode else {}),
+        **({"optimizer_policy_mode": env.optimizer_policy_mode} if env.optimizer_policy_mode else {}),
         "prompt_block":             build_policy_prompt_block(env),
     }

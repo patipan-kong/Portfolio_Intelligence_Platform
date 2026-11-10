@@ -9,8 +9,9 @@ from services.evaluation.plan_grader import compute_plan_grade, derive_full_plan
 from services.optimizer.execution_optimizer import optimize_execution_for_payload
 from services.optimizer.policy_engine import compute_policy, compute_policy_alignment_score
 from services.optimizer.sector_policy import (
-    SECTOR_POLICY_ADVISORY, attach_target_evaluation, current_values, evaluate_frozen_sectors, freeze_concentration,
-    project_targets,
+    OPTIMIZER_POLICY_MUJI_V2, SECTOR_POLICY_ADVISORY, UnsupportedOptimizerPolicyEvidence,
+    attach_target_evaluation, current_values, evaluate_frozen_sectors, freeze_concentration,
+    optimizer_policy_mode, project_targets,
 )
 from services.optimizer_action_summary import build_action_summary
 
@@ -244,6 +245,60 @@ def test_advisory_replay_239_keeps_only_nav_repairs(replay_239):
     assert schedule(replay_239).model_dump() == historical
 
 
+@pytest.mark.parametrize(
+    "policy, expected",
+    [
+        ({}, None),
+        ({"execution_policy_version": "wealth.policy-evidence.v1"}, None),
+        ({"execution_policy_version": "wealth.policy-evidence.v2"}, None),
+        ({"sector_policy_mode": SECTOR_POLICY_ADVISORY}, SECTOR_POLICY_ADVISORY),
+        ({"sector_policy_mode": SECTOR_POLICY_ADVISORY, "optimizer_policy_mode": OPTIMIZER_POLICY_MUJI_V2},
+         OPTIMIZER_POLICY_MUJI_V2),
+    ],
+)
+def test_optimizer_policy_dispatch_uses_explicit_identity(policy, expected):
+    assert optimizer_policy_mode(policy) == expected
+
+
+@pytest.mark.parametrize(
+    "markers",
+    [
+        {"optimizer_policy_mode": OPTIMIZER_POLICY_MUJI_V2},
+        {"sector_policy_mode": SECTOR_POLICY_ADVISORY, "optimizer_policy_mode": None},
+        {"sector_policy_mode": SECTOR_POLICY_ADVISORY, "optimizer_policy_mode": OPTIMIZER_POLICY_MUJI_V2.upper()},
+        {"sector_policy_mode": "unknown", "optimizer_policy_mode": OPTIMIZER_POLICY_MUJI_V2},
+        {"sector_policy_mode": "unknown"},
+    ],
+)
+def test_unsupported_policy_cannot_schedule_or_replay(replay_239, markers):
+    policy = replay_239["active_policy"]
+    policy["scheduled_execution"] = schedule(replay_239).model_dump()
+    policy.update(markers)
+    with pytest.raises(UnsupportedOptimizerPolicyEvidence):
+        schedule(replay_239)
+
+
+def test_muji_frozen_slice_one_keeps_sector_advisory_schedule_and_grade(replay_239):
+    policy = replay_239["active_policy"]
+    policy["sector_policy_mode"] = SECTOR_POLICY_ADVISORY
+    old_schedule = schedule(replay_239).model_dump()
+    policy["scheduled_execution"] = old_schedule
+    grade_args = (replay_239["target_allocations"], replay_239["cash_balance"])
+    old_grade = compute_plan_grade(*grade_args, policy_provenance=policy)
+
+    policy["optimizer_policy_mode"] = OPTIMIZER_POLICY_MUJI_V2
+    assert schedule(replay_239).model_dump() == old_schedule
+    # Re-tagging a v1 schedule does not create V2 monetary evidence or a V2
+    # grade. The old stored grade remains untouched by the new dispatch.
+    from services.optimizer.sector_policy import UnsupportedOptimizerPolicyEvidence
+    with pytest.raises(UnsupportedOptimizerPolicyEvidence):
+        compute_plan_grade(*grade_args, policy_provenance=policy)
+    legacy_policy = {key: value for key, value in policy.items() if key != "optimizer_policy_mode"}
+    assert old_grade == compute_plan_grade(*grade_args, policy_provenance=legacy_policy)
+    del policy["scheduled_execution"]
+    assert all(trade.executed_amount == trade.required_amount == 0 for trade in schedule(replay_239).trades)
+
+
 def test_run_239_v1_plan_grade_preserves_recorded_formula(replay_239):
     allocations = replay_239["target_allocations"]
     sector_by_symbol = replay_239["active_policy"]["concentration"]["positions"]
@@ -311,6 +366,109 @@ def test_untagged_sale_can_fund_buy_with_frozen_sell_signal():
     plan = schedule(result)
     assert plan.scheduled_buys == {"N": 10000}
     assert plan.trades[0].reason == "INVESTMENT_THESIS"
+
+
+@pytest.mark.parametrize("signal", ["HOLD", "SELL"])
+def test_muji_mixed_rationale_only_funds_with_independent_frozen_sell_signal(signal):
+    sell = allocation("T", "SELL", 0, 60, -60000)
+    reason = "Sector exceeds threshold. Earnings are deteriorating."
+    sell.update(reason=reason, decision_basis="INVESTMENT_THESIS")
+    result = run(
+        [{**holding("T", "Technology", 60000), "signal": signal}, holding("U", "Utilities", 40000)],
+        [sell, allocation("N", "BUY", 10, 0, 10000)],
+        candidates=[{"symbol": "N", "sector": "Financial", "current_price": 100}],
+        caps={"Technology": 25}, sector_advisory=True,
+    )
+    result["active_policy"]["optimizer_policy_mode"] = OPTIMIZER_POLICY_MUJI_V2
+    plan = schedule(result)
+    assert plan.scheduled_buys == ({"N": 10000} if signal == "SELL" else {})
+    assert plan.trades[0].executed_amount == (60000 if signal == "SELL" else 0)
+    assert plan.trades[0].required_amount == 0
+    assert plan.idle_cash_after == (49895 if signal == "SELL" else 0)
+    assert sell["reason"] == reason
+
+
+def test_muji_verified_sell_only_raises_cash_without_required_repair():
+    sell = {**allocation("T", "SELL", 0, 60, -60000), "reason": "Independent frozen SELL signal"}
+    result = run(
+        [{**holding("T", "Technology", 60000), "signal": "SELL"}, holding("U", "Utilities", 40000)],
+        [sell], caps={"Technology": 25}, position=50, sector_advisory=True,
+    )
+    result["active_policy"]["optimizer_policy_mode"] = OPTIMIZER_POLICY_MUJI_V2
+    plan = schedule(result)
+    assert plan.scheduled_buys == {}
+    assert plan.scheduled_changes == {"T": -60000}
+    assert plan.idle_cash_after == 59910
+    assert plan.estimated_trade_costs == {"T": 90}
+    assert (plan.trades[0].execution_role, plan.trades[0].required_amount) == ("STANDALONE", 0)
+    assert plan.trades[0].funding_basis == "INDEPENDENT_FROZEN_SELL_SIGNAL"
+    result["active_policy"]["scheduled_execution"] = plan.model_dump()
+    assert schedule(result).model_dump() == plan.model_dump()
+    grade = compute_plan_grade(result["target_allocations"], result["cash_balance"],
+                               policy_provenance={**result["active_policy"], "total_value": result["total_value"]})
+    assert grade["grade_version"] == "wealth.plan-grade-muji.v2"
+    assert grade["action_evidence_score"] == 100
+
+
+@pytest.mark.parametrize("action,amount", [("BUY", -10000), ("SELL", 10000), ("REDUCE", 10000),
+                                             ("REDUCE", float("nan"))])
+def test_muji_opposite_or_invalid_direction_never_reverses(action, amount):
+    row = allocation("T", action, 50 if action != "SELL" else 0, 60, amount)
+    result = run([{**holding("T", "Technology", 60000), "signal": "SELL"}], [row],
+                 sector_advisory=True)
+    result["active_policy"]["optimizer_policy_mode"] = OPTIMIZER_POLICY_MUJI_V2
+    plan = schedule(result)
+    assert plan.scheduled_changes == {}
+    assert plan.scheduled_buys == {}
+    assert plan.idle_cash_after == 0
+    assert "INVALID_TRADE_DIRECTION_OR_AMOUNT" in plan.policy_review_reasons
+
+
+@pytest.mark.parametrize("sector_advisory", [False, True])
+def test_legacy_sale_amount_parsing_is_unchanged(sector_advisory):
+    result = run([holding("T", "Technology", 60000)],
+                 [allocation("T", "REDUCE", 50, 60, 10000)],
+                 sector_advisory=sector_advisory, position=50)
+    plan = schedule(result)
+    assert plan.trades[0].full_recommended_amount == 10000
+
+
+def test_muji_unverified_sale_cannot_fund_buy_or_raise_cash():
+    result = run([holding("T", "Technology", 60000)],
+                 [allocation("T", "SELL", 0, 60, -60000), allocation("N", "BUY", 10, 0, 10000)],
+                 candidates=[{"symbol": "N", "sector": "Financial", "current_price": 100}],
+                 sector_advisory=True)
+    result["active_policy"]["optimizer_policy_mode"] = OPTIMIZER_POLICY_MUJI_V2
+    plan = schedule(result)
+    assert plan.scheduled_changes == {}
+    assert plan.idle_cash_after == 0
+    assert plan.trades[0].execution_state == "DEFERRED"
+    assert plan.trades[0].evidence_status == "UNVERIFIED"
+
+
+def test_muji_estimated_net_proceeds_and_buy_cost_reconcile():
+    result = run([{**holding("T", "Technology", 60000), "signal": "SELL"}],
+                 [allocation("T", "SELL", 0, 100, -60000), allocation("N", "BUY", 60, 0, 36000)],
+                 candidates=[{"symbol": "N", "sector": "Financial", "current_price": 100}],
+                 sector_advisory=True, turnover=200)
+    result["active_policy"]["optimizer_policy_mode"] = OPTIMIZER_POLICY_MUJI_V2
+    plan = schedule(result)
+    assert plan.scheduled_changes == {"T": -60000, "N": 36000}
+    assert plan.estimated_trade_costs == {"T": 90, "N": 54}
+    assert plan.idle_cash_after == 23856
+    assert plan.trades[0].scheduled_cash_impact == 59910
+    assert "not a broker fee quote" in plan.funding_assumptions[0]
+
+
+def test_muji_cash_limited_buy_scales_without_negative_cash():
+    result = run([], [allocation("N", "BUY", 100, 0, 10000)], cash=10000,
+                 candidates=[{"symbol": "N", "sector": "Financial", "current_price": 100}],
+                 sector_advisory=True)
+    result["active_policy"]["optimizer_policy_mode"] = OPTIMIZER_POLICY_MUJI_V2
+    plan = schedule(result)
+    assert 0 < plan.scheduled_buys["N"] < 10000
+    assert plan.idle_cash_after >= 0
+    assert plan.scheduled_buys["N"] + plan.estimated_trade_costs["N"] + plan.idle_cash_after == 10000
 
 
 def test_run_239_sector_tag_cannot_remove_bh_nav_repair(replay_239):

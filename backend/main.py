@@ -4436,6 +4436,9 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
     """
     ws = _ws_id(db)
     portfolio = resolve_portfolio_or_404(db, body.portfolio_id, ws)
+    from services.optimizer.sector_policy import OPTIMIZER_POLICY_MUJI_V2, SECTOR_POLICY_ADVISORY
+
+    optimizer_policy_mode = OPTIMIZER_POLICY_MUJI_V2
 
     # Advisory Integration V1 (Slice 1) — one default-OFF flag for the whole
     # integration. Off: every branch below keyed on it is skipped and the run
@@ -4463,8 +4466,6 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
     # ── Phase 7.5 (ADR-009) — explicit pre-decision Goal policy admission ────
     # This path is independent from Phase 7.4 goal_ids and reads only the three
     # facts authorized for deterministic policy derivation.
-    goal_constraint_evaluation = None
-    goal_constraint_candidate = None
     goal_constraint_evidence: dict | None = None
     if body.goal_constraint_goal_id is not None:
         from services.goal_recommendation_constraints import (
@@ -4504,11 +4505,9 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
             goal_constraint_evaluation = evaluate_goal_recommendation_constraint(
                 _goal_admission, _goal_as_of_date,
             )
-            goal_constraint_candidate = goal_constraint_evaluation.candidate
-            if goal_constraint_candidate is None:
-                goal_constraint_evidence = build_goal_constraint_evidence(
-                    goal_constraint_evaluation,
-                )
+            goal_constraint_evidence = build_goal_constraint_evidence(
+                goal_constraint_evaluation, advisory=True,
+            )
         except Exception as _goal_derivation_exc:
             _log.exception(
                 "analyze_optimizer: activated Goal constraint derivation failed",
@@ -4547,19 +4546,6 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
                 _finish_exc,
                 exc_info=True,
             )
-
-    def _raise_goal_internal(stage: str, exc: Exception) -> None:
-        _log.error(
-            "analyze_optimizer: activated Goal constraint failed at %s: %s",
-            stage,
-            exc,
-            exc_info=True,
-        )
-        _finish_failed_goal_run()
-        raise HTTPException(status_code=500, detail={
-            "code": "GOAL_RECOMMENDATION_CONSTRAINT_INTERNAL_ERROR",
-            "message": "Unable to apply goal recommendation constraints",
-        }) from exc
 
     all_symbols = [h.symbol for h in holdings] + [w.symbol for w in watchlist_items]
 
@@ -4764,34 +4750,19 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
     # Merge user preferences + regime policy + emergency + system safety into a
     # single deterministic EffectiveEnvelope before any AI agent is called.
     effective_env: object | None = None
-    effective_env_dict: dict | None = None
     try:
-        from services.optimizer.constraint_resolver import (
-            apply_single_position_upper_bound as _apply_single_position_upper_bound,
-            resolve_constraints as _resolve_constraints,
-            envelope_to_dict as _eff_env_to_dict,
+        from services.optimizer.constraint_resolver import resolve_constraints
+        effective_env = resolve_constraints(
+            ps, sector_limits, regime_ctx, persona_ctx, optimizer_policy_mode=optimizer_policy_mode,
         )
-        effective_env = _resolve_constraints(ps, sector_limits, regime_ctx, persona_ctx)
-        if goal_constraint_candidate is not None:
-            effective_env, _goal_composition_outcome = _apply_single_position_upper_bound(
-                effective_env, goal_constraint_candidate,
-            )
-            from services.goal_recommendation_constraints import build_goal_constraint_evidence
-            goal_constraint_evidence = build_goal_constraint_evidence(
-                goal_constraint_evaluation, _goal_composition_outcome,
-            )
-        effective_env_dict = _eff_env_to_dict(effective_env)
         _log.info(
             "analyze_optimizer: constraint_resolver ran — %d adjustment(s), emergency=%s",
             len(effective_env.resolver_notes), effective_env.emergency_active,
         )
     except Exception as _cre:
-        if goal_constraint_candidate is not None:
-            _raise_goal_internal("constraint composition", _cre)
         _log.warning("analyze_optimizer: constraint_resolver failed — continuing without: %s", _cre)
 
     # ── Phase 3B.4 — Build unified Policy Envelope ────────────────────────────
-    from services.optimizer.sector_policy import SECTOR_POLICY_ADVISORY
     policy_ctx: dict | None = None
     try:
         from services.optimizer.policy_engine import compute_policy, envelope_to_dict as _env_to_dict
@@ -4803,11 +4774,10 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
             consensus=None, max_sector_pct=max_sector_pct,
             effective_envelope=effective_env,
             sector_policy_mode=SECTOR_POLICY_ADVISORY,
+            optimizer_policy_mode=optimizer_policy_mode,
         )
         policy_ctx = _env_to_dict(_policy_env)
     except Exception as _pe:
-        if goal_constraint_candidate is not None:
-            _raise_goal_internal("PolicyEngine propagation", _pe)
         _log.error(
             "[POLICY_ENGINE] compute_policy failed — falling back to regime-only mode: %s", _pe,
             exc_info=True,
@@ -4837,15 +4807,12 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
             effective_env,
             execution_ctx,
             on_stage=partial(mark_stage, body.portfolio_id),
-            enforce_effective_policy_in_fallback=goal_constraint_candidate is not None,
             sector_policy_mode=SECTOR_POLICY_ADVISORY,
+            optimizer_policy_mode=optimizer_policy_mode,
             **({"advisory": advisory_run} if advisory_run is not None else {}),
         )
-    except Exception as _optimizer_exc:
-        from agents.optimizer import HardPolicyEnforcementError
-        if isinstance(_optimizer_exc, HardPolicyEnforcementError):
-            _raise_goal_internal("deterministic hard-policy enforcement", _optimizer_exc)
-        if goal_constraint_candidate is not None:
+    except Exception:
+        if goal_constraint_evidence is not None and goal_constraint_evidence["contribution"] is not None:
             _finish_failed_goal_run()
         raise
 
@@ -4873,6 +4840,8 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
         # Canonical evidence is attached before stabilization and therefore
         # serialized into unconditional OptimizerHistory on every success.
         result["goal_recommendation_constraints"] = goal_constraint_evidence
+        if isinstance(result.get("active_policy"), dict):
+            result["active_policy"]["goal_recommendation_constraints"] = goal_constraint_evidence
 
     # ── Phase 4C.6H.5 — Enrich target_allocations with timing data ───────────
     if timing_ctx_map:
@@ -5322,15 +5291,29 @@ async def get_optimizer_history_detail(history_id: int, db: Session = Depends(ge
         ).first()
         if snap:
             payload["recommendation_snapshot_id"] = snap.id
+    from services.optimizer.sector_policy import (
+        OPTIMIZER_POLICY_MUJI_V2, UNSUPPORTED_OPTIMIZER_POLICY_EVIDENCE, UnsupportedOptimizerPolicyEvidence,
+        validate_frozen_optimizer_policy,
+    )
+    try:
+        policy_mode = validate_frozen_optimizer_policy(
+            payload.get("active_policy") or {}, effective_envelope=payload.get("effective_envelope"),
+        )
+    except UnsupportedOptimizerPolicyEvidence:
+        payload.pop("execution_optimization", None)
+        payload["execution_policy_evidence_status"] = UNSUPPORTED_OPTIMIZER_POLICY_EVIDENCE
+        return payload
+    if policy_mode == OPTIMIZER_POLICY_MUJI_V2:
+        payload.pop("execution_optimization", None)
     # Noise filter + action_summary are response-time views, applied after
     # result_json is committed — stored rows carry neither. Recompute them here
     # (display-only, row untouched) so history views render the same Execution
-    # Plan as live runs. Filter thresholds are current-day, not run-day.
+    # Plan as live runs, using the recorded drift policy when available.
     if "action_summary" not in payload:
         try:
             from services.noise_filter import apply_noise_filter
             from services.optimizer_action_summary import build_action_summary
-            apply_noise_filter(payload)
+            apply_noise_filter(payload, replay=True)
             saved_summary = (payload.get("active_policy") or payload).get("scheduled_action_summary")
             payload["action_summary"] = (saved_summary if saved_summary is not None else
                                          build_action_summary(payload.get("target_allocations", [])))

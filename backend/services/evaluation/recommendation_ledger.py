@@ -197,6 +197,9 @@ def get_report_card(db: Session, portfolio_id: int, snapshot_id: int) -> dict[st
         advisory_plan_provenance, derive_full_plan, read_snapshot_plan_inputs,
     )
     from services.evaluation.verdict_composer import compose_report_card_verdict
+    from services.optimizer.sector_policy import (
+        UNSUPPORTED_OPTIMIZER_POLICY_EVIDENCE, UnsupportedOptimizerPolicyEvidence,
+    )
 
     ws_row = db.query(Workspace).order_by(Workspace.id).first()
     ws = ws_row.id if ws_row else 1
@@ -222,7 +225,12 @@ def get_report_card(db: Session, portfolio_id: int, snapshot_id: int) -> dict[st
         except Exception:
             consensus = {}
 
-    inputs = read_snapshot_plan_inputs(db, snap)
+    unavailable_reason = "no_target_allocations"
+    try:
+        inputs = read_snapshot_plan_inputs(db, snap, raise_on_unsupported_policy=True)
+    except UnsupportedOptimizerPolicyEvidence:
+        inputs = None
+        unavailable_reason = UNSUPPORTED_OPTIMIZER_POLICY_EVIDENCE
 
     plan_grade_row = (
         db.query(RecommendationGrade)
@@ -232,7 +240,7 @@ def get_report_card(db: Session, portfolio_id: int, snapshot_id: int) -> dict[st
 
     plan_section: dict[str, Any]
     if inputs is None:
-        plan_section = {"status": "unavailable", "reason": "no_target_allocations"}
+        plan_section = {"status": "unavailable", "reason": unavailable_reason}
     else:
         # Report Card only: provenance-aware classification (same canonical
         # classifier as the optimizer page). Grades and other analytics keep the
@@ -242,6 +250,7 @@ def get_report_card(db: Session, portfolio_id: int, snapshot_id: int) -> dict[st
         eo = plan["execution_optimization"]
         plan_section = {
             "status": "ok",
+            "optimizer_policy_mode": inputs["policy_provenance"].get("optimizer_policy_mode"),
             "buy_trades": plan["buy_trades"],
             "sell_reduce_trades": [t.model_dump() for t in eo.trades],
             "cash_available": eo.cash_available,
@@ -253,6 +262,12 @@ def get_report_card(db: Session, portfolio_id: int, snapshot_id: int) -> dict[st
             "portfolio_assessment": inputs["portfolio_assessment"],
             "no_action_summary": inputs["no_action_summary"],
         }
+        if plan_section["optimizer_policy_mode"] == "wealth.optimizer-muji.v2":
+            plan_section["recommended_actions"] = [
+                {"symbol": row.get("symbol"), "action": row.get("original_action", row.get("action")),
+                 "rationale": row.get("reason")}
+                for row in inputs["target_allocations"]
+            ]
         if provenance := advisory_plan_provenance(inputs):
             concentration = provenance.get("concentration") or {}
             plan_section["sector_advisory"] = {
@@ -350,6 +365,8 @@ def get_report_card(db: Session, portfolio_id: int, snapshot_id: int) -> dict[st
 
     verdict = compose_report_card_verdict(
         plan_score=plan_grade_row.score if plan_grade_row else None,
+        plan_grade_version=(plan_section.get("grade") or {}).get("detail", {}).get("grade_version")
+        if isinstance((plan_section.get("grade") or {}).get("detail"), dict) else None,
         horizon_grade_kind=mature_kind,
         return_pct=mature_cell.get("return_pct") if mature_cell else None,
         benchmark_return_pct=mature_cell.get("benchmark_return_pct") if mature_cell else None,

@@ -404,11 +404,13 @@ def test_e2e_219_negative_control_reproduces_the_defect_and_fails_closed(monkeyp
     _, _, response = run_219(monkeypatch, flag=False, legacy_weights=True)
     row = micron_row(response)
     assert (row["current_weight"], row["allocation_change_percent"], row["estimated_amount"]) == (22.2, -9.7, -95832)
-    assert any("CONCENTRATION_BREACH: MICRON01.BK at 22.2%" in v for v in response["active_policy"]["violations"])
-    assert response["active_policy"]["violation_evidence"] == []
+    policy = response["active_policy"]
+    assert row["current_weight"] > policy["hard_constraints"]["max_single_position_pct"]
+    assert not any("MICRON01.BK" in v for v in policy["violations"])
+    assert not any(e.get("symbol") == "MICRON01.BK" for e in policy["concentration"]["current_breaches"])
     trade = micron_trade(response)
     assert trade is not None
-    # The string alone no longer authorizes a Required trade.
+    # The incorrect displayed weight cannot authorize a Required trade.
     assert (trade["reason"], trade["necessity"]) == ("PORTFOLIO_IMPROVEMENT", "DISCRETIONARY")
     assert trade["required_amount"] == 0 and trade["policy_evidence"] == []
 
@@ -428,7 +430,7 @@ def test_e2e_flag_on_and_off_agree_on_deterministic_nav_calculations(monkeypatch
     assert on["stabilization"]["overrides_active"] == off["stabilization"]["overrides_active"]
 
 
-def test_e2e_genuine_breach_with_intent_conflict_is_verified_but_still_advisory(monkeypatch):
+def test_e2e_muji_nav_breach_with_intent_conflict_preserves_deferred_schedule(monkeypatch):
     from models.database import RecommendationSnapshot
     from services.decision_memory.snapshot_writer import write_recommendation_snapshot
     from services.evaluation.plan_grader import derive_full_plan, read_snapshot_plan_inputs
@@ -443,19 +445,19 @@ def test_e2e_genuine_breach_with_intent_conflict_is_verified_but_still_advisory(
     response = run(db, p)
     aaa_w = next(a for a in response["target_allocations"] if a["symbol"] == "AAA")["current_weight"]
     assert aaa_w == pytest.approx(23.08, abs=0.01)
-    [ev] = [e for e in response["active_policy"]["violation_evidence"] if e["symbol"] == "AAA"]
+    policy = response["active_policy"]
+    assert not policy["violation_evidence"]
+    [ev] = [e for e in policy["concentration"]["current_breaches"] if e.get("symbol") == "AAA"]
     assert ev["basis"] == "NAV" and ev["observed_pct"] > ev["limit_pct"]
     trade = next(t for t in response["execution_optimization"]["trades"] if t["symbol"] == "AAA")
     assert (trade["reason"], trade["necessity"], trade["evidence_status"]) == (
-        "POLICY_ENFORCEMENT", "NECESSARY", "VERIFIED_POLICY_REPAIR")
-    [repair] = trade["policy_evidence"]
-    assert repair["current_breach"]["basis"] == "NAV"
-    assert repair["current_breach"]["symbol"] == "AAA"
+        "PORTFOLIO_IMPROVEMENT", "DISCRETIONARY", "UNVERIFIED")
+    assert not trade["policy_evidence"]
     assert "UNCERTAIN_SECTOR_CLASSIFICATION" in response["execution_optimization"]["policy_review_reasons"]
     review = position(response["advisory_intent_review"], "AAA")["review"]
     assert review["final"]["outcome"] == "CONFLICT" and review["requires_owner_decision"] is True
     assert response["advisory_intent_review"]["review"]["allocations_changed_by_review"] is False
-    assert trade["executed_amount"] == trade["required_amount"] == pytest.approx(63000, abs=0.01)
+    assert trade["executed_amount"] == trade["required_amount"] == 0
     assert trade["required_amount"] < trade["full_recommended_amount"]
     assert trade["discretionary_amount"] == pytest.approx(trade["full_recommended_amount"] - trade["required_amount"])
 

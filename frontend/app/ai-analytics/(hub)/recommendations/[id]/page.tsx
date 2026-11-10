@@ -54,9 +54,21 @@ function PlanSection({ plan }: { plan: RecommendationReportCard["plan"] }) {
   const [breakdownOpen, setBreakdownOpen] = useState(false);
   const buys = plan.buy_trades ?? [];
   const sells = (plan.sell_reduce_trades ?? []) as Array<Record<string, unknown>>;
+  const muji = plan.optimizer_policy_mode === "wealth.optimizer-muji.v2";
+  const v2Grade = plan.grade?.detail?.grade_version === "wealth.plan-grade-muji.v2";
 
   return (
     <>
+      {muji && <p className="text-xs text-gray-600">Original recommendation and scheduled advisory amounts are shown below. Scheduled trades are not recorded transactions; actual transactions, if any, appear under What Happened.</p>}
+      {muji && <div className="text-sm"><p className="font-semibold">Original recommendation</p>
+        {plan.recommended_actions?.length ? <ul>{plan.recommended_actions.map((action, index) => {
+          const sale = sells.find((trade) => trade.symbol === action.symbol);
+          const scheduled = buys.some((buy) => buy.symbol === action.symbol) ||
+            (typeof sale?.executed_amount === "number" && sale.executed_amount > 0);
+          return <li key={`${action.symbol}-${index}`}>{action.action} {action.symbol}
+            {action.rationale ? ` — ${action.rationale}` : ""} · {scheduled ? "scheduled advisory action below" : "no scheduled trade; deferred or HOLD"}</li>;
+        })}</ul> : <p>Original recommendation unavailable.</p>}
+      </div>}
       {plan.no_action_summary && <p className="text-sm text-gray-700">{plan.no_action_summary}</p>}
       {plan.portfolio_assessment && <p className="text-xs text-gray-500">{plan.portfolio_assessment}</p>}
 
@@ -70,7 +82,7 @@ function PlanSection({ plan }: { plan: RecommendationReportCard["plan"] }) {
                 {String(t.action)}
               </span>
               <span className="font-semibold text-gray-800">{String(t.symbol).replace(".BK", "")}</span>
-              <span className="text-gray-500">{money(t.planned_amount as number)}</span>
+              <span className="text-gray-500">{muji ? "Scheduled advisory " : ""}{money(t.planned_amount as number)}</span>
             </div>
           ))}
         </div>
@@ -98,6 +110,11 @@ function PlanSection({ plan }: { plan: RecommendationReportCard["plan"] }) {
                   Reason: {String(t.reason ?? "—").replace(/_/g, " ").toLowerCase()}
                   {deferred ? " · deferred" : ""}
                 </span>
+                {muji && <span className="basis-full text-xs text-gray-600">
+                  Recommended: {String(t.original_action ?? t.action)}{t.original_rationale ? ` — ${String(t.original_rationale)}` : ""}.
+                  {deferred ? ` Deferred${t.deferral_reason ? `: ${String(t.deferral_reason).replace(/_/g, " ").toLowerCase()}` : ""}; no scheduled sale.`
+                    : ` Scheduled advisory sale: ${money(t.executed_amount as number)} gross; estimated cash impact ${typeof t.scheduled_cash_impact === "number" ? money(t.scheduled_cash_impact) : "unavailable"}.`}
+                </span>}
                 {necessity === "NECESSARY" && (
                   <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full border bg-white border-gray-800 text-gray-800"
                     data-testid="report-required-tag">
@@ -137,7 +154,7 @@ function PlanSection({ plan }: { plan: RecommendationReportCard["plan"] }) {
         <div className="pt-2 border-t">
           <div className="flex items-center justify-between">
             <p className="text-sm">
-              Plan grade (day 0): <strong className="text-gray-800">{plan.grade.score != null ? `${plan.grade.score.toFixed(0)}/100` : "—"}</strong>
+              {v2Grade ? "Advisory plan and execution quality (day 0)" : "Plan grade (day 0)"}: <strong className="text-gray-800">{plan.grade.score != null ? `${plan.grade.score.toFixed(0)}/100` : "—"}</strong>
             </p>
             {plan.grade.detail && (
               <button onClick={() => setBreakdownOpen((v) => !v)} className="text-xs text-blue-600 hover:underline">
@@ -145,6 +162,7 @@ function PlanSection({ plan }: { plan: RecommendationReportCard["plan"] }) {
               </button>
             )}
           </div>
+          {v2Grade && <p className="text-xs text-gray-500">This grade checks frozen schedule feasibility, independent action evidence, turnover, and explanation completeness. It does not measure investment returns or goal success.</p>}
           {breakdownOpen && plan.grade.detail && (
             <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs text-gray-600 bg-gray-50 rounded-lg p-3">
               {Object.entries(plan.grade.detail)
@@ -153,6 +171,8 @@ function PlanSection({ plan }: { plan: RecommendationReportCard["plan"] }) {
                   <div key={k}>
                     <p className="text-gray-400">{k.replace(/_/g, " ")}</p>
                     <p className="font-semibold text-gray-700">{typeof v === "number" ? v.toFixed(0) : JSON.stringify(v)}</p>
+                    {v2Grade && typeof plan.grade?.detail?.component_definitions === "object" &&
+                      <p className="text-gray-500">{String((plan.grade.detail.component_definitions as Record<string, string>)[k.replace(/_score$/, "")] ?? "")}</p>}
                   </div>
                 ))}
             </div>

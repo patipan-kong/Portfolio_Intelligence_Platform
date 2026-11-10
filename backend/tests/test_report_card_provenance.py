@@ -223,3 +223,26 @@ def test_remaining_grader_limitation_is_explicit(db, book):
     ws, portfolio = book
     card, _ = card_trades(db, ws, portfolio, p)
     assert card["XXX"]["necessity"] == "DISCRETIONARY" and card["XXX"]["evidence_status"] == "UNVERIFIED"
+
+
+def test_muji_report_card_keeps_deferred_buy_recommendation_visible(db, book):
+    from tests.test_plan_grader import _muji_policy
+
+    ws, portfolio = book
+    payload = {
+        "total_value": 100_000, "cash_balance": 1_000,
+        "active_policy": _muji_policy(verified=False),
+        "target_allocations": [
+            {"symbol": "SELL1", "action": "SELL", "estimated_amount": -10_000,
+             "reason": "Recorded thesis"},
+            {"symbol": "BUY1", "action": "BUY", "estimated_amount": 5_000,
+             "reason": "Deferred proposal"},
+        ],
+    }
+    snap, _ = seed(db, ws, portfolio, payload)
+    plan = get_report_card(db, portfolio.id, snap.id)["plan"]
+    assert plan["optimizer_policy_mode"] == "wealth.optimizer-muji.v2"
+    assert plan["recommended_actions"][1] == {
+        "symbol": "BUY1", "action": "BUY", "rationale": "Deferred proposal",
+    }
+    assert plan["buy_trades"] == []

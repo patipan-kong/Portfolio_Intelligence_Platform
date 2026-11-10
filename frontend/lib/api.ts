@@ -1818,6 +1818,7 @@ export interface StabilizationCooldown {
 }
 
 export interface StabilizationMinimumImpact {
+  advisory_only?: boolean;
   expected_improvement_pct: number;
   estimated_cost_pct: number;
   net_benefit_pct: number;
@@ -1840,6 +1841,7 @@ export interface StabilizationMeta {
   original_optimizer_status: OptimizerStatus;
   reason: string | null;
   drift_threshold_pct: number;
+  drift_advisory?: boolean;
   cooldown_days: number;
   net_benefit_threshold_pct: number;
   positions_within_tolerance: number;
@@ -1930,6 +1932,7 @@ export interface PolicyHardConstraints {
 
 export interface ActivePolicy {
   sector_policy_mode?: string;
+  optimizer_policy_mode?: string;
   hard_policy_unavailable?: boolean;
   concentration?: Pick<SectorAdvisoryEvidence, "current" | "projected_target">;
   sector_alternatives?: SectorAdvisoryEvidence["alternatives"];
@@ -2057,6 +2060,7 @@ export type GoalConstraintRelationToBase =
   | "NOT_APPLICABLE";
 
 export type GoalConstraintApplicationStatus =
+  | "ADVISORY_ONLY"
   | "APPLIED_AND_BINDING"
   | "APPLIED_BUT_DOMINATED"
   | "NOT_APPLICABLE";
@@ -2093,6 +2097,7 @@ export interface GoalRecommendationConstraintEvidence {
 
 export interface OptimizerResult {
   execution_policy_version?: string;
+  execution_policy_evidence_status?: "unsupported_optimizer_policy_evidence";
   portfolio_name: string;
   status?: OptimizerStatus;
   final_consensus_score?: number | null;
@@ -2215,6 +2220,11 @@ export interface OptimizedTrade {
   required_amount?: number | null;
   discretionary_amount?: number | null;
   policy_evidence?: PolicyRepairEvidence[] | null;
+  funding_basis?: string | null;
+  original_action?: string | null;
+  original_rationale?: string | null;
+  scheduled_cash_impact?: number | null;
+  deferral_reason?: string | null;
 }
 
 export interface PolicyExposureEvidence {
@@ -2273,6 +2283,9 @@ export interface ExecutionOptimizationResult {
   effective_turnover_cap_pct?: number | null;
   valuation_nav?: number | null;
   policy_review_reasons?: string[] | null;
+  scheduled_changes?: Record<string, number> | null;
+  estimated_trade_costs?: Record<string, number> | null;
+  funding_assumptions?: string[] | null;
 }
 
 export interface OptimizerHistoryItem {
@@ -4676,6 +4689,8 @@ export const getRecommendationsLedger = (portfolioId: number, limit = 50, offset
   );
 
 export interface ReportCardPlanSection {
+  optimizer_policy_mode?: string | null;
+  recommended_actions?: Array<{ symbol: string; action: string; rationale?: string | null }>;
   sector_advisory?: SectorAdvisoryEvidence;
   status: "ok" | "unavailable";
   reason?: string;

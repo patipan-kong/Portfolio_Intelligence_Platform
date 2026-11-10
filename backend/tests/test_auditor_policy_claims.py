@@ -27,13 +27,14 @@ def interpret(flags, evidence=None):
         "auditor_notes": "Universal 15% limit breached"}, evidence or contract())
 
 
-def test_sector_advisory_does_not_change_safer_choice_or_committee():
+@pytest.mark.parametrize("claim_kind", ["POLICY_BREACH", "INVESTMENT_JUDGMENT"])
+def test_sector_advisory_does_not_change_safer_choice_or_committee(claim_kind):
     evidence = contract(action="BUY")
     hard_flag = flag("EXECUTION_RESTRICTION", ref="execution:1")
     baseline = interpret([hard_flag], evidence)
     sector_ref = "PROJECTED_TARGET:effective_sector_limits:Technology"
     evidence["sector_advisories"] = {sector_ref: {"basis": "EQUITY", "breach_pp": 40}}
-    sector_flag = {**flag("POLICY_BREACH", symbol="PORTFOLIO", ref=sector_ref), "severity": "CRITICAL"}
+    sector_flag = {**flag(claim_kind, symbol="PORTFOLIO", ref=sector_ref), "severity": "CRITICAL"}
     advisory = interpret([hard_flag, sector_flag], evidence)
     assert advisory["claim_reviews"][0]["validation_status"] == "ADVISORY"
     assert advisory["safer_choice"] == baseline["safer_choice"] == "neither"

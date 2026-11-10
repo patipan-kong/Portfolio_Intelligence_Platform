@@ -118,6 +118,16 @@ def test_report_card_verdict_plan_only_when_no_horizon_matured():
     assert result["th"]
 
 
+def test_muji_report_card_verdict_describes_execution_evidence_not_proportionality():
+    result = compose_report_card_verdict(
+        plan_score=45.0, plan_grade_version="wealth.plan-grade-muji.v2",
+        horizon_grade_kind=None, return_pct=None, benchmark_return_pct=None,
+        alpha=None, directional_correct=None,
+    )
+    assert "execution-evidence gaps" in result["en"]
+    assert "proportionality" not in result["en"]
+
+
 def test_report_card_verdict_beat_benchmark():
     result = compose_report_card_verdict(
         plan_score=92.0, horizon_grade_kind="H30", return_pct=4.2,

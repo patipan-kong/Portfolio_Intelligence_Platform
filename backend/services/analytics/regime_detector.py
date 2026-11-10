@@ -594,7 +594,7 @@ _REGIME_NARRATIVES: dict[str, str] = {
 }
 
 
-def build_regime_prompt_block(regime_ctx: dict) -> str:
+def build_regime_prompt_block(regime_ctx: dict, *, concentration_advisory: bool = False) -> str:
     """Generate the [MARKET REGIME] block injected into L1 and L2 prompts."""
     if not regime_ctx:
         return ""
@@ -626,6 +626,15 @@ def build_regime_prompt_block(regime_ctx: dict) -> str:
     factor_line = "; ".join(factor_guidance) if factor_guidance else "Balanced factor selection"
 
     warnings = regime_ctx.get("transition_warnings", [])
+    position_rule = f"  Max single position:     {max_pos:.0f}%\n"
+    if concentration_advisory:
+        position_rule = ""
+        if regime == REGIME_HIGH_VOL:
+            mandate = (
+                "Elevated volatility favors capital preservation. Minimum cash 15%. "
+                "Suppress speculative positions and reduce turnover."
+            )
+        warnings = [w.replace(" Tighten position limits.", "") for w in warnings]
     warning_block = ""
     if warnings:
         warning_block = "\nWarnings:\n" + "\n".join(f"  ⚠ {w}" for w in warnings)
@@ -642,8 +651,7 @@ Regime Allocation Mandate:
 
 Hard Constraints (regime-enforced — DO NOT override):
   Minimum cash reserve:    {min_cash:.0f}%
-  Max single position:     {max_pos:.0f}%
-  Factor stance:           {factor_line}
+{position_rule}  Factor stance:           {factor_line}
 
 All allocation proposals MUST respect these regime-derived constraints.
 The optimizer MUST NOT recommend cash below {min_cash:.0f}% in this regime.
