@@ -142,6 +142,7 @@ class PolicyEnvelope:
     sector_limit_sources: dict[str, str] = field(default_factory=dict)
     position_limit_source: str = "POLICY_ENGINE"
     sector_policy_mode: str | None = None
+    optimizer_policy_mode: str | None = None
 
 
 # ─── Emergency detection ──────────────────────────────────────────────────────
@@ -522,7 +523,7 @@ def compute_policy(
     consensus: dict | None = None,
     max_sector_pct: int = 40,
     effective_envelope: "EffectiveEnvelope | None" = None,
-    *, sector_policy_mode: str | None = None,
+    *, sector_policy_mode: str | None = None, optimizer_policy_mode: str | None = None,
 ) -> PolicyEnvelope:
     """Build a PolicyEnvelope from persona + regime + portfolio risk + confidence state.
 
@@ -694,6 +695,7 @@ def compute_policy(
         sector_limit_sources     = sector_limit_sources,
         position_limit_source    = position_limit_source,
         sector_policy_mode       = sector_policy_mode,
+        optimizer_policy_mode    = optimizer_policy_mode,
     )
 
 
@@ -965,5 +967,6 @@ def envelope_to_dict(env: PolicyEnvelope) -> dict:
         "position_limit_source":   env.position_limit_source,
         "violation_evidence":       env.violation_evidence,
         **({"sector_policy_mode": env.sector_policy_mode} if env.sector_policy_mode else {}),
+        **({"optimizer_policy_mode": env.optimizer_policy_mode} if env.optimizer_policy_mode else {}),
         "prompt_block":             build_policy_prompt_block(env),
     }

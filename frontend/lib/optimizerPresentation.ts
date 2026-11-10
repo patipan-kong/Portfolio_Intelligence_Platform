@@ -10,6 +10,7 @@ export function assessment(value: unknown): number | null {
 // Availability only: scheduling and trade classification stay owned by the
 // backend. Never turn an absent/partial summary into a confirmed empty plan.
 export function executionEvidenceAvailable(result: OptimizerResult): boolean {
+  if (result.execution_policy_evidence_status === "unsupported_optimizer_policy_evidence") return false;
   if (result.active_policy?.sector_policy_mode === SECTOR_POLICY_ADVISORY
       && result.execution_optimization?.scheduled_buys == null) return false;
   const summary = result.action_summary;

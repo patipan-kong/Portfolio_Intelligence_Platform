@@ -491,8 +491,12 @@ def optimize_execution_for_payload(
     """
     policy = payload.get("active_policy") or {}
     cash = float(payload.get("cash_balance") or 0.0) if cash_available is None else float(cash_available)
-    from services.optimizer.sector_policy import EVIDENCE_VERSION, POSITION_RULE, sector_caps_are_advisory
+    from services.optimizer.sector_policy import (
+        EVIDENCE_VERSION, POSITION_RULE, optimizer_policy_mode, sector_caps_are_advisory,
+    )
 
+    # MUJI V2 and Sector Advisory v1 intentionally share enforcement in Slice 1.
+    optimizer_policy_mode(policy, effective_envelope=payload.get("effective_envelope"))
     sector_advisory = sector_caps_are_advisory(policy)
     if sector_advisory or "concentration" in policy or payload.get("execution_policy_version"):
         from services.optimizer.concentration_execution import optimize_concentration_execution

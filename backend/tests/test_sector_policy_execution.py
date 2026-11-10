@@ -9,8 +9,9 @@ from services.evaluation.plan_grader import compute_plan_grade, derive_full_plan
 from services.optimizer.execution_optimizer import optimize_execution_for_payload
 from services.optimizer.policy_engine import compute_policy, compute_policy_alignment_score
 from services.optimizer.sector_policy import (
-    SECTOR_POLICY_ADVISORY, attach_target_evaluation, current_values, evaluate_frozen_sectors, freeze_concentration,
-    project_targets,
+    OPTIMIZER_POLICY_MUJI_V2, SECTOR_POLICY_ADVISORY, UnsupportedOptimizerPolicyEvidence,
+    attach_target_evaluation, current_values, evaluate_frozen_sectors, freeze_concentration,
+    optimizer_policy_mode, project_targets,
 )
 from services.optimizer_action_summary import build_action_summary
 
@@ -242,6 +243,54 @@ def test_advisory_replay_239_keeps_only_nav_repairs(replay_239):
     policy.pop("sector_policy_mode")
     policy["scheduled_execution"] = historical
     assert schedule(replay_239).model_dump() == historical
+
+
+@pytest.mark.parametrize(
+    "policy, expected",
+    [
+        ({}, None),
+        ({"execution_policy_version": "wealth.policy-evidence.v1"}, None),
+        ({"execution_policy_version": "wealth.policy-evidence.v2"}, None),
+        ({"sector_policy_mode": SECTOR_POLICY_ADVISORY}, SECTOR_POLICY_ADVISORY),
+        ({"sector_policy_mode": SECTOR_POLICY_ADVISORY, "optimizer_policy_mode": OPTIMIZER_POLICY_MUJI_V2},
+         OPTIMIZER_POLICY_MUJI_V2),
+    ],
+)
+def test_optimizer_policy_dispatch_uses_explicit_identity(policy, expected):
+    assert optimizer_policy_mode(policy) == expected
+
+
+@pytest.mark.parametrize(
+    "markers",
+    [
+        {"optimizer_policy_mode": OPTIMIZER_POLICY_MUJI_V2},
+        {"sector_policy_mode": SECTOR_POLICY_ADVISORY, "optimizer_policy_mode": None},
+        {"sector_policy_mode": SECTOR_POLICY_ADVISORY, "optimizer_policy_mode": OPTIMIZER_POLICY_MUJI_V2.upper()},
+        {"sector_policy_mode": "unknown", "optimizer_policy_mode": OPTIMIZER_POLICY_MUJI_V2},
+        {"sector_policy_mode": "unknown"},
+    ],
+)
+def test_unsupported_policy_cannot_schedule_or_replay(replay_239, markers):
+    policy = replay_239["active_policy"]
+    policy["scheduled_execution"] = schedule(replay_239).model_dump()
+    policy.update(markers)
+    with pytest.raises(UnsupportedOptimizerPolicyEvidence):
+        schedule(replay_239)
+
+
+def test_muji_slice_one_keeps_sector_advisory_schedule_and_grade(replay_239):
+    policy = replay_239["active_policy"]
+    policy["sector_policy_mode"] = SECTOR_POLICY_ADVISORY
+    old_schedule = schedule(replay_239).model_dump()
+    policy["scheduled_execution"] = old_schedule
+    grade_args = (replay_239["target_allocations"], replay_239["cash_balance"])
+    old_grade = compute_plan_grade(*grade_args, policy_provenance=policy)
+
+    policy["optimizer_policy_mode"] = OPTIMIZER_POLICY_MUJI_V2
+    assert schedule(replay_239).model_dump() == old_schedule
+    assert compute_plan_grade(*grade_args, policy_provenance=policy) == old_grade
+    del policy["scheduled_execution"]
+    assert schedule(replay_239).model_dump() == old_schedule
 
 
 def test_run_239_v1_plan_grade_preserves_recorded_formula(replay_239):

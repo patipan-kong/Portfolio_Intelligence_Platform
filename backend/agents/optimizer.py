@@ -11,8 +11,10 @@ from typing import Callable
 from services.ai_client import call_ai
 from services.json_utils import safe_parse_json
 from services.optimizer.sector_policy import (
-    SECTOR_POLICY_ADVISORY, attach_target_evaluation, current_values, evaluate_frozen_sectors,
+    SECTOR_POLICY_ADVISORY, UnsupportedOptimizerPolicyEvidence,
+    attach_target_evaluation, current_values, evaluate_frozen_sectors,
     evaluate_sectors, freeze_concentration, freeze_positions, project_targets, sector_weights,
+    optimizer_policy_mode as read_optimizer_policy_mode,
 )
 from services.optimizer.risk_flags import investment_risk_flags
 from services.optimizer.auditor_claims import build_claim_evidence, validate_auditor_claims
@@ -192,6 +194,7 @@ def _make_envelope_from_dict(d: dict) -> _PolicyEnvelope:
         sector_limit_sources    = d.get("sector_limit_sources", {}),
         position_limit_source   = d.get("position_limit_source", "POLICY_ENGINE"),
         sector_policy_mode      = d.get("sector_policy_mode"),
+        optimizer_policy_mode   = d.get("optimizer_policy_mode"),
     )
 
 
@@ -496,7 +499,8 @@ def _degraded_sector_policy(limits, default_cap, effective_envelope):
     }
 
 
-def _capture_sector_policy(output, policy, mode, portfolio, candidates, nav, degraded_policy, alternatives):
+def _capture_sector_policy(output, policy, mode, portfolio, candidates, nav, degraded_policy, alternatives,
+                           optimizer_policy_mode=None):
     if mode == SECTOR_POLICY_ADVISORY:
         if policy is None:
             # Exposure remains measurable when hard-policy evidence is unavailable.
@@ -504,6 +508,8 @@ def _capture_sector_policy(output, policy, mode, portfolio, candidates, nav, deg
         policy["sector_policy_mode"] = mode
         policy["sector_alternatives"] = alternatives
     if policy is not None:
+        if optimizer_policy_mode is not None:
+            policy["optimizer_policy_mode"] = optimizer_policy_mode
         output["active_policy"] = policy
         policy["concentration"] = freeze_concentration(portfolio, candidates, policy, nav)
         attach_target_evaluation(output)
@@ -1736,6 +1742,7 @@ def _run_single_shot_fallback(
     advisory=None,
     execution_context: dict | None = None,
     sector_policy_mode: str | None = None,
+    optimizer_policy_mode: str | None = None,
 ) -> dict:
     """Single-shot emergency fallback when the 3-layer pipeline fails completely.
 
@@ -1924,7 +1931,7 @@ def _run_single_shot_fallback(
     policy_output = ({**{k: v for k, v in policy_context.items() if k != "prompt_block"},
                       "violation_details": fallback_details} if policy_context else None)
     _capture_sector_policy(output, policy_output, sector_policy_mode, portfolio_data, wc,
-                           total_value, degraded_policy, sector_alternatives)
+                           total_value, degraded_policy, sector_alternatives, optimizer_policy_mode)
     return output
 
 
@@ -2039,6 +2046,7 @@ def run_layered_optimizer(
     enforce_effective_policy_in_fallback: bool = False,
     advisory=None,
     sector_policy_mode: str | None = None,
+    optimizer_policy_mode: str | None = None,
 ) -> dict:
     """3-layer Dynamic Capital Allocation Engine with global single-shot fallback.
 
@@ -2051,7 +2059,15 @@ def run_layered_optimizer(
     common-NAV current weights for held positions when that basis resolves,
     and proposal-transition capture. It never changes an allocation decision.
     """
-    sector_policy_mode = sector_policy_mode or (policy_context or {}).get("sector_policy_mode")
+    # Keep one identity for all layer attempts, including the schema retry.
+    policy_identity = dict(policy_context or {})
+    for field, mode in (("sector_policy_mode", sector_policy_mode),
+                        ("optimizer_policy_mode", optimizer_policy_mode)):
+        if mode is not None and policy_identity.setdefault(field, mode) != mode:
+            raise UnsupportedOptimizerPolicyEvidence(f"Conflicting {field}")
+    read_optimizer_policy_mode(policy_identity)
+    sector_policy_mode = policy_identity.get("sector_policy_mode")
+    optimizer_policy_mode = policy_identity.get("optimizer_policy_mode")
     sector_advisory = sector_policy_mode == SECTOR_POLICY_ADVISORY
     degraded_policy = _degraded_sector_policy(sector_limits, max_sector_pct, effective_envelope) if sector_advisory else None
     sector_alternatives = []
@@ -2614,7 +2630,7 @@ def run_layered_optimizer(
             **persona_fields,
         }
         _capture_sector_policy(output, active_policy_out, sector_policy_mode, portfolio_data, watchlist_data,
-                               total_value, degraded_policy, sector_alternatives)
+                               total_value, degraded_policy, sector_alternatives, optimizer_policy_mode)
         return output
 
     except HardPolicyEnforcementError:
@@ -2638,6 +2654,7 @@ def run_layered_optimizer(
             effective_envelope=effective_envelope,
             enforce_effective_policy=enforce_effective_policy_in_fallback,
             sector_policy_mode=sector_policy_mode,
+            optimizer_policy_mode=optimizer_policy_mode,
             execution_context=execution_context,
             **({"advisory": advisory} if advisory is not None else {}),
         )

@@ -197,6 +197,9 @@ def get_report_card(db: Session, portfolio_id: int, snapshot_id: int) -> dict[st
         advisory_plan_provenance, derive_full_plan, read_snapshot_plan_inputs,
     )
     from services.evaluation.verdict_composer import compose_report_card_verdict
+    from services.optimizer.sector_policy import (
+        UNSUPPORTED_OPTIMIZER_POLICY_EVIDENCE, UnsupportedOptimizerPolicyEvidence,
+    )
 
     ws_row = db.query(Workspace).order_by(Workspace.id).first()
     ws = ws_row.id if ws_row else 1
@@ -222,7 +225,12 @@ def get_report_card(db: Session, portfolio_id: int, snapshot_id: int) -> dict[st
         except Exception:
             consensus = {}
 
-    inputs = read_snapshot_plan_inputs(db, snap)
+    unavailable_reason = "no_target_allocations"
+    try:
+        inputs = read_snapshot_plan_inputs(db, snap, raise_on_unsupported_policy=True)
+    except UnsupportedOptimizerPolicyEvidence:
+        inputs = None
+        unavailable_reason = UNSUPPORTED_OPTIMIZER_POLICY_EVIDENCE
 
     plan_grade_row = (
         db.query(RecommendationGrade)
@@ -232,7 +240,7 @@ def get_report_card(db: Session, portfolio_id: int, snapshot_id: int) -> dict[st
 
     plan_section: dict[str, Any]
     if inputs is None:
-        plan_section = {"status": "unavailable", "reason": "no_target_allocations"}
+        plan_section = {"status": "unavailable", "reason": unavailable_reason}
     else:
         # Report Card only: provenance-aware classification (same canonical
         # classifier as the optimizer page). Grades and other analytics keep the

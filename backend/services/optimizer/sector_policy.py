@@ -7,9 +7,49 @@ from services.portfolio_sector import SECTOR_CLASSIFICATION_VERSION
 
 EVIDENCE_VERSION = "wealth.policy-evidence.v2"
 SECTOR_POLICY_ADVISORY = "wealth.optimizer-sector-advisory.v1"
+OPTIMIZER_POLICY_MUJI_V2 = "wealth.optimizer-muji.v2"
+UNSUPPORTED_OPTIMIZER_POLICY_EVIDENCE = "unsupported_optimizer_policy_evidence"
 SECTOR_RULE = "effective_sector_limits"
 POSITION_RULE = "hard_constraints.max_single_position_pct"
 TOLERANCE = 1e-8
+
+
+class UnsupportedOptimizerPolicyEvidence(ValueError):
+    pass
+
+
+def optimizer_policy_mode(policy: dict, *, effective_envelope: dict | None = None) -> str | None:
+    """Read policy identity independently of the execution evidence version."""
+    if not isinstance(policy, dict):
+        raise UnsupportedOptimizerPolicyEvidence("Invalid active policy")
+    if isinstance(effective_envelope, dict) and "optimizer_policy_mode" in effective_envelope:
+        if effective_envelope["optimizer_policy_mode"] != policy.get("optimizer_policy_mode"):
+            raise UnsupportedOptimizerPolicyEvidence("Resolver and active policy modes disagree")
+    sector_mode = policy.get("sector_policy_mode")
+    if "sector_policy_mode" in policy and sector_mode != SECTOR_POLICY_ADVISORY:
+        raise UnsupportedOptimizerPolicyEvidence("Unrecognized sector policy mode")
+    if "optimizer_policy_mode" not in policy:
+        return sector_mode
+    if policy["optimizer_policy_mode"] != OPTIMIZER_POLICY_MUJI_V2:
+        raise UnsupportedOptimizerPolicyEvidence("Unrecognized optimizer policy mode")
+    if sector_mode != SECTOR_POLICY_ADVISORY:
+        raise UnsupportedOptimizerPolicyEvidence("MUJI V2 requires Sector Advisory v1")
+    return OPTIMIZER_POLICY_MUJI_V2
+
+
+def validate_frozen_optimizer_policy(policy: dict, *, effective_envelope: dict | None = None) -> str | None:
+    mode = optimizer_policy_mode(policy, effective_envelope=effective_envelope)
+    if mode == OPTIMIZER_POLICY_MUJI_V2:
+        from pydantic import ValidationError
+        from services.optimizer.execution_optimizer import ExecutionOptimizationResult
+
+        try:
+            schedule = ExecutionOptimizationResult.model_validate(policy.get("scheduled_execution"))
+        except ValidationError as exc:
+            raise UnsupportedOptimizerPolicyEvidence("Missing or invalid frozen MUJI V2 schedule") from exc
+        if schedule.scheduled_buys is None:
+            raise UnsupportedOptimizerPolicyEvidence("Missing frozen MUJI V2 buy schedule")
+    return mode
 
 
 def sector_caps_are_advisory(policy: dict | None) -> bool:

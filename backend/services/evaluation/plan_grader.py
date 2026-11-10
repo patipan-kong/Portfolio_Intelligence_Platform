@@ -124,7 +124,9 @@ def _derive_action_summary_and_buys(
     return action_summary, buy_trades, total_buy_deployment
 
 
-def read_snapshot_plan_inputs(db: Session, snap: Any) -> dict[str, Any] | None:
+def read_snapshot_plan_inputs(
+    db: Session, snap: Any, *, raise_on_unsupported_policy: bool = False,
+) -> dict[str, Any] | None:
     """Reconstruct the stored plan inputs for one RecommendationSnapshot.
 
     Reads target_allocations/active_policy directly off the snapshot
@@ -176,13 +178,33 @@ def read_snapshot_plan_inputs(db: Session, snap: Any) -> dict[str, Any] | None:
         except Exception:
             pass
 
-    stored_policy = (stored.get("active_policy") or {}) if isinstance(stored, dict) else {}
-    from services.optimizer.sector_policy import sector_caps_are_advisory
+    if not isinstance(stored, dict):
+        stored = {}
+    stored_policy = stored.get("active_policy") or {}
+    from services.optimizer.sector_policy import (
+        OPTIMIZER_POLICY_MUJI_V2, UnsupportedOptimizerPolicyEvidence, optimizer_policy_mode,
+        sector_caps_are_advisory, validate_frozen_optimizer_policy,
+    )
 
-    if sector_caps_are_advisory(stored_policy):
-        # The run and snapshot normally contain the same frozen policy. Use the
-        # run as a fallback if the snapshot lacks its captured fields.
-        active_policy = {**stored_policy, **active_policy}
+    try:
+        try:
+            snapshot_envelope = json.loads(getattr(snap, "constraint_envelope_json", None) or "null")
+        except (TypeError, ValueError):
+            snapshot_envelope = None
+        optimizer_policy_mode(stored_policy, effective_envelope=stored.get("effective_envelope"))
+        optimizer_policy_mode(active_policy, effective_envelope=snapshot_envelope)
+        if stored_policy and active_policy and (
+            stored_policy.get("optimizer_policy_mode") != active_policy.get("optimizer_policy_mode")
+        ):
+            raise UnsupportedOptimizerPolicyEvidence("Snapshot and run policy modes disagree")
+        if sector_caps_are_advisory(stored_policy):
+            # Older snapshots can lack fields that were captured in the run.
+            active_policy = {**stored_policy, **active_policy}
+        policy_mode = validate_frozen_optimizer_policy(active_policy)
+    except UnsupportedOptimizerPolicyEvidence:
+        if raise_on_unsupported_policy:
+            raise
+        return None
 
     return {
         "target_allocations": target_allocations,
@@ -195,13 +217,13 @@ def read_snapshot_plan_inputs(db: Session, snap: Any) -> dict[str, Any] | None:
         # the recorded classification for older runs.
         "policy_provenance": {
             "violation_evidence": active_policy.get("violation_evidence"),
-            **{key: active_policy[key] for key in ("concentration", "scheduled_execution")
+            **{key: active_policy[key] for key in ("concentration", "scheduled_execution", "optimizer_policy_mode")
                if key in active_policy},
             **{key: active_policy[key] for key in ("sector_policy_mode", "sector_alternatives",
                                                 "scheduled_action_summary", "hard_policy_unavailable", "emergency_override")
                if sector_caps_are_advisory(active_policy) and key in active_policy},
             **{key: stored[key] for key in ("execution_policy_version", "scheduled_execution")
-               if isinstance(stored, dict) and key in stored},
+               if key in stored and (key != "scheduled_execution" or policy_mode != OPTIMIZER_POLICY_MUJI_V2)},
             "hard_constraints": active_policy.get("hard_constraints"),
             "max_single_position_pct": (active_policy.get("hard_constraints") or {}).get("max_single_position_pct"),
             "total_value": run_total_value,
@@ -245,6 +267,7 @@ def derive_full_plan(
                 "max_single_position_pct": policy_provenance.get("max_single_position_pct"),
             },
             **{key: policy_provenance[key] for key in ("concentration", "scheduled_execution", "sector_policy_mode",
+                                                     "optimizer_policy_mode",
                                                      "hard_policy_unavailable", "emergency_override")
                if key in policy_provenance},
         }
@@ -395,6 +418,9 @@ def grade_pending_plans(db: Session, portfolio_id: int | None = None) -> dict[st
     horizon_grader.grade_due_recommendations; never raises per-snapshot.
     """
     from models.database import RecommendationGrade, RecommendationSnapshot, Workspace
+    from services.optimizer.sector_policy import (
+        UNSUPPORTED_OPTIMIZER_POLICY_EVIDENCE, UnsupportedOptimizerPolicyEvidence,
+    )
 
     graded: list[dict] = []
     skipped: list[dict] = []
@@ -413,7 +439,11 @@ def grade_pending_plans(db: Session, portfolio_id: int | None = None) -> dict[st
             if already:
                 continue
 
-            inputs = read_snapshot_plan_inputs(db, snap)
+            try:
+                inputs = read_snapshot_plan_inputs(db, snap, raise_on_unsupported_policy=True)
+            except UnsupportedOptimizerPolicyEvidence:
+                skipped.append({"snapshot_id": snap.id, "reason": UNSUPPORTED_OPTIMIZER_POLICY_EVIDENCE})
+                continue
             if inputs is None:
                 reason = "no_target_allocations" if not snap.projected_allocations_json else "unparseable_allocations"
                 skipped.append({"snapshot_id": snap.id, "reason": reason})

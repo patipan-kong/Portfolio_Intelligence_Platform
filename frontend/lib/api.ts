@@ -1930,6 +1930,7 @@ export interface PolicyHardConstraints {
 
 export interface ActivePolicy {
   sector_policy_mode?: string;
+  optimizer_policy_mode?: string;
   hard_policy_unavailable?: boolean;
   concentration?: Pick<SectorAdvisoryEvidence, "current" | "projected_target">;
   sector_alternatives?: SectorAdvisoryEvidence["alternatives"];
@@ -2057,6 +2058,7 @@ export type GoalConstraintRelationToBase =
   | "NOT_APPLICABLE";
 
 export type GoalConstraintApplicationStatus =
+  | "ADVISORY_ONLY"
   | "APPLIED_AND_BINDING"
   | "APPLIED_BUT_DOMINATED"
   | "NOT_APPLICABLE";
@@ -2093,6 +2095,7 @@ export interface GoalRecommendationConstraintEvidence {
 
 export interface OptimizerResult {
   execution_policy_version?: string;
+  execution_policy_evidence_status?: "unsupported_optimizer_policy_evidence";
   portfolio_name: string;
   status?: OptimizerStatus;
   final_consensus_score?: number | null;

@@ -131,6 +131,7 @@ class EffectiveEnvelope:
     emergency_active: bool
     regime_name:      str
     resolver_notes:   list[str]    # human-readable constraint adjustment notes
+    optimizer_policy_mode: str | None = None
 
 
 @dataclass(frozen=True)
@@ -268,6 +269,8 @@ def resolve_constraints(
     user_sector_limits: dict,
     regime_ctx: dict | None,
     persona_ctx: dict | None,
+    *,
+    optimizer_policy_mode: str | None = None,
 ) -> EffectiveEnvelope:
     """Resolve all optimizer constraints into a single deterministic EffectiveEnvelope.
 
@@ -392,6 +395,7 @@ def resolve_constraints(
         emergency_active=emergency,
         regime_name=regime_name,
         resolver_notes=notes,
+        optimizer_policy_mode=optimizer_policy_mode,
     )
 
 
@@ -456,6 +460,7 @@ def _bd_to_dict(bd: ConstraintBreakdown) -> dict:
 def envelope_to_dict(envelope: EffectiveEnvelope) -> dict:
     """Convert EffectiveEnvelope to a JSON-serializable dict for API responses."""
     return {
+        **({"optimizer_policy_mode": envelope.optimizer_policy_mode} if envelope.optimizer_policy_mode else {}),
         "single_position":   _bd_to_dict(envelope.single_position),
         "cash_min":          _bd_to_dict(envelope.cash_min),
         "turnover_max":      _bd_to_dict(envelope.turnover_max),

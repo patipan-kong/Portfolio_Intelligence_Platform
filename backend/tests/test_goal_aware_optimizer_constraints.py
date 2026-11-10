@@ -19,6 +19,7 @@ from models.database import (
     AgentCache, Base, OptimizerHistory, Portfolio, PortfolioItem,
     RecommendationSnapshot, Watchlist, WealthGoal, Workspace,
 )
+from services.optimizer.sector_policy import OPTIMIZER_POLICY_MUJI_V2
 
 
 def _session():
@@ -193,39 +194,52 @@ def test_not_applicable_preserves_legacy_optimizer_inputs_and_persists_evidence(
     result = asyncio.run(main.analyze_optimizer(main.OptimizerRequest(
         portfolio_id=portfolio.id, goal_constraint_goal_id=goal.id,
     ), db))
-    assert calls[0][1]["enforce_effective_policy_in_fallback"] is False
+    assert not calls[0][1].get("enforce_effective_policy_in_fallback")
     assert result["goal_recommendation_constraints"]["resolution"]["application_status"] == "NOT_APPLICABLE"
     history = db.query(OptimizerHistory).one()
     persisted = json.loads(history.result_json)
     assert persisted["goal_recommendation_constraints"] == result["goal_recommendation_constraints"]
 
 
-def test_candidate_propagates_goal20_and_history_survives_snapshot_failure(monkeypatch):
+def test_goal20_is_advisory_and_history_survives_snapshot_failure(monkeypatch):
     calls = []
     def optimizer(*args, **kwargs):
         calls.append((args, kwargs))
-        return {"fallback_mode": True}
+        return {"fallback_mode": True, "active_policy": args[14]}
     _patch_pre_ai_pipeline(monkeypatch, optimizer)
     from services.decision_memory import snapshot_writer
-    monkeypatch.setattr(snapshot_writer, "write_recommendation_snapshot", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("snapshot")))
+    snapshot_contexts = []
+
+    def fail_snapshot(*args, wealth_goal_context, **kwargs):
+        snapshot_contexts.append(wealth_goal_context)
+        raise RuntimeError("snapshot")
+
+    monkeypatch.setattr(snapshot_writer, "write_recommendation_snapshot", fail_snapshot)
     db = _session()
     ws_id = main._ws_id(db)
     portfolio = _pipeline_portfolio(db, ws_id)
     goal = _goal(db, ws_id, target_date=(date.today() + timedelta(days=30)).isoformat())
     result = asyncio.run(main.analyze_optimizer(main.OptimizerRequest(
-        portfolio_id=portfolio.id, goal_constraint_goal_id=goal.id,
+        portfolio_id=portfolio.id, goal_constraint_goal_id=goal.id, goal_ids=[goal.id],
     ), db))
     args, kwargs = calls[0]
     effective_envelope = args[15]
     policy_context = args[14]
-    assert effective_envelope.effective_single_position_pct == 20
-    assert policy_context["hard_constraints"]["max_single_position_pct"] <= 20
-    assert kwargs["enforce_effective_policy_in_fallback"] is True
+    assert effective_envelope.effective_single_position_pct == 22
+    assert effective_envelope.optimizer_policy_mode == OPTIMIZER_POLICY_MUJI_V2
+    assert policy_context["hard_constraints"]["max_single_position_pct"] == 22
+    assert policy_context["optimizer_policy_mode"] == kwargs["optimizer_policy_mode"] == OPTIMIZER_POLICY_MUJI_V2
+    assert not kwargs.get("enforce_effective_policy_in_fallback")
     assert db.query(RecommendationSnapshot).count() == 0
+    assert snapshot_contexts[0]["selected_goal_ids"] == [goal.id]
     persisted = json.loads(db.query(OptimizerHistory).one().result_json)
     assert persisted["goal_recommendation_constraints"] == result["goal_recommendation_constraints"]
     assert persisted["fallback_mode"] is True
     frozen_evidence = persisted["goal_recommendation_constraints"]
+    assert persisted["active_policy"]["goal_recommendation_constraints"] == frozen_evidence
+    assert frozen_evidence["contribution"]["upper_bound_pct"] == 20
+    assert frozen_evidence["resolution"]["application_status"] == "ADVISORY_ONLY"
+    assert frozen_evidence["resolution"]["resulting_binding_source"] is None
     goal.target_date = "2099-01-01"
     goal.is_archived = True
     db.commit()
@@ -234,26 +248,32 @@ def test_candidate_propagates_goal20_and_history_survives_snapshot_failure(monke
     assert json.loads(db.query(OptimizerHistory).one().result_json)["goal_recommendation_constraints"] == frozen_evidence
 
 
-def test_candidate_resolver_failure_fails_closed_and_finalizes_once(monkeypatch):
-    _patch_pre_ai_pipeline(monkeypatch, lambda *a, **k: pytest.fail("AI must not run"))
-    from services.optimizer import constraint_resolver
-    from services import run_progress
-    monkeypatch.setattr(constraint_resolver, "resolve_constraints", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("resolver")))
-    finishes = []
-    monkeypatch.setattr(run_progress, "finish_run", lambda portfolio_id, ok: finishes.append((portfolio_id, ok)))
+@pytest.mark.parametrize("failed_stage", ["resolver", "policy"])
+def test_advisory_goal_does_not_turn_policy_degradation_into_goal_failure(monkeypatch, failed_stage):
+    from services.optimizer import constraint_resolver, policy_engine
+
+    def optimizer(*args, **kwargs):
+        assert kwargs["optimizer_policy_mode"] == OPTIMIZER_POLICY_MUJI_V2
+        assert not kwargs.get("enforce_effective_policy_in_fallback")
+        assert args[15 if failed_stage == "resolver" else 14] is None
+        return {}
+
+    def unavailable(*args, **kwargs):
+        raise RuntimeError(failed_stage)
+
+    _patch_pre_ai_pipeline(monkeypatch, optimizer)
+    if failed_stage == "resolver":
+        monkeypatch.setattr(constraint_resolver, "resolve_constraints", unavailable)
+    else:
+        monkeypatch.setattr(policy_engine, "compute_policy", unavailable)
     db = _session()
     ws_id = main._ws_id(db)
     portfolio = _pipeline_portfolio(db, ws_id)
     goal = _goal(db, ws_id, target_date=(date.today() + timedelta(days=30)).isoformat())
-    with pytest.raises(HTTPException) as exc:
-        asyncio.run(main.analyze_optimizer(main.OptimizerRequest(
-            portfolio_id=portfolio.id, goal_constraint_goal_id=goal.id,
-        ), db))
-    assert exc.value.status_code == 500
-    assert exc.value.detail["code"] == "GOAL_RECOMMENDATION_CONSTRAINT_INTERNAL_ERROR"
-    assert finishes == [(portfolio.id, False)]
-    assert db.query(OptimizerHistory).count() == 0
-    assert db.query(RecommendationSnapshot).count() == 0
+    result = asyncio.run(main.analyze_optimizer(main.OptimizerRequest(
+        portfolio_id=portfolio.id, goal_constraint_goal_id=goal.id,
+    ), db))
+    assert result["goal_recommendation_constraints"]["resolution"]["application_status"] == "ADVISORY_ONLY"
 
 
 def test_candidate_generic_optimizer_failure_remains_generic_and_finalizes(monkeypatch):
@@ -273,52 +293,29 @@ def test_candidate_generic_optimizer_failure_remains_generic_and_finalizes(monke
     assert db.query(OptimizerHistory).count() == 0
 
 
-def test_candidate_policy_engine_failure_fails_closed_before_optimizer(monkeypatch):
-    _patch_pre_ai_pipeline(monkeypatch, lambda *a, **k: pytest.fail("optimizer must not run"))
-    from services.optimizer import policy_engine
-    from services import run_progress
-    monkeypatch.setattr(policy_engine, "compute_policy", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("policy")))
-    finishes = []
-    monkeypatch.setattr(run_progress, "finish_run", lambda portfolio_id, ok: finishes.append((portfolio_id, ok)))
-    db = _session()
-    ws_id = main._ws_id(db)
-    portfolio = _pipeline_portfolio(db, ws_id)
-    goal = _goal(db, ws_id, target_date=(date.today() + timedelta(days=30)).isoformat())
-    with pytest.raises(HTTPException) as exc:
-        asyncio.run(main.analyze_optimizer(main.OptimizerRequest(
-            portfolio_id=portfolio.id, goal_constraint_goal_id=goal.id,
-        ), db))
-    assert exc.value.detail["code"] == "GOAL_RECOMMENDATION_CONSTRAINT_INTERNAL_ERROR"
-    assert finishes == [(portfolio.id, False)]
-
-
-def test_candidate_typed_enforcement_failure_is_goal_specific(monkeypatch):
+def test_advisory_goal_does_not_relabel_hard_policy_failure(monkeypatch):
     from agents.optimizer import HardPolicyEnforcementError
     _patch_pre_ai_pipeline(monkeypatch, lambda *a, **k: (_ for _ in ()).throw(HardPolicyEnforcementError("hard")))
     db = _session()
     ws_id = main._ws_id(db)
     portfolio = _pipeline_portfolio(db, ws_id)
     goal = _goal(db, ws_id, target_date=(date.today() + timedelta(days=30)).isoformat())
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(HardPolicyEnforcementError, match="hard"):
         asyncio.run(main.analyze_optimizer(main.OptimizerRequest(
             portfolio_id=portfolio.id, goal_constraint_goal_id=goal.id,
         ), db))
-    assert exc.value.status_code == 500
-    assert exc.value.detail["code"] == "GOAL_RECOMMENDATION_CONSTRAINT_INTERNAL_ERROR"
 
 
-def test_progress_finalization_failure_does_not_mask_goal_internal_error(monkeypatch):
-    _patch_pre_ai_pipeline(monkeypatch, lambda *a, **k: pytest.fail("optimizer must not run"))
-    from services.optimizer import constraint_resolver
+def test_progress_finalization_failure_does_not_mask_optimizer_error(monkeypatch):
+    from agents.optimizer import HardPolicyEnforcementError
     from services import run_progress
-    monkeypatch.setattr(constraint_resolver, "resolve_constraints", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("resolver")))
+    _patch_pre_ai_pipeline(monkeypatch, lambda *a, **k: (_ for _ in ()).throw(HardPolicyEnforcementError("hard")))
     monkeypatch.setattr(run_progress, "finish_run", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("finish")))
     db = _session()
     ws_id = main._ws_id(db)
     portfolio = _pipeline_portfolio(db, ws_id)
     goal = _goal(db, ws_id, target_date=(date.today() + timedelta(days=30)).isoformat())
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(HardPolicyEnforcementError, match="hard"):
         asyncio.run(main.analyze_optimizer(main.OptimizerRequest(
             portfolio_id=portfolio.id, goal_constraint_goal_id=goal.id,
         ), db))
-    assert exc.value.detail["code"] == "GOAL_RECOMMENDATION_CONSTRAINT_INTERNAL_ERROR"

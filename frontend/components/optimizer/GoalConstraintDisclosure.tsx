@@ -45,6 +45,14 @@ function StatusDetail({ evidence }: { evidence: GoalRecommendationConstraintEvid
     );
   }
 
+  if (status === "ADVISORY_ONLY") {
+    return (
+      <p>
+        {evidence.contribution ? `The ${formatPct(evidence.contribution.upper_bound_pct)} Goal threshold` : "The Goal threshold"} is advisory and did not change the position limit.
+      </p>
+    );
+  }
+
   if (status === "NOT_APPLICABLE") {
     return <p className="font-medium text-gray-700">Not applicable for this run</p>;
   }

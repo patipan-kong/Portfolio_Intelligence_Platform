@@ -28,6 +28,7 @@ from models.database import (
     AgentCache, AnalysisCache, Base, OptimizerHistory, Portfolio, PortfolioItem, RecommendationSnapshot,
     Watchlist,
 )
+from services.optimizer.sector_policy import OPTIMIZER_POLICY_MUJI_V2
 
 FLAG = "FEATURE_ADVISORY_INTENT_REVIEW_V1"
 L1_EMPTY = {"swaps": [], "top_buys": [], "sector_flags": [], "priority": "balanced", "summary": "s."}
@@ -209,7 +210,7 @@ def test_disabled_is_legacy_prompts_response_and_persistence(monkeypatch, disabl
     assert outputs[0] == outputs[1]
 
 
-@pytest.mark.parametrize("path", ["layered", "fallback", "degraded"])
+@pytest.mark.parametrize("path", ["layered", "fallback", "auditor_degraded", "degraded", "degraded_fallback"])
 def test_sector_warning_allows_no_action(monkeypatch, disabled, path):
     from services.optimizer import policy_engine
     from services.optimizer.sector_policy import SECTOR_POLICY_ADVISORY
@@ -219,9 +220,12 @@ def test_sector_warning_allows_no_action(monkeypatch, disabled, path):
     proposal["blocked_opportunities"] = [{"symbol": "WWW", "reason": "sector_limit_exceeded"}]
     proposal["agrees_with_layer1"] = False
     proposal["disagreements"] = ["Technology exceeds the sector threshold"]
-    ai = FakeAI(proposal, fallback=proposal, fail=("layer2",) if path == "fallback" else ())
+    fallback = path in ("fallback", "degraded_fallback")
+    degraded = path in ("degraded", "degraded_fallback")
+    failed_layers = ("layer3",) if path == "auditor_degraded" else ()
+    ai = FakeAI(None if fallback else proposal, fallback=proposal, fail=failed_layers)
     patch_pipeline(monkeypatch, ai)
-    if path == "degraded":
+    if degraded:
         def unavailable(*args, **kwargs):
             raise RuntimeError("policy unavailable")
         monkeypatch.setattr(policy_engine, "compute_policy", unavailable)
@@ -234,6 +238,13 @@ def test_sector_warning_allows_no_action(monkeypatch, disabled, path):
     assert result["blocked_opportunities"] == []
     policy = result["active_policy"]
     assert policy["sector_policy_mode"] == SECTOR_POLICY_ADVISORY
+    assert policy["optimizer_policy_mode"] == OPTIMIZER_POLICY_MUJI_V2
+    if fallback:
+        assert "effective_envelope" not in result
+    else:
+        assert result["effective_envelope"]["optimizer_policy_mode"] == OPTIMIZER_POLICY_MUJI_V2
+    stored = json.loads(db.query(OptimizerHistory).one().result_json)
+    assert stored["active_policy"]["optimizer_policy_mode"] == OPTIMIZER_POLICY_MUJI_V2
     assert policy["concentration"]["current"]["sectors"][0]["breach_pp"] > 0
     assert policy["sector_alternatives"][0]["estimated_amount"] == 250000
     assert not any(flag.startswith("SECTOR_") for flag in policy.get("violations", []))
@@ -243,13 +254,15 @@ def test_sector_warning_allows_no_action(monkeypatch, disabled, path):
     if path == "layered":
         assert result["consensus"]["consensus_type"] == "NO_ACTION_CONSENSUS"
         assert "sector_advisories" in ai.prompts["layer3"][0]
-    elif path == "fallback":
+    if fallback:
         assert result["fallback_mode"]
         assert "Sector caps are advisory" in ai.prompts["fallback"][0]
-    else:
+    if degraded:
         assert policy["hard_policy_unavailable"]
         assert "MISSING_POLICY_EVIDENCE" in result["execution_optimization"]["policy_review_reasons"]
-    if path != "fallback":
+    if path == "auditor_degraded":
+        assert "layer3 provider down" in result["layer3_result"]["error"]
+    if not fallback:
         assert result["layer2_result"]["agrees_with_layer1"]
         assert result["layer2_result"]["unscored_comments"] == proposal["disagreements"]
 
@@ -288,14 +301,34 @@ def test_sector_advisory_history_snapshot_report_card_and_actual_use_frozen_sche
     history = db.query(OptimizerHistory).one()
     payload = json.loads(history.result_json)
     assert payload["active_policy"]["sector_policy_mode"] == SECTOR_POLICY_ADVISORY
+    assert payload["active_policy"]["optimizer_policy_mode"] == OPTIMIZER_POLICY_MUJI_V2
     assert payload["active_policy"]["scheduled_execution"] == frozen
+    stale_schedule = {**frozen, "scheduled_buys": {"AAA": 1}, "total_buy_deployment": 1}
+    history.result_json = json.dumps({
+        **payload, "scheduled_execution": stale_schedule, "execution_optimization": stale_schedule,
+    })
     snap_id = write_recommendation_snapshot(
         db, workspace_id=p.workspace_id, portfolio_id=p.id, optimizer_history_id=history.id,
         optimizer_result=payload, persona=None, total_portfolio_value=500000,
         scores_map={"AAA": {"current_price": 50}},
     )
     snap = db.get(RecommendationSnapshot, snap_id)
-    assert json.loads(snap.active_policy_json)["sector_policy_mode"] == SECTOR_POLICY_ADVISORY
+    frozen_policy = json.loads(snap.active_policy_json)
+    assert frozen_policy["sector_policy_mode"] == SECTOR_POLICY_ADVISORY
+    assert frozen_policy["optimizer_policy_mode"] == OPTIMIZER_POLICY_MUJI_V2
+    assert json.loads(snap.constraint_envelope_json)["optimizer_policy_mode"] == OPTIMIZER_POLICY_MUJI_V2
+
+    original_policy_json = snap.active_policy_json
+    legacy_marker = dict(frozen_policy)
+    del legacy_marker["optimizer_policy_mode"]
+    unavailable = {"status": "unavailable", "reason": "unsupported_optimizer_policy_evidence"}
+    for invalid_policy in (legacy_marker, {**frozen_policy, "scheduled_execution": {}}):
+        snap.active_policy_json = json.dumps(invalid_policy)
+        assert get_report_card(db, p.id, snap_id)["plan"] == unavailable
+        assert grade_pending_plans(db, portfolio_id=p.id)["skipped"] == [
+            {"snapshot_id": snap_id, "reason": "unsupported_optimizer_policy_evidence"},
+        ]
+    snap.active_policy_json = original_policy_json
     grade_pending_plans(db, portfolio_id=p.id)
     db.add(UserExecutionDecision(
         workspace_id=p.workspace_id, portfolio_id=p.id, recommendation_snapshot_id=snap_id,
@@ -309,6 +342,16 @@ def test_sector_advisory_history_snapshot_report_card_and_actual_use_frozen_sche
     assert report["plan"]["buy_trades"][0]["planned_amount"] == 250000
     assert report["plan"]["sector_advisory"]["scheduled"] == frozen["scheduled_sector_evaluation"]
     assert report["execution"]["analysis"]["symbols"]["AAA"]["planned_amount"] == 250000
+
+    for invalid_policy in (
+        {**frozen_policy, "optimizer_policy_mode": "wealth.optimizer-muji.v999"},
+        {**frozen_policy, "scheduled_execution": None},
+        {**frozen_policy, "scheduled_execution": {}},
+    ):
+        history.result_json = json.dumps({**payload, "active_policy": invalid_policy, "execution_optimization": frozen})
+        invalid = asyncio.run(main.get_optimizer_history_detail(history.id, db))
+        assert invalid["execution_policy_evidence_status"] == "unsupported_optimizer_policy_evidence"
+        assert "execution_optimization" not in invalid
 
 
 def test_sector_advisory_does_not_override_cooldown_or_change_hard_scores():
@@ -520,7 +563,9 @@ def test_l1_retry_carries_hard_context(monkeypatch, enabled):
     db = session()
     p = seed(db, book(), cash=CASH)
     set_intent(db, p, "AAA", inc=True)
-    envelope = run(db, p)["advisory_intent_review"]
+    result = run(db, p)
+    assert result["active_policy"]["optimizer_policy_mode"] == OPTIMIZER_POLICY_MUJI_V2
+    envelope = result["advisory_intent_review"]
     assert "- AAA: do not increase" in ai.prompts["layer1_retry"][0]
     path = [(e["layer"], e["outcome"]) for e in envelope["prompt_use"]["path"]]
     assert path[:2] == [("L1", "FAILED"), ("L1_RETRY", "SUCCESS")]
