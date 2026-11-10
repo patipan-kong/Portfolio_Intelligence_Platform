@@ -2220,6 +2220,11 @@ export interface OptimizedTrade {
   required_amount?: number | null;
   discretionary_amount?: number | null;
   policy_evidence?: PolicyRepairEvidence[] | null;
+  funding_basis?: string | null;
+  original_action?: string | null;
+  original_rationale?: string | null;
+  scheduled_cash_impact?: number | null;
+  deferral_reason?: string | null;
 }
 
 export interface PolicyExposureEvidence {
@@ -2278,6 +2283,9 @@ export interface ExecutionOptimizationResult {
   effective_turnover_cap_pct?: number | null;
   valuation_nav?: number | null;
   policy_review_reasons?: string[] | null;
+  scheduled_changes?: Record<string, number> | null;
+  estimated_trade_costs?: Record<string, number> | null;
+  funding_assumptions?: string[] | null;
 }
 
 export interface OptimizerHistoryItem {
@@ -4681,6 +4689,8 @@ export const getRecommendationsLedger = (portfolioId: number, limit = 50, offset
   );
 
 export interface ReportCardPlanSection {
+  optimizer_policy_mode?: string | null;
+  recommended_actions?: Array<{ symbol: string; action: string; rationale?: string | null }>;
   sector_advisory?: SectorAdvisoryEvidence;
   status: "ok" | "unavailable";
   reason?: string;

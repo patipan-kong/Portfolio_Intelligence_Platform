@@ -269,6 +269,7 @@ def compose_report_card_verdict(
     benchmark_return_pct: float | None,
     alpha: float | None,
     directional_correct: bool | None,
+    plan_grade_version: str | None = None,
 ) -> dict[str, str]:
     """The Report Card's bottom verdict strip (UX S3).
 
@@ -280,6 +281,16 @@ def compose_report_card_verdict(
     if plan_score is None:
         plan_en = "This recommendation has not yet been graded."
         plan_th = "คำแนะนำนี้ยังไม่ได้รับการประเมิน"
+    elif plan_grade_version == "wealth.plan-grade-muji.v2":
+        if plan_score >= 80:
+            plan_en = "The frozen advisory plan has strong execution evidence"
+            plan_th = "แผนคำแนะนำมีหลักฐานด้านการดำเนินการที่ชัดเจน"
+        elif plan_score >= 60:
+            plan_en = "The frozen advisory plan has some execution-evidence gaps"
+            plan_th = "แผนคำแนะนำยังมีช่องว่างด้านหลักฐานการดำเนินการบางส่วน"
+        else:
+            plan_en = "The frozen advisory plan has significant execution-evidence gaps"
+            plan_th = "แผนคำแนะนำยังมีช่องว่างด้านหลักฐานการดำเนินการที่สำคัญ"
     elif plan_score >= 80:
         plan_en = "A well-constructed plan"
         plan_th = "แผนการลงทุนที่มีคุณภาพดี"

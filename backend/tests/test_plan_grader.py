@@ -279,3 +279,98 @@ def test_grade_pending_plans_skips_missing_allocations(db, ws_portfolio):
     assert result["graded"] == []
     assert len(result["skipped"]) == 1
     assert result["skipped"][0]["reason"] == "no_target_allocations"
+
+
+def _muji_policy(*, verified=True, buy=0.0):
+    sale = 10_000.0 if verified else 0.0
+    buy_cost = round(buy * 0.0015, 2)
+    return {
+        "optimizer_policy_mode": "wealth.optimizer-muji.v2",
+        "sector_policy_mode": "wealth.optimizer-sector-advisory.v1",
+        "concentration": {"positions": {"SELL1": {"sell_signal": verified}}},
+        "scheduled_execution": {
+            "cash_available": 1_000.0, "total_buy_deployment": buy,
+            "funding_gap": max(0.0, buy - 1_000.0 - sale + sale * 0.0015),
+            "idle_cash_after": round(1_000 + sale - sale * 0.0015 - buy - buy_cost, 2),
+            "scheduled_buys": {"BUY1": buy} if buy else {},
+            "scheduled_changes": {**({"SELL1": -sale} if sale else {}), **({"BUY1": buy} if buy else {})},
+            "estimated_trade_costs": {**({"SELL1": sale * 0.0015} if sale else {}),
+                                      **({"BUY1": buy_cost} if buy else {})},
+            "scheduled_turnover_pct": 10.0, "effective_turnover_cap_pct": 20.0,
+            "trades": [{
+                "symbol": "SELL1", "action": "SELL", "reason": "INVESTMENT_THESIS",
+                "necessity": "DISCRETIONARY", "execution_role": "STANDALONE" if not buy else "FUNDING_SOURCE",
+                "execution_state": "FULL" if verified else "DEFERRED",
+                "full_recommended_amount": 10_000.0, "executed_amount": sale,
+                "evidence_status": "NOT_APPLICABLE" if verified else "UNVERIFIED",
+                "funding_basis": "INDEPENDENT_FROZEN_SELL_SIGNAL" if verified else "UNVERIFIED",
+                "note": "Frozen SELL signal" if verified else "Unverified sale deferred",
+            }],
+        },
+    }
+
+
+def test_muji_verified_sell_to_cash_and_funding_role_have_equal_action_credit():
+    allocations = [_alloc("SELL1", "SELL", -10, -10_000)]
+    standalone = compute_plan_grade(allocations, 1_000, policy_provenance=_muji_policy())
+    assert standalone["grade_version"] == "wealth.plan-grade-muji.v2"
+    assert standalone["score"] == 100
+    assert standalone["projected_cash"] == 10_985
+    funded = _muji_policy(buy=5_000)
+    result = compute_plan_grade([*allocations, _alloc("BUY1", "BUY", 5, 5_000)], 1_000,
+                                policy_provenance=funded)
+    assert result["action_evidence_score"] == 100
+    assert result["score"] == standalone["score"]
+
+
+def test_muji_unverified_or_cap_only_sale_gets_no_action_credit():
+    allocations = [_alloc("SELL1", "SELL", -10, -10_000)]
+    policy = _muji_policy(verified=False)
+    grade = compute_plan_grade(allocations, 1_000, policy_provenance=policy)
+    assert grade["action_evidence_score"] == 0
+    assert grade["deferred_count"] == 1
+    allocations[0]["reason"] = "Position exceeds advisory cap"
+    policy["concentration"] = {"position_cap": 15, "sector_cap": 40}
+    assert compute_plan_grade(allocations, 1_000, policy_provenance=policy) == grade
+    policy["concentration"]["position_cap"] = 25
+    assert compute_plan_grade(allocations, 1_000, policy_provenance=policy) == grade
+
+
+def test_muji_cash_limited_buy_remains_recommendation_without_scheduled_credit():
+    policy = _muji_policy(verified=False)
+    allocations = [_alloc("SELL1", "SELL", -10, -10_000),
+                   _alloc("BUY1", "BUY", 5, 5_000)]
+    grade = compute_plan_grade(allocations, 1_000, policy_provenance=policy)
+    assert grade["scheduled_buy_count"] == 0
+    assert grade["action_evidence_score"] == 0
+    assert grade["projected_cash"] == 1_000
+
+
+def test_muji_supported_hold_has_no_trade_penalty():
+    policy = _muji_policy(verified=False)
+    schedule = policy["scheduled_execution"]
+    schedule["trades"] = []
+    schedule["scheduled_turnover_pct"] = 0
+    grade = compute_plan_grade([_alloc("HOLD1", "HOLD", 0, 0)], 1_000,
+                               portfolio_assessment="No investment change is justified.",
+                               policy_provenance=policy)
+    assert grade["trade_count"] == 0
+    assert grade["action_evidence_score"] == 100
+    assert grade["score"] == 100
+
+
+def test_muji_missing_or_malformed_frozen_schedule_is_unavailable(db, ws_portfolio):
+    from models.database import RecommendationGrade
+    from services.optimizer.sector_policy import UnsupportedOptimizerPolicyEvidence
+    allocations = [_alloc("SELL1", "SELL", -10, -10_000)]
+    policy = _muji_policy()
+    for broken in (None, {**policy["scheduled_execution"], "scheduled_changes": None},
+                   {**policy["scheduled_execution"], "idle_cash_after": 11_000}):
+        candidate = {**policy, "scheduled_execution": broken}
+        with pytest.raises(UnsupportedOptimizerPolicyEvidence):
+            compute_plan_grade(allocations, 1_000, policy_provenance=candidate)
+    ws, portfolio = ws_portfolio
+    _seed_snapshot(db, ws, portfolio, allocations, cash_balance=1_000,
+                   active_policy={**policy, "scheduled_execution": {**policy["scheduled_execution"], "idle_cash_after": 11_000}})
+    assert grade_pending_plans(db)["skipped"][0]["reason"] == "unsupported_optimizer_policy_evidence"
+    assert db.query(RecommendationGrade).count() == 0

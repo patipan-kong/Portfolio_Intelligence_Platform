@@ -2,6 +2,7 @@ import type { OptimizerResult } from "./api";
 import { deriveExecutionPlan, NO_ACTION_REASON_LABELS } from "./executionPlan";
 
 export const SECTOR_POLICY_ADVISORY = "wealth.optimizer-sector-advisory.v1";
+export const OPTIMIZER_POLICY_MUJI_V2 = "wealth.optimizer-muji.v2";
 
 export function assessment(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
@@ -11,6 +12,10 @@ export function assessment(value: unknown): number | null {
 // backend. Never turn an absent/partial summary into a confirmed empty plan.
 export function executionEvidenceAvailable(result: OptimizerResult): boolean {
   if (result.execution_policy_evidence_status === "unsupported_optimizer_policy_evidence") return false;
+  if (result.active_policy?.optimizer_policy_mode === OPTIMIZER_POLICY_MUJI_V2 &&
+      (result.execution_optimization?.scheduled_changes == null ||
+       result.execution_optimization?.estimated_trade_costs == null ||
+       result.execution_optimization?.scheduled_buys == null)) return false;
   if (result.active_policy?.sector_policy_mode === SECTOR_POLICY_ADVISORY
       && result.execution_optimization?.scheduled_buys == null) return false;
   const summary = result.action_summary;

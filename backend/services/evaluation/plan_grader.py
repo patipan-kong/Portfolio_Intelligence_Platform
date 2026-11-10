@@ -39,11 +39,9 @@ deterministic composite over data the pipeline already produced:
                                on an already-guaranteed property, not new
                                judgment.
 
-This module re-derives the execution plan via `optimize_execution` on
-STORED inputs (target_allocations, cash_balance, active_policy.violations —
-all frozen at analysis time) rather than re-running any AI layer or
-re-deriving execution_optimizer's own arithmetic — same inputs always
-produce the same PLAN grade (PLAN §4.1, §4.6; Invariant 3).
+Legacy and Sector Advisory v1 grades re-derive the execution plan from stored
+inputs. MUJI V2 grades the canonical frozen monetary schedule and marks
+incomplete or contradictory evidence unavailable.
 
 Zero AI calls, zero DB writes to anything but `recommendation_grades`
 (append-only, P3), zero mutation of `RecommendationSnapshot`/
@@ -79,6 +77,7 @@ from __future__ import annotations
 
 import json
 import logging
+from math import ceil, isfinite
 from datetime import datetime
 from typing import Any
 
@@ -92,6 +91,127 @@ _WEIGHT_NECESSITY = 30.0
 _WEIGHT_FUNDING_EFFICIENCY = 30.0
 _WEIGHT_TURNOVER = 20.0
 _WEIGHT_EXPLANATION = 20.0
+_MUJI_PLAN_GRADE_VERSION = "wealth.plan-grade-muji.v2"
+
+
+def _compute_muji_plan_grade(
+    target_allocations: list[dict], cash_available: float,
+    portfolio_assessment: str | None, no_action_summary: str | None,
+    provenance: dict[str, Any],
+) -> dict[str, Any]:
+    """Grade frozen advisory-plan integrity, never investment performance."""
+    from services.optimizer.execution_optimizer import ExecutionOptimizationResult
+    from services.optimizer.sector_policy import UnsupportedOptimizerPolicyEvidence
+
+    try:
+        raw = provenance["scheduled_execution"]
+        if not isinstance(raw, dict) or any(raw.get(k) is None for k in (
+            "scheduled_buys", "scheduled_changes", "estimated_trade_costs",
+            "scheduled_turnover_pct", "effective_turnover_cap_pct",
+        )):
+            raise ValueError("Incomplete frozen monetary schedule")
+        plan = ExecutionOptimizationResult.model_validate(raw)
+        buys = plan.scheduled_buys or {}
+        changes = plan.scheduled_changes or {}
+        costs = plan.estimated_trade_costs or {}
+        allocations = {a["symbol"]: a for a in target_allocations}
+        if len(allocations) != len(target_allocations):
+            raise ValueError("Duplicate allocation symbols")
+        if not all(isfinite(float(v)) and float(v) >= 0 for v in
+                   (plan.cash_available, plan.idle_cash_after, *buys.values(), *costs.values())):
+            raise ValueError("Invalid monetary value")
+        if not all(isfinite(float(v)) for v in changes.values()):
+            raise ValueError("Invalid scheduled change")
+        if abs(plan.cash_available - cash_available) > 0.011:
+            raise ValueError("Frozen cash disagrees with run")
+        if set(costs) != {s for s, v in changes.items() if abs(v) > 0.001}:
+            raise ValueError("Trade cost evidence disagrees with schedule")
+        for symbol, amount in buys.items():
+            if allocations[symbol]["action"] not in ("BUY", "ACCUMULATE") or amount <= 0 or abs(changes[symbol] - amount) > 0.011:
+                raise ValueError("Invalid frozen BUY direction")
+        sales = {t.symbol: t for t in plan.trades}
+        positions = (provenance.get("concentration") or {}).get("positions") or {}
+        if len(sales) != len(plan.trades):
+            raise ValueError("Duplicate frozen SELL")
+        for symbol, trade in sales.items():
+            if allocations[symbol]["action"] not in ("SELL", "REDUCE") or trade.action != allocations[symbol]["action"]:
+                raise ValueError("Invalid frozen SELL direction")
+            if trade.executed_amount < 0 or abs(changes.get(symbol, 0) + trade.executed_amount) > 0.011:
+                raise ValueError("Frozen sale disagrees with schedule")
+            if trade.executed_amount and (trade.funding_basis != "INDEPENDENT_FROZEN_SELL_SIGNAL"
+                                          or trade.evidence_status == "UNVERIFIED" or trade.execution_state == "DEFERRED"):
+                raise ValueError("Unsupported scheduled SELL")
+            if trade.executed_amount and (positions.get(symbol, {}).get("sell_signal") is not True
+                                          or allocations[symbol].get("decision_basis") in
+                                          ("SECTOR_ADVISORY", "CONCENTRATION_ADVISORY")):
+                raise ValueError("Scheduled SELL lacks independent frozen signal")
+        if any(symbol not in buys and symbol not in sales for symbol in changes):
+            raise ValueError("Unrecognized scheduled action")
+        expected_cash = plan.cash_available - sum(changes.values()) - sum(costs.values())
+        if abs(expected_cash - plan.idle_cash_after) > 0.021:
+            raise ValueError("Frozen cash does not reconcile")
+        cash_floor_pct = (provenance.get("hard_constraints") or {}).get("min_cash_pct")
+        if cash_floor_pct and provenance.get("total_value") is not None and (
+            plan.idle_cash_after + 0.021 < float(provenance["total_value"]) * float(cash_floor_pct) / 100
+        ):
+            raise ValueError("Frozen cash violates the applicable cash floor")
+        if abs(plan.total_buy_deployment - sum(buys.values())) > 0.011:
+            raise ValueError("Frozen BUY total does not reconcile")
+        if any(cost < 0 or abs(cost - ceil(abs(changes[symbol]) * 0.0015 * 100 - 1e-8) / 100) > 0.011
+               for symbol, cost in costs.items()):
+            raise ValueError("Frozen trading friction does not reconcile")
+        if plan.scheduled_turnover_pct < 0 or plan.effective_turnover_cap_pct < 0:
+            raise ValueError("Invalid turnover evidence")
+        if plan.valuation_nav and abs(plan.scheduled_turnover_pct -
+                                      sum(abs(value) for value in changes.values()) / plan.valuation_nav * 100) > 0.011:
+            raise ValueError("Frozen turnover does not reconcile")
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise UnsupportedOptimizerPolicyEvidence("Missing or contradictory frozen MUJI V2 schedule") from exc
+
+    # No investment-merit inference: a frozen independent signal permits a
+    # sale to count as supported, whether it funds a BUY or retains CASH.
+    proposed = [a for a in target_allocations if a.get("action") in ("BUY", "ACCUMULATE", "SELL", "REDUCE")]
+    supported = sum(
+        (a["symbol"] in buys if a["action"] in ("BUY", "ACCUMULATE")
+         else sales[a["symbol"]].executed_amount > 0 and
+              sales[a["symbol"]].funding_basis == "INDEPENDENT_FROZEN_SELL_SIGNAL")
+        for a in proposed if a["symbol"] in allocations and
+        (a["action"] in ("BUY", "ACCUMULATE") or a["symbol"] in sales)
+    )
+    evidence_score = round(100 * supported / len(proposed), 2) if proposed else 100.0
+    # A deferred BUY or SELL is a recommendation, never an executed action.
+    feasibility_score = 100.0
+    cap = plan.effective_turnover_cap_pct
+    turnover_score = 100.0 if cap == 0 and plan.scheduled_turnover_pct == 0 else max(
+        0.0, round(100 * (1 - max(0.0, plan.scheduled_turnover_pct - cap) / (cap or 1)), 2))
+    complete = sum(bool(t.reason and t.execution_role and t.execution_state and t.note)
+                   for t in plan.trades)
+    explanation_score = (round(100 * complete / len(plan.trades), 2) if plan.trades else
+                         100.0 if (portfolio_assessment or no_action_summary) else 60.0)
+    weights = {"schedule_feasibility": 30.0, "action_evidence": 30.0,
+               "turnover_proportionality": 20.0, "explanation_completeness": 20.0}
+    return {
+        "score": round((feasibility_score * 30 + evidence_score * 30 + turnover_score * 20
+                        + explanation_score * 20) / 100, 2),
+        "grade_version": _MUJI_PLAN_GRADE_VERSION,
+        "grade_scope": "advisory_plan_and_execution_quality_not_investment_performance",
+        "component_definitions": {
+            "schedule_feasibility": "Frozen directions, friction and cash reconcile; no broker execution implied.",
+            "action_evidence": "Share of proposed actions scheduled with required independent SELL evidence; funding role adds no credit.",
+            "turnover_proportionality": "Scheduled turnover against the frozen applicable turnover safeguard.",
+            "explanation_completeness": "Frozen sale explanations, or recorded no-action assessment, are present.",
+        },
+        "schedule_feasibility_score": feasibility_score,
+        "action_evidence_score": evidence_score,
+        "turnover_proportionality_score": turnover_score,
+        "explanation_completeness_score": explanation_score,
+        "weights": weights,
+        "trade_count": len(plan.trades),
+        "deferred_count": sum(t.execution_state == "DEFERRED" for t in plan.trades),
+        "scheduled_buy_count": len(buys),
+        "cash_available": plan.cash_available,
+        "projected_cash": plan.idle_cash_after,
+    }
 
 
 def _derive_action_summary_and_buys(
@@ -319,6 +439,14 @@ def compute_plan_grade(
         STATE_DEFERRED,
     )
 
+    if policy_provenance is not None:
+        from services.optimizer.sector_policy import OPTIMIZER_POLICY_MUJI_V2, optimizer_policy_mode
+        if optimizer_policy_mode(policy_provenance) == OPTIMIZER_POLICY_MUJI_V2:
+            return _compute_muji_plan_grade(
+                target_allocations, cash_available, portfolio_assessment,
+                no_action_summary, policy_provenance,
+            )
+
     plan = derive_full_plan(target_allocations, cash_available, violations, policy_provenance)
     eo = plan["execution_optimization"]
     trades = eo.trades
@@ -452,13 +580,17 @@ def grade_pending_plans(db: Session, portfolio_id: int | None = None) -> dict[st
             provenance = inputs["policy_provenance"]
             versioned_plan = any(key in provenance for key in
                                  ("execution_policy_version", "concentration", "sector_policy_mode"))
-            result = compute_plan_grade(
-                inputs["target_allocations"], inputs["cash_available"],
-                inputs["violations"], inputs["violation_details"],
-                portfolio_assessment=inputs["portfolio_assessment"],
-                no_action_summary=inputs["no_action_summary"],
-                policy_provenance=provenance if versioned_plan else None,
-            )
+            try:
+                result = compute_plan_grade(
+                    inputs["target_allocations"], inputs["cash_available"],
+                    inputs["violations"], inputs["violation_details"],
+                    portfolio_assessment=inputs["portfolio_assessment"],
+                    no_action_summary=inputs["no_action_summary"],
+                    policy_provenance=provenance if versioned_plan else None,
+                )
+            except UnsupportedOptimizerPolicyEvidence:
+                skipped.append({"snapshot_id": snap.id, "reason": UNSUPPORTED_OPTIMIZER_POLICY_EVIDENCE})
+                continue
 
             grade = RecommendationGrade(
                 workspace_id=ws.id,

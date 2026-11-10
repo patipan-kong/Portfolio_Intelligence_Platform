@@ -288,7 +288,13 @@ def test_muji_frozen_slice_one_keeps_sector_advisory_schedule_and_grade(replay_2
 
     policy["optimizer_policy_mode"] = OPTIMIZER_POLICY_MUJI_V2
     assert schedule(replay_239).model_dump() == old_schedule
-    assert compute_plan_grade(*grade_args, policy_provenance=policy) == old_grade
+    # Re-tagging a v1 schedule does not create V2 monetary evidence or a V2
+    # grade. The old stored grade remains untouched by the new dispatch.
+    from services.optimizer.sector_policy import UnsupportedOptimizerPolicyEvidence
+    with pytest.raises(UnsupportedOptimizerPolicyEvidence):
+        compute_plan_grade(*grade_args, policy_provenance=policy)
+    legacy_policy = {key: value for key, value in policy.items() if key != "optimizer_policy_mode"}
+    assert old_grade == compute_plan_grade(*grade_args, policy_provenance=legacy_policy)
     del policy["scheduled_execution"]
     assert all(trade.executed_amount == trade.required_amount == 0 for trade in schedule(replay_239).trades)
 
@@ -398,6 +404,10 @@ def test_muji_verified_sell_only_raises_cash_without_required_repair():
     assert plan.trades[0].funding_basis == "INDEPENDENT_FROZEN_SELL_SIGNAL"
     result["active_policy"]["scheduled_execution"] = plan.model_dump()
     assert schedule(result).model_dump() == plan.model_dump()
+    grade = compute_plan_grade(result["target_allocations"], result["cash_balance"],
+                               policy_provenance={**result["active_policy"], "total_value": result["total_value"]})
+    assert grade["grade_version"] == "wealth.plan-grade-muji.v2"
+    assert grade["action_evidence_score"] == 100
 
 
 @pytest.mark.parametrize("action,amount", [("BUY", -10000), ("SELL", 10000), ("REDUCE", 10000),

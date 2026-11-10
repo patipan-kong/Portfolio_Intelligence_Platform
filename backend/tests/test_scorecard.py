@@ -93,6 +93,14 @@ def test_cold_start_portfolio_returns_cold_start_status(db, ws_portfolio):
     assert result["recent_grades"] == []
 
 
+def test_snapshot_without_plan_grade_does_not_enter_execution_average(db, ws_portfolio):
+    ws, portfolio = ws_portfolio
+    _seed_snapshot(db, ws, portfolio)
+    result = compute_scorecard(db, portfolio.id, period_days=90)
+    assert result["execution"]["avg_plan_score"] is None
+    assert result["execution"]["n_plans"] == 0
+
+
 def test_partial_history_execution_graded_belief_cold(db, ws_portfolio):
     from models.database import RecommendationGrade
 

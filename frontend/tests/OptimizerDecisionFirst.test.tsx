@@ -76,6 +76,44 @@ beforeEach(() => {
 });
 
 describe("Selected historical journeys", () => {
+  it("shows V2 recommendation separately from advisory schedule and unavailable estimates", () => {
+    const result = fixture(218);
+    result.active_policy = { ...result.active_policy!, optimizer_policy_mode: "wealth.optimizer-muji.v2" };
+    result.target_allocations = [{ symbol: "AAA.BK", action: "SELL", reason: "Recorded thesis",
+      current_weight: 10, target_weight: 0, allocation_change_percent: -10, estimated_amount: -10000 }];
+    result.market_regime = null;
+    result.goal_recommendation_constraints = undefined;
+    result.no_action_summary = null;
+    result.execution_optimization = null;
+    render(<OptimizerDecisionSummary result={result} historyId={8} historical loading={false} />);
+    const primary = screen.getByTestId("muji-primary-result");
+    expect(within(primary).getByText(/SELL AAA.BK/).closest("li")).toHaveTextContent("Schedule unavailable");
+    expect(within(primary).getByText(/Goal evidence unavailable/)).toBeInTheDocument();
+    expect(within(primary).getByText(/Quantified HOLD comparison unavailable/)).toBeInTheDocument();
+    expect(within(primary).getByText(/Estimated monetary impact unavailable/)).toBeInTheDocument();
+  });
+
+  it("labels a V2 monetary sale and per-side friction as estimates", () => {
+    const result = fixture(218);
+    result.active_policy = { ...result.active_policy!, optimizer_policy_mode: "wealth.optimizer-muji.v2" };
+    result.target_allocations = [{ symbol: "AAA.BK", action: "SELL", reason: "Recorded thesis",
+      current_weight: 10, target_weight: 0, allocation_change_percent: -10, estimated_amount: -10000 }];
+    result.action_summary = { sell: [{ symbol: "AAA.BK", allocation_change_percent: -10 }],
+      reduce: [], accumulate: [], new_position: [], hold: [] };
+    result.execution_optimization = { cash_available: 1000, total_buy_deployment: 0,
+      funding_gap: 0, idle_cash_after: 10985, scheduled_buys: {},
+      scheduled_changes: { "AAA.BK": -10000 }, estimated_trade_costs: { "AAA.BK": 15 },
+      trades: [{ symbol: "AAA.BK", action: "SELL", reason: "INVESTMENT_THESIS",
+        necessity: "DISCRETIONARY", execution_role: "STANDALONE", execution_state: "FULL",
+        full_recommended_amount: 10000, executed_amount: 10000, note: "Frozen signal" }] };
+    render(<OptimizerDecisionSummary result={result} historyId={8} historical loading={false} />);
+    const primary = screen.getByTestId("muji-primary-result");
+    expect(within(primary).getByText(/SELL AAA.BK/).closest("li")).toHaveTextContent("Scheduled advisory THB 10,000");
+    expect(within(primary).getByText(/Estimated trading friction/)).toHaveTextContent("0.15% per side");
+    expect(within(primary).getByText(/Estimated trading friction/)).toHaveTextContent("THB 15");
+    expect(within(primary).getByText(/CASH: estimated/)).toHaveTextContent("10,985");
+  });
+
   it.each([
     [undefined, "Est. Turnover"],
     ["wealth.policy-evidence.v2", "Proposed Turnover"],
