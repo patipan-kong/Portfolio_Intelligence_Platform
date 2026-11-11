@@ -3662,11 +3662,17 @@ importance that the captured evidence cannot establish.
   - compact data rows, the scores map and snapshots (D5);
   - hard safeguards, the monetary scheduler, and TA/FA agents.
 **Impact:** `agents/optimizer.py`, `services/optimizer/strategic_candidates.py`; tests `tests/test_challenger_evidence_guidance.py` plus fixture. No API, schema or frontend change. Known limits:
-- Prompt guidance does not guarantee model compliance; that is unverified until an owner-run opt-in run.
 - In emergency regimes the Policy Engine still lists every holding as a "low-quality … should be suppressed" violation. `fa < 35 and ta < 35` is applied to small-integer scores at `policy_engine.py:399-407`, so the Challenger still sees that mandatory-governance text beside this guidance. This needs a separate, approved investigation (D3); until then, expect unverified sale plans or `NO_ACTION` in such regimes.
 - A Challenger-chosen `NO_ACTION` and a failed plan still share `NO_ELIGIBLE_ACTION`.
 - The Strategist prompt still shows defaulted values.
 
-No live runs were performed for this slice.
+**Live validation (history 248, Committee opt-in): `PASS WITH LIMITATIONS`.**
+- Run 248 used Committee opt-in (`wealth.strategy-selection.v1`) with provenance `SUPPLIED`. Prompts are not persisted; use of the Slice 4.3 code is inferred from the run time (after the change) and a Challenger input about 320 tokens larger than history 246 with an identical Strategist input.
+- The Challenger returned `strategy_family=null`, no `observed_evidence_refs` and no `additional_plans`, and stated that no holding had a SELL signal and that its reductions were not verified investment-thesis trades.
+- It still returned `status=REBALANCE` with five REDUCE rows (BH, GOOGL01, GULF, NVDA01, MICRON01; all `ACCUMULATE`/`WATCH` signals) to remediate the conflicting mandatory Policy Engine suppression violations, instead of `NO_ACTION`.
+- The Auditor was `AVAILABLE` with 1/1 valid review (`hold-current`). Only `hold-current` was eligible, so the Committee was correctly not invoked (`NO_ELIGIBLE_ACTION`).
+- Final selection was `CAUTIONED_HOLD`: all holdings HOLD and zero scheduled trades.
+- The unavailable-evidence disclosure path was not exercised live (`unobserved_evidence` was empty); whether the preview succeeded is not observable from stored data.
+- The Policy Engine score-scale issue remains unresolved.
 
 **Disposition:** `IMPLEMENTED`
