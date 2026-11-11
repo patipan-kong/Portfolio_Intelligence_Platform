@@ -426,6 +426,35 @@ def test_write_recommendation_snapshot_no_context_attempt_persists_null():
     assert snap.wealth_goal_context_json is None
 
 
+def test_phase3_selection_is_frozen_in_existing_snapshot_evidence():
+    db = make_session()
+    ws = workspace(db)
+    p = portfolio_row(db, ws.id)
+    history = OptimizerHistory(
+        workspace_id=ws.id, portfolio_id=p.id, portfolio_name=p.name,
+        analyzed_at=datetime.utcnow(), result_json="{}",
+    )
+    db.add(history)
+    db.commit()
+    selection = {"version": "wealth.strategy-selection.v1", "state": "SELECTED",
+                 "selected_candidate_id": "hold-current"}
+    result = {"active_policy": {"optimizer_policy_mode": "wealth.optimizer-muji.v2",
+                                "strategy_selection_mode": "wealth.strategy-selection.v1"},
+              "consensus": {"consensus_type": "WEAK_CONSENSUS"},
+              "strategy_selection": selection,
+              "strategic_candidates": {"status": "PREPARED_NOT_SELECTED", "candidates": []},
+              "candidate_audit": {"status": "AVAILABLE", "reviews": {}}}
+    snap_id = write_recommendation_snapshot(
+        db, workspace_id=ws.id, portfolio_id=p.id,
+        optimizer_history_id=history.id, optimizer_result=result)
+    snap = db.query(RecommendationSnapshot).filter_by(id=snap_id).first()
+    frozen = json.loads(snap.consensus_json)
+    assert frozen["strategy_selection"] == selection
+    assert frozen["strategic_candidates"]["status"] == "PREPARED_NOT_SELECTED"
+    assert frozen["candidate_audit"]["status"] == "AVAILABLE"
+    assert json.loads(snap.active_policy_json)["strategy_selection_mode"] == "wealth.strategy-selection.v1"
+
+
 def test_write_recommendation_snapshot_empty_and_complete_context_persist_distinctly():
     db = make_session()
     ws = workspace(db)

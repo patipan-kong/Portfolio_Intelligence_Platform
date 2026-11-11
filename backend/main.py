@@ -4425,6 +4425,8 @@ class OptimizerRequest(BaseModel):
     # Phase 7.5 (ADR-009): independent explicit activation of at most one
     # deterministic Goal recommendation constraint.
     goal_constraint_goal_id: StrictInt | None = Field(default=None, gt=0)
+    # Explicit Phase 3 opt-in; absent requests retain Phase 1 Challenger semantics.
+    strategy_selection_mode: Literal["wealth.strategy-selection.v1"] | None = None
 
 
 @app.post("/analyze/optimizer")
@@ -4439,6 +4441,7 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
     from services.optimizer.sector_policy import OPTIMIZER_POLICY_MUJI_V2, SECTOR_POLICY_ADVISORY
 
     optimizer_policy_mode = OPTIMIZER_POLICY_MUJI_V2
+    strategy_selection_mode = body.strategy_selection_mode
 
     # Advisory Integration V1 (Slice 1) — one default-OFF flag for the whole
     # integration. Off: every branch below keyed on it is skipped and the run
@@ -4822,6 +4825,7 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
             sector_policy_mode=SECTOR_POLICY_ADVISORY,
             optimizer_policy_mode=optimizer_policy_mode,
             goal_decision_input=wealth_goal_context,
+            strategy_selection_mode=strategy_selection_mode,
             **({"advisory": advisory_run} if advisory_run is not None else {}),
         )
     except Exception:

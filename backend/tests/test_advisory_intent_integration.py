@@ -8,6 +8,7 @@ import asyncio
 import copy
 import json
 import os
+import re
 import sys
 from datetime import datetime
 from decimal import Decimal
@@ -29,6 +30,7 @@ from models.database import (
     Watchlist,
 )
 from services.optimizer.sector_policy import OPTIMIZER_POLICY_MUJI_V2
+from services.optimizer.strategic_candidates import SELECTION_VERSION
 
 FLAG = "FEATURE_ADVISORY_INTENT_REVIEW_V1"
 L1_EMPTY = {"swaps": [], "top_buys": [], "sector_flags": [], "priority": "balanced", "summary": "s."}
@@ -136,6 +138,69 @@ def set_intent(db, portfolio, symbol, *, inc=False, dec=False, pref="NONE", expe
 
 def run(db, portfolio, **body):
     return asyncio.run(main.analyze_optimizer(main.OptimizerRequest(portfolio_id=portfolio.id, **body), db))
+
+
+def test_explicit_phase3_hold_is_frozen_without_forced_trade(monkeypatch):
+    ai = FakeAI(
+        {"allocations": [{"s": "AAA", "tw": 50, "sig": "HOLD"}],
+         "cash_balance_target": 50, "status": "NO_ACTION"},
+        l3={"risk_flags": [], "candidate_reviews": [
+            {"candidate_id": "hold-current", "supporting_refs": [], "opposing_refs": []}]},
+    )
+    ai.responses["committee"] = {
+        "selected_candidate_id": "hold-current", "supporting_evidence_refs": [],
+        "opposing_evidence_refs": [], "comparison_against_hold": "No supported action is better.",
+        "decision_rationale": "Maintain current holdings.", "material_uncertainty": [],
+    }
+    patch_pipeline(monkeypatch, ai)
+    db = session()
+    p = seed(db, {"AAA": (10000, True)}, cash=500000, sell_signal=("AAA",))
+    response = run(db, p, strategy_selection_mode=SELECTION_VERSION)
+    assert response["active_policy"]["strategy_selection_mode"] == SELECTION_VERSION
+    assert response["strategy_selection"]["selected_candidate_id"] == "hold-current"
+    assert response["target_allocations"][0]["action"] == "HOLD"
+    assert not response["swap_suggestions"]
+    stored = db.query(OptimizerHistory).filter_by(portfolio_id=p.id).first()
+    frozen = json.loads(stored.result_json)
+    assert frozen["strategy_selection"]["selected_candidate_id"] == "hold-current"
+    assert frozen["active_policy"]["strategy_selection_mode"] == SELECTION_VERSION
+
+
+def test_explicit_phase3_sell_to_cash_uses_selected_frozen_signal(monkeypatch):
+    ai = FakeAI(
+        {"allocations": [{"s": "AAA", "tw": 0, "sig": "SELL",
+                          "decision_basis": "INVESTMENT_THESIS", "r": "Thesis deteriorated"}],
+         "strategy_family": "RAISE_CASH", "observed_evidence_refs": ["symbol:AAA:signal"],
+         "cash_balance_target": 100, "status": "REBALANCE"},
+    )
+    def on_call(layer):
+        if layer == "layer3":
+            candidate_id = re.search(r"proposal-[0-9a-f]{12}", ai.prompts[layer][-1]).group()
+            ai.responses["layer3"] = {"risk_flags": [], "candidate_reviews": [
+                {"candidate_id": "hold-current", "supporting_refs": [], "opposing_refs": []},
+                {"candidate_id": candidate_id, "supporting_refs": ["symbol:AAA:signal"],
+                 "opposing_refs": []}]}
+            ai.responses["committee"] = {
+                "selected_candidate_id": candidate_id,
+                "supporting_evidence_refs": ["symbol:AAA:signal"],
+                "opposing_evidence_refs": [],
+                "comparison_against_hold": "The frozen SELL signal supports reducing thesis risk.",
+                "decision_rationale": "Sell AAA and retain proceeds as cash.",
+                "material_uncertainty": [],
+            }
+    ai.on_call = on_call
+    patch_pipeline(monkeypatch, ai)
+    db = session()
+    p = seed(db, {"AAA": (10000, True)}, cash=500000, sell_signal=("AAA",))
+    response = run(db, p, strategy_selection_mode=SELECTION_VERSION)
+    assert response["strategy_selection"]["state"] == "SELECTED"
+    assert response["strategy_selection"]["selected_candidate_id"].startswith("proposal-")
+    assert response["target_allocations"][0]["action"] == "SELL"
+    scheduled = response["execution_optimization"]
+    assert scheduled["trades"][0]["action"] == "SELL"
+    assert scheduled["scheduled_changes"]["AAA"] < 0
+    assert scheduled["estimated_trade_costs"]["AAA"] > 0
+    assert scheduled["idle_cash_after"] > response["cash_balance"]
 
 
 # Standard book: five holdings of 10,000 shares at 50 (500,000 each) plus
