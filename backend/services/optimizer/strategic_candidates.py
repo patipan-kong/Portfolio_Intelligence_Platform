@@ -190,6 +190,59 @@ def _append_proposal(envelope, holdings, watchlist, hold_rows, hold_ok, regime, 
     })
 
 
+_REVIEW_ROW_FIELDS = ("symbol", "action", "current_weight", "target_weight",
+                      "allocation_change_percent", "decision_basis")
+
+
+def _symbol_of_ref(ref: str) -> str | None:
+    if not ref.startswith("symbol:") or ref.count(":") < 2:
+        return None
+    return ref[len("symbol:"):ref.rindex(":")]
+
+
+def candidate_review_view(envelope: dict) -> dict:
+    """Compact, deterministic Auditor view of a frozen envelope. Prompt-only.
+
+    Keeps every candidate's identity, actions, eligibility and cited refs, and
+    every frozen fact for every symbol any candidate touches (so contradictory
+    evidence travels with the supporting evidence), plus regime, goal and any
+    other cited facts. Values are copied verbatim; nothing is inferred or filled
+    in. Reviews are still validated against the full frozen catalog.
+    """
+    catalog = envelope.get("observed_evidence_catalog") or {}
+    candidates, symbols, cited = [], set(), set()
+    for candidate in envelope.get("candidates") or []:
+        if not isinstance(candidate, dict):
+            continue
+        rows = []
+        for row in candidate.get("proposed_allocations") or []:
+            if not isinstance(row, dict):
+                continue
+            rows.append({key: row[key] for key in _REVIEW_ROW_FIELDS if row.get(key) is not None})
+            if isinstance(row.get("symbol"), str):
+                symbols.add(row["symbol"])
+        refs = dict(candidate.get("observed_evidence_refs") or {})
+        cited.update(refs)
+        candidates.append({
+            "candidate_id": candidate.get("id"), "family": candidate.get("family"),
+            "eligibility_status": candidate.get("eligibility_status"),
+            "eligibility_reasons": list(candidate.get("eligibility_reasons") or []),
+            "missing_information": list(candidate.get("missing_information") or []),
+            "cash_intent": candidate.get("cash_intent"),
+            "proposed_allocations": rows, "cited_refs": refs,
+        })
+    relevant = {
+        ref: value for ref, value in catalog.items()
+        if ref in cited or ref.startswith(("regime:", "goal:")) or _symbol_of_ref(ref) in symbols
+    }
+    return {
+        "candidates": candidates,
+        "relevant_evidence": dict(sorted(relevant.items())),
+        "catalog_entry_count": len(catalog),
+        "omitted_unrelated_entry_count": len(catalog) - len(relevant),
+    }
+
+
 def validate_candidate_reviews(raw, envelope):
     """Bind Auditor observations to frozen candidate IDs and observed facts."""
     candidates = {c["id"]: c for c in envelope.get("candidates", [])}
@@ -246,11 +299,17 @@ def decide_selection(envelope, audit, committee, *, hold_safe=True, failure_reas
     if not hold_valid:
         base["reason_codes"] = ["HOLD_BASIS_OR_HARD_SAFEGUARD_UNVERIFIED"]
         return base
-    if failure_reason or (audit or {}).get("status") != "AVAILABLE":
+    audit_unavailable = (audit or {}).get("status") != "AVAILABLE"
+    if failure_reason or audit_unavailable:
+        # Record every concurrent cause (e.g. NO_ELIGIBLE_ACTION and
+        # AUDITOR_REVIEWS_MISSING), deterministically ordered and deduplicated.
+        causes = [failure_reason] if failure_reason else []
+        if audit_unavailable:
+            causes.append((audit or {}).get("reason") or "AUDITOR_UNAVAILABLE")
         base.update(state="SELECTED", selected_candidate_id="hold-current",
                     decision_rationale="Maintain current portfolio pending verified comparison.",
                     comparison_against_hold="No defensible action established.",
-                    material_uncertainty=[failure_reason or audit.get("reason") or "AUDITOR_UNAVAILABLE"],
+                    material_uncertainty=list(dict.fromkeys(causes)),
                     reason_codes=["CAUTIONED_HOLD"])
         return base
     if isinstance(committee, dict) and committee.get("state") == "ABSTAINED":

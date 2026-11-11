@@ -1409,6 +1409,38 @@ Return JSON only. No markdown fences, no prose outside the JSON.
 }}"""
 
 
+_CANDIDATE_REVIEW_SCHEMA_LINE = (
+    '  "candidate_reviews": [{"candidate_id":"exact candidate_id","supporting_refs":["exact cited_refs key"],'
+    '"opposing_refs":["exact relevant_evidence key"],"material_conflicts":["unresolved material conflict"],'
+    '"assessment":"<30 words"}],\n'
+)
+
+# Opt-in Auditor output budget. Each of up to four candidate reviews (HOLD,
+# primary plan, two additional plans) can carry ~10-20 exact refs plus a short
+# assessment (~250-350 tokens each) on top of up to 8 risk_flags (~500 tokens);
+# 2048 tokens risks truncating the JSON and failing the whole review closed.
+_LAYER3_SELECTION_MAX_TOKENS = 4096
+
+
+def _candidate_review_block(envelope: dict) -> str:
+    """Opt-in Auditor instructions plus the compact frozen candidate evidence view."""
+    view = strategic_candidates.candidate_review_view(envelope)
+    return (
+        "[STRATEGIC CANDIDATE REVIEW — REQUIRED FOR THIS RUN]\n"
+        "Review every candidate below, including hold-current. Return candidate_reviews with exactly\n"
+        "one row per candidate_id; omit none and repeat none. A missing or incomplete review set\n"
+        "invalidates the whole review.\n"
+        "- supporting_refs: only keys from that candidate's cited_refs that genuinely support it.\n"
+        "- opposing_refs: keys from relevant_evidence that contradict or weaken that candidate.\n"
+        "  Report material contradictory facts, not only supporting ones.\n"
+        "- material_conflicts: short descriptions of unresolved material conflicts; [] if none.\n"
+        "- assessment: one sentence under 30 words. Model opinions are unscored.\n"
+        "Use exact keys only. Never invent a reference or a value; missing information stays missing.\n"
+        "A review is not a selection. Do not use safer_choice as a selection vote.\n"
+        f"CANDIDATES_FOR_REVIEW={json.dumps(view, sort_keys=True, default=str)}\n\n"
+    )
+
+
 def _layer3_prompt(
     l1: dict,
     l2: dict,
@@ -1423,10 +1455,13 @@ def _layer3_prompt(
     claim_contract: dict | None = None,
     muji_v2: bool = False,
     goal_decision_input: dict | None = None,
+    candidate_review_block: str = "",
 ) -> str:
     from services.optimizer.execution_penalty import build_execution_prompt_block
     execution_block = build_execution_prompt_block(execution_context or {})
     role_line = f"Your role: {role}\n\n" if role else ""
+    # Committee opt-in only; empty fragments keep every other prompt byte-identical.
+    candidate_review_schema = _CANDIDATE_REVIEW_SCHEMA_LINE if candidate_review_block else ""
     l1_swaps    = l1.get("swap_suggestions", l1.get("swaps", []))[:4]
     l1_priority = l1.get("priority", "balanced")
     l2_allocs   = l2.get("allocations", l2.get("target_allocations", []))
@@ -1524,10 +1559,10 @@ allowed: preserve it for owner review, but exclude it from final_risk_level, saf
 and investment/governance/quality judgments. A real investment risk in the same symbol
 must be a separate INVESTMENT_RISK flag. Never disguise investment risk as Intent review.
 
-Return JSON only. No markdown fences.
+{candidate_review_block}Return JSON only. No markdown fences.
 
 {{
-  "risk_flags": [{{"symbol":"...","issue":"...","severity":"LOW|MEDIUM|HIGH|CRITICAL","category":"INVESTMENT_RISK|OWNER_INTENT_REVIEW","claim_kind":"POLICY_BREACH|EXECUTION_RESTRICTION|EXISTING_EXPOSURE|ADVISORY_CONCERN|SECTOR_ADVISORY|INVESTMENT_JUDGMENT","evidence_ref":"exact contract key or null"}}],
+{candidate_review_schema}  "risk_flags": [{{"symbol":"...","issue":"...","severity":"LOW|MEDIUM|HIGH|CRITICAL","category":"INVESTMENT_RISK|OWNER_INTENT_REVIEW","claim_kind":"POLICY_BREACH|EXECUTION_RESTRICTION|EXISTING_EXPOSURE|ADVISORY_CONCERN|SECTOR_ADVISORY|INVESTMENT_JUDGMENT","evidence_ref":"exact contract key or null"}}],
   "safer_choice": "layer1|layer2|neither",
   "final_risk_level": "low|medium|high",
   "auditor_notes": "1-2 sentences."
@@ -2629,6 +2664,9 @@ def run_layered_optimizer(
                 for evaluation in (sector_context["current"], target)
                 for row in evaluation["sectors"] if row["breach_pp"]
             }
+        # Only a prepared envelope can be reviewed; any other state fails closed below.
+        review_candidates = bool(selection_enabled and candidate_envelope
+                                 and candidate_envelope.get("status") == "PREPARED_NOT_SELECTED")
         try:
             l3_prompt = _layer3_prompt(l1_result, l2_result, l3_cfg.get("role", ""), max_sector_pct=max_sector_pct,
                                execution_context=execution_context,
@@ -2639,18 +2677,13 @@ def run_layered_optimizer(
                                t1_breach_note=_t1_note, muji_v2=muji_v2,
                                 goal_decision_input=goal_decision_input if muji_v2 else None,
                                **({"intent_block": _intent_block(advisory, _LAYER_L3)}
-                                  if advisory is not None else {}))
-            if selection_enabled:
-                l3_prompt += ("\nReview every candidate including HOLD. Return candidate_reviews with one "
-                              "row per candidate: candidate_id, supporting_refs, opposing_refs, "
-                              "material_conflicts, assessment. Supporting refs must be candidate refs; "
-                              "opposing refs may use the frozen observed_evidence_catalog. "
-                              "Model opinions are unscored. "
-                              "Do not use safer_choice as a selection vote.\n"
-                              + json.dumps(candidate_envelope, default=str))
+                                  if advisory is not None else {}),
+                               **({"candidate_review_block": _candidate_review_block(candidate_envelope)}
+                                  if review_candidates else {}))
             l3_raw = call_ai(
                 l3_prompt,
-                l3_cfg["provider"], l3_cfg["model"], max_tokens=2048,
+                l3_cfg["provider"], l3_cfg["model"],
+                max_tokens=_LAYER3_SELECTION_MAX_TOKENS if review_candidates else 2048,
                 usage_operation="optimize", usage_layer="layer3",
             )
             l3_latency_ms = l3_raw["latency_ms"]
