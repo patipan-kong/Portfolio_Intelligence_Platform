@@ -3628,3 +3628,45 @@ importance that the captured evidence cannot establish.
 **Impact:** `main.py`, `agents/optimizer.py`, `services/optimizer/strategic_candidates.py`, new `services/optimizer/evidence_provenance.py`; tests `tests/test_evidence_provenance.py` (35). No API, database schema or frontend change; the persisted opt-in envelope gains three additive keys and the Challenger-owned MUJI V2 envelope gains `evidence_provenance_status`; stored histories are not rewritten. Known limits: a signal coerced to `HOLD` by the summary agent at analysis time (`agents/summary.py`) is still indistinguishable from a real `HOLD`; the Strategist/Challenger prompts still show defaulted `HOLD`/`0` values (Slice 4.3); TA/FA provenance has no timestamp (agent-cache `cached_at` is not read). No live runs were performed for this slice.
 
 **Disposition:** `IMPLEMENTED`
+
+## MUJI V2 Phase 4 Slice 4.3 — Challenger Evidence Guidance
+
+**Date:** 2026-11-11
+**Problem:** In Committee opt-in runs the Challenger was never told how a strategy plan becomes an eligible candidate. Its prompt named citable ref formats but not the existing rules: refs must be exact frozen-catalog keys, model scores alone never verify, a sale verifies only on an observed `SELL` signal, an observed `SELL`/`REDUCE` signal contradicts a buy. The data rows still show defaulted `HOLD`/`0` values with no marker, while Slice 4.2 provenance never reached the Challenger. The timing block reads `timing_score<40` without `timing_data_available`, so a no-data `0` looks like poor timing. Frozen evidence: histories 245 and 246 both produced `RAISE_CASH` plans reducing all five holdings on `ACCUMULATE`/`WATCH` signals, citing only fa/ta/timing scores and policy-violation text. The result was `UNVERIFIED_SELL` ×5, `MODEL_SCORE_ONLY_SUPPORT` and `CAUTIONED_HOLD` / `NO_ELIGIBLE_ACTION`. The opt-in `additional_plans` instruction was appended after the L2 JSON schema (the Slice 4.1 anti-pattern).
+**Decision:** Describe the existing rules to the Challenger, opt-in only, without changing them.
+- `strategic_candidates.evidence_preview` (new) runs the same `_evidence` code on the same frozen inputs and provenance as the later `prepare_candidates` call. Its `unobserved_evidence` therefore equals the envelope's.
+- `optimizer._challenger_evidence_block` (about 1.9 KB plus the list) is passed to the new `evidence_block` argument (default empty) of `_layer2_prompt` and `_fallback_prompt` and placed immediately before the final output instruction, only when strategy selection is enabled. It states:
+  - refs must be exact catalog keys for observed values;
+  - listed unavailable values are defaults, not facts;
+  - model scores alone never verify;
+  - each change needs observed evidence supporting its direction, and an observed `SELL`/`REDUCE` signal contradicts a buy;
+  - an observed `SELL` signal is currently required to verify a sale;
+  - policy violations and concentration diagnostics are context, not citable evidence;
+  - `timing_data_available=false` is unknown timing, not poor timing;
+  - `NO_ACTION` with `strategy_family=null` is a legitimate outcome;
+  - never fabricate refs or construct trades to satisfy the rules.
+- Per D1 the wording is generic and direction-aware: no field (P/E, ROE) is presented as a way to pass verification.
+- A compact, deterministic list of unavailable refs grouped by field and status follows. When provenance is not supplied, or the preview fails, the list says values were not provenance-checked; a preview failure never fails the Challenger call.
+- The `additional_plans` instruction moved inside the block, before the schema, and its text is unchanged.
+- The fallback uses the same block without `additional_plans` (D2), which the fallback never reads.
+**Invariants preserved:**
+- **Opt-in OFF prompts are byte-identical:** L1/L2/L3 via the Slice 4.2 fixture, and single-shot fallback prompts with allocations for Legacy, Sector Advisory v1 and Challenger-owned MUJI V2 via the new fixture `tests/fixtures/challenger_evidence_guidance_baseline.json`, captured from baseline `a6e0505`.
+- **Opt-in ON changes only the block:**
+  - the L1, L3 and Committee prompts, every budget, the candidate envelope, selection and allocations equal the baseline;
+  - the new L2 prompt equals the baseline with the trailing `additional_plans` text removed and the block inserted;
+  - the new fallback prompt equals the baseline with the block inserted.
+- **Unchanged rules and components:**
+  - Policy Engine thresholds and governance text (D3);
+  - candidate eligibility rules, Auditor validation, and Committee prompt and selection;
+  - the `NO_ELIGIBLE_ACTION` / `CAUTIONED_HOLD` labels (D4);
+  - compact data rows, the scores map and snapshots (D5);
+  - hard safeguards, the monetary scheduler, and TA/FA agents.
+**Impact:** `agents/optimizer.py`, `services/optimizer/strategic_candidates.py`; tests `tests/test_challenger_evidence_guidance.py` plus fixture. No API, schema or frontend change. Known limits:
+- Prompt guidance does not guarantee model compliance; that is unverified until an owner-run opt-in run.
+- In emergency regimes the Policy Engine still lists every holding as a "low-quality … should be suppressed" violation. `fa < 35 and ta < 35` is applied to small-integer scores at `policy_engine.py:399-407`, so the Challenger still sees that mandatory-governance text beside this guidance. This needs a separate, approved investigation (D3); until then, expect unverified sale plans or `NO_ACTION` in such regimes.
+- A Challenger-chosen `NO_ACTION` and a failed plan still share `NO_ELIGIBLE_ACTION`.
+- The Strategist prompt still shows defaulted values.
+
+No live runs were performed for this slice.
+
+**Disposition:** `IMPLEMENTED`

@@ -1,0 +1,372 @@
+{
+ "fallback_optin_off:legacy": {
+  "prompt": {
+   "max_tokens": 4096,
+   "prompt": "You are an emergency portfolio analyst. The multi-layer optimizer pipeline failed.\nProduce a complete, compliant capital allocation plan in a single response.\n\nPortfolio holdings (current): [\n  {\n    \"symbol\": \"AAA\",\n    \"sector\": \"Other\",\n    \"sector_classification\": null,\n    \"signal\": \"SELL\",\n    \"combined_score\": 0,\n    \"ta_score\": 0,\n    \"fa_score\": 30,\n    \"trend\": \"sideways\",\n    \"pe_ratio\": 40,\n    \"roe\": null,\n    \"allow_swap\": true,\n    \"weight_pct\": 60.0,\n    \"market_value\": 600.0,\n    \"current_price\": 10,\n    \"timing_score\": 0,\n    \"timing_data_available\": false,\n    \"execution_priority\": null,\n    \"momentum\": null\n  },\n  {\n    \"symbol\": \"BBB\",\n    \"sector\": \"Other\",\n    \"sector_classification\": null,\n    \"signal\": \"HOLD\",\n    \"combined_score\": 0,\n    \"ta_score\": 55,\n    \"fa_score\": 0,\n    \"trend\": \"sideways\",\n    \"pe_ratio\": 12,\n    \"roe\": 20.0,\n    \"allow_swap\": true,\n    \"weight_pct\": 20.0,\n    \"market_value\": 200.0,\n    \"current_price\": 10,\n    \"timing_score\": 62,\n    \"timing_data_available\": true,\n    \"execution_priority\": null,\n    \"momentum\": null\n  }\n]\nWatchlist candidates: [\n  {\n    \"symbol\": \"WWW\",\n    \"current_price\": 5,\n    \"sector\": \"Other\",\n    \"sector_classification\": null,\n    \"signal\": \"BUY\",\n    \"combined_score\": 0,\n    \"ta_score\": 0,\n    \"fa_score\": 60,\n    \"trend\": \"sideways\",\n    \"pe_ratio\": 9,\n    \"roe\": null,\n    \"timing_score\": 0,\n    \"timing_data_available\": false,\n    \"execution_priority\": null,\n    \"momentum\": null\n  },\n  {\n    \"symbol\": \"ZZZ\",\n    \"current_price\": 5,\n    \"sector\": \"Other\",\n    \"sector_classification\": null,\n    \"signal\": \"HOLD\",\n    \"combined_score\": 0,\n    \"ta_score\": 0,\n    \"fa_score\": 0,\n    \"trend\": \"sideways\",\n    \"pe_ratio\": null,\n    \"roe\": null,\n    \"timing_score\": null,\n    \"timing_data_available\": false,\n    \"execution_priority\": null,\n    \"momentum\": null\n  }\n]\nForced exits (SELL signal): ['AAA']\nLocked positions (no swap): none\nMax portfolio stocks: 12\nDefault sector threshold: 40% of invested equity, excluding cash\nTotal portfolio value: 1000, Cash balance: 200\n\nHARD RULES \u2014 you MUST follow all of these:\n1. Forced exit symbols MUST appear with action=SELL and target_weight=0.0\n2. Locked symbols MUST appear with action=HOLD and unchanged target_weight\n3. Total unique stocks after rebalancing (HOLD/BUY/ACCUMULATE/REDUCE combined) MUST NOT exceed 12\n5. target_weight values are FLAT PERCENTAGES (10.0 = 10% of portfolio), NOT monetary amounts\n6. Every existing portfolio holding must appear in allocations with an explicit action\n\n\nSector caps are advisory. Allow HOLD and NO_ACTION with a concentration warning.\nNever block a buy or propose an actionable sale solely because of sector exposure.\nPut optional sector-only SELL/REDUCE ideas in sector_alternatives using the same allocation row format.\nKeep the actionable allocation HOLD unless independently justified. Mark thesis-driven reductions\nwith decision_basis=INVESTMENT_THESIS.\n\nOUTPUT CONTRACT \u2014 this JSON is read by software; do not spend output tokens on prose. Watchlist symbols you are\nnot recommending (no BUY/ACCUMULATE) do NOT need an allocations row \u2014 omit them, except up to 5 WATCH rows for\nyour top-ranked candidates. \"r\"/\"reason\" is one line, under 20 words. blocked_opportunities and risk_flags: only\nthe highest-priority items, max 5 each. Never drop an existing-holding allocation row to make room for text.\n\nEvery risk flag must have category INVESTMENT_RISK or OWNER_INTENT_REVIEW.\nOwner Intent disagreement is allowed and belongs to OWNER_INTENT_REVIEW; preserve it\nfor review but exclude it from investment risk, final_risk_level and governance judgments.\nAny actual investment risk in the same symbol must remain a separate INVESTMENT_RISK flag.\nInclude claim_kind=INVESTMENT_JUDGMENT for independent risk opinions, ADVISORY_CONCERN\nfor concentration guidance. Do not assert a deterministic breach without evidence_ref.\nModel-only opinions are visible but unscored; a model label never authorizes a penalty.\nFallback execution has no deterministic DR target clamp; holding size does not mandate liquidation.\n\nReturn ONLY valid JSON without markdown fences:\n{\n  \"status\": \"REBALANCE|NO_ACTION\",\n  \"rebalance_opportunity_score\": 50,\n  \"no_action_reason\": \"WELL_BALANCED|LOW_CONFIDENCE|HIGH_DISAGREEMENT|CONSTRAINT_BLOCKED|MARKET_UNCERTAINTY|INSUFFICIENT_EDGE|null\",\n  \"no_action_summary\": \"<20 words, null if REBALANCE\",\n  \"blocked_opportunities\": [{\"symbol\":\"X\",\"signal\":\"BUY\",\"reason\":\"insufficient_cash|portfolio_count_cap\"}],\n  \"portfolio_assessment\": \"1-2 sentence summary of the plan\",\n  \"cash_balance_target\": 5.0,\n  \"allocations\": [\n    {\"s\":\"X\",\"tw\":0.0,\"sig\":\"BUY|ACCUMULATE|HOLD|REDUCE|SELL|WATCH\",\"r\":\"<20 words\"}\n  ],\n  \"risk_flags\": [{\"symbol\":\"...\",\"issue\":\"<15 words\",\"severity\":\"LOW|MEDIUM|HIGH|CRITICAL\",\"category\":\"INVESTMENT_RISK|OWNER_INTENT_REVIEW\",\"claim_kind\":\"INVESTMENT_JUDGMENT|ADVISORY_CONCERN\",\"evidence_ref\":null}],\n  \"final_risk_level\": \"low|medium|high|critical\",\n  \"auditor_notes\": \"brief compliance note\"\n}"
+  },
+  "target_allocations": [
+   {
+    "action": "SELL",
+    "allocation_change_percent": -60.0,
+    "combined_score": 0,
+    "current_weight": 60.0,
+    "estimated_amount": -600,
+    "fa_score": 30,
+    "pe_ratio": 40,
+    "reason": "Forced exit: SELL signal.",
+    "sector": "Other",
+    "symbol": "AAA",
+    "ta_score": 0,
+    "target_weight": 0.0,
+    "timing_score": 0
+   }
+  ],
+  "target_cash_weight": 20.0
+ },
+ "fallback_optin_off:muji_v2_challenger": {
+  "prompt": {
+   "max_tokens": 4096,
+   "prompt": "You are an emergency portfolio analyst. The multi-layer optimizer pipeline failed.\nProduce a complete, compliant capital allocation plan in a single response.\n\nPortfolio holdings (current): [\n  {\n    \"symbol\": \"AAA\",\n    \"sector\": \"Other\",\n    \"sector_classification\": null,\n    \"signal\": \"SELL\",\n    \"combined_score\": 0,\n    \"ta_score\": 0,\n    \"fa_score\": 30,\n    \"trend\": \"sideways\",\n    \"pe_ratio\": 40,\n    \"roe\": null,\n    \"allow_swap\": true,\n    \"weight_pct\": 60.0,\n    \"market_value\": 600.0,\n    \"current_price\": 10,\n    \"timing_score\": 0,\n    \"timing_data_available\": false,\n    \"execution_priority\": null,\n    \"momentum\": null\n  },\n  {\n    \"symbol\": \"BBB\",\n    \"sector\": \"Other\",\n    \"sector_classification\": null,\n    \"signal\": \"HOLD\",\n    \"combined_score\": 0,\n    \"ta_score\": 55,\n    \"fa_score\": 0,\n    \"trend\": \"sideways\",\n    \"pe_ratio\": 12,\n    \"roe\": 20.0,\n    \"allow_swap\": true,\n    \"weight_pct\": 20.0,\n    \"market_value\": 200.0,\n    \"current_price\": 10,\n    \"timing_score\": 62,\n    \"timing_data_available\": true,\n    \"execution_priority\": null,\n    \"momentum\": null\n  }\n]\nWatchlist candidates: [\n  {\n    \"symbol\": \"WWW\",\n    \"current_price\": 5,\n    \"sector\": \"Other\",\n    \"sector_classification\": null,\n    \"signal\": \"BUY\",\n    \"combined_score\": 0,\n    \"ta_score\": 0,\n    \"fa_score\": 60,\n    \"trend\": \"sideways\",\n    \"pe_ratio\": 9,\n    \"roe\": null,\n    \"timing_score\": 0,\n    \"timing_data_available\": false,\n    \"execution_priority\": null,\n    \"momentum\": null\n  },\n  {\n    \"symbol\": \"ZZZ\",\n    \"current_price\": 5,\n    \"sector\": \"Other\",\n    \"sector_classification\": null,\n    \"signal\": \"HOLD\",\n    \"combined_score\": 0,\n    \"ta_score\": 0,\n    \"fa_score\": 0,\n    \"trend\": \"sideways\",\n    \"pe_ratio\": null,\n    \"roe\": null,\n    \"timing_score\": null,\n    \"timing_data_available\": false,\n    \"execution_priority\": null,\n    \"momentum\": null\n  }\n]\nForced exits (SELL signal): ['AAA']\nLocked positions (no swap): none\nMax portfolio stocks: 12\n\nTotal portfolio value: 1000, Cash balance: 200\n\nHARD RULES \u2014 you MUST follow all of these:\n1. Forced exit symbols MUST appear with action=SELL and target_weight=0.0\n2. Locked symbols MUST appear with action=HOLD and unchanged target_weight\n3. Total unique stocks after rebalancing (HOLD/BUY/ACCUMULATE/REDUCE combined) MUST NOT exceed 12\n5. target_weight values are FLAT PERCENTAGES (10.0 = 10% of portfolio), NOT monetary amounts\n6. Every existing portfolio holding must appear in allocations with an explicit action\n[MARKET REGIME \u2014 MANDATORY ALLOCATION CONTEXT]\nCurrent Regime: HIGH_VOLATILITY (confidence: 50%)\nTransition Stability: STABLE (1 trading days in current regime)\nPrevious Regime: UNKNOWN\nVolatility Signal: z-score 0.0\u03c3\nTrend Strength: 50/100\n\nRegime Allocation Mandate:\nElevated volatility favors capital preservation. Minimum cash 15%. Suppress speculative positions and reduce turnover.\n\nHard Constraints (regime-enforced \u2014 DO NOT override):\n  Minimum cash reserve:    15%\n  Factor stance:           PRIORITIZE quality (high ROE, low debt) stocks; SUPPRESS speculative and high-beta positions\n\nAll allocation proposals MUST respect these regime-derived constraints.\nThe optimizer MUST NOT recommend cash below 15% in this regime.\n\n\n\nPosition NAV concentration, sector concentration and allocation drift are advisory diagnostics. They cannot by themselves justify or veto a trade, change its score, or rule out HOLD or NO_ACTION. Use available market, downside, valuation, portfolio and investor-goal evidence to justify each BUY, ACCUMULATE, REDUCE or SELL. A concentrated winner can remain a HOLD.\nSector caps are advisory. Allow HOLD and NO_ACTION with a concentration warning.\nNever block a buy or propose an actionable sale solely because of sector exposure.\nPut optional sector-only SELL/REDUCE ideas in sector_alternatives using the same allocation row format.\nKeep the actionable allocation HOLD unless independently justified. Mark thesis-driven reductions\nwith decision_basis=INVESTMENT_THESIS.\n If this is a coherent optional strategy, return strategy_family as RAISE_CASH, DEFENSIVE_ROTATION or GROWTH_ROTATION and observed_evidence_refs using only frozen symbol:SYM:signal, symbol:SYM:fa_score, symbol:SYM:ta_score, regime:regime or goal:ID:target_date facts. Otherwise use null and an empty evidence list.\n\nOUTPUT CONTRACT \u2014 this JSON is read by software; do not spend output tokens on prose. Watchlist symbols you are\nnot recommending (no BUY/ACCUMULATE) do NOT need an allocations row \u2014 omit them, except up to 5 WATCH rows for\nyour top-ranked candidates. \"r\"/\"reason\" is one line, under 20 words. blocked_opportunities and risk_flags: only\nthe highest-priority items, max 5 each. Never drop an existing-holding allocation row to make room for text.\n\nEvery risk flag must have category INVESTMENT_RISK or OWNER_INTENT_REVIEW.\nOwner Intent disagreement is allowed and belongs to OWNER_INTENT_REVIEW; preserve it\nfor review but exclude it from investment risk, final_risk_level and governance judgments.\nAny actual investment risk in the same symbol must remain a separate INVESTMENT_RISK flag.\nInclude claim_kind=INVESTMENT_JUDGMENT for independent risk opinions, ADVISORY_CONCERN\nfor concentration guidance. Do not assert a deterministic breach without evidence_ref.\nModel-only opinions are visible but unscored; a model label never authorizes a penalty.\nFallback execution has no deterministic DR target clamp; holding size does not mandate liquidation.\n\nReturn ONLY valid JSON without markdown fences:\n{\n  \"status\": \"REBALANCE|NO_ACTION\",\n  \"rebalance_opportunity_score\": 50,\n  \"no_action_reason\": \"WELL_BALANCED|LOW_CONFIDENCE|HIGH_DISAGREEMENT|CONSTRAINT_BLOCKED|MARKET_UNCERTAINTY|INSUFFICIENT_EDGE|null\",\n  \"no_action_summary\": \"<20 words, null if REBALANCE\",\n  \"blocked_opportunities\": [{\"symbol\":\"X\",\"signal\":\"BUY\",\"reason\":\"insufficient_cash|portfolio_count_cap\"}],\n  \"portfolio_assessment\": \"1-2 sentence summary of the plan\",\n  \"cash_balance_target\": 5.0,\n  \"strategy_family\": \"RAISE_CASH|DEFENSIVE_ROTATION|GROWTH_ROTATION|null\", \"observed_evidence_refs\": [\"symbol:SYM:signal\"],\n  \"allocations\": [\n    {\"s\":\"X\",\"tw\":0.0,\"sig\":\"BUY|ACCUMULATE|HOLD|REDUCE|SELL|WATCH\",\"r\":\"<20 words\",\"decision_basis\":\"INVESTMENT_THESIS|CONCENTRATION_ADVISORY\"}\n  ],\n  \"risk_flags\": [{\"symbol\":\"...\",\"issue\":\"<15 words\",\"severity\":\"LOW|MEDIUM|HIGH|CRITICAL\",\"category\":\"INVESTMENT_RISK|OWNER_INTENT_REVIEW\",\"claim_kind\":\"INVESTMENT_JUDGMENT|ADVISORY_CONCERN\",\"evidence_ref\":null}],\n  \"final_risk_level\": \"low|medium|high|critical\",\n  \"auditor_notes\": \"brief compliance note\"\n}"
+  },
+  "target_allocations": [
+   {
+    "action": "SELL",
+    "allocation_change_percent": -60.0,
+    "combined_score": 0,
+    "current_weight": 60.0,
+    "estimated_amount": -600,
+    "fa_score": 30,
+    "pe_ratio": 40,
+    "reason": "Forced exit: SELL signal.",
+    "sector": "Other",
+    "symbol": "AAA",
+    "ta_score": 0,
+    "target_weight": 0.0,
+    "timing_score": 0
+   }
+  ],
+  "target_cash_weight": 20.0
+ },
+ "fallback_optin_off:sector_advisory_v1": {
+  "prompt": {
+   "max_tokens": 4096,
+   "prompt": "You are an emergency portfolio analyst. The multi-layer optimizer pipeline failed.\nProduce a complete, compliant capital allocation plan in a single response.\n\nPortfolio holdings (current): [\n  {\n    \"symbol\": \"AAA\",\n    \"sector\": \"Other\",\n    \"sector_classification\": null,\n    \"signal\": \"SELL\",\n    \"combined_score\": 0,\n    \"ta_score\": 0,\n    \"fa_score\": 30,\n    \"trend\": \"sideways\",\n    \"pe_ratio\": 40,\n    \"roe\": null,\n    \"allow_swap\": true,\n    \"weight_pct\": 60.0,\n    \"market_value\": 600.0,\n    \"current_price\": 10,\n    \"timing_score\": 0,\n    \"timing_data_available\": false,\n    \"execution_priority\": null,\n    \"momentum\": null\n  },\n  {\n    \"symbol\": \"BBB\",\n    \"sector\": \"Other\",\n    \"sector_classification\": null,\n    \"signal\": \"HOLD\",\n    \"combined_score\": 0,\n    \"ta_score\": 55,\n    \"fa_score\": 0,\n    \"trend\": \"sideways\",\n    \"pe_ratio\": 12,\n    \"roe\": 20.0,\n    \"allow_swap\": true,\n    \"weight_pct\": 20.0,\n    \"market_value\": 200.0,\n    \"current_price\": 10,\n    \"timing_score\": 62,\n    \"timing_data_available\": true,\n    \"execution_priority\": null,\n    \"momentum\": null\n  }\n]\nWatchlist candidates: [\n  {\n    \"symbol\": \"WWW\",\n    \"current_price\": 5,\n    \"sector\": \"Other\",\n    \"sector_classification\": null,\n    \"signal\": \"BUY\",\n    \"combined_score\": 0,\n    \"ta_score\": 0,\n    \"fa_score\": 60,\n    \"trend\": \"sideways\",\n    \"pe_ratio\": 9,\n    \"roe\": null,\n    \"timing_score\": 0,\n    \"timing_data_available\": false,\n    \"execution_priority\": null,\n    \"momentum\": null\n  },\n  {\n    \"symbol\": \"ZZZ\",\n    \"current_price\": 5,\n    \"sector\": \"Other\",\n    \"sector_classification\": null,\n    \"signal\": \"HOLD\",\n    \"combined_score\": 0,\n    \"ta_score\": 0,\n    \"fa_score\": 0,\n    \"trend\": \"sideways\",\n    \"pe_ratio\": null,\n    \"roe\": null,\n    \"timing_score\": null,\n    \"timing_data_available\": false,\n    \"execution_priority\": null,\n    \"momentum\": null\n  }\n]\nForced exits (SELL signal): ['AAA']\nLocked positions (no swap): none\nMax portfolio stocks: 12\n\nTotal portfolio value: 1000, Cash balance: 200\n\nHARD RULES \u2014 you MUST follow all of these:\n1. Forced exit symbols MUST appear with action=SELL and target_weight=0.0\n2. Locked symbols MUST appear with action=HOLD and unchanged target_weight\n3. Total unique stocks after rebalancing (HOLD/BUY/ACCUMULATE/REDUCE combined) MUST NOT exceed 12\n5. target_weight values are FLAT PERCENTAGES (10.0 = 10% of portfolio), NOT monetary amounts\n6. Every existing portfolio holding must appear in allocations with an explicit action\n\n\nSector caps are advisory. Allow HOLD and NO_ACTION with a concentration warning.\nNever block a buy or propose an actionable sale solely because of sector exposure.\nPut optional sector-only SELL/REDUCE ideas in sector_alternatives using the same allocation row format.\nKeep the actionable allocation HOLD unless independently justified. Mark thesis-driven reductions\nwith decision_basis=INVESTMENT_THESIS.\n\nOUTPUT CONTRACT \u2014 this JSON is read by software; do not spend output tokens on prose. Watchlist symbols you are\nnot recommending (no BUY/ACCUMULATE) do NOT need an allocations row \u2014 omit them, except up to 5 WATCH rows for\nyour top-ranked candidates. \"r\"/\"reason\" is one line, under 20 words. blocked_opportunities and risk_flags: only\nthe highest-priority items, max 5 each. Never drop an existing-holding allocation row to make room for text.\n\nEvery risk flag must have category INVESTMENT_RISK or OWNER_INTENT_REVIEW.\nOwner Intent disagreement is allowed and belongs to OWNER_INTENT_REVIEW; preserve it\nfor review but exclude it from investment risk, final_risk_level and governance judgments.\nAny actual investment risk in the same symbol must remain a separate INVESTMENT_RISK flag.\nInclude claim_kind=INVESTMENT_JUDGMENT for independent risk opinions, ADVISORY_CONCERN\nfor concentration guidance. Do not assert a deterministic breach without evidence_ref.\nModel-only opinions are visible but unscored; a model label never authorizes a penalty.\nFallback execution has no deterministic DR target clamp; holding size does not mandate liquidation.\n\nReturn ONLY valid JSON without markdown fences:\n{\n  \"status\": \"REBALANCE|NO_ACTION\",\n  \"rebalance_opportunity_score\": 50,\n  \"no_action_reason\": \"WELL_BALANCED|LOW_CONFIDENCE|HIGH_DISAGREEMENT|CONSTRAINT_BLOCKED|MARKET_UNCERTAINTY|INSUFFICIENT_EDGE|null\",\n  \"no_action_summary\": \"<20 words, null if REBALANCE\",\n  \"blocked_opportunities\": [{\"symbol\":\"X\",\"signal\":\"BUY\",\"reason\":\"insufficient_cash|portfolio_count_cap\"}],\n  \"portfolio_assessment\": \"1-2 sentence summary of the plan\",\n  \"cash_balance_target\": 5.0,\n  \"allocations\": [\n    {\"s\":\"X\",\"tw\":0.0,\"sig\":\"BUY|ACCUMULATE|HOLD|REDUCE|SELL|WATCH\",\"r\":\"<20 words\"}\n  ],\n  \"risk_flags\": [{\"symbol\":\"...\",\"issue\":\"<15 words\",\"severity\":\"LOW|MEDIUM|HIGH|CRITICAL\",\"category\":\"INVESTMENT_RISK|OWNER_INTENT_REVIEW\",\"claim_kind\":\"INVESTMENT_JUDGMENT|ADVISORY_CONCERN\",\"evidence_ref\":null}],\n  \"final_risk_level\": \"low|medium|high|critical\",\n  \"auditor_notes\": \"brief compliance note\"\n}"
+  },
+  "target_allocations": [
+   {
+    "action": "SELL",
+    "allocation_change_percent": -60.0,
+    "combined_score": 0,
+    "current_weight": 60.0,
+    "estimated_amount": -600,
+    "fa_score": 30,
+    "pe_ratio": 40,
+    "reason": "Forced exit: SELL signal.",
+    "sector": "Other",
+    "symbol": "AAA",
+    "ta_score": 0,
+    "target_weight": 0.0,
+    "timing_score": 0
+   }
+  ],
+  "target_cash_weight": 20.0
+ },
+ "optin_on:fallback": {
+  "prompt": {
+   "max_tokens": 4096,
+   "prompt": "You are an emergency portfolio analyst. The multi-layer optimizer pipeline failed.\nProduce a complete, compliant capital allocation plan in a single response.\n\nPortfolio holdings (current): [\n  {\n    \"symbol\": \"AAA\",\n    \"sector\": \"Other\",\n    \"sector_classification\": null,\n    \"signal\": \"SELL\",\n    \"combined_score\": 0,\n    \"ta_score\": 0,\n    \"fa_score\": 30,\n    \"trend\": \"sideways\",\n    \"pe_ratio\": 40,\n    \"roe\": null,\n    \"allow_swap\": true,\n    \"weight_pct\": 60.0,\n    \"market_value\": 600.0,\n    \"current_price\": 10,\n    \"timing_score\": 0,\n    \"timing_data_available\": false,\n    \"execution_priority\": null,\n    \"momentum\": null\n  },\n  {\n    \"symbol\": \"BBB\",\n    \"sector\": \"Other\",\n    \"sector_classification\": null,\n    \"signal\": \"HOLD\",\n    \"combined_score\": 0,\n    \"ta_score\": 55,\n    \"fa_score\": 0,\n    \"trend\": \"sideways\",\n    \"pe_ratio\": 12,\n    \"roe\": 20.0,\n    \"allow_swap\": true,\n    \"weight_pct\": 20.0,\n    \"market_value\": 200.0,\n    \"current_price\": 10,\n    \"timing_score\": 62,\n    \"timing_data_available\": true,\n    \"execution_priority\": null,\n    \"momentum\": null\n  }\n]\nWatchlist candidates: [\n  {\n    \"symbol\": \"WWW\",\n    \"current_price\": 5,\n    \"sector\": \"Other\",\n    \"sector_classification\": null,\n    \"signal\": \"BUY\",\n    \"combined_score\": 0,\n    \"ta_score\": 0,\n    \"fa_score\": 60,\n    \"trend\": \"sideways\",\n    \"pe_ratio\": 9,\n    \"roe\": null,\n    \"timing_score\": 0,\n    \"timing_data_available\": false,\n    \"execution_priority\": null,\n    \"momentum\": null\n  },\n  {\n    \"symbol\": \"ZZZ\",\n    \"current_price\": 5,\n    \"sector\": \"Other\",\n    \"sector_classification\": null,\n    \"signal\": \"HOLD\",\n    \"combined_score\": 0,\n    \"ta_score\": 0,\n    \"fa_score\": 0,\n    \"trend\": \"sideways\",\n    \"pe_ratio\": null,\n    \"roe\": null,\n    \"timing_score\": null,\n    \"timing_data_available\": false,\n    \"execution_priority\": null,\n    \"momentum\": null\n  }\n]\nForced exits (SELL signal): ['AAA']\nLocked positions (no swap): none\nMax portfolio stocks: 12\n\nTotal portfolio value: 1000, Cash balance: 200\n\nHARD RULES \u2014 you MUST follow all of these:\n1. Forced exit symbols MUST appear with action=SELL and target_weight=0.0\n2. Locked symbols MUST appear with action=HOLD and unchanged target_weight\n3. Total unique stocks after rebalancing (HOLD/BUY/ACCUMULATE/REDUCE combined) MUST NOT exceed 12\n5. target_weight values are FLAT PERCENTAGES (10.0 = 10% of portfolio), NOT monetary amounts\n6. Every existing portfolio holding must appear in allocations with an explicit action\n[MARKET REGIME \u2014 MANDATORY ALLOCATION CONTEXT]\nCurrent Regime: HIGH_VOLATILITY (confidence: 50%)\nTransition Stability: STABLE (1 trading days in current regime)\nPrevious Regime: UNKNOWN\nVolatility Signal: z-score 0.0\u03c3\nTrend Strength: 50/100\n\nRegime Allocation Mandate:\nElevated volatility favors capital preservation. Minimum cash 15%. Suppress speculative positions and reduce turnover.\n\nHard Constraints (regime-enforced \u2014 DO NOT override):\n  Minimum cash reserve:    15%\n  Factor stance:           PRIORITIZE quality (high ROE, low debt) stocks; SUPPRESS speculative and high-beta positions\n\nAll allocation proposals MUST respect these regime-derived constraints.\nThe optimizer MUST NOT recommend cash below 15% in this regime.\n\n\n\nPosition NAV concentration, sector concentration and allocation drift are advisory diagnostics. They cannot by themselves justify or veto a trade, change its score, or rule out HOLD or NO_ACTION. Use available market, downside, valuation, portfolio and investor-goal evidence to justify each BUY, ACCUMULATE, REDUCE or SELL. A concentrated winner can remain a HOLD.\nSector caps are advisory. Allow HOLD and NO_ACTION with a concentration warning.\nNever block a buy or propose an actionable sale solely because of sector exposure.\nPut optional sector-only SELL/REDUCE ideas in sector_alternatives using the same allocation row format.\nKeep the actionable allocation HOLD unless independently justified. Mark thesis-driven reductions\nwith decision_basis=INVESTMENT_THESIS.\n If this is a coherent optional strategy, return strategy_family as RAISE_CASH, DEFENSIVE_ROTATION or GROWTH_ROTATION and observed_evidence_refs using only frozen symbol:SYM:signal, symbol:SYM:fa_score, symbol:SYM:ta_score, regime:regime or goal:ID:target_date facts. Otherwise use null and an empty evidence list.\n\nOUTPUT CONTRACT \u2014 this JSON is read by software; do not spend output tokens on prose. Watchlist symbols you are\nnot recommending (no BUY/ACCUMULATE) do NOT need an allocations row \u2014 omit them, except up to 5 WATCH rows for\nyour top-ranked candidates. \"r\"/\"reason\" is one line, under 20 words. blocked_opportunities and risk_flags: only\nthe highest-priority items, max 5 each. Never drop an existing-holding allocation row to make room for text.\n\nEvery risk flag must have category INVESTMENT_RISK or OWNER_INTENT_REVIEW.\nOwner Intent disagreement is allowed and belongs to OWNER_INTENT_REVIEW; preserve it\nfor review but exclude it from investment risk, final_risk_level and governance judgments.\nAny actual investment risk in the same symbol must remain a separate INVESTMENT_RISK flag.\nInclude claim_kind=INVESTMENT_JUDGMENT for independent risk opinions, ADVISORY_CONCERN\nfor concentration guidance. Do not assert a deterministic breach without evidence_ref.\nModel-only opinions are visible but unscored; a model label never authorizes a penalty.\nFallback execution has no deterministic DR target clamp; holding size does not mandate liquidation.\n\nReturn ONLY valid JSON without markdown fences:\n{\n  \"status\": \"REBALANCE|NO_ACTION\",\n  \"rebalance_opportunity_score\": 50,\n  \"no_action_reason\": \"WELL_BALANCED|LOW_CONFIDENCE|HIGH_DISAGREEMENT|CONSTRAINT_BLOCKED|MARKET_UNCERTAINTY|INSUFFICIENT_EDGE|null\",\n  \"no_action_summary\": \"<20 words, null if REBALANCE\",\n  \"blocked_opportunities\": [{\"symbol\":\"X\",\"signal\":\"BUY\",\"reason\":\"insufficient_cash|portfolio_count_cap\"}],\n  \"portfolio_assessment\": \"1-2 sentence summary of the plan\",\n  \"cash_balance_target\": 5.0,\n  \"strategy_family\": \"RAISE_CASH|DEFENSIVE_ROTATION|GROWTH_ROTATION|null\", \"observed_evidence_refs\": [\"symbol:SYM:signal\"],\n  \"allocations\": [\n    {\"s\":\"X\",\"tw\":0.0,\"sig\":\"BUY|ACCUMULATE|HOLD|REDUCE|SELL|WATCH\",\"r\":\"<20 words\",\"decision_basis\":\"INVESTMENT_THESIS|CONCENTRATION_ADVISORY\"}\n  ],\n  \"risk_flags\": [{\"symbol\":\"...\",\"issue\":\"<15 words\",\"severity\":\"LOW|MEDIUM|HIGH|CRITICAL\",\"category\":\"INVESTMENT_RISK|OWNER_INTENT_REVIEW\",\"claim_kind\":\"INVESTMENT_JUDGMENT|ADVISORY_CONCERN\",\"evidence_ref\":null}],\n  \"final_risk_level\": \"low|medium|high|critical\",\n  \"auditor_notes\": \"brief compliance note\"\n}"
+  },
+  "strategic_candidates": {
+   "candidates": [
+    {
+     "cash_intent": {
+      "amount": 200.0,
+      "kind": "KEEP_CURRENT"
+     },
+     "eligibility_reasons": [],
+     "eligibility_status": "ELIGIBLE",
+     "family": "HOLD",
+     "id": "hold-current",
+     "missing_information": [],
+     "model_rationale": null,
+     "observed_evidence_refs": [],
+     "proposed_allocations": [
+      {
+       "action": "HOLD",
+       "allocation_change_percent": 0.0,
+       "current_weight": 60.0,
+       "symbol": "AAA",
+       "target_weight": 60.0
+      },
+      {
+       "action": "HOLD",
+       "allocation_change_percent": 0.0,
+       "current_weight": 20.0,
+       "symbol": "BBB",
+       "target_weight": 20.0
+      }
+     ],
+     "risks_and_opposing_evidence": [],
+     "source_layer": "FROZEN_PORTFOLIO"
+    }
+   ],
+   "evidence_provenance_status": "SUPPLIED",
+   "goal_context_version": null,
+   "observed_evidence_as_of": {
+    "symbol:AAA:signal": "2026-11-01T00:00:00",
+    "symbol:WWW:signal": "2026-11-02T00:00:00"
+   },
+   "observed_evidence_catalog": {
+    "regime:regime": "HIGH_VOLATILITY",
+    "symbol:AAA:fa_score": 30,
+    "symbol:AAA:pe_ratio": 40,
+    "symbol:AAA:signal": "SELL",
+    "symbol:AAA:ta_score": 0,
+    "symbol:BBB:pe_ratio": 12,
+    "symbol:BBB:roe": 0.2,
+    "symbol:BBB:ta_score": 55,
+    "symbol:BBB:timing_score": 62,
+    "symbol:WWW:fa_score": 60,
+    "symbol:WWW:pe_ratio": 9,
+    "symbol:WWW:signal": "BUY"
+   },
+   "status": "PREPARED_NOT_SELECTED",
+   "unobserved_evidence": {
+    "symbol:AAA:timing_score": "MISSING",
+    "symbol:BBB:fa_score": "FAILED",
+    "symbol:BBB:signal": "MISSING",
+    "symbol:WWW:ta_score": "DISABLED",
+    "symbol:WWW:timing_score": "MISSING",
+    "symbol:ZZZ:fa_score": "MISSING",
+    "symbol:ZZZ:signal": "MISSING",
+    "symbol:ZZZ:ta_score": "MISSING"
+   },
+   "version": "wealth.strategic-candidates.v1"
+  },
+  "target_allocations": [
+   {
+    "action": "HOLD",
+    "allocation_change_percent": 0.0,
+    "combined_score": 0,
+    "current_weight": 60.0,
+    "estimated_amount": 0,
+    "fa_score": 30,
+    "pe_ratio": 40,
+    "sector": "Other",
+    "symbol": "AAA",
+    "ta_score": 0,
+    "target_weight": 60.0,
+    "timing_score": 0
+   },
+   {
+    "action": "HOLD",
+    "allocation_change_percent": 0.0,
+    "combined_score": 0,
+    "current_weight": 20.0,
+    "estimated_amount": 0,
+    "fa_score": 0,
+    "pe_ratio": 12,
+    "roe": 20.0,
+    "sector": "Other",
+    "symbol": "BBB",
+    "ta_score": 55,
+    "target_weight": 20.0,
+    "timing_score": 62
+   }
+  ]
+ },
+ "optin_on:primary": {
+  "prompts": {
+   "committee": {
+    "max_tokens": 2048,
+    "prompt": "You are the existing portfolio Committee. Compare the frozen candidates qualitatively against HOLD. Consider supported thesis, risk and exposure, liquidity, selected goals, trading friction, opposing evidence, and uncertainty. Only cite references verified by the Auditor. An actionable choice must explain why it is preferable to HOLD; scores are not return forecasts. Return JSON with selected_candidate_id, supporting_evidence_refs, opposing_evidence_refs, comparison_against_hold, decision_rationale, material_uncertainty.\nCANDIDATES={\"version\": \"wealth.strategic-candidates.v1\", \"status\": \"PREPARED_NOT_SELECTED\", \"goal_context_version\": null, \"candidates\": [{\"id\": \"hold-current\", \"family\": \"HOLD\", \"source_layer\": \"FROZEN_PORTFOLIO\", \"proposed_allocations\": [{\"symbol\": \"AAA\", \"action\": \"HOLD\", \"current_weight\": 60.0, \"target_weight\": 60.0, \"allocation_change_percent\": 0.0}, {\"symbol\": \"BBB\", \"action\": \"HOLD\", \"current_weight\": 20.0, \"target_weight\": 20.0, \"allocation_change_percent\": 0.0}], \"cash_intent\": {\"kind\": \"KEEP_CURRENT\", \"amount\": 200.0}, \"observed_evidence_refs\": [], \"model_rationale\": null, \"risks_and_opposing_evidence\": [], \"missing_information\": [], \"eligibility_status\": \"ELIGIBLE\", \"eligibility_reasons\": []}, {\"id\": \"proposal-234cb8874d6e\", \"family\": \"RAISE_CASH\", \"source_layer\": \"CHALLENGER\", \"proposed_allocations\": [{\"symbol\": \"AAA\", \"current_weight\": 60.0, \"target_weight\": 0.0, \"action\": \"SELL\", \"allocation_change_percent\": -60.0, \"estimated_amount\": -600, \"reason\": \"\", \"decision_basis\": \"INVESTMENT_THESIS\", \"ta_score\": 0, \"fa_score\": 30, \"pe_ratio\": 40, \"sector\": \"Other\", \"combined_score\": 0, \"timing_score\": 0}, {\"symbol\": \"BBB\", \"current_weight\": 20.0, \"target_weight\": 20.0, \"action\": \"HOLD\", \"allocation_change_percent\": 0.0, \"estimated_amount\": 0, \"reason\": \"\", \"ta_score\": 55, \"fa_score\": 0, \"pe_ratio\": 12, \"roe\": 20.0, \"sector\": \"Other\", \"combined_score\": 0, \"timing_score\": 62}], \"cash_intent\": {\"kind\": \"TARGET_WEIGHT_PCT\", \"value\": 80.0}, \"observed_evidence_refs\": {\"symbol:AAA:signal\": \"SELL\"}, \"model_rationale\": null, \"risks_and_opposing_evidence\": [], \"missing_information\": [], \"eligibility_status\": \"ELIGIBLE\", \"eligibility_reasons\": []}], \"observed_evidence_catalog\": {\"symbol:WWW:signal\": \"BUY\", \"symbol:WWW:fa_score\": 60, \"symbol:WWW:pe_ratio\": 9, \"symbol:AAA:signal\": \"SELL\", \"symbol:AAA:fa_score\": 30, \"symbol:AAA:ta_score\": 0, \"symbol:AAA:pe_ratio\": 40, \"symbol:BBB:ta_score\": 55, \"symbol:BBB:pe_ratio\": 12, \"symbol:BBB:roe\": 0.2, \"symbol:BBB:timing_score\": 62, \"regime:regime\": \"HIGH_VOLATILITY\"}, \"evidence_provenance_status\": \"SUPPLIED\", \"unobserved_evidence\": {\"symbol:AAA:timing_score\": \"MISSING\", \"symbol:BBB:fa_score\": \"FAILED\", \"symbol:BBB:signal\": \"MISSING\", \"symbol:WWW:ta_score\": \"DISABLED\", \"symbol:WWW:timing_score\": \"MISSING\", \"symbol:ZZZ:fa_score\": \"MISSING\", \"symbol:ZZZ:signal\": \"MISSING\", \"symbol:ZZZ:ta_score\": \"MISSING\"}, \"observed_evidence_as_of\": {\"symbol:AAA:signal\": \"2026-11-01T00:00:00\", \"symbol:WWW:signal\": \"2026-11-02T00:00:00\"}}\nAUDITOR={\"status\": \"AVAILABLE\", \"reason\": null, \"reviews\": {\"hold-current\": {\"supporting_refs\": [], \"opposing_refs\": [], \"material_conflicts\": [], \"model_opinion\": \"Model view\"}, \"proposal-234cb8874d6e\": {\"supporting_refs\": [], \"opposing_refs\": [], \"material_conflicts\": [], \"model_opinion\": \"Model view\"}}}"
+   },
+   "layer1": {
+    "max_tokens": 4096,
+    "prompt": "[MARKET REGIME \u2014 MANDATORY ALLOCATION CONTEXT]\nCurrent Regime: HIGH_VOLATILITY (confidence: 50%)\nTransition Stability: STABLE (1 trading days in current regime)\nPrevious Regime: UNKNOWN\nVolatility Signal: z-score 0.0\u03c3\nTrend Strength: 50/100\n\nRegime Allocation Mandate:\nElevated volatility favors capital preservation. Minimum cash 15%. Suppress speculative positions and reduce turnover.\n\nHard Constraints (regime-enforced \u2014 DO NOT override):\n  Minimum cash reserve:    15%\n  Factor stance:           PRIORITIZE quality (high ROE, low debt) stocks; SUPPRESS speculative and high-beta positions\n\nAll allocation proposals MUST respect these regime-derived constraints.\nThe optimizer MUST NOT recommend cash below 15% in this regime.\n\n\n[TIMING INTELLIGENCE \u2014 Phase 4C.6H]\nEach symbol carries ts= (timing score 0-100) and pr= (execution priority: HIGH/MEDIUM/LOW/DEFER).\nTiming Score = entry quality: trend + momentum + relative strength + volume.\n  ts\u226580 / HIGH  : strong entry \u2192 increase conviction for BUY/ACCUMULATE ranking\n  ts 60-79 / MED: acceptable  \u2192 proceed normally\n  ts 40-59 / LOW : weak entry \u2192 reduce urgency; rank watchlist candidates lower\n  ts<40 / DEFER  : poor entry \u2192 note in sector_flags; still eligible as lower-ranked top_buy\nTiming informs urgency \u2014 it does not block. A DEFER symbol with strong fundamentals is still top_buys material at lower rank.\n\nYou are a STRATEGIST. Output swap targets in JSON only.\nNo explanation. No prose. Only valid JSON output.\n\nPortfolio: [{\"s\": \"AAA\", \"sec\": \"Other\", \"sector_status\": null, \"w\": 60.0, \"mv\": 600, \"fa\": 30, \"ta\": 0, \"sig\": \"SELL\", \"swap\": true, \"ts\": 0, \"pr\": null}, {\"s\": \"BBB\", \"sec\": \"Other\", \"sector_status\": null, \"w\": 20.0, \"mv\": 200, \"fa\": 0, \"ta\": 55, \"sig\": \"HOLD\", \"swap\": true, \"ts\": 62, \"pr\": null}]\nWatchlist: [{\"s\": \"WWW\", \"sec\": \"Other\", \"sector_status\": null, \"fa\": 60, \"ta\": 0, \"sig\": \"BUY\", \"ts\": 0, \"pr\": null}]\n\nSwap eligible: ['BBB']\nForced sells: ['AAA']\n\nSTOCK COUNT: 0/12 max unique stocks after rebalancing.\nSIGNALS: BUY=add aggressively, ACCUMULATE=add gradually, HOLD=keep, WATCH=monitor, REDUCE=trim, SELL=exit\n\nSTABILIZATION MANDATE \u2014 quality over quantity. Every proposed change must clear a high bar:\nPosition NAV concentration, sector concentration and allocation drift are advisory diagnostics. They cannot by themselves justify or veto a trade, change its score, or rule out HOLD or NO_ACTION. Use available market, downside, valuation, portfolio and investor-goal evidence to justify each BUY, ACCUMULATE, REDUCE or SELL. A concentrated winner can remain a HOLD.\nPrefer high-conviction changes after transaction costs. Evaluate buying opportunities,\nindependently justified exits or reductions, and holding the current portfolio.\nReturn priority=\"no_action\" when no investment case warrants a change.\nPut concentration observations in sector_flags and keep them out of swaps and top_buys.\n\nOutput schema \u2014 nothing else. Max 550 tokens.\nswaps: max 3 (sell or buy may be null for one-sided REDUCE or ACCUMULATE from cash)\ntop_buys: max 5 watchlist symbols ranked by signal quality\nsector_flags: max 3 short strings\npriority: one word only\nsummary: exactly 2 sentences. Explain the portfolio outlook and the evidence supporting action or HOLD.\n\"r\" = one independent investment reason for each swap, under 12 words.\n\nIf running low on output budget, prioritize in this order: (1) swaps, (2) priority,\n(3) summary, (4) top_buys, (5) sector_flags.\n\n{\"swaps\":[{\"sell\":\"SYM|null\",\"buy\":\"SYM|null\",\"score_delta\":0.0,\"sector\":\"S\",\"type\":\"SELL|SWAP|REDUCE\",\"r\":\"<12 words\",\"decision_basis\":\"INVESTMENT_THESIS\"}],\"top_buys\":[\"S\"],\"sector_flags\":[\"S 45%>30%\"],\"priority\":\"growth\",\"summary\":\"<2 natural-language sentences>\"}"
+   },
+   "layer2": {
+    "max_tokens": 8192,
+    "prompt": "You are an independent portfolio reviewer.\n[MARKET REGIME \u2014 MANDATORY ALLOCATION CONTEXT]\nCurrent Regime: HIGH_VOLATILITY (confidence: 50%)\nTransition Stability: STABLE (1 trading days in current regime)\nPrevious Regime: UNKNOWN\nVolatility Signal: z-score 0.0\u03c3\nTrend Strength: 50/100\n\nRegime Allocation Mandate:\nElevated volatility favors capital preservation. Minimum cash 15%. Suppress speculative positions and reduce turnover.\n\nHard Constraints (regime-enforced \u2014 DO NOT override):\n  Minimum cash reserve:    15%\n  Factor stance:           PRIORITIZE quality (high ROE, low debt) stocks; SUPPRESS speculative and high-beta positions\n\nAll allocation proposals MUST respect these regime-derived constraints.\nThe optimizer MUST NOT recommend cash below 15% in this regime.\n\n\n[TIMING AWARENESS \u2014 CHALLENGER]\nEach symbol carries timing_score and execution_priority.\nChallenge BUY/ACCUMULATE recommendations where execution_priority=DEFER or timing_score<40.\nRecord material timing disagreements with basis=INVESTMENT_THESIS and include the symbol and timing evidence.\nTiming does not invalidate a fundamentally attractive stock \u2014 document the concern, do not block.\n\nYour role: Independent risk-aware reviewer\n\nThe Strategist (Layer 1) proposed:\n- Priority: balanced\n- Swaps: [\n  {\n    \"sell_symbol\": \"AAA\",\n    \"buy_symbol\": null,\n    \"reason\": \"Forced exit: SELL signal.\",\n    \"score_improvement\": 0,\n    \"sector\": \"Other\",\n    \"type\": \"SELL\"\n  }\n]\n- Top watchlist picks: []\n\n\nFull portfolio data for your analysis:\n[\n  {\n    \"symbol\": \"AAA\",\n    \"sector\": \"Other\",\n    \"sector_classification\": null,\n    \"signal\": \"SELL\",\n    \"combined_score\": 0,\n    \"ta_score\": 0,\n    \"fa_score\": 30,\n    \"trend\": \"sideways\",\n    \"pe_ratio\": 40,\n    \"roe\": null,\n    \"allow_swap\": true,\n    \"weight_pct\": 60.0,\n    \"market_value\": 600.0,\n    \"current_price\": 10,\n    \"timing_score\": 0,\n    \"timing_data_available\": false,\n    \"execution_priority\": null,\n    \"momentum\": null\n  },\n  {\n    \"symbol\": \"BBB\",\n    \"sector\": \"Other\",\n    \"sector_classification\": null,\n    \"signal\": \"HOLD\",\n    \"combined_score\": 0,\n    \"ta_score\": 55,\n    \"fa_score\": 0,\n    \"trend\": \"sideways\",\n    \"pe_ratio\": 12,\n    \"roe\": 20.0,\n    \"allow_swap\": true,\n    \"weight_pct\": 20.0,\n    \"market_value\": 200.0,\n    \"current_price\": 10,\n    \"timing_score\": 62,\n    \"timing_data_available\": true,\n    \"execution_priority\": null,\n    \"momentum\": null\n  }\n]\n\nFull watchlist for your analysis:\n[\n  {\n    \"symbol\": \"WWW\",\n    \"current_price\": 5,\n    \"sector\": \"Other\",\n    \"sector_classification\": null,\n    \"signal\": \"BUY\",\n    \"combined_score\": 0,\n    \"ta_score\": 0,\n    \"fa_score\": 60,\n    \"trend\": \"sideways\",\n    \"pe_ratio\": 9,\n    \"roe\": null,\n    \"timing_score\": 0,\n    \"timing_data_available\": false,\n    \"execution_priority\": null,\n    \"momentum\": null\n  },\n  {\n    \"symbol\": \"ZZZ\",\n    \"current_price\": 5,\n    \"sector\": \"Other\",\n    \"sector_classification\": null,\n    \"signal\": \"HOLD\",\n    \"combined_score\": 0,\n    \"ta_score\": 0,\n    \"fa_score\": 0,\n    \"trend\": \"sideways\",\n    \"pe_ratio\": null,\n    \"roe\": null,\n    \"timing_score\": null,\n    \"timing_data_available\": false,\n    \"execution_priority\": null,\n    \"momentum\": null\n  }\n]\n\nTotal portfolio value: 1000, Cash balance: 200\nThai stocks end in .BK.\n\nSTABILIZATION PHILOSOPHY:\nUnnecessary portfolio churn destroys value through transaction costs, tax drag, and operational complexity.\n\nPosition NAV concentration, sector concentration and allocation drift are advisory diagnostics. They cannot by themselves justify or veto a trade, change its score, or rule out HOLD or NO_ACTION. Use available market, downside, valuation, portfolio and investor-goal evidence to justify each BUY, ACCUMULATE, REDUCE or SELL. A concentrated winner can remain a HOLD.\nChallenge the Strategist with an independently supported alternative or confirm the proposal.\nCompare the expected benefit and trading costs against keeping the existing portfolio.\nUse NO_ACTION when the available evidence supports keeping the portfolio.\nKeep concentration observations separate from actionable allocations and opportunity scoring.\n\nscore guide: 0-25=no action needed, 26-45=minor optimization, 46-70=moderate opportunity, 71-100=strong opportunity.\nno_action_reason enum (use null if status=REBALANCE):\n  WELL_BALANCED | LOW_CONFIDENCE | HIGH_DISAGREEMENT | CONSTRAINT_BLOCKED | MARKET_UNCERTAINTY | INSUFFICIENT_EDGE\n\nBuild a complete capital allocation plan. Challenge or confirm the Strategist's swaps.\n\nOUTPUT CONTRACT \u2014 this JSON is read by software, not a person; a separate step writes the human-readable\nreport later. Do not spend output tokens on prose. Follow this priority order if you are running low on\noutput budget: (1) allocations for existing holdings and BUY/ACCUMULATE/REDUCE/SELL decisions, (2) risk/\nconstraint-violation notes, (3) portfolio_assessment, (4) blocked_opportunities, (5) watchlist WATCH rows,\n(6) any optional explanation. Never drop an allocation row to make room for longer text.\n\nALLOCATIONS ARRAY:\n- Include every existing portfolio holding exactly once, with its action (ACCUMULATE|BUY|HOLD|REDUCE|SELL|WATCH).\n- Include a watchlist symbol only if you assign it BUY or ACCUMULATE, OR it is one of your top few WATCH-worthy\n  candidates with a specific reason (max 5 WATCH rows total). Do not add a row for every watchlist symbol \u2014\n  omit ones with no actionable signal completely.\n- Weights are FLAT PERCENTAGES (10.0 = 10% of portfolio), not monetary amounts.\n- Omit current weight \u2014 the backend already has it; send only the target.\n- \"r\" = one reason, under 20 words. State each idea once \u2014 do not repeat it in \"r\", disagreements, and\n  portfolio_assessment.\n\nIf a watchlist symbol with BUY/ACCUMULATE signal was evaluated but rejected (cash constraint,\nportfolio count cap), list it in blocked_opportunities \u2014 but only the highest-priority rejections, max 5.\nKeep each \"reason\" under 10 words (e.g. \"insufficient_cash\").\nSector thresholds alone cannot block BUY/ACCUMULATE or justify a SELL/REDUCE.\nPut optional sector-only reductions in sector_alternatives, using the same allocation row format.\nKeep the actionable allocation HOLD unless independently justified. Mark thesis-driven SELL/REDUCE\nwith decision_basis=INVESTMENT_THESIS. Judge agreement and opportunity only on actionable decisions.\n If the complete allocation forms a coherent optional strategy, label strategy_family as\n RAISE_CASH, DEFENSIVE_ROTATION or GROWTH_ROTATION; otherwise use null. Evidence refs may\n cite only observed fields: symbol:SYM:signal, symbol:SYM:fa_score, symbol:SYM:ta_score,\n symbol:SYM:pe_ratio, symbol:SYM:roe, symbol:SYM:timing_score, regime:regime,\n goal:ID:target_date, goal:ID:funding_gap or goal:ID:priority. A cited fact does not\n by itself prove the strategy is superior. Never cite a concentration threshold as support.\n\ndisagreements[]: only material disagreements with Layer 1 (wrong signal, missed breach, constraint conflict).\nUse CONCENTRATION_ADVISORY for concentration-only comments. Other bases must identify the actionable disagreement.\nMax 5 entries, each under 20 words.\n\nportfolio_assessment: 2-3 sentences max \u2014 a decision summary, not an essay.\n\nReturn JSON only. No markdown fences, no prose outside the JSON.\n\n{\n  \"status\": \"REBALANCE|NO_ACTION\",\n  \"rebalance_opportunity_score\": 50,\n  \"no_action_reason\": \"WELL_BALANCED|LOW_CONFIDENCE|HIGH_DISAGREEMENT|CONSTRAINT_BLOCKED|MARKET_UNCERTAINTY|INSUFFICIENT_EDGE|null\",\n  \"no_action_summary\": \"<20 words, null if REBALANCE\",\n  \"blocked_opportunities\": [{\"symbol\":\"X\",\"signal\":\"BUY\",\"reason\":\"insufficient_cash|portfolio_count_cap\"}],\n  \"agrees_with_layer1\": true,\n  \"disagreements\": [{\"basis\":\"ACTION|SIZING|INVESTMENT_THESIS|HARD_POLICY|CONCENTRATION_ADVISORY\",\"issue\":\"<20 words>\"}],\n  \"portfolio_assessment\": \"2-3 sentences\",\n  \"cash_balance_target\": 0.0,\n  \"strategy_family\": \"RAISE_CASH|DEFENSIVE_ROTATION|GROWTH_ROTATION|null\", \"observed_evidence_refs\": [\"symbol:SYM:signal\"],\n  \"allocations\": [\n    {\"s\":\"X\",\"tw\":0.0,\"sig\":\"BUY|ACCUMULATE|HOLD|REDUCE|SELL|WATCH\",\"r\":\"<20 words\",\"decision_basis\":\"INVESTMENT_THESIS|CONCENTRATION_ADVISORY\"}\n  ]\n}\nOptional additional_plans: up to two complete portfolio plans, each with strategy_family, observed_evidence_refs, cash_balance_target, portfolio_assessment, and allocations in the same format as the primary plan. Omit when evidence is insufficient. These are candidates, not selected trades.\n"
+   },
+   "layer3": {
+    "max_tokens": 4096,
+    "prompt": "You are a portfolio risk auditor.\n[TIMING RISK ASSESSMENT \u2014 Phase 4C.6H]\nFlag MEDIUM severity when a new BUY or ACCUMULATE position has execution_priority=DEFER or timing_score<40.\nUse: {\"symbol\":\"X\",\"issue\":\"Poor entry timing (ts=[N], priority=DEFER) for new position\",\"severity\":\"MEDIUM\"}\nDo NOT escalate to HIGH or CRITICAL for timing alone \u2014 timing cautions, it does not block.\n\nYour role: Concentration risk and assumption validator\n\nEvaluate both allocation proposals for concentration risk and soundness.\n\n[AUTHORITATIVE POLICY CLAIM CONTRACT]\n{\"basket_guidance\": {\"enforced\": false, \"kind\": \"ADVISORY_CONCERN\", \"threshold_pct\": 40}, \"evidence\": {}, \"general_policy_limits\": {}, \"sector_advisories\": {\"CURRENT:effective_sector_limits:Other\": {\"basis\": \"EQUITY\", \"binding_source\": \"WORKSPACE_THRESHOLD_FALLBACK\", \"breach_amount\": 480.0, \"breach_pp\": 60.0, \"currency\": \"THB\", \"denominator\": 800.0, \"evidence_id\": \"CURRENT:effective_sector_limits:Other\", \"evidence_version\": \"wealth.policy-evidence.v2\", \"limit_pct\": 40.0, \"members\": [{\"symbol\": \"AAA\"}, {\"symbol\": \"BBB\"}], \"numerator\": 800.0, \"observed_pct\": 100.0, \"rule\": \"effective_sector_limits\", \"scope\": \"SECTOR\", \"sector\": \"Other\", \"stage\": \"CURRENT\", \"type\": \"CONCENTRATION_BREACH\"}, \"PROJECTED_TARGET:effective_sector_limits:Other\": {\"basis\": \"EQUITY\", \"binding_source\": \"WORKSPACE_THRESHOLD_FALLBACK\", \"breach_amount\": 120.0, \"breach_pp\": 60.0, \"currency\": \"THB\", \"denominator\": 200.0, \"evidence_id\": \"PROJECTED_TARGET:effective_sector_limits:Other\", \"evidence_version\": \"wealth.policy-evidence.v2\", \"limit_pct\": 40.0, \"members\": [{\"symbol\": \"BBB\"}], \"numerator\": 200.0, \"observed_pct\": 100.0, \"rule\": \"effective_sector_limits\", \"scope\": \"SECTOR\", \"sector\": \"Other\", \"stage\": \"PROJECTED_TARGET\", \"type\": \"CONCENTRATION_BREACH\"}}, \"version\": \"wealth.auditor-policy-claims.v2\"}\nSector advisories in the contract are informational and excluded from risk_flags and safer_choice.\nAn optional sector comment can use SECTOR_ADVISORY with its exact evidence_ref.\nEvery risk flag must include claim_kind. POLICY_BREACH and EXECUTION_RESTRICTION must\nreference an exact evidence_ref from this contract, with the same symbol (PORTFOLIO for\nportfolio-wide evidence). Missing or mismatched evidence is unscored, unsupported model output.\nGeneral portfolio policy is separate from per-instrument execution caps. An execution cap\nis applicable only to proposed BUY/ACCUMULATE targets, never a universal holding limit.\nEXISTING_EXPOSURE above an execution cap requires no automatic liquidation; it is unscored context.\nADVISORY_CONCERN includes the prompt-only 40% DR basket guidance; it is not a governance breach.\nUse INVESTMENT_JUDGMENT for independent business, valuation, volatility or timing risk opinions\nonly, never assertions that a deterministic limit is breached. Model-only opinions are visible but\nunscored. Investment observations require a matching independently produced evidence_ref;\nthe model label alone never authorizes a risk penalty. Only existing contract evidence is scoreable.\nSeverity thresholds below guide opinions, not proof of a policy violation. Do not invent limits.\n\nLayer 1 (Strategist):\nPriority: balanced\nProposed swaps: [\n  {\n    \"sell_symbol\": \"AAA\",\n    \"buy_symbol\": null,\n    \"reason\": \"Forced exit: SELL signal.\",\n    \"score_improvement\": 0,\n    \"sector\": \"Other\",\n    \"type\": \"SELL\"\n  }\n]\n\nLayer 2 (Challenger):\nAgrees: True\nDisagreements: []\nAllocations: [\n  {\n    \"symbol\": \"AAA\",\n    \"current_weight\": 60.0,\n    \"target_weight\": 0.0,\n    \"action\": \"SELL\",\n    \"allocation_change_percent\": -60.0,\n    \"estimated_amount\": -600,\n    \"reason\": \"\",\n    \"decision_basis\": \"INVESTMENT_THESIS\",\n    \"ta_score\": 0,\n    \"fa_score\": 30,\n    \"pe_ratio\": 40,\n    \"sector\": \"Other\",\n    \"combined_score\": 0,\n    \"timing_score\": 0\n  },\n  {\n    \"symbol\": \"BBB\",\n    \"current_weight\": 20.0,\n    \"target_weight\": 20.0,\n    \"action\": \"HOLD\",\n    \"allocation_change_percent\": 0.0,\n    \"estimated_amount\": 0,\n    \"reason\": \"\",\n    \"ta_score\": 55,\n    \"fa_score\": 0,\n    \"pe_ratio\": 12,\n    \"roe\": 20.0,\n    \"sector\": \"Other\",\n    \"combined_score\": 0,\n    \"timing_score\": 62\n  }\n]\n\nReport position concentration and drift as ADVISORY_CONCERN. Flag genuine instrument restrictions,\ninvestor restrictions and evidence-quality concerns with the relevant contract evidence.\nAssess independent investment risks using the evidence contract and its severity guidance.\n\nMax 8 risk_flags, \"issue\" under 15 words each. \"auditor_notes\" is a 1-2 sentence verdict \u2014 do not\nrestate the risk_flags issue text there.\n\nEvery flag must have category INVESTMENT_RISK or OWNER_INTENT_REVIEW.\nUse OWNER_INTENT_REVIEW only for disagreement with owner Intent. Such disagreement is\nallowed: preserve it for owner review, but exclude it from final_risk_level, safer_choice\nand investment/governance/quality judgments. A real investment risk in the same symbol\nmust be a separate INVESTMENT_RISK flag. Never disguise investment risk as Intent review.\n\n[STRATEGIC CANDIDATE REVIEW \u2014 REQUIRED FOR THIS RUN]\nReview every candidate below, including hold-current. Return candidate_reviews with exactly\none row per candidate_id; omit none and repeat none. A missing or incomplete review set\ninvalidates the whole review.\n- supporting_refs: only keys from that candidate's cited_refs that genuinely support it.\n- opposing_refs: keys from relevant_evidence that contradict or weaken that candidate.\n  Report material contradictory facts, not only supporting ones.\n- material_conflicts: short descriptions of unresolved material conflicts; [] if none.\n- assessment: one sentence under 30 words. Model opinions are unscored.\nUse exact keys only. Never invent a reference or a value; missing information stays missing.\n- unobserved_evidence: missing, failed or disabled analysis for these symbols. It is not\n  evidence and not a neutral reading; never cite its keys. evidence_provenance_status\n  NOT_SUPPLIED means the values were not provenance-checked.\nA review is not a selection. Do not use safer_choice as a selection vote.\nCANDIDATES_FOR_REVIEW={\"candidates\": [{\"candidate_id\": \"hold-current\", \"cash_intent\": {\"amount\": 200.0, \"kind\": \"KEEP_CURRENT\"}, \"cited_refs\": {}, \"eligibility_reasons\": [], \"eligibility_status\": \"ELIGIBLE\", \"family\": \"HOLD\", \"missing_information\": [], \"proposed_allocations\": [{\"action\": \"HOLD\", \"allocation_change_percent\": 0.0, \"current_weight\": 60.0, \"symbol\": \"AAA\", \"target_weight\": 60.0}, {\"action\": \"HOLD\", \"allocation_change_percent\": 0.0, \"current_weight\": 20.0, \"symbol\": \"BBB\", \"target_weight\": 20.0}]}, {\"candidate_id\": \"proposal-234cb8874d6e\", \"cash_intent\": {\"kind\": \"TARGET_WEIGHT_PCT\", \"value\": 80.0}, \"cited_refs\": {\"symbol:AAA:signal\": \"SELL\"}, \"eligibility_reasons\": [], \"eligibility_status\": \"ELIGIBLE\", \"family\": \"RAISE_CASH\", \"missing_information\": [], \"proposed_allocations\": [{\"action\": \"SELL\", \"allocation_change_percent\": -60.0, \"current_weight\": 60.0, \"decision_basis\": \"INVESTMENT_THESIS\", \"symbol\": \"AAA\", \"target_weight\": 0.0}, {\"action\": \"HOLD\", \"allocation_change_percent\": 0.0, \"current_weight\": 20.0, \"symbol\": \"BBB\", \"target_weight\": 20.0}]}], \"catalog_entry_count\": 12, \"evidence_provenance_status\": \"SUPPLIED\", \"omitted_unrelated_entry_count\": 3, \"omitted_unrelated_unobserved_count\": 5, \"relevant_evidence\": {\"regime:regime\": \"HIGH_VOLATILITY\", \"symbol:AAA:fa_score\": 30, \"symbol:AAA:pe_ratio\": 40, \"symbol:AAA:signal\": \"SELL\", \"symbol:AAA:ta_score\": 0, \"symbol:BBB:pe_ratio\": 12, \"symbol:BBB:roe\": 0.2, \"symbol:BBB:ta_score\": 55, \"symbol:BBB:timing_score\": 62}, \"unobserved_evidence\": {\"symbol:AAA:timing_score\": \"MISSING\", \"symbol:BBB:fa_score\": \"FAILED\", \"symbol:BBB:signal\": \"MISSING\"}}\n\nReturn JSON only. No markdown fences.\n\n{\n  \"candidate_reviews\": [{\"candidate_id\":\"exact candidate_id\",\"supporting_refs\":[\"exact cited_refs key\"],\"opposing_refs\":[\"exact relevant_evidence key\"],\"material_conflicts\":[\"unresolved material conflict\"],\"assessment\":\"<30 words\"}],\n  \"risk_flags\": [{\"symbol\":\"...\",\"issue\":\"...\",\"severity\":\"LOW|MEDIUM|HIGH|CRITICAL\",\"category\":\"INVESTMENT_RISK|OWNER_INTENT_REVIEW\",\"claim_kind\":\"POLICY_BREACH|EXECUTION_RESTRICTION|EXISTING_EXPOSURE|ADVISORY_CONCERN|SECTOR_ADVISORY|INVESTMENT_JUDGMENT\",\"evidence_ref\":\"exact contract key or null\"}],\n  \"safer_choice\": \"layer1|layer2|neither\",\n  \"final_risk_level\": \"low|medium|high\",\n  \"auditor_notes\": \"1-2 sentences.\"\n}"
+   }
+  },
+  "strategic_candidates": {
+   "candidates": [
+    {
+     "cash_intent": {
+      "amount": 200.0,
+      "kind": "KEEP_CURRENT"
+     },
+     "eligibility_reasons": [],
+     "eligibility_status": "ELIGIBLE",
+     "family": "HOLD",
+     "id": "hold-current",
+     "missing_information": [],
+     "model_rationale": null,
+     "observed_evidence_refs": [],
+     "proposed_allocations": [
+      {
+       "action": "HOLD",
+       "allocation_change_percent": 0.0,
+       "current_weight": 60.0,
+       "symbol": "AAA",
+       "target_weight": 60.0
+      },
+      {
+       "action": "HOLD",
+       "allocation_change_percent": 0.0,
+       "current_weight": 20.0,
+       "symbol": "BBB",
+       "target_weight": 20.0
+      }
+     ],
+     "risks_and_opposing_evidence": [],
+     "source_layer": "FROZEN_PORTFOLIO"
+    },
+    {
+     "cash_intent": {
+      "kind": "TARGET_WEIGHT_PCT",
+      "value": 80.0
+     },
+     "eligibility_reasons": [],
+     "eligibility_status": "ELIGIBLE",
+     "family": "RAISE_CASH",
+     "id": "proposal-234cb8874d6e",
+     "missing_information": [],
+     "model_rationale": null,
+     "observed_evidence_refs": {
+      "symbol:AAA:signal": "SELL"
+     },
+     "proposed_allocations": [
+      {
+       "action": "SELL",
+       "allocation_change_percent": -60.0,
+       "combined_score": 0,
+       "current_weight": 60.0,
+       "decision_basis": "INVESTMENT_THESIS",
+       "estimated_amount": -600,
+       "fa_score": 30,
+       "pe_ratio": 40,
+       "reason": "",
+       "sector": "Other",
+       "symbol": "AAA",
+       "ta_score": 0,
+       "target_weight": 0.0,
+       "timing_score": 0
+      },
+      {
+       "action": "HOLD",
+       "allocation_change_percent": 0.0,
+       "combined_score": 0,
+       "current_weight": 20.0,
+       "estimated_amount": 0,
+       "fa_score": 0,
+       "pe_ratio": 12,
+       "reason": "",
+       "roe": 20.0,
+       "sector": "Other",
+       "symbol": "BBB",
+       "ta_score": 55,
+       "target_weight": 20.0,
+       "timing_score": 62
+      }
+     ],
+     "risks_and_opposing_evidence": [],
+     "source_layer": "CHALLENGER"
+    }
+   ],
+   "evidence_provenance_status": "SUPPLIED",
+   "goal_context_version": null,
+   "observed_evidence_as_of": {
+    "symbol:AAA:signal": "2026-11-01T00:00:00",
+    "symbol:WWW:signal": "2026-11-02T00:00:00"
+   },
+   "observed_evidence_catalog": {
+    "regime:regime": "HIGH_VOLATILITY",
+    "symbol:AAA:fa_score": 30,
+    "symbol:AAA:pe_ratio": 40,
+    "symbol:AAA:signal": "SELL",
+    "symbol:AAA:ta_score": 0,
+    "symbol:BBB:pe_ratio": 12,
+    "symbol:BBB:roe": 0.2,
+    "symbol:BBB:ta_score": 55,
+    "symbol:BBB:timing_score": 62,
+    "symbol:WWW:fa_score": 60,
+    "symbol:WWW:pe_ratio": 9,
+    "symbol:WWW:signal": "BUY"
+   },
+   "status": "PREPARED_NOT_SELECTED",
+   "unobserved_evidence": {
+    "symbol:AAA:timing_score": "MISSING",
+    "symbol:BBB:fa_score": "FAILED",
+    "symbol:BBB:signal": "MISSING",
+    "symbol:WWW:ta_score": "DISABLED",
+    "symbol:WWW:timing_score": "MISSING",
+    "symbol:ZZZ:fa_score": "MISSING",
+    "symbol:ZZZ:signal": "MISSING",
+    "symbol:ZZZ:ta_score": "MISSING"
+   },
+   "version": "wealth.strategic-candidates.v1"
+  },
+  "strategy_selection": {
+   "auditor_review_status": "AVAILABLE",
+   "comparison_against_hold": "Waiting is preferable.",
+   "considered_candidate_ids": [
+    "hold-current",
+    "proposal-234cb8874d6e"
+   ],
+   "decision_rationale": "Hold the current portfolio.",
+   "downstream_outcome": {
+    "status": "UNCHANGED"
+   },
+   "eligible_candidate_ids": [
+    "hold-current",
+    "proposal-234cb8874d6e"
+   ],
+   "material_uncertainty": [],
+   "opposing_evidence_refs": [],
+   "reason_codes": [
+    "COMMITTEE_SELECTED"
+   ],
+   "selected_candidate_id": "hold-current",
+   "state": "SELECTED",
+   "supporting_evidence_refs": [],
+   "version": "wealth.strategy-selection.v1"
+  },
+  "target_allocations": [
+   {
+    "action": "HOLD",
+    "allocation_change_percent": 0.0,
+    "combined_score": 0,
+    "current_weight": 60.0,
+    "estimated_amount": 0,
+    "fa_score": 30,
+    "pe_ratio": 40,
+    "sector": "Other",
+    "symbol": "AAA",
+    "ta_score": 0,
+    "target_weight": 60.0,
+    "timing_score": 0
+   },
+   {
+    "action": "HOLD",
+    "allocation_change_percent": 0.0,
+    "combined_score": 0,
+    "current_weight": 20.0,
+    "estimated_amount": 0,
+    "fa_score": 0,
+    "pe_ratio": 12,
+    "roe": 20.0,
+    "sector": "Other",
+    "symbol": "BBB",
+    "ta_score": 55,
+    "target_weight": 20.0,
+    "timing_score": 62
+   }
+  ]
+ }
+}
