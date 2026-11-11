@@ -47,6 +47,19 @@ vi.mock("@/components/WorkspaceScopeSwitcher", () => ({ default: () => <span>TA 
 vi.mock("@/components/operations-center/quant/OperationsTimeline", () => ({ default: () => null }));
 
 const fixture = (id: number) => structuredClone(id === 217 ? raw217 : raw218) as unknown as OptimizerResult;
+function optedInHold(): OptimizerResult {
+  const result = fixture(218);
+  result.active_policy = { ...result.active_policy!, optimizer_policy_mode: "wealth.optimizer-muji.v2",
+    strategy_selection_mode: "wealth.strategy-selection.v1" };
+  result.consensus = { ...result.consensus!, consensus_type: "STRATEGIC_CONFLICT",
+    consensus_decision: "REBALANCE" };
+  result.strategy_selection = { version: "wealth.strategy-selection.v1", state: "SELECTED",
+    selected_candidate_id: "hold-current", reason_codes: ["CAUTIONED_HOLD"],
+    material_uncertainty: ["NO_ELIGIBLE_ACTION"], comparison_against_hold: "No defensible action established." };
+  result.strategic_candidates = { version: "wealth.strategic-candidates.v1", status: "PREPARED_NOT_SELECTED",
+    candidates: [{ id: "hold-current", family: "HOLD", eligibility_status: "ELIGIBLE", proposed_allocations: [] }] };
+  return result;
+}
 const history = [218, 217].map((id) => ({ id, portfolio_name: "TA", analyzed_at: fixture(id).analyzed_at,
   swap_count: 0, optimizer_status: fixture(id).status, final_consensus_score: id === 218 ? 64 : 26 }));
 function navigate(url: string) {
@@ -76,6 +89,143 @@ beforeEach(() => {
 });
 
 describe("Selected historical journeys", () => {
+  it("keeps frozen Committee HOLD authoritative when legacy consensus conflicts and says REBALANCE", async () => {
+    api.getOptimizerHistory.mockResolvedValue(optedInHold());
+    render(<OptimizerPage />);
+    const decision = await screen.findByTestId("committee-decision");
+    expect(decision).toHaveTextContent("Decision owner: Committee · SELECTED");
+    expect(decision).toHaveTextContent("Selected strategy: HOLD · hold-current");
+    expect(screen.getByText("Legacy Consensus Assessment")).toBeInTheDocument();
+    expect(screen.getByText("Strategic conflict (legacy assessment)")).toBeInTheDocument();
+    expect(screen.queryByText("Human Review Required")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Full Consensus Detail/ }));
+    expect(screen.getByText("Legacy assessment result").parentElement).toHaveTextContent("REBALANCE");
+  });
+
+  it("retains the legacy consensus display without exact opt-in markers", async () => {
+    const result = optedInHold();
+    result.active_policy = { ...result.active_policy!, strategy_selection_mode: undefined };
+    api.getOptimizerHistory.mockResolvedValue(result);
+    render(<OptimizerPage />);
+    await screen.findByText("Decision owner: Challenger");
+    expect(screen.getByText("Committee Decision")).toBeInTheDocument();
+    expect(screen.getByText("Human Review Required")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Full Consensus Detail/ }));
+    expect(screen.getByText("REBALANCE")).toBeInTheDocument();
+  });
+
+  it("does not substitute legacy consensus for missing frozen selection evidence", async () => {
+    const result = optedInHold();
+    result.strategy_selection = null;
+    api.getOptimizerHistory.mockResolvedValue(result);
+    render(<OptimizerPage />);
+    await screen.findByText(/Selection Evidence Unavailable/);
+    expect(screen.getByText("Legacy Consensus Assessment")).toBeInTheDocument();
+    expect(screen.getByText("Strategic conflict (legacy assessment)")).toBeInTheDocument();
+    expect(screen.queryByText("Human Review Required")).not.toBeInTheDocument();
+    expect(screen.queryByText("Decision owner: Challenger")).not.toBeInTheDocument();
+  });
+
+  it("keeps the per-run Committee opt-in off for history and sends it only when checked", async () => {
+    api.runOptimizer.mockResolvedValue(fixture(218));
+    render(<OptimizerPage />);
+    await screen.findByText("Keep held positions unchanged");
+    const toggle = screen.getByRole("checkbox", { name: /Use Committee strategy selection for this run/ });
+    expect(toggle).not.toBeChecked();
+    expect(api.runOptimizer).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Run Optimizer" }));
+    await waitFor(() => expect(api.runOptimizer).toHaveBeenCalledWith(4, undefined, undefined, undefined, null, false));
+    fireEvent.click(toggle);
+    fireEvent.click(screen.getByRole("button", { name: "Run Optimizer" }));
+    await waitFor(() => expect(api.runOptimizer).toHaveBeenLastCalledWith(4, undefined, undefined, undefined, null, true));
+  });
+
+  it("shows selected Committee evidence, HOLD comparison and safeguard changes", () => {
+    const result = fixture(218);
+    result.active_policy = { ...result.active_policy!, optimizer_policy_mode: "wealth.optimizer-muji.v2",
+      strategy_selection_mode: "wealth.strategy-selection.v1" };
+    result.strategy_selection = { version: "wealth.strategy-selection.v1", state: "SELECTED",
+      selected_candidate_id: "proposal-a", supporting_evidence_refs: ["symbol:AAA:signal"],
+      opposing_evidence_refs: ["regime:regime"], comparison_against_hold: "Lower thesis risk than HOLD.",
+      decision_rationale: "Raise cash.", material_uncertainty: ["Timing uncertain"],
+      reason_codes: ["COMMITTEE_SELECTED"], downstream_outcome: { status: "ALTERED_BY_SAFEGUARDS" } };
+    result.strategic_candidates = { version: "wealth.strategic-candidates.v1", status: "PREPARED_NOT_SELECTED",
+      observed_evidence_catalog: { "regime:regime": "DOWNTURN" }, candidates: [{
+        id: "proposal-a", family: "RAISE_CASH", eligibility_status: "ELIGIBLE",
+        observed_evidence_refs: { "symbol:AAA:signal": "SELL" }, proposed_allocations: [{
+          symbol: "AAA", action: "SELL", current_weight: 50, target_weight: 0,
+          allocation_change_percent: -50, estimated_amount: -5000, reason: "Frozen SELL signal",
+        }],
+      }] };
+    result.candidate_audit = { status: "AVAILABLE", reviews: {
+      "proposal-a": { supporting_refs: ["symbol:AAA:signal"], opposing_refs: ["regime:regime"] },
+    } };
+    result.target_allocations = [{ symbol: "AAA", action: "SELL", current_weight: 50,
+      target_weight: 10, allocation_change_percent: -40, estimated_amount: -4000, reason: "Frozen SELL signal" }];
+    const { rerender } = render(<OptimizerDecisionSummary result={result} historyId={8} historical loading={false} />);
+    const decision = screen.getByTestId("committee-decision");
+    expect(decision).toHaveTextContent("Decision owner: Committee");
+    expect(decision).toHaveTextContent("RAISE CASH · proposal-a");
+    expect(decision).toHaveTextContent("Lower thesis risk than HOLD");
+    expect(decision).toHaveTextContent("symbol:AAA:signal = SELL");
+    expect(decision).toHaveTextContent("regime:regime = DOWNTURN");
+    expect(decision).toHaveTextContent("Proposed allocation: SELL AAA 0%");
+    expect(decision).toHaveTextContent("Effective post-safeguard allocation: SELL AAA 10%");
+    expect(screen.getByText(/Stored legacy consensus assessment/)).toBeInTheDocument();
+    result.candidate_audit.reviews!["proposal-a"].supporting_refs = [];
+    rerender(<OptimizerDecisionSummary result={{ ...result }} historyId={8} historical loading={false} />);
+    expect(screen.getByText(/Selection Evidence Unavailable/)).toBeInTheDocument();
+  });
+
+  it.each(["ABSTAINED", "HUMAN_REVIEW_REQUIRED"] as const)("shows %s without selected action", (state) => {
+    const result = fixture(218);
+    result.active_policy = { ...result.active_policy!, optimizer_policy_mode: "wealth.optimizer-muji.v2",
+      strategy_selection_mode: "wealth.strategy-selection.v1" };
+    result.strategy_selection = { version: "wealth.strategy-selection.v1", state,
+      selected_candidate_id: null, reason_codes: ["AUDITOR_UNAVAILABLE"], material_uncertainty: ["Missing NAV"] };
+    result.strategic_candidates = { version: "wealth.strategic-candidates.v1", status: "PREPARED_NOT_SELECTED", candidates: [] };
+    render(<OptimizerDecisionSummary result={result} historyId={8} historical loading={false} />);
+    expect(screen.getByTestId("committee-decision")).toHaveTextContent(state.replace(/_/g, " "));
+    expect(screen.getByTestId("committee-decision")).toHaveTextContent("AUDITOR_UNAVAILABLE");
+    expect(screen.getByTestId("committee-decision")).not.toHaveTextContent("Selected strategy:");
+  });
+
+  it("distinguishes selected HOLD, unavailable evidence, and non-opt-in Challenger history", () => {
+    const result = fixture(218);
+    result.active_policy = { ...result.active_policy!, optimizer_policy_mode: "wealth.optimizer-muji.v2",
+      strategy_selection_mode: "wealth.strategy-selection.v1" };
+    result.strategy_selection = { version: "wealth.strategy-selection.v1", state: "SELECTED",
+      selected_candidate_id: "hold-current", reason_codes: ["CAUTIONED_HOLD"],
+      material_uncertainty: ["Auditor unavailable"], comparison_against_hold: "Wait for evidence." };
+    result.strategic_candidates = { version: "wealth.strategic-candidates.v1", status: "PREPARED_NOT_SELECTED",
+      candidates: [{ id: "hold-current", family: "HOLD", eligibility_status: "ELIGIBLE", proposed_allocations: [] }] };
+    const { rerender } = render(<OptimizerDecisionSummary result={result} historyId={8} historical loading={false} />);
+    expect(screen.getByTestId("committee-decision")).toHaveTextContent("no actionable alternative was preferred");
+    result.strategy_selection = null;
+    rerender(<OptimizerDecisionSummary result={{ ...result }} historyId={8} historical loading={false} />);
+    expect(screen.getByText(/Selection Evidence Unavailable/)).toBeInTheDocument();
+    result.active_policy = { ...result.active_policy!, strategy_selection_mode: undefined };
+    rerender(<OptimizerDecisionSummary result={{ ...result }} historyId={8} historical loading={false} />);
+    expect(screen.getByText("Decision owner: Challenger")).toBeInTheDocument();
+  });
+
+  it("renders malformed frozen references and candidate rows as unavailable", () => {
+    const result = fixture(218);
+    result.active_policy = { ...result.active_policy!, optimizer_policy_mode: "wealth.optimizer-muji.v2",
+      strategy_selection_mode: "wealth.strategy-selection.v1" };
+    result.strategy_selection = { version: "wealth.strategy-selection.v1", state: "SELECTED",
+      selected_candidate_id: "hold-current", reason_codes: [], material_uncertainty: [],
+      supporting_evidence_refs: "invalid" as unknown as string[] };
+    result.strategic_candidates = { version: "wealth.strategic-candidates.v1",
+      status: "PREPARED_NOT_SELECTED", candidates: [{ id: "hold-current", family: "HOLD",
+        eligibility_status: "ELIGIBLE", proposed_allocations: [] }] };
+    const { rerender } = render(<OptimizerDecisionSummary result={result} historyId={8} historical loading={false} />);
+    expect(screen.getByText(/Selection Evidence Unavailable/)).toBeInTheDocument();
+    result.strategy_selection.supporting_evidence_refs = [];
+    result.strategic_candidates.candidates = [null] as unknown as typeof result.strategic_candidates.candidates;
+    rerender(<OptimizerDecisionSummary result={{ ...result }} historyId={8} historical loading={false} />);
+    expect(screen.getByText(/Selection Evidence Unavailable/)).toBeInTheDocument();
+  });
   it("shows V2 recommendation separately from advisory schedule and unavailable estimates", () => {
     const result = fixture(218);
     result.active_policy = { ...result.active_policy!, optimizer_policy_mode: "wealth.optimizer-muji.v2" };

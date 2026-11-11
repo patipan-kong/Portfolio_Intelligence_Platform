@@ -69,6 +69,10 @@ def test_muji_thresholds_do_not_change_strategy_or_scores(monkeypatch, failure):
         {"symbol": "BBB", "shares": 3000, "current_price": 100, "sector": "Technology"},
     ]
     regime = {"regime": "SIDEWAYS", "confidence": .9}
+    selected_goals = {"contract_version": "wealth.decision-goal-context.v2", "goals": [
+        {"id": 7, "goal_type": "HOUSE", "priority": "HIGH", "target_amount": 100000,
+         "target_date": "2030-01-01", "designated_total": 50000, "funding_gap": 50000},
+    ]}
     results = []
     for position_cap, sector_cap in [(15, 30), (35, 100)]:
         resolved = _effective_envelope(position_cap)
@@ -82,10 +86,19 @@ def test_muji_thresholds_do_not_change_strategy_or_scores(monkeypatch, failure):
         result = optimizer_module.run_layered_optimizer(
             holdings, [], "P", cash_balance=500000, policy_context=envelope_to_dict(env),
             effective_envelope=resolved, regime_context=regime, enforce_effective_policy_in_fallback=True,
+            goal_decision_input=selected_goals,
         )
         apply_noise_filter(result)
         policy = result["active_policy"]
         assert policy["optimizer_policy_mode"] == OPTIMIZER_POLICY_MUJI_V2
+        preparation = result["strategic_candidates"]
+        assert preparation["status"] == "PREPARED_NOT_SELECTED"
+        assert preparation["candidates"][0]["family"] == "HOLD"
+        assert preparation["candidates"][0]["source_layer"] == "FROZEN_PORTFOLIO"
+        if failure == "layer2":
+            assert result["fallback_mode"] is True
+        else:
+            assert preparation["candidates"][0]["id"] == "hold-current"
         assert not policy.get("turnover_relaxation_active")
         assert not policy.get("relaxed_turnover_cap")
         assert not policy["violations"]
@@ -101,6 +114,9 @@ def test_muji_thresholds_do_not_change_strategy_or_scores(monkeypatch, failure):
     assert not results[1]["active_policy"]["concentration"]["current_breaches"]
     assert results[0]["consensus"] == results[1]["consensus"]
     assert results[0]["target_allocations"] == results[1]["target_allocations"]
+    for prompt in prompts.values():
+        assert "OBSERVED SELECTED GOALS" in prompt
+        assert "not an immediate cash requirement" in prompt
     for layer in ("layer1", "layer1_retry", "layer2", "fallback"):
         if layer in prompts:
             assert "allocation drift are advisory diagnostics" in prompts[layer]
@@ -119,6 +135,28 @@ def test_muji_thresholds_do_not_change_strategy_or_scores(monkeypatch, failure):
         assert results[0]["consensus"]["consensus_type"] == "STRONG_CONSENSUS"
         assert not results[0]["consensus"]["disagreement_reasons"]
         assert not results[0]["layer1_result"]["swap_suggestions"]
+
+
+def test_candidate_preparation_failure_cannot_change_challenger_allocation(monkeypatch):
+    replies = {
+        "layer1": {"swaps": [], "top_buys": []},
+        "layer2": {"allocations": [{"s": "AAA", "tw": 50, "sig": "HOLD"}],
+                   "status": "NO_ACTION", "cash_balance_target": 50},
+        "layer3": {"risk_flags": [], "safer_choice": "layer1", "final_risk_level": "low"},
+    }
+    monkeypatch.setattr(optimizer_module, "call_ai", lambda prompt, *a, usage_layer, **k: {
+        "text": json.dumps(replies[usage_layer]), "latency_ms": 1,
+    })
+    holdings = [{"symbol": "AAA", "shares": 5, "current_price": 100, "signal": "HOLD"}]
+    kwargs = dict(cash_balance=500, sector_policy_mode=SECTOR_POLICY_ADVISORY,
+                  optimizer_policy_mode=OPTIMIZER_POLICY_MUJI_V2)
+    baseline = optimizer_module.run_layered_optimizer(holdings, [], "P", **kwargs)
+    from services.optimizer import strategic_candidates
+    monkeypatch.setattr(strategic_candidates, "prepare_candidates", lambda *a, **k: 1 / 0)
+    failed = optimizer_module.run_layered_optimizer(holdings, [], "P", **kwargs)
+    assert failed["strategic_candidates"]["status"] == "UNAVAILABLE"
+    assert failed["target_allocations"] == baseline["target_allocations"]
+    assert failed["consensus"] == baseline["consensus"]
 
 
 @pytest.mark.parametrize("mode", [None, SECTOR_POLICY_ADVISORY, OPTIMIZER_POLICY_MUJI_V2])

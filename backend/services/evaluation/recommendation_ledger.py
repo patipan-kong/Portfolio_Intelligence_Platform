@@ -224,6 +224,12 @@ def get_report_card(db: Session, portfolio_id: int, snapshot_id: int) -> dict[st
             consensus = json.loads(snap.consensus_json)
         except Exception:
             consensus = {}
+    try:
+        frozen_policy = json.loads(snap.active_policy_json) if snap.active_policy_json else {}
+    except (TypeError, ValueError):
+        frozen_policy = {}
+    if not isinstance(frozen_policy, dict):
+        frozen_policy = {}
 
     unavailable_reason = "no_target_allocations"
     try:
@@ -276,6 +282,38 @@ def get_report_card(db: Session, portfolio_id: int, snapshot_id: int) -> dict[st
                 "scheduled": eo.scheduled_sector_evaluation,
                 "alternatives": provenance.get("sector_alternatives") or [],
             }
+
+    if (frozen_policy.get("optimizer_policy_mode") == "wealth.optimizer-muji.v2"
+            and frozen_policy.get("strategy_selection_mode") == "wealth.strategy-selection.v1"):
+        selection = consensus.get("strategy_selection") if isinstance(consensus, dict) else None
+        candidates = consensus.get("strategic_candidates") if isinstance(consensus, dict) else None
+        audit = consensus.get("candidate_audit") if isinstance(consensus, dict) else None
+        valid = (isinstance(selection, dict)
+                 and selection.get("version") == "wealth.strategy-selection.v1"
+                 and selection.get("state") in ("SELECTED", "ABSTAINED", "HUMAN_REVIEW_REQUIRED")
+                 and isinstance(selection.get("reason_codes"), list)
+                 and isinstance(selection.get("material_uncertainty"), list)
+                 and isinstance(candidates, dict)
+                 and candidates.get("version") == "wealth.strategic-candidates.v1"
+                 and candidates.get("status") == "PREPARED_NOT_SELECTED"
+                 and isinstance(candidates.get("candidates"), list)
+                 and isinstance(audit, dict) and isinstance(audit.get("status"), str))
+        if valid and selection["state"] == "SELECTED":
+            selected = [row for row in candidates["candidates"]
+                        if isinstance(row, dict) and row.get("id") == selection.get("selected_candidate_id")]
+            valid = (len(selected) == 1 and selected[0].get("eligibility_status") == "ELIGIBLE"
+                     and isinstance(selected[0].get("proposed_allocations"), list))
+        plan_section["selection_evidence"] = {
+            "status": "available" if valid else "unavailable",
+            "active_policy": {"optimizer_policy_mode": frozen_policy["optimizer_policy_mode"],
+                              "strategy_selection_mode": frozen_policy["strategy_selection_mode"]},
+        }
+        if valid:
+            plan_section["selection_evidence"].update(
+                strategy_selection=selection, strategic_candidates=candidates,
+                candidate_audit=audit,
+                effective_allocations=inputs["target_allocations"] if inputs is not None else None,
+            )
 
     decision_row = (
         db.query(UserExecutionDecision)

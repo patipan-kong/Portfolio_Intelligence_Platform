@@ -168,14 +168,14 @@ describe("Goal-aware Optimizer selector", () => {
 
     fireEvent.change(select, { target: { value: "11" } });
     fireEvent.click(screen.getByRole("button", { name: "Run Optimizer" }));
-    await waitFor(() => expect(runOptimizerMock).toHaveBeenCalledWith(1, undefined, undefined, undefined, 11));
+    await waitFor(() => expect(runOptimizerMock).toHaveBeenCalledWith(1, undefined, undefined, undefined, 11, false));
     expect(select).toBeDisabled();
     resolveRun(result);
     await waitFor(() => expect(screen.getByRole("button", { name: "Run Optimizer" })).toBeEnabled());
 
     fireEvent.change(screen.getByLabelText("Goal constraint"), { target: { value: "" } });
     fireEvent.click(screen.getByRole("button", { name: "Run Optimizer" }));
-    await waitFor(() => expect(runOptimizerMock).toHaveBeenLastCalledWith(1, undefined, undefined, undefined, null));
+    await waitFor(() => expect(runOptimizerMock).toHaveBeenLastCalledWith(1, undefined, undefined, undefined, null, false));
   });
 
   it("resets the selector when the portfolio changes", async () => {

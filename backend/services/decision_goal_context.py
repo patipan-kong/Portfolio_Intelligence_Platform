@@ -1,17 +1,15 @@
 """decision_goal_context.py — Phase 7.4
 
-Derives the versioned, context-only Decision Intelligence admission envelope
-(``wealth.decision-goal-context.v1``) from the canonical Goal Context for an
-explicitly selected set of Wealth Goals.
+Derives versioned Decision Intelligence envelopes from canonical Goal Context
+for explicitly selected Wealth Goals. V1 is historical context-only evidence;
+V2 is frozen input to new MUJI Optimizer decisions.
 
 This module owns only that derived envelope shape. It performs no optimizer,
 provider, or valuation work, and reuses services.goal_context's existing
 composition rather than duplicating funding arithmetic or source validation.
 
-Per ADR-008, the caller (main.py) is responsible for invoking
-``build_decision_goal_context`` only after the full recommendation result
-already exists — this module makes no attempt to enforce that ordering
-itself, since it has no visibility into when it is called.
+The caller controls timing: historical V1 was captured after the decision;
+new V2 must be captured before model calls and reused for persistence.
 """
 
 from __future__ import annotations
@@ -30,7 +28,9 @@ from services.goal_context import (
 _log = logging.getLogger(__name__)
 
 CONTRACT_VERSION = "wealth.decision-goal-context.v1"
+DECISION_INPUT_VERSION = "wealth.decision-goal-context.v2"
 CONTEXT_ONLY = "CONTEXT_ONLY"
+DECISION_INPUT = "DECISION_INPUT"
 EMPTY = "EMPTY"
 COMPLETE = "COMPLETE"
 
@@ -251,13 +251,14 @@ def _validate_source(value: object, path: str) -> dict:
 
 def _validate_context_payload(payload: object) -> dict:
     envelope = _require_exact_keys(payload, _TOP_LEVEL_KEYS, "persisted decision context")
-    if envelope["contract_version"] != CONTRACT_VERSION:
+    if envelope["contract_version"] not in (CONTRACT_VERSION, DECISION_INPUT_VERSION):
         _raise_integrity(f"unsupported decision context contract_version={envelope['contract_version']!r}")
     if envelope["source_goal_context_version"] != SOURCE_GOAL_CONTEXT_VERSION:
         _raise_integrity(
             f"unsupported source_goal_context_version={envelope['source_goal_context_version']!r}"
         )
-    if envelope["decision_effect"] != CONTEXT_ONLY:
+    expected_effect = CONTEXT_ONLY if envelope["contract_version"] == CONTRACT_VERSION else DECISION_INPUT
+    if envelope["decision_effect"] != expected_effect:
         _raise_integrity(f"unexpected decision_effect={envelope['decision_effect']!r}")
     if envelope["context_state"] not in (EMPTY, COMPLETE):
         _raise_integrity(f"unexpected context_state={envelope['context_state']!r}")
@@ -321,7 +322,9 @@ def _validate_context_payload(payload: object) -> dict:
     return envelope
 
 
-def build_decision_goal_context(db: Session, workspace_id: int, goal_ids: list[int]) -> dict:
+def build_decision_goal_context(
+    db: Session, workspace_id: int, goal_ids: list[int], *, decision_input: bool = False,
+) -> dict:
     """Build the frozen, versioned Decision Intelligence admission payload.
 
     ``goal_ids`` must already have been pre-run validated as existing and
@@ -337,9 +340,9 @@ def build_decision_goal_context(db: Session, workspace_id: int, goal_ids: list[i
         for goal in raw_context["goals"]
     ]
     return {
-        "contract_version": CONTRACT_VERSION,
+        "contract_version": DECISION_INPUT_VERSION if decision_input else CONTRACT_VERSION,
         "source_goal_context_version": raw_context["contract_version"],
-        "decision_effect": CONTEXT_ONLY,
+        "decision_effect": DECISION_INPUT if decision_input else CONTEXT_ONLY,
         "context_state": COMPLETE if goals else EMPTY,
         "selected_goal_ids": raw_context["scope"]["goal_ids"],
         "observed_at": observed_at.isoformat(),

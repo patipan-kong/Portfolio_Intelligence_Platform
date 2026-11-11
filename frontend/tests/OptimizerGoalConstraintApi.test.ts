@@ -21,6 +21,15 @@ function requestBody(fetchMock: ReturnType<typeof mockFetch>): unknown {
 }
 
 describe("optimizer Goal constraint request wiring", () => {
+  it("sends Committee mode only for explicit opt-in", async () => {
+    const fetchMock = mockFetch();
+    await runOptimizer(7, undefined, undefined, undefined, null, true);
+    await runOptimizer(7, undefined, undefined, undefined, null, false);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual({
+      portfolio_id: 7, strategy_selection_mode: "wealth.strategy-selection.v1",
+    });
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body as string)).toEqual({ portfolio_id: 7 });
+  });
   it("preserves the legacy body when no Goal argument is supplied", async () => {
     const fetchMock = mockFetch();
 

@@ -1,5 +1,37 @@
-import type { OptimizerResult } from "@/lib/api";
-import { OPTIMIZER_POLICY_MUJI_V2, assessment, economicRecommendation, executionEvidenceAvailable, intentReviewSummary, primarySchedulingReason, scheduledTradeCount } from "@/lib/optimizerPresentation";
+import type { OptimizerResult, ActivePolicy, StrategySelection, StrategicCandidateEnvelope, CandidateAudit, TargetAllocation } from "@/lib/api";
+import { OPTIMIZER_POLICY_MUJI_V2, assessment, committeeDecisionPresentation, economicRecommendation, executionEvidenceAvailable, intentReviewSummary, primarySchedulingReason, scheduledTradeCount } from "@/lib/optimizerPresentation";
+
+export function CommitteeDecisionBlock({ evidence }: { evidence: {
+  active_policy?: Pick<ActivePolicy, "optimizer_policy_mode" | "strategy_selection_mode"> | null;
+  strategy_selection?: StrategySelection | null;
+  strategic_candidates?: StrategicCandidateEnvelope | null;
+  candidate_audit?: CandidateAudit | null;
+  target_allocations?: TargetAllocation[] | null;
+} }) {
+  const view = committeeDecisionPresentation(evidence);
+  if (view.owner === "Challenger") return <p className="text-xs text-gray-500">Decision owner: Challenger</p>;
+  if (view.unavailable || !view.selection) return <p className="text-sm text-amber-700">Decision owner: Committee · Selection Evidence Unavailable</p>;
+  const { selection, candidate } = view;
+  const actionable = selection.state === "SELECTED" && candidate?.id !== "hold-current";
+  return <div className="text-sm space-y-1" data-testid="committee-decision">
+    <p className="font-semibold">Decision owner: Committee · {selection.state.replace(/_/g, " ")}</p>
+    {candidate && <p>Selected strategy: {candidate.family.replace(/_/g, " ")} · {candidate.id}</p>}
+    {selection.state === "ABSTAINED" && <p>Committee abstained; no strategy was selected or approved.</p>}
+    {selection.state === "HUMAN_REVIEW_REQUIRED" && <p>Human review required; no strategy is approved for action.</p>}
+    {candidate?.id === "hold-current" && <p>HOLD: no actionable alternative was preferred on the recorded evidence.</p>}
+    {selection.comparison_against_hold && <p>Committee comparison with HOLD (recorded opinion): {selection.comparison_against_hold}</p>}
+    {selection.decision_rationale && <p>Committee rationale (recorded opinion): {selection.decision_rationale}</p>}
+    {view.support?.length ? <p>Supporting frozen observations: {view.support.map(({ ref, value }) => `${ref} = ${String(value)}`).join("; ")}</p> : null}
+    {view.opposition?.length ? <p>Opposing frozen observations: {view.opposition.map(({ ref, value }) => `${ref} = ${String(value)}`).join("; ")}</p> : null}
+    {selection.material_uncertainty?.length ? <p>Uncertainty: {selection.material_uncertainty.join("; ")}</p> : null}
+    {selection.reason_codes?.length ? <p>Decision reasons: {selection.reason_codes.join("; ")}</p> : null}
+    {view.altered && candidate && <div className="border-l-2 border-amber-300 pl-2 space-y-1">
+      <p>Safeguards changed the selected plan. Proposed allocation: {candidate.proposed_allocations.map((row) => `${row.action} ${row.symbol} ${row.target_weight}%`).join("; ") || "Unavailable"}.</p>
+      <p>Effective post-safeguard allocation: {Array.isArray(view.effective) ? view.effective.map((row) => `${row.action} ${row.symbol} ${row.target_weight}%`).join("; ") || "No actionable allocation" : "Unavailable"}.</p>
+    </div>}
+    {actionable && <p className="text-xs text-gray-500">Selection is a recommendation. Scheduled advisory amounts and estimated friction appear in the Execution Plan; they are not recorded transactions.</p>}
+  </div>;
+}
 
 export default function OptimizerDecisionSummary({ result, historyId, historical, loading }: {
   result: OptimizerResult | null; historyId: number | null; historical: boolean; loading: boolean;
@@ -19,6 +51,7 @@ export default function OptimizerDecisionSummary({ result, historyId, historical
     <p className="text-xs text-gray-500">{date && !Number.isNaN(date.getTime()) ? `${date.toLocaleString("en-GB", { timeZone: "Asia/Bangkok" })} · Bangkok time` : "Analysis timestamp unavailable"}. This plan reflects the analysis time, not current prices.</p>
     {loading ? <p role="status">Loading selected analysis — recommendation and scheduled actions unavailable.</p>
       : <>
+        {result && <CommitteeDecisionBlock evidence={result} />}
         {muji && <div className="space-y-3 text-sm" data-testid="muji-primary-result">
           <div><h3 className="font-semibold">Portfolio Outlook</h3>
             <p>Market regime: {result?.market_regime?.regime?.replace(/_/g, " ") ?? "Unavailable"}.</p>
@@ -62,7 +95,7 @@ export default function OptimizerDecisionSummary({ result, historyId, historical
         <p className="text-xs text-gray-600">{!result ? "Auditor evidence unavailable." : result.layer3_result?.claim_validation_version
           ? "Evidence-backed auditor observations are separated from unscored opinions and advisory concerns below. Unscored does not mean risk-free."
           : "Historical model claims were not independently validated by Auditor V2. They are recorded opinions, not verified policy breaches."}</p>
-        <p className="text-xs text-gray-500">{score == null ? "Consensus assessment unavailable." : `Stored consensus assessment: ${score}/100.`} Scores are assessments, not probabilities of returns or investment success.</p>
+        <p className="text-xs text-gray-500">{score == null ? "Consensus assessment unavailable." : `${result?.active_policy?.strategy_selection_mode === "wealth.strategy-selection.v1" && muji ? "Stored legacy consensus assessment" : "Stored consensus assessment"}: ${score}/100.`} Scores are assessments, not probabilities of returns or investment success.</p>
       </>}
   </section>;
 }

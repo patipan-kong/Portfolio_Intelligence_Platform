@@ -6,6 +6,7 @@ funding arithmetic happen downstream, deterministically.
 """
 import json
 import logging
+from copy import deepcopy
 from math import floor
 from typing import Callable
 from services.ai_client import MujiLayer1Response, call_ai
@@ -18,6 +19,10 @@ from services.optimizer.sector_policy import (
 )
 from services.optimizer.risk_flags import investment_risk_flags
 from services.optimizer.auditor_claims import build_claim_evidence, validate_auditor_claims
+from services.optimizer import strategic_candidates
+from services.optimizer.strategic_candidates import (
+    SELECTION_VERSION, validate_candidate_reviews, decide_selection,
+)
 from services.optimizer.strategy_profiles import build_persona_context, get_profile  # noqa: F401
 from services.optimizer.policy_engine import (  # noqa: F401
     compute_policy_alignment_score,
@@ -85,6 +90,17 @@ def _observe(advisory, symbol: str, before: dict | None, after_row: dict | None,
 
 def _intent_block(advisory, layer: str) -> str:
     return advisory.prompt_block(layer) if advisory is not None else ""
+
+
+def _goal_decision_block(context: dict | None) -> str:
+    if context is None:
+        return ""
+    goals = [{key: goal.get(key) for key in ("id", "goal_type", "priority", "target_amount",
+              "target_date", "designated_total", "funding_gap")}
+             for goal in context.get("goals", [])]
+    return ("[OBSERVED SELECTED GOALS — decision context, not trade instructions]\n"
+            + json.dumps({"version": context["contract_version"], "goals": goals}, sort_keys=True)
+            + "\nFunding gap is not an immediate cash requirement; no success probability is available.\n")
 
 
 def _note_prompt(advisory, layer: str, outcome: str) -> None:
@@ -438,6 +454,17 @@ def _normalize_allocations(
         _apply_score_context(row, score_map, sym)
         result.append(row)
     return [a for a in result if a["symbol"]]
+
+
+def _complete_candidate_input(rows) -> bool:
+    """A Phase 3 candidate must explicitly provide direction and target for every row."""
+    return isinstance(rows, list) and bool(rows) and all(
+        isinstance(row, dict)
+        and ("symbol" in row or "s" in row)
+        and ("action" in row or "sig" in row)
+        and ("target_weight" in row or "tw" in row)
+        for row in rows
+    )
 
 
 def _separate_sector_alternatives(model_result, allocations, holdings, nav, concentration, *, muji_v2=False,
@@ -1028,6 +1055,7 @@ def _layer1_prompt(
     intent_block: str = "",
     sector_advisory: bool = False,
     muji_v2: bool = False,
+    goal_decision_input: dict | None = None,
 ) -> str:
     # Phase 3B.5: use resolved per-sector limits when available; fall back to raw sector_limits
     if effective_envelope is not None:
@@ -1157,7 +1185,7 @@ priority="no_action" when ALL of the following are true:
 "r" = one reason for the swap, under 12 words (e.g. "Technology at 45% > 30% limit")."""
 
     swap_basis = ',"decision_basis":"INVESTMENT_THESIS"' if muji_v2 else ""
-    return f"""{policy_block}{regime_block}{strategy_block}{t1_breach_note}{execution_block}{timing_block}{intent_block}You are a STRATEGIST. Output swap targets in JSON only.
+    return f"""{policy_block}{regime_block}{strategy_block}{t1_breach_note}{execution_block}{timing_block}{intent_block}{_goal_decision_block(goal_decision_input) if muji_v2 else ''}You are a STRATEGIST. Output swap targets in JSON only.
 No explanation. No prose. Only valid JSON output.
 {violation_note}
 Portfolio: {json.dumps(c_pc)}
@@ -1200,6 +1228,7 @@ def _layer2_prompt(
     intent_block: str = "",
     sector_advisory: bool = False,
     muji_v2: bool = False,
+    goal_decision_input: dict | None = None,
 ) -> str:
     role_line = f"Your role: {role}\n\n" if role else ""
 
@@ -1300,7 +1329,7 @@ A portfolio with 2 targeted swaps beats one with 6 micro-adjustments."""
 
     allocation_basis = ',"decision_basis":"INVESTMENT_THESIS|CONCENTRATION_ADVISORY"' if muji_v2 else ""
     return f"""You are an independent portfolio reviewer.
-{policy_block}{regime_block}{strategy_block}{t1_breach_note}{execution_block}{timing_challenge_block}{intent_block}{role_line}The Strategist (Layer 1) proposed:
+{policy_block}{regime_block}{strategy_block}{t1_breach_note}{execution_block}{timing_challenge_block}{intent_block}{_goal_decision_block(goal_decision_input) if muji_v2 else ''}{role_line}The Strategist (Layer 1) proposed:
 - Priority: {l1_priority}
 - Swaps: {json.dumps(l1_swaps, indent=2)}
 - Top watchlist picks: {l1_top_buys}
@@ -1349,6 +1378,12 @@ Sector thresholds alone cannot block BUY/ACCUMULATE or justify a SELL/REDUCE.
 Put optional sector-only reductions in sector_alternatives, using the same allocation row format.
 Keep the actionable allocation HOLD unless independently justified. Mark thesis-driven SELL/REDUCE
 with decision_basis=INVESTMENT_THESIS. Judge agreement and opportunity only on actionable decisions.
+ If the complete allocation forms a coherent optional strategy, label strategy_family as
+ RAISE_CASH, DEFENSIVE_ROTATION or GROWTH_ROTATION; otherwise use null. Evidence refs may
+ cite only observed fields: symbol:SYM:signal, symbol:SYM:fa_score, symbol:SYM:ta_score,
+ symbol:SYM:pe_ratio, symbol:SYM:roe, symbol:SYM:timing_score, regime:regime,
+ goal:ID:target_date, goal:ID:funding_gap or goal:ID:priority. A cited fact does not
+ by itself prove the strategy is superior. Never cite a concentration threshold as support.
 
 disagreements[]: only material disagreements with Layer 1 (wrong signal, missed breach, constraint conflict).
 {f"Use {advisory_basis} for concentration-only comments. Other bases must identify the actionable disagreement." if sector_advisory else "Skip informational observations."}
@@ -1368,7 +1403,7 @@ Return JSON only. No markdown fences, no prose outside the JSON.
   "disagreements": [{disagreement_example}],
   "portfolio_assessment": "2-3 sentences",
   "cash_balance_target": 0.0,
-  "allocations": [
+{('  "strategy_family": "RAISE_CASH|DEFENSIVE_ROTATION|GROWTH_ROTATION|null", "observed_evidence_refs": ["symbol:SYM:signal"],\n') if muji_v2 else ''}  "allocations": [
     {{"s":"X","tw":0.0,"sig":"BUY|ACCUMULATE|HOLD|REDUCE|SELL|WATCH","r":"<20 words"{allocation_basis}}}
   ]
 }}"""
@@ -1387,6 +1422,7 @@ def _layer3_prompt(
     execution_context: dict | None = None,
     claim_contract: dict | None = None,
     muji_v2: bool = False,
+    goal_decision_input: dict | None = None,
 ) -> str:
     from services.optimizer.execution_penalty import build_execution_prompt_block
     execution_block = build_execution_prompt_block(execution_context or {})
@@ -1448,7 +1484,7 @@ Assess independent investment risks using the evidence contract and its severity
 - MEDIUM   : conflicting allocation math
 - LOW      : minor concentration risk, suboptimal but acceptable"""
 
-    return f"""{t1_breach_note}You are a portfolio risk auditor.
+    return f"""{t1_breach_note}{_goal_decision_block(goal_decision_input) if muji_v2 else ''}You are a portfolio risk auditor.
 {execution_block}{timing_risk_block}{policy_note}{persona_note}{intent_block}{role_line}Evaluate both allocation proposals for concentration risk and soundness.
 
 [AUTHORITATIVE POLICY CLAIM CONTRACT]
@@ -1757,7 +1793,7 @@ Total portfolio value: {total_value:.0f}, Cash balance: {cash_balance:.0f}
 Never block a buy or propose an actionable sale solely because of sector exposure.
 Put optional sector-only SELL/REDUCE ideas in sector_alternatives using the same allocation row format.
 Keep the actionable allocation HOLD unless independently justified. Mark thesis-driven reductions
-with decision_basis=INVESTMENT_THESIS.
+with decision_basis=INVESTMENT_THESIS.{('\n If this is a coherent optional strategy, return strategy_family as RAISE_CASH, DEFENSIVE_ROTATION or GROWTH_ROTATION and observed_evidence_refs using only frozen symbol:SYM:signal, symbol:SYM:fa_score, symbol:SYM:ta_score, regime:regime or goal:ID:target_date facts. Otherwise use null and an empty evidence list.') if muji_v2 else ''}
 
 OUTPUT CONTRACT — this JSON is read by software; do not spend output tokens on prose. Watchlist symbols you are
 not recommending (no BUY/ACCUMULATE) do NOT need an allocations row — omit them, except up to 5 WATCH rows for
@@ -1782,7 +1818,7 @@ Return ONLY valid JSON without markdown fences:
   "blocked_opportunities": [{{"symbol":"X","signal":"BUY","reason":"insufficient_cash|portfolio_count_cap"}}],
   "portfolio_assessment": "1-2 sentence summary of the plan",
   "cash_balance_target": 5.0,
-  "allocations": [
+{('  "strategy_family": "RAISE_CASH|DEFENSIVE_ROTATION|GROWTH_ROTATION|null", "observed_evidence_refs": ["symbol:SYM:signal"],\n') if muji_v2 else ''}  "allocations": [
     {{"s":"X","tw":0.0,"sig":"BUY|ACCUMULATE|HOLD|REDUCE|SELL|WATCH","r":"<20 words"{allocation_basis}}}
   ],
   "risk_flags": [{{"symbol":"...","issue":"<15 words","severity":"LOW|MEDIUM|HIGH|CRITICAL","category":"INVESTMENT_RISK|OWNER_INTENT_REVIEW","claim_kind":"INVESTMENT_JUDGMENT|ADVISORY_CONCERN","evidence_ref":null}}],
@@ -1817,6 +1853,9 @@ def _run_single_shot_fallback(
     sector_policy_mode: str | None = None,
     optimizer_policy_mode: str | None = None,
     muji_policy_block: str = "",
+    goal_decision_input: dict | None = None,
+    regime_context: dict | None = None,
+    strategy_selection_mode: str | None = None,
 ) -> dict:
     """Single-shot emergency fallback when the 3-layer pipeline fails completely.
 
@@ -1825,6 +1864,7 @@ def _run_single_shot_fallback(
     """
     muji_v2 = (sector_policy_mode == SECTOR_POLICY_ADVISORY
                and optimizer_policy_mode == OPTIMIZER_POLICY_MUJI_V2)
+    selection_enabled = strategy_selection_mode == SELECTION_VERSION and muji_v2
     sector_advisory = sector_policy_mode == SECTOR_POLICY_ADVISORY
     degraded_policy = _degraded_sector_policy(sector_limits, max_sector_pct, effective_envelope) if sector_advisory else None
     score_map = _build_score_context_map(pc, wc)
@@ -1853,7 +1893,9 @@ def _run_single_shot_fallback(
         **({"intent_block": _intent_block(advisory, _LAYER_FALLBACK)} if advisory is not None else {}),
     )
     from services.optimizer.execution_penalty import build_execution_prompt_block
-    prompt = build_execution_prompt_block(execution_context or {}) + prompt
+    prompt = build_execution_prompt_block(execution_context or {}) + (
+        _goal_decision_block(goal_decision_input) if muji_v2 else ""
+    ) + prompt
     try:
         raw = call_ai(
             prompt, fallback_provider, fallback_model, max_tokens=4096,
@@ -1879,9 +1921,44 @@ def _run_single_shot_fallback(
         _observe(advisory, a["symbol"], None, a, stage=_STAGE_FALLBACK, source=_SRC_ADVISORY,
                  effect=_ORIGINATE, reason_code="FALLBACK_ALLOCATION", reason_text=a.get("reason", ""))
 
+    fallback_candidates = None
+    fallback_selection = None
+    if selection_enabled:
+        try:
+            fallback_candidates = strategic_candidates.prepare_candidates(
+                portfolio_data, wc, cash_balance,
+                {**result, "target_allocations": allocations,
+                 "target_cash_weight": result.get("cash_balance_target")},
+                regime=regime_context, goals=goal_decision_input,
+                source_layer="SINGLE_SHOT_FALLBACK")
+            hold = fallback_candidates["candidates"][0]
+            hold_safe = hold["eligibility_status"] == "ELIGIBLE"
+            if hold_safe:
+                trial = deepcopy(hold["proposed_allocations"])
+                _enforce_hard_policy(trial, total_value=total_value,
+                                     policy_context=policy_context,
+                                     regime_context=regime_context, muji_v2=True)
+                hold_safe = trial == hold["proposed_allocations"]
+                floor_pct = (policy_context or {}).get("hard_constraints", {}).get("min_cash_pct")
+                if floor_pct is not None and total_value > 0 and cash_balance / total_value * 100 < floor_pct:
+                    hold_safe = False
+            fallback_selection = decide_selection(
+                fallback_candidates, {"status": "UNAVAILABLE", "reason": "AUDITOR_UNAVAILABLE_IN_FALLBACK"},
+                None, hold_safe=hold_safe)
+            allocations = (deepcopy(hold["proposed_allocations"])
+                           if fallback_selection["selected_candidate_id"] == "hold-current" else [])
+        except Exception as exc:
+            fallback_candidates = {"version": "wealth.strategic-candidates.v1",
+                                   "status": "UNAVAILABLE", "candidates": [],
+                                   "reason": "CANDIDATE_PREPARATION_FAILED"}
+            fallback_selection = decide_selection(fallback_candidates,
+                {"status": "UNAVAILABLE", "reason": type(exc).__name__}, None, hold_safe=False)
+            allocations = []
+
     locked_set = set(locked)
     alloc_map: dict[str, dict] = {a["symbol"]: a for a in allocations}
-    _apply_forced_and_locked(alloc_map, sell_forced, locked_set, pc_map, advisory)
+    _apply_forced_and_locked(alloc_map, [] if selection_enabled else sell_forced,
+                             locked_set, pc_map, advisory)
 
     final_allocations = list(alloc_map.values())
     for a in final_allocations:
@@ -1907,7 +1984,8 @@ def _run_single_shot_fallback(
             raise HardPolicyEnforcementError("fallback hard-policy enforcement failed") from exc
     _snap_neutral_actions(final_allocations, **_observer_kw)
 
-    swap_suggestions = _derive_swap_suggestions(final_allocations, sell_forced, locked)
+    swap_suggestions = _derive_swap_suggestions(final_allocations,
+                                                [] if selection_enabled else sell_forced, locked)
     projected_sector_weights = calculate_projected_sector_weights_from_allocations(
         portfolio_data, final_allocations, total_value
     )
@@ -2013,6 +2091,37 @@ def _run_single_shot_fallback(
                       "violation_details": fallback_details} if policy_context else None)
     _capture_sector_policy(output, policy_output, sector_policy_mode, portfolio_data, wc,
                            total_value, degraded_policy, sector_alternatives, optimizer_policy_mode)
+    if selection_enabled:
+        output["strategic_candidates"] = fallback_candidates
+        output["strategy_selection"] = fallback_selection
+        output["candidate_audit"] = {"status": "UNAVAILABLE",
+                                     "reason": "AUDITOR_UNAVAILABLE_IN_FALLBACK", "reviews": {}}
+        output["active_policy"]["strategy_selection_mode"] = strategy_selection_mode
+        output["target_allocations"] = final_allocations
+        output["status"] = "NO_ACTION" if fallback_selection["selected_candidate_id"] else "REVIEW"
+        output["target_cash_weight"] = cash_balance / total_value * 100 if total_value else 0.0
+        output["portfolio_assessment"] = fallback_selection.get("decision_rationale") or "Human review required."
+        output["consensus"]["strategy_selection_state"] = fallback_selection["state"]
+        output["consensus"]["recommended"] = fallback_selection["selected_candidate_id"] or "human_review"
+        output["consensus"]["recommended_action"] = output["portfolio_assessment"]
+        output["optimization_notes"] = output["portfolio_assessment"]
+    elif muji_v2:
+        from services.optimizer.strategic_candidates import VERSION
+        try:
+            output["strategic_candidates"] = strategic_candidates.prepare_candidates(
+                portfolio_data, wc, cash_balance,
+                {**result, "target_allocations": final_allocations,
+                 "target_cash_weight": output["target_cash_weight"]},
+                regime=regime_context, goals=goal_decision_input,
+                source_layer="SINGLE_SHOT_FALLBACK",
+            )
+        except Exception as exc:
+            logger.exception("MUJI fallback candidate preparation unavailable: %s", exc)
+            output["strategic_candidates"] = {
+                "version": VERSION, "status": "UNAVAILABLE", "goal_context_version":
+                (goal_decision_input or {}).get("contract_version"), "candidates": [],
+                "reason": "CANDIDATE_PREPARATION_FAILED",
+            }
     return output
 
 
@@ -2028,6 +2137,7 @@ def _retry_l1_with_schema(
     execution_context: dict | None = None,
     muji_v2: bool = False,
     policy_block: str = "",
+    goal_decision_input: dict | None = None,
 ) -> dict:
     """Single-shot L1 retry with a stripped-down prompt after an initial parse failure.
 
@@ -2040,6 +2150,8 @@ def _retry_l1_with_schema(
         if muji_v2 else "Sector concentration is advisory and cannot by itself justify a trade.\n"
     )
     minimal_prompt = build_execution_prompt_block(execution_context or {}) + intent_block + policy_block + (
+        _goal_decision_block(goal_decision_input) if muji_v2 else ""
+    ) + (
         "You are a portfolio strategist. Return ONLY a valid JSON object — "
         "no markdown, no prose, just the JSON.\n\n"
         f"Current holdings: {json.dumps(c_pc)}\n"
@@ -2134,6 +2246,8 @@ def run_layered_optimizer(
     advisory=None,
     sector_policy_mode: str | None = None,
     optimizer_policy_mode: str | None = None,
+    goal_decision_input: dict | None = None,
+    strategy_selection_mode: str | None = None,
 ) -> dict:
     """3-layer Dynamic Capital Allocation Engine with global single-shot fallback.
 
@@ -2156,6 +2270,9 @@ def run_layered_optimizer(
     muji_v2 = read_optimizer_policy_mode(
         policy_identity, effective_envelope={"optimizer_policy_mode": resolver_mode} if resolver_mode is not None else None,
     ) == OPTIMIZER_POLICY_MUJI_V2
+    if strategy_selection_mode not in (None, SELECTION_VERSION) or (strategy_selection_mode and not muji_v2):
+        raise UnsupportedOptimizerPolicyEvidence("Unsupported strategy_selection_mode")
+    selection_enabled = strategy_selection_mode == SELECTION_VERSION
     muji_policy_block = ""
     if muji_v2 and policy_context:
         from services.optimizer.policy_engine import build_policy_prompt_block
@@ -2299,6 +2416,7 @@ def run_layered_optimizer(
                 effective_envelope=effective_envelope,
                 t1_breach_note=_t1_note,
                 muji_v2=muji_v2,
+                goal_decision_input=goal_decision_input if muji_v2 else None,
                 execution_context=execution_context,
                 **({"intent_block": _intent_block(advisory, _LAYER_L1)} if advisory is not None else {}),
             )
@@ -2337,9 +2455,13 @@ def run_layered_optimizer(
                 l1_result = _retry_l1_with_schema(
                     c_pc, c_wc, sell_forced, swap_eligible, l1_cfg,
                     execution_context=execution_context, muji_v2=muji_v2,
+                    goal_decision_input=goal_decision_input if muji_v2 else None,
                     policy_block=(muji_policy_block + "\n" if muji_policy_block else ""),
                     **({"intent_block": _intent_block(advisory, _LAYER_L1_RETRY)} if advisory is not None else {}),
                 )
+                if selection_enabled:
+                    # The successful retry has no latency field in the legacy helper.
+                    l1_latency_ms = 0
                 _l1_swaps = _normalize_l1_swaps(
                     [s for s in l1_result.get("swaps", [])
                      if s.get("decision_basis") not in advisory_bases], score_map,
@@ -2362,16 +2484,23 @@ def run_layered_optimizer(
         # Layer 2 — Challenger
         _emit_stage(on_stage, "LAYER2_CHALLENGE")
         try:
-            l2_raw = call_ai(
-                _layer2_prompt(pc, wc, l1_result, l2_cfg.get("role", ""),
+            l2_prompt = _layer2_prompt(pc, wc, l1_result, l2_cfg.get("role", ""),
                                cash_balance=cash_balance, total_value=total_value, sector_advisory=sector_advisory,
                                persona_context=persona_context,
                                regime_context=regime_context,
                                policy_context=policy_context,
                                t1_breach_note=_t1_note, muji_v2=muji_v2,
+                                goal_decision_input=goal_decision_input if muji_v2 else None,
                                execution_context=execution_context,
                                **({"intent_block": _intent_block(advisory, _LAYER_L2)}
-                                  if advisory is not None else {})),
+                                  if advisory is not None else {}))
+            if selection_enabled:
+                l2_prompt += ("\nOptional additional_plans: up to two complete portfolio plans, each with "
+                              "strategy_family, observed_evidence_refs, cash_balance_target, "
+                              "portfolio_assessment, and allocations in the same format as the primary plan. "
+                              "Omit when evidence is insufficient. These are candidates, not selected trades.\n")
+            l2_raw = call_ai(
+                l2_prompt,
                 l2_cfg["provider"], l2_cfg["model"], max_tokens=8192,
                 usage_operation="optimize", usage_layer="layer2",
             )
@@ -2382,10 +2511,23 @@ def run_layered_optimizer(
                 l2_cfg["provider"], l2_cfg["model"], len(raw_l2_text), l2_latency_ms,
             )
             l2_result = safe_parse_json(raw_l2_text)
+            if selection_enabled:
+                extra_plans = []
+                for plan in (l2_result.get("additional_plans") or [])[:2]:
+                    if not isinstance(plan, dict):
+                        continue
+                    raw_extra = plan.get("allocations", plan.get("target_allocations", []))
+                    normalized = _normalize_allocations(raw_extra, pc_map, score_map, muji_v2=True)
+                    extra_plans.append({**plan, "target_allocations": normalized,
+                                        "candidate_input_invalid": not _complete_candidate_input(raw_extra),
+                                        "target_cash_weight": plan.get("target_cash_weight", plan.get("cash_balance_target"))})
+                l2_result["additional_plans"] = extra_plans
             # Fix: use None check so an explicitly-empty allocations:[] isn't dropped
             raw_allocs = l2_result.pop("allocations", None)
             if raw_allocs is None:
                 raw_allocs = l2_result.pop("target_allocations", [])
+            if selection_enabled:
+                l2_result["candidate_input_invalid"] = not _complete_candidate_input(raw_allocs)
             l2_allocs = _normalize_allocations(raw_allocs, pc_map, score_map, muji_v2=muji_v2)
             if sector_advisory:
                 sector_alternatives = _separate_sector_alternatives(
@@ -2428,6 +2570,38 @@ def run_layered_optimizer(
             }
             l2_latency_ms = 0
 
+        candidate_envelope = None
+        if selection_enabled:
+            try:
+                candidate_envelope = strategic_candidates.prepare_candidates(
+                    portfolio_data, watchlist_data, cash_balance, l2_result,
+                    regime=regime_context, goals=goal_decision_input,
+                    source_layer="CHALLENGER_DEGRADED" if l1_parse_failed or "error" in l2_result else "CHALLENGER",
+                )
+                for candidate in candidate_envelope["candidates"]:
+                    if candidate["eligibility_status"] != "ELIGIBLE":
+                        continue
+                    trial = deepcopy(candidate["proposed_allocations"])
+                    _enforce_hard_policy(trial, total_value=total_value,
+                                         policy_context=policy_context,
+                                         regime_context=regime_context, muji_v2=True)
+                    if any((a.get("action"), a.get("target_weight")) !=
+                           (b.get("action"), b.get("target_weight"))
+                           for a, b in zip(candidate["proposed_allocations"], trial)):
+                        candidate["eligibility_status"] = "INELIGIBLE"
+                        candidate["eligibility_reasons"].append("HARD_SAFEGUARD_CONFLICT")
+                    if candidate["family"] != "HOLD" and any(
+                        row.get("symbol") in locked and row.get("action") not in ("HOLD", "WATCH")
+                        for row in candidate["proposed_allocations"]
+                    ):
+                        candidate["eligibility_status"] = "INELIGIBLE"
+                        candidate["eligibility_reasons"].append("MANDATORY_LOCK_CONFLICT")
+            except Exception as exc:
+                candidate_envelope = {"version": "wealth.strategic-candidates.v1",
+                                      "status": "UNAVAILABLE", "candidates": [],
+                                      "reason": "CANDIDATE_PREPARATION_FAILED",
+                                      "error_type": type(exc).__name__}
+
         # Layer 3 — Risk Auditor
         _emit_stage(on_stage, "LAYER3_ARBITRATION")
         # Evaluate the proposal with the existing policy calculator; do not enforce
@@ -2456,16 +2630,26 @@ def run_layered_optimizer(
                 for row in evaluation["sectors"] if row["breach_pp"]
             }
         try:
-            l3_raw = call_ai(
-                _layer3_prompt(l1_result, l2_result, l3_cfg.get("role", ""), max_sector_pct=max_sector_pct,
+            l3_prompt = _layer3_prompt(l1_result, l2_result, l3_cfg.get("role", ""), max_sector_pct=max_sector_pct,
                                execution_context=execution_context,
                                claim_contract=claim_contract,
                                persona_context=persona_context,
                                policy_context=policy_context,
                                effective_envelope=effective_envelope,
                                t1_breach_note=_t1_note, muji_v2=muji_v2,
+                                goal_decision_input=goal_decision_input if muji_v2 else None,
                                **({"intent_block": _intent_block(advisory, _LAYER_L3)}
-                                  if advisory is not None else {})),
+                                  if advisory is not None else {}))
+            if selection_enabled:
+                l3_prompt += ("\nReview every candidate including HOLD. Return candidate_reviews with one "
+                              "row per candidate: candidate_id, supporting_refs, opposing_refs, "
+                              "material_conflicts, assessment. Supporting refs must be candidate refs; "
+                              "opposing refs may use the frozen observed_evidence_catalog. "
+                              "Model opinions are unscored. "
+                              "Do not use safer_choice as a selection vote.\n"
+                              + json.dumps(candidate_envelope, default=str))
+            l3_raw = call_ai(
+                l3_prompt,
                 l3_cfg["provider"], l3_cfg["model"], max_tokens=2048,
                 usage_operation="optimize", usage_layer="layer3",
             )
@@ -2481,6 +2665,9 @@ def run_layered_optimizer(
             l3_latency_ms = 0
 
         l3_result = validate_auditor_claims(l3_result, claim_contract)
+        candidate_audit = (validate_candidate_reviews(l3_result.get("raw_model_output"), candidate_envelope)
+                           if selection_enabled and candidate_envelope.get("status") == "PREPARED_NOT_SELECTED"
+                           else {"status": "UNAVAILABLE", "reason": "CANDIDATE_ENVELOPE_UNAVAILABLE", "reviews": {}})
 
         # If L2 produced no allocations all three layers failed — trigger global fallback
         if "error" in l2_result and not l2_result.get("target_allocations"):
@@ -2492,6 +2679,46 @@ def run_layered_optimizer(
             l1_result, l2_result, l3_result, sector_advisory=sector_advisory, muji_v2=muji_v2,
             sell_forced=sell_forced,
         )
+        strategy_selection = None
+        if selection_enabled:
+            hold_candidate = next((c for c in candidate_envelope.get("candidates", [])
+                                   if c.get("id") == "hold-current"), None)
+            hold_safe = bool(hold_candidate and hold_candidate.get("eligibility_status") == "ELIGIBLE")
+            floor_pct = (policy_context or {}).get("hard_constraints", {}).get("min_cash_pct")
+            if floor_pct is not None and total_value > 0 and cash_balance / total_value * 100 < floor_pct:
+                hold_safe = False
+            committee_result = None
+            failure_reason = None
+            actionable = [c for c in candidate_envelope.get("candidates", [])
+                          if c.get("family") != "HOLD" and c.get("eligibility_status") == "ELIGIBLE"]
+            if not actionable:
+                failure_reason = "NO_ELIGIBLE_ACTION"
+            if candidate_audit["status"] == "AVAILABLE" and hold_safe and actionable:
+                try:
+                    committee_prompt = (
+                        "You are the existing portfolio Committee. Compare the frozen candidates "
+                        "qualitatively against HOLD. Consider supported thesis, risk and exposure, "
+                        "liquidity, selected goals, trading friction, opposing evidence, and uncertainty. "
+                        "Only cite references verified by the Auditor. An actionable choice must explain "
+                        "why it is preferable to HOLD; scores are not return forecasts. "
+                        "Return JSON with selected_candidate_id, supporting_evidence_refs, "
+                        "opposing_evidence_refs, comparison_against_hold, decision_rationale, "
+                        "material_uncertainty.\nCANDIDATES=" + json.dumps(candidate_envelope, default=str)
+                        + "\nAUDITOR=" + json.dumps(candidate_audit, default=str)
+                    )
+                    committee_raw = call_ai(committee_prompt, l3_cfg["provider"], l3_cfg["model"],
+                                            max_tokens=2048, usage_operation="optimize",
+                                            usage_layer="committee")
+                    committee_result = safe_parse_json(committee_raw["text"])
+                except Exception as exc:
+                    failure_reason = "COMMITTEE_UNAVAILABLE:" + type(exc).__name__
+            strategy_selection = decide_selection(candidate_envelope, candidate_audit,
+                                                  committee_result, hold_safe=hold_safe,
+                                                  failure_reason=failure_reason)
+            consensus["strategy_selection_state"] = strategy_selection["state"]
+            consensus["recommended"] = strategy_selection["selected_candidate_id"] or "human_review"
+            consensus["recommended_action"] = (strategy_selection.get("decision_rationale")
+                                               or "Human review required; no candidate selected.")
         if sector_advisory:
             l2_result["agrees_with_layer1"] = consensus.pop("challenger_agrees")
             l2_result["disagreements"] = consensus["disagreement_reasons"]
@@ -2509,15 +2736,27 @@ def run_layered_optimizer(
         xai_no_action_summary   = l2_result.get("no_action_summary")
         xai_blocked             = l2_result.get("blocked_opportunities", [])
 
-        # Final allocations always come from L2 (L1 only produces swaps)
+        # Older runs retain Challenger ownership. Only explicit Phase 3 selection transfers it.
         final_allocations = l2_result.get("target_allocations", [])
         final_cash_weight = l2_result.get("target_cash_weight", 0.0)
-        final_summary     = l2_result.get("summary", l2_result.get("portfolio_assessment", ""))
+        final_summary = l2_result.get("summary", l2_result.get("portfolio_assessment", ""))
+        if selection_enabled:
+            selected_id = strategy_selection["selected_candidate_id"]
+            selected = next((c for c in candidate_envelope.get("candidates", [])
+                             if c.get("id") == selected_id), None)
+            final_allocations = deepcopy(selected["proposed_allocations"]) if selected else []
+            final_cash_weight = ((selected or {}).get("cash_intent") or {}).get(
+                "value", (cash_balance / total_value * 100 if total_value else 0.0))
+            final_summary = strategy_selection.get("decision_rationale") or "Human review required; no actionable allocation selected."
+            xai_status = "NO_ACTION" if selected_id == "hold-current" else "REBALANCE" if selected else "REVIEW"
+            xai_no_action_reason = "INSUFFICIENT_EDGE" if selected_id == "hold-current" else None
+            xai_no_action_summary = final_summary if selected_id == "hold-current" else None
 
         # Enforce constraints regardless of AI output
         locked_set = set(locked)
         alloc_map: dict[str, dict] = {a["symbol"]: a for a in final_allocations}
-        _apply_forced_and_locked(alloc_map, sell_forced, locked_set, pc_map, advisory)
+        _apply_forced_and_locked(alloc_map, [] if selection_enabled else sell_forced,
+                                 locked_set, pc_map, advisory)
 
         final_allocations = list(alloc_map.values())
 
@@ -2590,6 +2829,33 @@ def run_layered_optimizer(
 
         _snap_neutral_actions(final_allocations, **_observer_kw)
 
+        if selection_enabled and strategy_selection["selected_candidate_id"]:
+            original = next(c for c in candidate_envelope["candidates"]
+                            if c["id"] == strategy_selection["selected_candidate_id"])
+            before = {a["symbol"]: (a["action"], a["target_weight"])
+                      for a in original["proposed_allocations"]}
+            after = {a["symbol"]: (a["action"], a["target_weight"])
+                     for a in final_allocations}
+            if before != after:
+                strategy_selection["downstream_outcome"] = {
+                    "status": "ALTERED_BY_SAFEGUARDS", "original": before, "result": after,
+                }
+                if strategy_selection["selected_candidate_id"] == "hold-current" or any(
+                    a["action"] in ("BUY", "ACCUMULATE") and a["allocation_change_percent"] < 0
+                    or a["action"] in ("SELL", "REDUCE") and a["allocation_change_percent"] > 0
+                    for a in final_allocations
+                ):
+                    strategy_selection["state"] = "HUMAN_REVIEW_REQUIRED"
+                    strategy_selection["reason_codes"].append("DOWNSTREAM_PLAN_INCOHERENT")
+                    final_allocations = []
+                    xai_status = "REVIEW"
+                    consensus["strategy_selection_state"] = "HUMAN_REVIEW_REQUIRED"
+                    consensus["recommended"] = "human_review"
+                    consensus["recommended_action"] = "Selected plan altered incoherently; human review required."
+                    final_summary = consensus["recommended_action"]
+            else:
+                strategy_selection["downstream_outcome"] = {"status": "UNCHANGED"}
+
         # Defensive: auto-correct NO_ACTION when allocations contain real changes
         if xai_status == "NO_ACTION" and any(
             a.get("action") not in ("HOLD", "WATCH") or abs(a.get("allocation_change_percent", 0)) >= 1.0
@@ -2652,7 +2918,8 @@ def run_layered_optimizer(
             len(l1_result.get("swap_suggestions", [])),
         )
 
-        swap_suggestions = _derive_swap_suggestions(final_allocations, sell_forced, locked)
+        swap_suggestions = _derive_swap_suggestions(final_allocations,
+                                                    [] if selection_enabled else sell_forced, locked)
         projected_sector_weights = calculate_projected_sector_weights_from_allocations(
             portfolio_data, final_allocations, total_value
         )
@@ -2741,6 +3008,26 @@ def run_layered_optimizer(
         }
         _capture_sector_policy(output, active_policy_out, sector_policy_mode, portfolio_data, watchlist_data,
                                total_value, degraded_policy, sector_alternatives, optimizer_policy_mode)
+        if selection_enabled:
+            output["strategic_candidates"] = candidate_envelope
+            output["strategy_selection"] = strategy_selection
+            output["candidate_audit"] = candidate_audit
+            output["active_policy"]["strategy_selection_mode"] = strategy_selection_mode
+        elif muji_v2:
+            from services.optimizer.strategic_candidates import VERSION
+            try:
+                output["strategic_candidates"] = strategic_candidates.prepare_candidates(
+                    portfolio_data, watchlist_data, cash_balance, l2_result,
+                    regime=regime_context, goals=goal_decision_input,
+                    source_layer="CHALLENGER_DEGRADED" if l1_parse_failed or "error" in l3_result else "CHALLENGER",
+                )
+            except Exception as exc:
+                logger.exception("MUJI candidate preparation unavailable: %s", exc)
+                output["strategic_candidates"] = {
+                    "version": VERSION, "status": "UNAVAILABLE", "goal_context_version":
+                    (goal_decision_input or {}).get("contract_version"), "candidates": [],
+                    "reason": "CANDIDATE_PREPARATION_FAILED",
+                }
         return output
 
     except HardPolicyEnforcementError:
@@ -2767,5 +3054,8 @@ def run_layered_optimizer(
             optimizer_policy_mode=optimizer_policy_mode,
             execution_context=execution_context,
             muji_policy_block=muji_policy_block,
+            goal_decision_input=goal_decision_input if muji_v2 else None,
+            regime_context=regime_context if muji_v2 else None,
+            strategy_selection_mode=strategy_selection_mode,
             **({"advisory": advisory} if advisory is not None else {}),
         )

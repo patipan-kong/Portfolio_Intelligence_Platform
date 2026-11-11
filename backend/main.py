@@ -4425,6 +4425,8 @@ class OptimizerRequest(BaseModel):
     # Phase 7.5 (ADR-009): independent explicit activation of at most one
     # deterministic Goal recommendation constraint.
     goal_constraint_goal_id: StrictInt | None = Field(default=None, gt=0)
+    # Explicit Phase 3 opt-in; absent requests retain Phase 1 Challenger semantics.
+    strategy_selection_mode: Literal["wealth.strategy-selection.v1"] | None = None
 
 
 @app.post("/analyze/optimizer")
@@ -4439,6 +4441,7 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
     from services.optimizer.sector_policy import OPTIMIZER_POLICY_MUJI_V2, SECTOR_POLICY_ADVISORY
 
     optimizer_policy_mode = OPTIMIZER_POLICY_MUJI_V2
+    strategy_selection_mode = body.strategy_selection_mode
 
     # Advisory Integration V1 (Slice 1) — one default-OFF flag for the whole
     # integration. Off: every branch below keyed on it is skipped and the run
@@ -4517,6 +4520,18 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
                 "code": "GOAL_RECOMMENDATION_CONSTRAINT_INTERNAL_ERROR",
                 "message": "Unable to apply goal recommendation constraints",
             })
+
+    # MUJI V2 uses selected facts before any model call, after the existing
+    # goal admission checks so their validation order stays intact.
+    wealth_goal_context = None
+    if selected_goal_ids is not None:
+        from services.decision_goal_context import build_decision_goal_context, integrity_error_detail
+        try:
+            wealth_goal_context = build_decision_goal_context(
+                db, ws, selected_goal_ids, decision_input=True,
+            )
+        except GoalContextIntegrityError:
+            raise HTTPException(status_code=409, detail=integrity_error_detail())
 
     holdings = db.query(PortfolioItem).filter(PortfolioItem.portfolio_id == body.portfolio_id).all()
     watchlist_items = db.query(Watchlist).filter(Watchlist.workspace_id == ws).all()
@@ -4809,6 +4824,8 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
             on_stage=partial(mark_stage, body.portfolio_id),
             sector_policy_mode=SECTOR_POLICY_ADVISORY,
             optimizer_policy_mode=optimizer_policy_mode,
+            goal_decision_input=wealth_goal_context,
+            strategy_selection_mode=strategy_selection_mode,
             **({"advisory": advisory_run} if advisory_run is not None else {}),
         )
     except Exception:
@@ -4817,6 +4834,8 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
         raise
 
     # Surface regime in optimizer result for frontend display
+    if wealth_goal_context is not None:
+        result["goal_decision_input"] = wealth_goal_context
     if regime_ctx:
         result["market_regime"] = {
             "regime":               regime_ctx.get("regime"),
@@ -5038,23 +5057,6 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
             (h.get("shares") or 0) * (h.get("current_price") or h.get("avg_cost") or 0)
             for h in portfolio_data
         )
-
-        # ── Phase 7.4 (ADR-008) — post-run Wealth Goal context capture ────
-        # Constructed only now, strictly after the recommendation result
-        # already exists (L1/L2/L3, policy, constraints, scoring, consensus,
-        # and stabilization have all completed above). If selected_goal_ids
-        # is None, no capture was requested and this stays None (persisted
-        # as SQL NULL). If construction fails for a requested selection
-        # (persisted-data integrity issue discovered only at full-context
-        # time), the exception propagates to this block's except-clause
-        # below: no snapshot is written for this run at all, OptimizerHistory
-        # is preserved, and the optimizer response still succeeds — this is
-        # ordinary best-effort snapshot-capture failure, not a client-visible
-        # error, and never a post-commit 404/409.
-        wealth_goal_context = None
-        if selected_goal_ids is not None:
-            from services.decision_goal_context import build_decision_goal_context
-            wealth_goal_context = build_decision_goal_context(db, ws, selected_goal_ids)
 
         _snap_id = write_recommendation_snapshot(
             db,

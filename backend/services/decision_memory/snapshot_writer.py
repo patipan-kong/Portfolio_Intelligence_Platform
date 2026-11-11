@@ -95,7 +95,12 @@ def write_recommendation_snapshot(
             layer1_output_json=_j(r.get("layer1_result")),
             layer2_output_json=_j(r.get("layer2_result")),
             layer3_output_json=_j(r.get("layer3_result")),
-            consensus_json=_j(r.get("consensus")),
+            consensus_json=_j({**(r.get("consensus") or {}),
+                               **({"strategy_selection": r["strategy_selection"],
+                                   "strategic_candidates": r.get("strategic_candidates"),
+                                   "candidate_audit": r.get("candidate_audit")}
+                                  if (r.get("active_policy") or {}).get("strategy_selection_mode")
+                                  == "wealth.strategy-selection.v1" else {})}),
             portfolio_dna_json=_j(r.get("current_portfolio_dna")),
             style_drift_json=_j({
                 "drift_score": r.get("style_drift_score"),
