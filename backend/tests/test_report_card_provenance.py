@@ -133,6 +133,40 @@ def test_219_report_card_does_not_rewrite_stored_rows(db, book):
     assert (s2.projected_allocations_json, s2.active_policy_json, o2.result_json) == before
 
 
+def test_committee_selection_projection_uses_only_frozen_exact_policy_evidence(db, book):
+    ws, portfolio = book
+    payload = recorded_payload(218)
+    payload["active_policy"] = {**payload["active_policy"],
+        "optimizer_policy_mode": "wealth.optimizer-muji.v2",
+        "strategy_selection_mode": "wealth.strategy-selection.v1"}
+    snap, _ = seed(db, ws, portfolio, payload)
+    frozen = {"strategy_selection": {"version": "wealth.strategy-selection.v1",
+        "state": "SELECTED", "selected_candidate_id": "hold-current",
+        "reason_codes": ["CAUTIONED_HOLD"], "material_uncertainty": ["Auditor unavailable"]},
+        "strategic_candidates": {"version": "wealth.strategic-candidates.v1",
+            "status": "PREPARED_NOT_SELECTED", "candidates": [{
+            "id": "hold-current", "family": "HOLD", "eligibility_status": "ELIGIBLE",
+            "proposed_allocations": []}]},
+        "candidate_audit": {"status": "UNAVAILABLE", "reason": "AUDITOR_UNAVAILABLE"}}
+    snap.consensus_json = json.dumps(frozen)
+    db.commit()
+    before = (snap.active_policy_json, snap.consensus_json, snap.projected_allocations_json)
+    card = get_report_card(db, portfolio.id, snap.id)
+    assert card["plan"]["selection_evidence"]["status"] == "available"
+    assert card["plan"]["selection_evidence"]["strategy_selection"] == frozen["strategy_selection"]
+    assert card["plan"]["selection_evidence"]["effective_allocations"] is None
+    db.refresh(snap)
+    assert (snap.active_policy_json, snap.consensus_json, snap.projected_allocations_json) == before
+    snap.consensus_json = json.dumps({"strategic_candidates": frozen["strategic_candidates"]})
+    db.commit()
+    assert get_report_card(db, portfolio.id, snap.id)["plan"]["selection_evidence"]["status"] == "unavailable"
+    snap.consensus_json = json.dumps(frozen)
+    snap.active_policy_json = json.dumps({**payload["active_policy"],
+        "strategy_selection_mode": None})
+    db.commit()
+    assert "selection_evidence" not in get_report_card(db, portfolio.id, snap.id)["plan"]
+
+
 @pytest.mark.parametrize("history_id", [217, 218])
 def test_217_and_218_report_cards_are_unchanged(db, book, history_id):
     ws, portfolio = book

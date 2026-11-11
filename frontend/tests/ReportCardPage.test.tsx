@@ -74,6 +74,39 @@ function planWithTrade(trade: Record<string, unknown>) {
 }
 
 describe("Report Card — execution provenance of Required trades", () => {
+  test("shows frozen Committee decision separately from recorded execution", async () => {
+    getRecommendationReportCard.mockResolvedValue(reportCard({
+      plan: { status: "ok", buy_trades: [], sell_reduce_trades: [],
+        selection_evidence: {
+          status: "available", active_policy: { optimizer_policy_mode: "wealth.optimizer-muji.v2",
+            strategy_selection_mode: "wealth.strategy-selection.v1" },
+          strategy_selection: { version: "wealth.strategy-selection.v1", state: "SELECTED",
+            selected_candidate_id: "hold-current", reason_codes: ["CAUTIONED_HOLD"],
+            material_uncertainty: ["Auditor unavailable"], comparison_against_hold: "Wait for evidence." },
+          strategic_candidates: { version: "wealth.strategic-candidates.v1", status: "PREPARED_NOT_SELECTED",
+            candidates: [{ id: "hold-current", family: "HOLD", eligibility_status: "ELIGIBLE",
+              proposed_allocations: [] }] },
+          candidate_audit: { status: "UNAVAILABLE" }, effective_allocations: [],
+        },
+      },
+      execution: { status: "no_decision_recorded" }, decision: null,
+    }));
+    render(<ReportCardPage />);
+    expect(await screen.findByTestId("committee-decision")).toHaveTextContent("HOLD");
+    expect(screen.getByTestId("committee-decision")).toHaveTextContent("Wait for evidence");
+    expect(screen.getByText(/No decision recorded/)).toBeInTheDocument();
+  });
+
+  test("shows unavailable selection when frozen Committee evidence is missing", async () => {
+    getRecommendationReportCard.mockResolvedValue(reportCard({
+      plan: { status: "unavailable", reason: "no_target_allocations", selection_evidence: {
+        status: "unavailable", active_policy: { optimizer_policy_mode: "wealth.optimizer-muji.v2",
+          strategy_selection_mode: "wealth.strategy-selection.v1" },
+      } },
+    }));
+    render(<ReportCardPage />);
+    expect(await screen.findByText(/Selection Evidence Unavailable/)).toBeInTheDocument();
+  });
   test("V2 labels frozen plan quality and scheduled sale separately from transactions", async () => {
     getRecommendationReportCard.mockResolvedValue(reportCard({
       plan: {

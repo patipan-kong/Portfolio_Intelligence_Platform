@@ -20,6 +20,7 @@ import TransactionEvidenceLinks from "@/components/evaluation/TransactionEvidenc
 import ReviewOutcomeBadge from "@/components/evaluation/ReviewOutcomeBadge";
 import RecommendationComparisonCard from "@/components/evaluation/RecommendationComparisonCard";
 import SectorConcentrationAdvisory from "@/components/optimizer/SectorConcentrationAdvisory";
+import { CommitteeDecisionBlock } from "@/components/optimizer/OptimizerDecisionSummary";
 import { provenanceQualifier, requiredLabel } from "@/lib/tradeProvenance";
 import type { PolicyRepairEvidence } from "@/lib/api";
 
@@ -49,7 +50,10 @@ function SectionCard({ title, children }: { title: string; children: React.React
 
 function PlanSection({ plan }: { plan: RecommendationReportCard["plan"] }) {
   if (plan.status === "unavailable") {
-    return <p className="text-sm text-gray-400 italic">Plan unavailable — {plan.reason ?? "no stored plan inputs for this snapshot"}.</p>;
+    return <><p className="text-sm text-gray-400 italic">Plan unavailable — {plan.reason ?? "no stored plan inputs for this snapshot"}.</p>
+      {plan.selection_evidence && <CommitteeDecisionBlock evidence={{
+        ...plan.selection_evidence, target_allocations: plan.selection_evidence.effective_allocations,
+      }} />}</>;
   }
   const [breakdownOpen, setBreakdownOpen] = useState(false);
   const buys = plan.buy_trades ?? [];
@@ -59,6 +63,9 @@ function PlanSection({ plan }: { plan: RecommendationReportCard["plan"] }) {
 
   return (
     <>
+      {plan.selection_evidence && <CommitteeDecisionBlock evidence={{
+        ...plan.selection_evidence, target_allocations: plan.selection_evidence.effective_allocations,
+      }} />}
       {muji && <p className="text-xs text-gray-600">Original recommendation and scheduled advisory amounts are shown below. Scheduled trades are not recorded transactions; actual transactions, if any, appear under What Happened.</p>}
       {muji && <div className="text-sm"><p className="font-semibold">Original recommendation</p>
         {plan.recommended_actions?.length ? <ul>{plan.recommended_actions.map((action, index) => {

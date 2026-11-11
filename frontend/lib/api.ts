@@ -1933,6 +1933,7 @@ export interface PolicyHardConstraints {
 export interface ActivePolicy {
   sector_policy_mode?: string;
   optimizer_policy_mode?: string;
+  strategy_selection_mode?: string;
   hard_policy_unavailable?: boolean;
   concentration?: Pick<SectorAdvisoryEvidence, "current" | "projected_target">;
   sector_alternatives?: SectorAdvisoryEvidence["alternatives"];
@@ -2095,6 +2096,40 @@ export interface GoalRecommendationConstraintEvidence {
   };
 }
 
+export interface StrategicCandidate {
+  id: string;
+  family: string;
+  proposed_allocations: TargetAllocation[];
+  observed_evidence_refs?: Record<string, unknown>;
+  eligibility_status?: string;
+}
+
+export interface StrategicCandidateEnvelope {
+  version: string;
+  status: string;
+  candidates: StrategicCandidate[];
+  observed_evidence_catalog?: Record<string, unknown>;
+}
+
+export interface CandidateAudit {
+  status: string;
+  reason?: string | null;
+  reviews?: Record<string, { supporting_refs?: string[]; opposing_refs?: string[]; material_conflicts?: string[] }>;
+}
+
+export interface StrategySelection {
+  version: string;
+  state: "SELECTED" | "ABSTAINED" | "HUMAN_REVIEW_REQUIRED";
+  selected_candidate_id: string | null;
+  supporting_evidence_refs?: string[];
+  opposing_evidence_refs?: string[];
+  comparison_against_hold?: string | null;
+  decision_rationale?: string | null;
+  material_uncertainty?: string[];
+  reason_codes?: string[];
+  downstream_outcome?: { status: string; original?: Record<string, unknown>; result?: Record<string, unknown> };
+}
+
 export interface OptimizerResult {
   execution_policy_version?: string;
   execution_policy_evidence_status?: "unsupported_optimizer_policy_evidence";
@@ -2151,6 +2186,9 @@ export interface OptimizerResult {
   > | null;
   // Phase 3B.4 — Active Policy Envelope
   active_policy?: ActivePolicy | null;
+  strategy_selection?: StrategySelection | null;
+  strategic_candidates?: StrategicCandidateEnvelope | null;
+  candidate_audit?: CandidateAudit | null;
   // Health indicator — surfaces silent Policy Engine degradation (falls back to regime-only)
   policy_engine_status?: "ACTIVE" | "DISABLED_FALLBACK" | null;
   // Phase 3B.5 — Resolved constraint breakdown
@@ -2305,6 +2343,7 @@ export const runOptimizer = (
   model?: string,
   forceRebalance?: boolean,
   goalConstraintGoalId?: number | null,
+  strategySelectionEnabled?: boolean,
 ) =>
   apiFetch<OptimizerResult>("/analyze/optimizer", {
     method: "POST",
@@ -2314,6 +2353,7 @@ export const runOptimizer = (
       ...(model           ? { model }                          : {}),
       ...(forceRebalance  ? { force_rebalance: true }          : {}),
       ...(goalConstraintGoalId != null ? { goal_constraint_goal_id: goalConstraintGoalId } : {}),
+      ...(strategySelectionEnabled ? { strategy_selection_mode: "wealth.strategy-selection.v1" } : {}),
     }),
   });
 
@@ -4690,6 +4730,14 @@ export const getRecommendationsLedger = (portfolioId: number, limit = 50, offset
 
 export interface ReportCardPlanSection {
   optimizer_policy_mode?: string | null;
+  selection_evidence?: {
+    status: "available" | "unavailable";
+    active_policy: Pick<ActivePolicy, "optimizer_policy_mode" | "strategy_selection_mode">;
+    strategy_selection?: StrategySelection | null;
+    strategic_candidates?: StrategicCandidateEnvelope | null;
+    candidate_audit?: CandidateAudit | null;
+    effective_allocations?: TargetAllocation[] | null;
+  };
   recommended_actions?: Array<{ symbol: string; action: string; rationale?: string | null }>;
   sector_advisory?: SectorAdvisoryEvidence;
   status: "ok" | "unavailable";

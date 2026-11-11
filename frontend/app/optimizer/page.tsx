@@ -2283,6 +2283,7 @@ export default function OptimizerPage() {
   const loadedHistoryRef = useRef<string | null>(null);
   const appliedPortfolioRef = useRef<string | null>(null);
   const [running, setRunning] = useState(false);
+  const [committeeSelectionEnabled, setCommitteeSelectionEnabled] = useState(false);
   const [forceRunning, setForceRunning] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
@@ -2547,7 +2548,7 @@ export default function OptimizerPage() {
     }
     setError("");
     try {
-      const data = await runOptimizer(pid, undefined, undefined, forceRebalance || undefined, runGoalId);
+      const data = await runOptimizer(pid, undefined, undefined, forceRebalance || undefined, runGoalId, committeeSelectionEnabled);
       // M36.1 WP4C F04 — discard a run's completion if the user has since
       // switched Current Selection away from the portfolio this run was
       // issued for; never let it repopulate a different portfolio's page.
@@ -2728,6 +2729,12 @@ export default function OptimizerPage() {
           </div>
         )}
 
+        <label className="flex items-center gap-2 text-sm text-gray-700 self-end">
+          <input type="checkbox" checked={committeeSelectionEnabled}
+            onChange={(event) => setCommitteeSelectionEnabled(event.target.checked)}
+            disabled={running || forceRunning || portfolioId == null} />
+          Use Committee strategy selection for this run
+        </label>
         <button
           onClick={() => handleRun()}
           disabled={running || portfolioId == null}
