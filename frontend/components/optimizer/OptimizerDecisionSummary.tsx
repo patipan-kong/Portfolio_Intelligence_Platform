@@ -1,5 +1,5 @@
 import type { OptimizerResult, ActivePolicy, StrategySelection, StrategicCandidateEnvelope, CandidateAudit, TargetAllocation } from "@/lib/api";
-import { OPTIMIZER_POLICY_MUJI_V2, assessment, committeeDecisionPresentation, economicRecommendation, executionEvidenceAvailable, intentReviewSummary, primarySchedulingReason, scheduledTradeCount } from "@/lib/optimizerPresentation";
+import { OPTIMIZER_POLICY_MUJI_V2, assessment, committeeDecisionPresentation, committeeSummaryPresentation, economicRecommendation, executionEvidenceAvailable, intentReviewSummary, primarySchedulingReason, scheduledTradeCount } from "@/lib/optimizerPresentation";
 
 export function CommitteeDecisionBlock({ evidence }: { evidence: {
   active_policy?: Pick<ActivePolicy, "optimizer_policy_mode" | "strategy_selection_mode"> | null;
@@ -33,6 +33,45 @@ export function CommitteeDecisionBlock({ evidence }: { evidence: {
   </div>;
 }
 
+const thb = (n: number) => `THB ${n.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+const label = (a: string) => a.charAt(0) + a.slice(1).toLowerCase();
+const MAX_CAUTIONS = 3;
+
+function CommitteePrimary({ result, count, cash, schedule }: {
+  result: OptimizerResult; count: number | null; cash: number | undefined;
+  schedule: OptimizerResult["execution_optimization"] | null;
+}) {
+  const summary = committeeSummaryPresentation(result, committeeDecisionPresentation(result));
+  const rows = summary.showHoldings ? result.target_allocations ?? [] : [];
+  return <div className="space-y-3" data-testid="committee-primary-summary">
+    <div className="rounded-lg bg-blue-50 border border-blue-100 p-3">
+      <p className="text-xs text-gray-500">Recommended action</p>
+      <p className="text-xl font-bold text-gray-900 break-words">{summary.headline}</p>
+      <p className="text-sm text-gray-700 mt-1">{summary.explanation}</p>
+    </div>
+    <dl className="grid grid-cols-2 gap-3 text-sm">
+      <div><dt className="text-xs text-gray-500">Scheduled trades</dt><dd className="font-semibold">{count == null ? "Unavailable" : count}</dd></div>
+      <div><dt className="text-xs text-gray-500">Estimated cash after plan</dt><dd className="font-semibold">{schedule && typeof cash === "number" ? thb(cash) : "Unavailable"}</dd></div>
+    </dl>
+    {rows.length > 0 && <div>
+      <h3 className="text-sm font-semibold mb-1">Holdings</h3>
+      <ul className="divide-y divide-gray-100 text-sm">{rows.map((row) => {
+        const sale = schedule?.trades.find((trade) => trade.symbol === row.symbol);
+        const amount = sale?.executed_amount || schedule?.scheduled_buys?.[row.symbol] || 0;
+        return <li key={row.symbol} className="flex flex-wrap justify-between gap-x-3 py-1">
+          <span className="font-medium break-all">{row.symbol}</span>
+          <span><strong>{label(sale?.original_action || row.action)}</strong>
+            {amount > 0 && <span className="text-gray-500"> · {thb(amount)} scheduled</span>}</span>
+        </li>; })}</ul>
+    </div>}
+    {summary.cautions.length > 0 && <div className="border-l-2 border-amber-300 pl-2 text-sm text-gray-700 space-y-0.5" data-testid="committee-cautions">
+      {summary.cautions.slice(0, MAX_CAUTIONS).map((item) => <p key={item}>{item}</p>)}
+      {summary.cautions.length > MAX_CAUTIONS && <p className="text-xs text-gray-500">+{summary.cautions.length - MAX_CAUTIONS} more caveats in technical details</p>}
+    </div>}
+    <p className="text-xs text-gray-500">Advisory plan as of the analysis time, not current prices. Scores and model opinions are assessments, not predictions of returns.</p>
+  </div>;
+}
+
 export default function OptimizerDecisionSummary({ result, historyId, historical, loading }: {
   result: OptimizerResult | null; historyId: number | null; historical: boolean; loading: boolean;
 }) {
@@ -46,12 +85,9 @@ export default function OptimizerDecisionSummary({ result, historyId, historical
   const projectedCash = schedule?.idle_cash_after;
   const friction = schedule?.estimated_trade_costs
     ? Object.values(schedule.estimated_trade_costs).reduce((sum, amount) => sum + amount, 0) : null;
-  return <section aria-label="Selected analysis decision" className="bg-white border border-blue-200 rounded-xl p-4 shadow-sm space-y-3 min-w-0">
-    <h2 className="font-semibold text-gray-900">{historical ? "Historical analysis" : "Analysis just completed"}{historyId != null ? ` #${historyId}` : " — run identity unavailable"}</h2>
-    <p className="text-xs text-gray-500">{date && !Number.isNaN(date.getTime()) ? `${date.toLocaleString("en-GB", { timeZone: "Asia/Bangkok" })} · Bangkok time` : "Analysis timestamp unavailable"}. This plan reflects the analysis time, not current prices.</p>
-    {loading ? <p role="status">Loading selected analysis — recommendation and scheduled actions unavailable.</p>
-      : <>
-        {result && <CommitteeDecisionBlock evidence={result} />}
+  const committee = !!result && muji && committeeDecisionPresentation(result).owner === "Committee";
+  const detail = <>
+    {result && <CommitteeDecisionBlock evidence={result} />}
         {muji && <div className="space-y-3 text-sm" data-testid="muji-primary-result">
           <div><h3 className="font-semibold">Portfolio Outlook</h3>
             <p>Market regime: {result?.market_regime?.regime?.replace(/_/g, " ") ?? "Unavailable"}.</p>
@@ -96,6 +132,17 @@ export default function OptimizerDecisionSummary({ result, historyId, historical
           ? "Evidence-backed auditor observations are separated from unscored opinions and advisory concerns below. Unscored does not mean risk-free."
           : "Historical model claims were not independently validated by Auditor V2. They are recorded opinions, not verified policy breaches."}</p>
         <p className="text-xs text-gray-500">{score == null ? "Consensus assessment unavailable." : `${result?.active_policy?.strategy_selection_mode === "wealth.strategy-selection.v1" && muji ? "Stored legacy consensus assessment" : "Stored consensus assessment"}: ${score}/100.`} Scores are assessments, not probabilities of returns or investment success.</p>
+  </>;
+  return <section aria-label="Selected analysis decision" className="bg-white border border-blue-200 rounded-xl p-4 shadow-sm space-y-3 min-w-0">
+    <h2 className="font-semibold text-gray-900">{historical ? "Historical analysis" : "Analysis just completed"}{historyId != null ? ` #${historyId}` : " — run identity unavailable"}</h2>
+    <p className="text-xs text-gray-500">{date && !Number.isNaN(date.getTime()) ? `${date.toLocaleString("en-GB", { timeZone: "Asia/Bangkok" })} · Bangkok time` : "Analysis timestamp unavailable"}. This plan reflects the analysis time, not current prices.</p>
+    {loading ? <p role="status">Loading selected analysis — recommendation and scheduled actions unavailable.</p>
+      : <>
+        {committee && result && <CommitteePrimary result={result} count={count} cash={projectedCash} schedule={schedule} />}
+        {committee ? <details className="border border-gray-200 rounded-lg p-3" data-testid="technical-details">
+          <summary className="cursor-pointer text-sm font-semibold text-gray-700">Technical details</summary>
+          <div className="mt-3 space-y-3">{detail}</div>
+        </details> : detail}
       </>}
   </section>;
 }
