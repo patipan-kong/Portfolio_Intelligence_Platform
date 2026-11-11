@@ -22,35 +22,81 @@ def _number(value):
     return result if isfinite(result) else None
 
 
-def _evidence_catalog(holdings: list[dict], watchlist: list[dict], regime: dict | None,
-                      goals: dict | None) -> dict[str, object]:
-    catalog = {}
+# Fields whose row value may be a default standing in for missing analysis
+# (signal "HOLD", score 0); with provenance they enter the catalog only when observed.
+_PROVENANCE_FIELDS = frozenset({"signal", "fa_score", "ta_score", "timing_score"})
+_SCORE_SUFFIXES = (":fa_score", ":ta_score", ":timing_score")
+
+
+def _admissible(value) -> bool:
+    return value is not None and (not isinstance(value, (int, float)) or _number(value) is not None)
+
+
+def _evidence(holdings: list[dict], watchlist: list[dict], regime: dict | None,
+              goals: dict | None, provenance: dict | None = None):
+    """Return (catalog, unobserved, as_of).
+
+    provenance None keeps the legacy catalog (no provenance check). Otherwise a
+    provenance-gated value enters the catalog only when its status is OBSERVED;
+    an excluded value is recorded by reference in ``unobserved`` with its status
+    (MISSING, FAILED, DISABLED, or UNRECORDED when no record exists).
+    """
+    catalog, unobserved, as_of = {}, {}, {}
     for row in [*watchlist, *holdings]:
         symbol = row.get("symbol")
         if not symbol:
             continue
         for field in ("signal", "fa_score", "ta_score", "pe_ratio", "roe", "timing_score"):
             value = row.get(field)
-            if value is not None and (not isinstance(value, (int, float)) or _number(value) is not None):
-                catalog[f"symbol:{symbol}:{field}"] = value
+            if not _admissible(value):
+                continue
+            ref = f"symbol:{symbol}:{field}"
+            if provenance is not None and field in _PROVENANCE_FIELDS:
+                record = (provenance.get(symbol) or {}).get(field) or {}
+                status = record.get("status") or "UNRECORDED"
+                if status != "OBSERVED":
+                    if ref not in catalog:
+                        unobserved[ref] = status
+                    continue
+                if record.get("as_of"):
+                    as_of[ref] = record["as_of"]
+            catalog[ref] = value
+            unobserved.pop(ref, None)
     if isinstance(regime, dict) and regime.get("regime"):
         catalog["regime:regime"] = regime["regime"]
     for goal in (goals or {}).get("goals", []):
         for field in ("target_date", "funding_gap", "priority"):
             if goal.get(field) is not None:
                 catalog[f"goal:{goal['id']}:{field}"] = goal[field]
-    return catalog
+    return catalog, unobserved, as_of
+
+
+def _evidence_catalog(holdings: list[dict], watchlist: list[dict], regime: dict | None,
+                      goals: dict | None) -> dict[str, object]:
+    """Legacy catalog without a provenance check."""
+    return _evidence(holdings, watchlist, regime, goals)[0]
 
 
 def prepare_candidates(holdings: list[dict], watchlist: list[dict], cash: float,
                        challenger: dict, *, regime: dict | None = None,
-                       goals: dict | None = None, source_layer: str = "CHALLENGER") -> dict:
-    """Retain coherent proposals with explicit evidence status; always include current HOLD."""
+                       goals: dict | None = None, source_layer: str = "CHALLENGER",
+                       provenance: dict | None = None) -> dict:
+    """Retain coherent proposals with explicit evidence status; always include current HOLD.
+
+    provenance: per-symbol evidence provenance (services/optimizer/evidence_provenance.py).
+    The production Committee path always supplies it. Without it the legacy catalog
+    is kept and the envelope records ``evidence_provenance_status: NOT_SUPPLIED``.
+    """
+    catalog, unobserved, as_of = _evidence(holdings, watchlist, regime, goals, provenance)
     envelope = {
         "version": VERSION, "status": "PREPARED_NOT_SELECTED",
         "goal_context_version": (goals or {}).get("contract_version"), "candidates": [],
-        "observed_evidence_catalog": _evidence_catalog(holdings, watchlist, regime, goals),
+        "observed_evidence_catalog": catalog,
+        "evidence_provenance_status": "NOT_SUPPLIED" if provenance is None else "SUPPLIED",
     }
+    if provenance is not None:
+        envelope["unobserved_evidence"] = dict(sorted(unobserved.items()))
+        envelope["observed_evidence_as_of"] = dict(sorted(as_of.items()))
     cash_value = _number(cash)
     hold_rows = []
     hold_errors = []
@@ -101,6 +147,8 @@ def _append_proposal(envelope, holdings, watchlist, hold_rows, hold_ok, regime, 
         return
     reasons = []
     missing = []
+    catalog = envelope["observed_evidence_catalog"]
+    provenance_supplied = envelope.get("evidence_provenance_status") == "SUPPLIED"
     if challenger.get("candidate_input_invalid"):
         reasons.append("INCOMPLETE_MODEL_ALLOCATION")
     held_symbols = {row.get("symbol") for row in holdings}
@@ -129,6 +177,9 @@ def _append_proposal(envelope, holdings, watchlist, hold_rows, hold_ok, regime, 
             frozen = next((item for item in holdings if item.get("symbol") == row.get("symbol")), None)
             if not frozen or frozen.get("signal") != "SELL":
                 missing.append(f"UNVERIFIED_SELL:{row.get('symbol')}")
+            # Disclosure only; the sale rule above is unchanged.
+            if provenance_supplied and f"symbol:{row.get('symbol')}:signal" not in catalog:
+                missing.append(f"SIGNAL_UNOBSERVED:{row.get('symbol')}")
             if row.get("thesis_evidence_status") == "UNVERIFIED" or row.get("decision_basis") in (
                 "CONCENTRATION_ADVISORY", "SECTOR_ADVISORY"
             ):
@@ -156,12 +207,10 @@ def _append_proposal(envelope, holdings, watchlist, hold_rows, hold_ok, regime, 
     if not isinstance(refs, list) or any(not isinstance(ref, str) for ref in refs):
         reasons.append("INVALID_EVIDENCE_REFS")
         refs = []
-    catalog = _evidence_catalog(holdings, watchlist, regime, goals)
     verified_refs = {ref: catalog[ref] for ref in refs if ref in catalog}
     if not verified_refs:
         missing.append("INDEPENDENT_SUPPORT_UNVERIFIED")
-    if verified_refs and all(ref.endswith((":fa_score", ":ta_score", ":timing_score"))
-                             for ref in verified_refs):
+    if verified_refs and all(ref.endswith(_SCORE_SUFFIXES) for ref in verified_refs):
         missing.append("MODEL_SCORE_ONLY_SUPPORT")
     if len(verified_refs) != len(refs):
         missing.append("UNKNOWN_EVIDENCE_REF")
@@ -171,9 +220,21 @@ def _append_proposal(envelope, holdings, watchlist, hold_rows, hold_ok, regime, 
     for row in proposal:
         if isinstance(row, dict) and row.get("action") in _BUY:
             symbol = row.get("symbol")
-            if not any(ref.startswith(f"symbol:{symbol}:")
-                       and not ref.endswith((":fa_score", ":ta_score", ":timing_score"))
-                       for ref in verified_refs):
+            if provenance_supplied:
+                # Direction check (catalog signals are observed here): an observed
+                # SELL/REDUCE signal contradicts the buy whatever else is cited; a
+                # cited signal supports only when it is BUY/ACCUMULATE; P/E and ROE
+                # stay admissible (no invented valuation thresholds).
+                if catalog.get(f"symbol:{symbol}:signal") in _SELL:
+                    missing.append(f"BUY_CONTRADICTS_SIGNAL:{symbol}")
+                supported = any(
+                    _symbol_of_ref(ref) == symbol and not ref.endswith(_SCORE_SUFFIXES)
+                    and (not ref.endswith(":signal") or value in _BUY)
+                    for ref, value in verified_refs.items())
+            else:
+                supported = any(ref.startswith(f"symbol:{symbol}:") and not ref.endswith(_SCORE_SUFFIXES)
+                                for ref in verified_refs)
+            if not supported:
                 missing.append(f"BUY_SUPPORT_UNVERIFIED:{symbol}")
     stable = json.dumps({"family": family, "allocations": proposal, "cash": cash_intent},
                         sort_keys=True, default=str, separators=(",", ":"))
@@ -235,12 +296,21 @@ def candidate_review_view(envelope: dict) -> dict:
         ref: value for ref, value in catalog.items()
         if ref in cited or ref.startswith(("regime:", "goal:")) or _symbol_of_ref(ref) in symbols
     }
-    return {
+    view = {
         "candidates": candidates,
         "relevant_evidence": dict(sorted(relevant.items())),
         "catalog_entry_count": len(catalog),
         "omitted_unrelated_entry_count": len(catalog) - len(relevant),
     }
+    if envelope.get("evidence_provenance_status") is not None:
+        view["evidence_provenance_status"] = envelope["evidence_provenance_status"]
+    unobserved = envelope.get("unobserved_evidence")
+    if isinstance(unobserved, dict):
+        # Missing analysis for touched symbols travels with the view; it is not evidence.
+        gaps = {ref: status for ref, status in unobserved.items() if _symbol_of_ref(ref) in symbols}
+        view["unobserved_evidence"] = dict(sorted(gaps.items()))
+        view["omitted_unrelated_unobserved_count"] = len(unobserved) - len(gaps)
+    return view
 
 
 def validate_candidate_reviews(raw, envelope):

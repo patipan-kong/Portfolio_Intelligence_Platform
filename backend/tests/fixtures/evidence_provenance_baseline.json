@@ -1,0 +1,1013 @@
+{
+ "endpoint:optin_off": {
+  "args": [
+   [
+    {
+     "allow_swap": true,
+     "avg_cost": 50.0,
+     "combined_score": 0.0,
+     "current_price": 50.0,
+     "execution_priority": "LOW",
+     "fa_score": 0,
+     "fa_summary": "",
+     "is_dr": false,
+     "momentum": null,
+     "parent_symbol": null,
+     "pe_ratio": null,
+     "revenue_growth": null,
+     "roe": null,
+     "sector": "Other",
+     "sector_classification": {
+      "classification_source": "unresolved",
+      "classification_status": "unresolved",
+      "classified_asset_id": null,
+      "conflict_reason": null,
+      "evidence_source": null,
+      "held_asset_id": null,
+      "observed_at": null,
+      "raw_sector": null,
+      "sector": "Other"
+     },
+     "shares": 10.0,
+     "signal": "ACCUMULATE",
+     "symbol": "AAA",
+     "ta_score": 0,
+     "ta_summary": "",
+     "target_price": null,
+     "timing_category": "POOR",
+     "timing_data_available": false,
+     "timing_reason": "no data",
+     "timing_score": 0,
+     "trend": "down",
+     "upside_pct": null,
+     "upside_reference_price": null
+    }
+   ],
+   [
+    {
+     "combined_score": 33.0,
+     "current_price": 50.0,
+     "execution_priority": "NORMAL",
+     "fa_score": 55,
+     "fa_summary": "",
+     "is_dr": false,
+     "momentum": 1.0,
+     "parent_symbol": null,
+     "pe_ratio": 10.5,
+     "revenue_growth": null,
+     "roe": 0.18,
+     "sector": "Other",
+     "sector_classification": {
+      "classification_source": "unresolved",
+      "classification_status": "unresolved",
+      "classified_asset_id": null,
+      "conflict_reason": null,
+      "evidence_source": null,
+      "held_asset_id": null,
+      "observed_at": null,
+      "raw_sector": null,
+      "sector": "Other"
+     },
+     "signal": "HOLD",
+     "symbol": "BBB",
+     "ta_score": 0,
+     "ta_summary": "",
+     "target_price": null,
+     "timing_category": "GOOD",
+     "timing_data_available": true,
+     "timing_reason": "trend",
+     "timing_score": 62,
+     "trend": "sideways",
+     "upside_pct": null,
+     "upside_reference_price": null,
+     "valuation_percentile": null
+    }
+   ],
+   "P",
+   1,
+   false,
+   {
+    "layer1": {
+     "model": "claude-sonnet-4-6",
+     "name": "Strategist",
+     "provider": "anthropic",
+     "role": "Capital allocation strategist"
+    },
+    "layer2": {
+     "model": "claude-sonnet-4-6",
+     "name": "Challenger",
+     "provider": "anthropic",
+     "role": "Independent risk-aware reviewer"
+    },
+    "layer3": {
+     "model": "claude-sonnet-4-6",
+     "name": "Risk Auditor",
+     "provider": "anthropic",
+     "role": "Concentration risk and assumption validator"
+    }
+   },
+   12,
+   40,
+   {
+    "Consumer": 25,
+    "Energy": 20,
+    "Financial": 30,
+    "Healthcare": 25,
+    "Industrial": 20,
+    "Real Estate": 15,
+    "Technology": 35,
+    "Utilities": 15,
+    "default": 25
+   },
+   1000.0,
+   "anthropic",
+   "claude-sonnet-4-6",
+   {
+    "aggressiveness_label": "MODERATE",
+    "dna_display": "Growth 50 / Value 50 / Momentum 50 / Quality 50 / Dividend 50",
+    "dominant_factor": "growth",
+    "dominant_factor_label": "Growth",
+    "drift_score": 30.0,
+    "drift_severity": "MEDIUM",
+    "factor_alignment_score": 70.0,
+    "factor_drift": {
+     "dividend": 0.3,
+     "growth": 0.3,
+     "momentum": 0.3,
+     "quality": 0.3,
+     "value": 0.3
+    },
+    "factor_weights": {
+     "dividend": 0.2,
+     "growth": 0.2,
+     "momentum": 0.2,
+     "quality": 0.2,
+     "value": 0.2
+    },
+    "max_cash_preference": 0.05,
+    "misaligned_display": "Growth, Value, Momentum",
+    "misaligned_factors": [
+     "growth",
+     "value",
+     "momentum"
+    ],
+    "persona": "BALANCED",
+    "persona_description": "Equal weight across all factors; diversified and suitable for most investors.",
+    "persona_label": "Balanced",
+    "portfolio_dna": {
+     "dividend": 50.0,
+     "growth": 50.0,
+     "momentum": 50.0,
+     "quality": 50.0,
+     "value": 50.0
+    },
+    "priority_order": "GROWTH > MOMENTUM > QUALITY > VALUE > DIVIDEND",
+    "rebalance_aggressiveness": 0.5,
+    "rebalance_urgency": "MODERATE",
+    "top_target_factor": "GROWTH",
+    "turnover_label": "MODERATE",
+    "turnover_tolerance": 0.4,
+    "volatility_tolerance": 0.5
+   },
+   {
+    "confidence": 0.7,
+    "constraints": {
+     "max_single_position_pct": 22,
+     "min_cash_pct": 5,
+     "turnover_multiplier": 1
+    },
+    "regime": "SIDEWAYS",
+    "transition_stability": "STABLE"
+   },
+   {
+    "confidence_discount": 0.0,
+    "deployment_bias": "SELECTIVE",
+    "emergency_override": false,
+    "emergency_reason": null,
+    "hard_constraints": {
+     "beta_ceiling": null,
+     "max_new_positions": 2,
+     "max_sector_pct": 38.0,
+     "max_single_position_pct": 22.0,
+     "max_turnover_pct": 40.0,
+     "min_cash_pct": 5.0,
+     "suppress_speculative": false
+    },
+    "optimizer_policy_mode": "wealth.optimizer-muji.v2",
+    "policy_narrative": "Balanced persona under SIDEWAYS \u2192 SELECTIVE deployment. Cash \u22655%, dominant tilt GROWTH (20%). Strictness: NORMAL.",
+    "position_limit_source": "REGIME_POLICY",
+    "prompt_block": "[ACTIVE OPTIMIZATION POLICY \u2014 MANDATORY GOVERNANCE]\nDEPLOYMENT_MODE:        SELECTIVE\nSTRICTNESS_LEVEL:       NORMAL\nRISK_BUDGET:            53/100\nCURRENT_CASH_MANDATE:   minimum 5% must remain undeployed\nTURNOVER_CEILING:       40% of NAV\nMAX_NEW_POSITIONS:      2 new stock(s) maximum\nSUPPRESS_SPECULATIVE:   NO\nACTIVE_FACTOR_TILT:     GROWTH (20%) > VALUE (20%) > MOMENTUM (20%)\n\nPolicy summary: Balanced persona under SIDEWAYS \u2192 SELECTIVE deployment. Cash \u22655%, dominant tilt GROWTH (20%). Strictness: NORMAL.\nObserve genuine policy restrictions. Position and sector concentration and allocation drift are advisory.\nUse NAV for position targets, cash and turnover.\n",
+    "rebalance_aggressiveness": 0.5,
+    "resolved_sector_limits": {
+     "Communication Services": 23.8,
+     "Consumer": 23.8,
+     "Energy": 19.0,
+     "Financial": 28.5,
+     "Healthcare": 23.8,
+     "Industrial": 19.0,
+     "Other": 23.8,
+     "Real Estate": 14.2,
+     "Technology": 33.2,
+     "Utilities": 14.2
+    },
+    "risk_budget": 52.8,
+    "sector_limit_sources": {
+     "Communication Services": "REGIME_POLICY",
+     "Consumer": "REGIME_POLICY",
+     "Energy": "REGIME_POLICY",
+     "Financial": "REGIME_POLICY",
+     "Healthcare": "REGIME_POLICY",
+     "Industrial": "REGIME_POLICY",
+     "Other": "REGIME_POLICY",
+     "Real Estate": "REGIME_POLICY",
+     "Technology": "REGIME_POLICY",
+     "Utilities": "REGIME_POLICY",
+     "default": "REGIME_POLICY"
+    },
+    "sector_policy_mode": "wealth.optimizer-sector-advisory.v1",
+    "soft_factor_tilts": {
+     "dividend": 0.2,
+     "growth": 0.2,
+     "momentum": 0.2,
+     "quality": 0.2,
+     "value": 0.2
+    },
+    "strictness_level": "NORMAL",
+    "violation_evidence": [],
+    "violations": []
+   },
+   "EffectiveEnvelope(single_position=ConstraintBreakdown(user_pref=25.0, regime_policy=22.0, emergency_limit=None, system_safety=40.0, effective=22.0, binding_source='REGIME_POLICY', tightened_reason='Tightened 25% \u2192 22% by SIDEWAYS regime policy'), cash_min=ConstraintBreakdown(user_pref=5.0, regime_policy=5.0, emergency_limit=None, system_safety=0.0, effective=5.0, binding_source='USER_PREFERENCE', tightened_reason=None), turnover_max=ConstraintBreakdown(user_pref=40.0, regime_policy=40.0, emergency_limit=None, system_safety=100.0, effective=40.0, binding_source='USER_PREFERENCE', tightened_reason=None), beta_ceiling=1.8, sector_limits={'Communication Services': ConstraintBreakdown(user_pref=25.0, regime_policy=23.8, emergency_limit=None, system_safety=70.0, effective=23.8, binding_source='REGIME_POLICY', tightened_reason='Tightened 25% \u2192 24% by SIDEWAYS regime policy'), 'Technology': ConstraintBreakdown(user_pref=35.0, regime_policy=33.2, emergency_limit=None, system_safety=70.0, effective=33.2, binding_source='REGIME_POLICY', tightened_reason='Tightened 35% \u2192 33% by SIDEWAYS regime policy'), 'Financial': ConstraintBreakdown(user_pref=30.0, regime_policy=28.5, emergency_limit=None, system_safety=70.0, effective=28.5, binding_source='REGIME_POLICY', tightened_reason='Tightened 30% \u2192 28% by SIDEWAYS regime policy'), 'Energy': ConstraintBreakdown(user_pref=20.0, regime_policy=19.0, emergency_limit=None, system_safety=70.0, effective=19.0, binding_source='REGIME_POLICY', tightened_reason='Tightened 20% \u2192 19% by SIDEWAYS regime policy'), 'Healthcare': ConstraintBreakdown(user_pref=25.0, regime_policy=23.8, emergency_limit=None, system_safety=70.0, effective=23.8, binding_source='REGIME_POLICY', tightened_reason='Tightened 25% \u2192 24% by SIDEWAYS regime policy'), 'Consumer': ConstraintBreakdown(user_pref=25.0, regime_policy=23.8, emergency_limit=None, system_safety=70.0, effective=23.8, binding_source='REGIME_POLICY', tightened_reason='Tightened 25% \u2192 24% by SIDEWAYS regime policy'), 'Industrial': ConstraintBreakdown(user_pref=20.0, regime_policy=19.0, emergency_limit=None, system_safety=70.0, effective=19.0, binding_source='REGIME_POLICY', tightened_reason='Tightened 20% \u2192 19% by SIDEWAYS regime policy'), 'Real Estate': ConstraintBreakdown(user_pref=15.0, regime_policy=14.2, emergency_limit=None, system_safety=70.0, effective=14.2, binding_source='REGIME_POLICY', tightened_reason='Tightened 15% \u2192 14% by SIDEWAYS regime policy'), 'Utilities': ConstraintBreakdown(user_pref=15.0, regime_policy=14.2, emergency_limit=None, system_safety=70.0, effective=14.2, binding_source='REGIME_POLICY', tightened_reason='Tightened 15% \u2192 14% by SIDEWAYS regime policy'), 'Other': ConstraintBreakdown(user_pref=25.0, regime_policy=23.8, emergency_limit=None, system_safety=70.0, effective=23.8, binding_source='REGIME_POLICY', tightened_reason='Tightened 25% \u2192 24% by SIDEWAYS regime policy')}, global_sector_cap=ConstraintBreakdown(user_pref=40.0, regime_policy=38.0, emergency_limit=None, system_safety=70.0, effective=38.0, binding_source='REGIME_POLICY', tightened_reason='Tightened 40% \u2192 38% by SIDEWAYS regime policy'), effective_single_position_pct=22.0, effective_cash_min_pct=5.0, effective_turnover_max_pct=40.0, effective_sector_limits={'Communication Services': 23.8, 'Technology': 33.2, 'Financial': 28.5, 'Energy': 19.0, 'Healthcare': 23.8, 'Consumer': 23.8, 'Industrial': 19.0, 'Real Estate': 14.2, 'Utilities': 14.2, 'Other': 23.8}, emergency_active=False, regime_name='SIDEWAYS', resolver_notes=['Position cap: Tightened 25% \u2192 22% by SIDEWAYS regime policy', 'Communication Services: Tightened 25% \u2192 24% by SIDEWAYS regime policy', 'Technology: Tightened 35% \u2192 33% by SIDEWAYS regime policy', 'Financial: Tightened 30% \u2192 28% by SIDEWAYS regime policy', 'Energy: Tightened 20% \u2192 19% by SIDEWAYS regime policy', 'Healthcare: Tightened 25% \u2192 24% by SIDEWAYS regime policy', 'Consumer: Tightened 25% \u2192 24% by SIDEWAYS regime policy', 'Industrial: Tightened 20% \u2192 19% by SIDEWAYS regime policy', 'Real Estate: Tightened 15% \u2192 14% by SIDEWAYS regime policy', 'Utilities: Tightened 15% \u2192 14% by SIDEWAYS regime policy', 'Other: Tightened 25% \u2192 24% by SIDEWAYS regime policy'], optimizer_policy_mode='wealth.optimizer-muji.v2')",
+   {
+    "canonical_instrument_context": {
+     "positions": [
+      {
+       "asset_id": null,
+       "classification_provenance": [],
+       "classification_source": "ExecutionInstrumentFacts",
+       "classification_verified": false,
+       "execution": {
+        "asset_type": "EQUITY",
+        "classification_source": "LEGACY_COMPATIBILITY_FALLBACK",
+        "classification_warning": "UNKNOWN: no ExecutionInstrumentFacts supplied; execution-risk assumptions use the deletable legacy compatibility fallback",
+        "combined_score_penalty": 0.0,
+        "execution_risk": "MEDIUM",
+        "position_cap_pct": null,
+        "slippage_cost_est_pct": 0.3
+       },
+       "held_symbol": "AAA",
+       "instrument_form": "UNKNOWN",
+       "local_quote_currency": null,
+       "resolution_status": "UNKNOWN",
+       "underlying": null,
+       "unresolved_evidence": [
+        "Canonical classification unavailable"
+       ]
+      }
+     ],
+     "prompt_block": "[CANONICAL INSTRUMENT CONTEXT]\n{\"positions\":[{\"asset_id\":null,\"classification_provenance\":[],\"classification_source\":\"ExecutionInstrumentFacts\",\"classification_verified\":false,\"execution\":{\"asset_type\":\"EQUITY\",\"classification_source\":\"LEGACY_COMPATIBILITY_FALLBACK\",\"classification_warning\":\"UNKNOWN: no ExecutionInstrumentFacts supplied; execution-risk assumptions use the deletable legacy compatibility fallback\",\"combined_score_penalty\":0.0,\"execution_risk\":\"MEDIUM\",\"position_cap_pct\":null,\"slippage_cost_est_pct\":0.3},\"held_symbol\":\"AAA\",\"instrument_form\":\"UNKNOWN\",\"local_quote_currency\":null,\"resolution_status\":\"UNKNOWN\",\"underlying\":null,\"unresolved_evidence\":[\"Canonical classification unavailable\"]}],\"rules\":{\"dr_basket_guidance\":{\"deterministic_breach_evaluated\":false,\"enforcement\":\"PROMPT_ONLY_ADVISORY\",\"threshold_pct\":40.0},\"execution_position_caps\":{\"actions\":[\"BUY\",\"ACCUMULATE\"],\"enforcement\":\"DETERMINISTIC_TARGET_CLAMP\",\"enforcement_scope\":\"PRIMARY_LAYERED_FINALIZATION_ONLY\",\"limits\":[],\"scope\":\"Per-symbol caps supplied by execution metadata; no automatic sell of existing holdings\"},\"general_portfolio_policy\":{\"scope\":\"Existing policy limits and calculations unchanged\",\"source\":\"Separate active policy context\"}},\"version\":\"wealth.optimizer-instrument-context.v1\"}\nUse verified canonical facts; ticker patterns and generic EQUITY asset type do not prove DR absence. Unresolved evidence is not verified classification. Underlying USD currency/prices must not replace local DR quote currency/prices.\nInstrument form alone is not a BUY/SELL signal; preserve independent investment reasoning. In primary layered finalization, execution position caps clamp BUY/ACCUMULATE targets only; the single-shot fallback has no deterministic execution-cap clamp. The 40% DR basket guidance is prompt-only advisory, not an enforced deterministic policy rule or evidence of an actual breach. Distinguish calculated policy breaches, OWNER_INTENT_REVIEW disagreements and advisory hypotheses; do not label ticker-based or basket-guidance hypotheses as verified policy breaches.\n",
+     "prompt_sha256": "b52325b8dfcc5a2c41a14d56aab863336a603b30220f7afe62f55af95d4c1a84",
+     "rules": {
+      "dr_basket_guidance": {
+       "deterministic_breach_evaluated": false,
+       "enforcement": "PROMPT_ONLY_ADVISORY",
+       "threshold_pct": 40.0
+      },
+      "execution_position_caps": {
+       "actions": [
+        "BUY",
+        "ACCUMULATE"
+       ],
+       "enforcement": "DETERMINISTIC_TARGET_CLAMP",
+       "enforcement_scope": "PRIMARY_LAYERED_FINALIZATION_ONLY",
+       "limits": [],
+       "scope": "Per-symbol caps supplied by execution metadata; no automatic sell of existing holdings"
+      },
+      "general_portfolio_policy": {
+       "scope": "Existing policy limits and calculations unchanged",
+       "source": "Separate active policy context"
+      }
+     },
+     "version": "wealth.optimizer-instrument-context.v1"
+    },
+    "dr_portfolio_cap": 40.0,
+    "dr_position_cap": 15.0,
+    "dr_symbols": [],
+    "execution_summary": "No significant execution constraints identified.",
+    "has_dr_assets": false,
+    "high_risk_symbols": [],
+    "per_symbol": {
+     "AAA": {
+      "asset_type": "EQUITY",
+      "classification_agrees": null,
+      "classification_source": "LEGACY_COMPATIBILITY_FALLBACK",
+      "classification_warning": "UNKNOWN: no ExecutionInstrumentFacts supplied; execution-risk assumptions use the deletable legacy compatibility fallback",
+      "combined_score_penalty": 0.0,
+      "execution_quality_score": 66.8,
+      "execution_risk": "MEDIUM",
+      "execution_role": "UNKNOWN",
+      "execution_warnings": [],
+      "instrument_form": "UNKNOWN",
+      "legacy_asset_type": "EQUITY",
+      "liquidity_score": 68.0,
+      "position_cap_pct": null,
+      "resolution_status": "UNKNOWN",
+      "slippage_cost_est_pct": 0.3,
+      "spread_score": 65.0
+     },
+     "BBB": {
+      "asset_type": "EQUITY",
+      "classification_agrees": null,
+      "classification_source": "LEGACY_COMPATIBILITY_FALLBACK",
+      "classification_warning": "UNKNOWN: no ExecutionInstrumentFacts supplied; execution-risk assumptions use the deletable legacy compatibility fallback",
+      "combined_score_penalty": 0.0,
+      "execution_quality_score": 66.8,
+      "execution_risk": "MEDIUM",
+      "execution_role": "UNKNOWN",
+      "execution_warnings": [],
+      "instrument_form": "UNKNOWN",
+      "legacy_asset_type": "EQUITY",
+      "liquidity_score": 68.0,
+      "position_cap_pct": null,
+      "resolution_status": "UNKNOWN",
+      "slippage_cost_est_pct": 0.3,
+      "spread_score": 65.0
+     }
+    }
+   }
+  ],
+  "kwargs": {
+   "goal_decision_input": null,
+   "optimizer_policy_mode": "wealth.optimizer-muji.v2",
+   "sector_policy_mode": "wealth.optimizer-sector-advisory.v1",
+   "strategy_selection_mode": null
+  },
+  "snapshot_scores_map": {
+   "AAA": {
+    "combined_score": 0.0,
+    "current_price": 50.0,
+    "execution_priority": "LOW",
+    "fa_score": 0,
+    "fa_summary": "",
+    "is_dr": false,
+    "momentum": null,
+    "parent_symbol": null,
+    "pe_ratio": null,
+    "registry": {
+     "reason": "no matching asset",
+     "resolved": false
+    },
+    "revenue_growth": null,
+    "roe": null,
+    "sector": "Other",
+    "sector_classification": {
+     "classification_source": "unresolved",
+     "classification_status": "unresolved",
+     "classified_asset_id": null,
+     "conflict_reason": null,
+     "evidence_source": null,
+     "held_asset_id": null,
+     "observed_at": null,
+     "raw_sector": null,
+     "sector": "Other"
+    },
+    "signal": "ACCUMULATE",
+    "symbol": "AAA",
+    "ta_score": 0,
+    "ta_summary": "",
+    "target_price": null,
+    "timing_category": "POOR",
+    "timing_data_available": false,
+    "timing_reason": "no data",
+    "timing_score": 0,
+    "trend": "down",
+    "upside_pct": null,
+    "upside_reference_price": null,
+    "valuation_percentile": null
+   },
+   "BBB": {
+    "combined_score": 33.0,
+    "current_price": 50.0,
+    "execution_priority": "NORMAL",
+    "fa_score": 55,
+    "fa_summary": "",
+    "is_dr": false,
+    "momentum": 1.0,
+    "parent_symbol": null,
+    "pe_ratio": 10.5,
+    "registry": {
+     "reason": "no matching asset",
+     "resolved": false
+    },
+    "revenue_growth": null,
+    "roe": 0.18,
+    "sector": "Other",
+    "sector_classification": {
+     "classification_source": "unresolved",
+     "classification_status": "unresolved",
+     "classified_asset_id": null,
+     "conflict_reason": null,
+     "evidence_source": null,
+     "held_asset_id": null,
+     "observed_at": null,
+     "raw_sector": null,
+     "sector": "Other"
+    },
+    "signal": "HOLD",
+    "symbol": "BBB",
+    "ta_score": 0,
+    "ta_summary": "",
+    "target_price": null,
+    "timing_category": "GOOD",
+    "timing_data_available": true,
+    "timing_reason": "trend",
+    "timing_score": 62,
+    "trend": "sideways",
+    "upside_pct": null,
+    "upside_reference_price": null,
+    "valuation_percentile": null
+   }
+  }
+ },
+ "endpoint:optin_on": {
+  "args": [
+   [
+    {
+     "allow_swap": true,
+     "avg_cost": 50.0,
+     "combined_score": 0.0,
+     "current_price": 50.0,
+     "execution_priority": "LOW",
+     "fa_score": 0,
+     "fa_summary": "",
+     "is_dr": false,
+     "momentum": null,
+     "parent_symbol": null,
+     "pe_ratio": null,
+     "revenue_growth": null,
+     "roe": null,
+     "sector": "Other",
+     "sector_classification": {
+      "classification_source": "unresolved",
+      "classification_status": "unresolved",
+      "classified_asset_id": null,
+      "conflict_reason": null,
+      "evidence_source": null,
+      "held_asset_id": null,
+      "observed_at": null,
+      "raw_sector": null,
+      "sector": "Other"
+     },
+     "shares": 10.0,
+     "signal": "ACCUMULATE",
+     "symbol": "AAA",
+     "ta_score": 0,
+     "ta_summary": "",
+     "target_price": null,
+     "timing_category": "POOR",
+     "timing_data_available": false,
+     "timing_reason": "no data",
+     "timing_score": 0,
+     "trend": "down",
+     "upside_pct": null,
+     "upside_reference_price": null
+    }
+   ],
+   [
+    {
+     "combined_score": 33.0,
+     "current_price": 50.0,
+     "execution_priority": "NORMAL",
+     "fa_score": 55,
+     "fa_summary": "",
+     "is_dr": false,
+     "momentum": 1.0,
+     "parent_symbol": null,
+     "pe_ratio": 10.5,
+     "revenue_growth": null,
+     "roe": 0.18,
+     "sector": "Other",
+     "sector_classification": {
+      "classification_source": "unresolved",
+      "classification_status": "unresolved",
+      "classified_asset_id": null,
+      "conflict_reason": null,
+      "evidence_source": null,
+      "held_asset_id": null,
+      "observed_at": null,
+      "raw_sector": null,
+      "sector": "Other"
+     },
+     "signal": "HOLD",
+     "symbol": "BBB",
+     "ta_score": 0,
+     "ta_summary": "",
+     "target_price": null,
+     "timing_category": "GOOD",
+     "timing_data_available": true,
+     "timing_reason": "trend",
+     "timing_score": 62,
+     "trend": "sideways",
+     "upside_pct": null,
+     "upside_reference_price": null,
+     "valuation_percentile": null
+    }
+   ],
+   "P",
+   1,
+   false,
+   {
+    "layer1": {
+     "model": "claude-sonnet-4-6",
+     "name": "Strategist",
+     "provider": "anthropic",
+     "role": "Capital allocation strategist"
+    },
+    "layer2": {
+     "model": "claude-sonnet-4-6",
+     "name": "Challenger",
+     "provider": "anthropic",
+     "role": "Independent risk-aware reviewer"
+    },
+    "layer3": {
+     "model": "claude-sonnet-4-6",
+     "name": "Risk Auditor",
+     "provider": "anthropic",
+     "role": "Concentration risk and assumption validator"
+    }
+   },
+   12,
+   40,
+   {
+    "Consumer": 25,
+    "Energy": 20,
+    "Financial": 30,
+    "Healthcare": 25,
+    "Industrial": 20,
+    "Real Estate": 15,
+    "Technology": 35,
+    "Utilities": 15,
+    "default": 25
+   },
+   1000.0,
+   "anthropic",
+   "claude-sonnet-4-6",
+   {
+    "aggressiveness_label": "MODERATE",
+    "dna_display": "Growth 50 / Value 50 / Momentum 50 / Quality 50 / Dividend 50",
+    "dominant_factor": "growth",
+    "dominant_factor_label": "Growth",
+    "drift_score": 30.0,
+    "drift_severity": "MEDIUM",
+    "factor_alignment_score": 70.0,
+    "factor_drift": {
+     "dividend": 0.3,
+     "growth": 0.3,
+     "momentum": 0.3,
+     "quality": 0.3,
+     "value": 0.3
+    },
+    "factor_weights": {
+     "dividend": 0.2,
+     "growth": 0.2,
+     "momentum": 0.2,
+     "quality": 0.2,
+     "value": 0.2
+    },
+    "max_cash_preference": 0.05,
+    "misaligned_display": "Growth, Value, Momentum",
+    "misaligned_factors": [
+     "growth",
+     "value",
+     "momentum"
+    ],
+    "persona": "BALANCED",
+    "persona_description": "Equal weight across all factors; diversified and suitable for most investors.",
+    "persona_label": "Balanced",
+    "portfolio_dna": {
+     "dividend": 50.0,
+     "growth": 50.0,
+     "momentum": 50.0,
+     "quality": 50.0,
+     "value": 50.0
+    },
+    "priority_order": "GROWTH > MOMENTUM > QUALITY > VALUE > DIVIDEND",
+    "rebalance_aggressiveness": 0.5,
+    "rebalance_urgency": "MODERATE",
+    "top_target_factor": "GROWTH",
+    "turnover_label": "MODERATE",
+    "turnover_tolerance": 0.4,
+    "volatility_tolerance": 0.5
+   },
+   {
+    "confidence": 0.7,
+    "constraints": {
+     "max_single_position_pct": 22,
+     "min_cash_pct": 5,
+     "turnover_multiplier": 1
+    },
+    "regime": "SIDEWAYS",
+    "transition_stability": "STABLE"
+   },
+   {
+    "confidence_discount": 0.0,
+    "deployment_bias": "SELECTIVE",
+    "emergency_override": false,
+    "emergency_reason": null,
+    "hard_constraints": {
+     "beta_ceiling": null,
+     "max_new_positions": 2,
+     "max_sector_pct": 38.0,
+     "max_single_position_pct": 22.0,
+     "max_turnover_pct": 40.0,
+     "min_cash_pct": 5.0,
+     "suppress_speculative": false
+    },
+    "optimizer_policy_mode": "wealth.optimizer-muji.v2",
+    "policy_narrative": "Balanced persona under SIDEWAYS \u2192 SELECTIVE deployment. Cash \u22655%, dominant tilt GROWTH (20%). Strictness: NORMAL.",
+    "position_limit_source": "REGIME_POLICY",
+    "prompt_block": "[ACTIVE OPTIMIZATION POLICY \u2014 MANDATORY GOVERNANCE]\nDEPLOYMENT_MODE:        SELECTIVE\nSTRICTNESS_LEVEL:       NORMAL\nRISK_BUDGET:            53/100\nCURRENT_CASH_MANDATE:   minimum 5% must remain undeployed\nTURNOVER_CEILING:       40% of NAV\nMAX_NEW_POSITIONS:      2 new stock(s) maximum\nSUPPRESS_SPECULATIVE:   NO\nACTIVE_FACTOR_TILT:     GROWTH (20%) > VALUE (20%) > MOMENTUM (20%)\n\nPolicy summary: Balanced persona under SIDEWAYS \u2192 SELECTIVE deployment. Cash \u22655%, dominant tilt GROWTH (20%). Strictness: NORMAL.\nObserve genuine policy restrictions. Position and sector concentration and allocation drift are advisory.\nUse NAV for position targets, cash and turnover.\n",
+    "rebalance_aggressiveness": 0.5,
+    "resolved_sector_limits": {
+     "Communication Services": 23.8,
+     "Consumer": 23.8,
+     "Energy": 19.0,
+     "Financial": 28.5,
+     "Healthcare": 23.8,
+     "Industrial": 19.0,
+     "Other": 23.8,
+     "Real Estate": 14.2,
+     "Technology": 33.2,
+     "Utilities": 14.2
+    },
+    "risk_budget": 52.8,
+    "sector_limit_sources": {
+     "Communication Services": "REGIME_POLICY",
+     "Consumer": "REGIME_POLICY",
+     "Energy": "REGIME_POLICY",
+     "Financial": "REGIME_POLICY",
+     "Healthcare": "REGIME_POLICY",
+     "Industrial": "REGIME_POLICY",
+     "Other": "REGIME_POLICY",
+     "Real Estate": "REGIME_POLICY",
+     "Technology": "REGIME_POLICY",
+     "Utilities": "REGIME_POLICY",
+     "default": "REGIME_POLICY"
+    },
+    "sector_policy_mode": "wealth.optimizer-sector-advisory.v1",
+    "soft_factor_tilts": {
+     "dividend": 0.2,
+     "growth": 0.2,
+     "momentum": 0.2,
+     "quality": 0.2,
+     "value": 0.2
+    },
+    "strictness_level": "NORMAL",
+    "violation_evidence": [],
+    "violations": []
+   },
+   "EffectiveEnvelope(single_position=ConstraintBreakdown(user_pref=25.0, regime_policy=22.0, emergency_limit=None, system_safety=40.0, effective=22.0, binding_source='REGIME_POLICY', tightened_reason='Tightened 25% \u2192 22% by SIDEWAYS regime policy'), cash_min=ConstraintBreakdown(user_pref=5.0, regime_policy=5.0, emergency_limit=None, system_safety=0.0, effective=5.0, binding_source='USER_PREFERENCE', tightened_reason=None), turnover_max=ConstraintBreakdown(user_pref=40.0, regime_policy=40.0, emergency_limit=None, system_safety=100.0, effective=40.0, binding_source='USER_PREFERENCE', tightened_reason=None), beta_ceiling=1.8, sector_limits={'Communication Services': ConstraintBreakdown(user_pref=25.0, regime_policy=23.8, emergency_limit=None, system_safety=70.0, effective=23.8, binding_source='REGIME_POLICY', tightened_reason='Tightened 25% \u2192 24% by SIDEWAYS regime policy'), 'Technology': ConstraintBreakdown(user_pref=35.0, regime_policy=33.2, emergency_limit=None, system_safety=70.0, effective=33.2, binding_source='REGIME_POLICY', tightened_reason='Tightened 35% \u2192 33% by SIDEWAYS regime policy'), 'Financial': ConstraintBreakdown(user_pref=30.0, regime_policy=28.5, emergency_limit=None, system_safety=70.0, effective=28.5, binding_source='REGIME_POLICY', tightened_reason='Tightened 30% \u2192 28% by SIDEWAYS regime policy'), 'Energy': ConstraintBreakdown(user_pref=20.0, regime_policy=19.0, emergency_limit=None, system_safety=70.0, effective=19.0, binding_source='REGIME_POLICY', tightened_reason='Tightened 20% \u2192 19% by SIDEWAYS regime policy'), 'Healthcare': ConstraintBreakdown(user_pref=25.0, regime_policy=23.8, emergency_limit=None, system_safety=70.0, effective=23.8, binding_source='REGIME_POLICY', tightened_reason='Tightened 25% \u2192 24% by SIDEWAYS regime policy'), 'Consumer': ConstraintBreakdown(user_pref=25.0, regime_policy=23.8, emergency_limit=None, system_safety=70.0, effective=23.8, binding_source='REGIME_POLICY', tightened_reason='Tightened 25% \u2192 24% by SIDEWAYS regime policy'), 'Industrial': ConstraintBreakdown(user_pref=20.0, regime_policy=19.0, emergency_limit=None, system_safety=70.0, effective=19.0, binding_source='REGIME_POLICY', tightened_reason='Tightened 20% \u2192 19% by SIDEWAYS regime policy'), 'Real Estate': ConstraintBreakdown(user_pref=15.0, regime_policy=14.2, emergency_limit=None, system_safety=70.0, effective=14.2, binding_source='REGIME_POLICY', tightened_reason='Tightened 15% \u2192 14% by SIDEWAYS regime policy'), 'Utilities': ConstraintBreakdown(user_pref=15.0, regime_policy=14.2, emergency_limit=None, system_safety=70.0, effective=14.2, binding_source='REGIME_POLICY', tightened_reason='Tightened 15% \u2192 14% by SIDEWAYS regime policy'), 'Other': ConstraintBreakdown(user_pref=25.0, regime_policy=23.8, emergency_limit=None, system_safety=70.0, effective=23.8, binding_source='REGIME_POLICY', tightened_reason='Tightened 25% \u2192 24% by SIDEWAYS regime policy')}, global_sector_cap=ConstraintBreakdown(user_pref=40.0, regime_policy=38.0, emergency_limit=None, system_safety=70.0, effective=38.0, binding_source='REGIME_POLICY', tightened_reason='Tightened 40% \u2192 38% by SIDEWAYS regime policy'), effective_single_position_pct=22.0, effective_cash_min_pct=5.0, effective_turnover_max_pct=40.0, effective_sector_limits={'Communication Services': 23.8, 'Technology': 33.2, 'Financial': 28.5, 'Energy': 19.0, 'Healthcare': 23.8, 'Consumer': 23.8, 'Industrial': 19.0, 'Real Estate': 14.2, 'Utilities': 14.2, 'Other': 23.8}, emergency_active=False, regime_name='SIDEWAYS', resolver_notes=['Position cap: Tightened 25% \u2192 22% by SIDEWAYS regime policy', 'Communication Services: Tightened 25% \u2192 24% by SIDEWAYS regime policy', 'Technology: Tightened 35% \u2192 33% by SIDEWAYS regime policy', 'Financial: Tightened 30% \u2192 28% by SIDEWAYS regime policy', 'Energy: Tightened 20% \u2192 19% by SIDEWAYS regime policy', 'Healthcare: Tightened 25% \u2192 24% by SIDEWAYS regime policy', 'Consumer: Tightened 25% \u2192 24% by SIDEWAYS regime policy', 'Industrial: Tightened 20% \u2192 19% by SIDEWAYS regime policy', 'Real Estate: Tightened 15% \u2192 14% by SIDEWAYS regime policy', 'Utilities: Tightened 15% \u2192 14% by SIDEWAYS regime policy', 'Other: Tightened 25% \u2192 24% by SIDEWAYS regime policy'], optimizer_policy_mode='wealth.optimizer-muji.v2')",
+   {
+    "canonical_instrument_context": {
+     "positions": [
+      {
+       "asset_id": null,
+       "classification_provenance": [],
+       "classification_source": "ExecutionInstrumentFacts",
+       "classification_verified": false,
+       "execution": {
+        "asset_type": "EQUITY",
+        "classification_source": "LEGACY_COMPATIBILITY_FALLBACK",
+        "classification_warning": "UNKNOWN: no ExecutionInstrumentFacts supplied; execution-risk assumptions use the deletable legacy compatibility fallback",
+        "combined_score_penalty": 0.0,
+        "execution_risk": "MEDIUM",
+        "position_cap_pct": null,
+        "slippage_cost_est_pct": 0.3
+       },
+       "held_symbol": "AAA",
+       "instrument_form": "UNKNOWN",
+       "local_quote_currency": null,
+       "resolution_status": "UNKNOWN",
+       "underlying": null,
+       "unresolved_evidence": [
+        "Canonical classification unavailable"
+       ]
+      }
+     ],
+     "prompt_block": "[CANONICAL INSTRUMENT CONTEXT]\n{\"positions\":[{\"asset_id\":null,\"classification_provenance\":[],\"classification_source\":\"ExecutionInstrumentFacts\",\"classification_verified\":false,\"execution\":{\"asset_type\":\"EQUITY\",\"classification_source\":\"LEGACY_COMPATIBILITY_FALLBACK\",\"classification_warning\":\"UNKNOWN: no ExecutionInstrumentFacts supplied; execution-risk assumptions use the deletable legacy compatibility fallback\",\"combined_score_penalty\":0.0,\"execution_risk\":\"MEDIUM\",\"position_cap_pct\":null,\"slippage_cost_est_pct\":0.3},\"held_symbol\":\"AAA\",\"instrument_form\":\"UNKNOWN\",\"local_quote_currency\":null,\"resolution_status\":\"UNKNOWN\",\"underlying\":null,\"unresolved_evidence\":[\"Canonical classification unavailable\"]}],\"rules\":{\"dr_basket_guidance\":{\"deterministic_breach_evaluated\":false,\"enforcement\":\"PROMPT_ONLY_ADVISORY\",\"threshold_pct\":40.0},\"execution_position_caps\":{\"actions\":[\"BUY\",\"ACCUMULATE\"],\"enforcement\":\"DETERMINISTIC_TARGET_CLAMP\",\"enforcement_scope\":\"PRIMARY_LAYERED_FINALIZATION_ONLY\",\"limits\":[],\"scope\":\"Per-symbol caps supplied by execution metadata; no automatic sell of existing holdings\"},\"general_portfolio_policy\":{\"scope\":\"Existing policy limits and calculations unchanged\",\"source\":\"Separate active policy context\"}},\"version\":\"wealth.optimizer-instrument-context.v1\"}\nUse verified canonical facts; ticker patterns and generic EQUITY asset type do not prove DR absence. Unresolved evidence is not verified classification. Underlying USD currency/prices must not replace local DR quote currency/prices.\nInstrument form alone is not a BUY/SELL signal; preserve independent investment reasoning. In primary layered finalization, execution position caps clamp BUY/ACCUMULATE targets only; the single-shot fallback has no deterministic execution-cap clamp. The 40% DR basket guidance is prompt-only advisory, not an enforced deterministic policy rule or evidence of an actual breach. Distinguish calculated policy breaches, OWNER_INTENT_REVIEW disagreements and advisory hypotheses; do not label ticker-based or basket-guidance hypotheses as verified policy breaches.\n",
+     "prompt_sha256": "b52325b8dfcc5a2c41a14d56aab863336a603b30220f7afe62f55af95d4c1a84",
+     "rules": {
+      "dr_basket_guidance": {
+       "deterministic_breach_evaluated": false,
+       "enforcement": "PROMPT_ONLY_ADVISORY",
+       "threshold_pct": 40.0
+      },
+      "execution_position_caps": {
+       "actions": [
+        "BUY",
+        "ACCUMULATE"
+       ],
+       "enforcement": "DETERMINISTIC_TARGET_CLAMP",
+       "enforcement_scope": "PRIMARY_LAYERED_FINALIZATION_ONLY",
+       "limits": [],
+       "scope": "Per-symbol caps supplied by execution metadata; no automatic sell of existing holdings"
+      },
+      "general_portfolio_policy": {
+       "scope": "Existing policy limits and calculations unchanged",
+       "source": "Separate active policy context"
+      }
+     },
+     "version": "wealth.optimizer-instrument-context.v1"
+    },
+    "dr_portfolio_cap": 40.0,
+    "dr_position_cap": 15.0,
+    "dr_symbols": [],
+    "execution_summary": "No significant execution constraints identified.",
+    "has_dr_assets": false,
+    "high_risk_symbols": [],
+    "per_symbol": {
+     "AAA": {
+      "asset_type": "EQUITY",
+      "classification_agrees": null,
+      "classification_source": "LEGACY_COMPATIBILITY_FALLBACK",
+      "classification_warning": "UNKNOWN: no ExecutionInstrumentFacts supplied; execution-risk assumptions use the deletable legacy compatibility fallback",
+      "combined_score_penalty": 0.0,
+      "execution_quality_score": 66.8,
+      "execution_risk": "MEDIUM",
+      "execution_role": "UNKNOWN",
+      "execution_warnings": [],
+      "instrument_form": "UNKNOWN",
+      "legacy_asset_type": "EQUITY",
+      "liquidity_score": 68.0,
+      "position_cap_pct": null,
+      "resolution_status": "UNKNOWN",
+      "slippage_cost_est_pct": 0.3,
+      "spread_score": 65.0
+     },
+     "BBB": {
+      "asset_type": "EQUITY",
+      "classification_agrees": null,
+      "classification_source": "LEGACY_COMPATIBILITY_FALLBACK",
+      "classification_warning": "UNKNOWN: no ExecutionInstrumentFacts supplied; execution-risk assumptions use the deletable legacy compatibility fallback",
+      "combined_score_penalty": 0.0,
+      "execution_quality_score": 66.8,
+      "execution_risk": "MEDIUM",
+      "execution_role": "UNKNOWN",
+      "execution_warnings": [],
+      "instrument_form": "UNKNOWN",
+      "legacy_asset_type": "EQUITY",
+      "liquidity_score": 68.0,
+      "position_cap_pct": null,
+      "resolution_status": "UNKNOWN",
+      "slippage_cost_est_pct": 0.3,
+      "spread_score": 65.0
+     }
+    }
+   }
+  ],
+  "kwargs": {
+   "goal_decision_input": null,
+   "optimizer_policy_mode": "wealth.optimizer-muji.v2",
+   "sector_policy_mode": "wealth.optimizer-sector-advisory.v1",
+   "strategy_selection_mode": "wealth.strategy-selection.v1"
+  },
+  "snapshot_scores_map": {
+   "AAA": {
+    "combined_score": 0.0,
+    "current_price": 50.0,
+    "execution_priority": "LOW",
+    "fa_score": 0,
+    "fa_summary": "",
+    "is_dr": false,
+    "momentum": null,
+    "parent_symbol": null,
+    "pe_ratio": null,
+    "registry": {
+     "reason": "no matching asset",
+     "resolved": false
+    },
+    "revenue_growth": null,
+    "roe": null,
+    "sector": "Other",
+    "sector_classification": {
+     "classification_source": "unresolved",
+     "classification_status": "unresolved",
+     "classified_asset_id": null,
+     "conflict_reason": null,
+     "evidence_source": null,
+     "held_asset_id": null,
+     "observed_at": null,
+     "raw_sector": null,
+     "sector": "Other"
+    },
+    "signal": "ACCUMULATE",
+    "symbol": "AAA",
+    "ta_score": 0,
+    "ta_summary": "",
+    "target_price": null,
+    "timing_category": "POOR",
+    "timing_data_available": false,
+    "timing_reason": "no data",
+    "timing_score": 0,
+    "trend": "down",
+    "upside_pct": null,
+    "upside_reference_price": null,
+    "valuation_percentile": null
+   },
+   "BBB": {
+    "combined_score": 33.0,
+    "current_price": 50.0,
+    "execution_priority": "NORMAL",
+    "fa_score": 55,
+    "fa_summary": "",
+    "is_dr": false,
+    "momentum": 1.0,
+    "parent_symbol": null,
+    "pe_ratio": 10.5,
+    "registry": {
+     "reason": "no matching asset",
+     "resolved": false
+    },
+    "revenue_growth": null,
+    "roe": 0.18,
+    "sector": "Other",
+    "sector_classification": {
+     "classification_source": "unresolved",
+     "classification_status": "unresolved",
+     "classified_asset_id": null,
+     "conflict_reason": null,
+     "evidence_source": null,
+     "held_asset_id": null,
+     "observed_at": null,
+     "raw_sector": null,
+     "sector": "Other"
+    },
+    "signal": "HOLD",
+    "symbol": "BBB",
+    "ta_score": 0,
+    "ta_summary": "",
+    "target_price": null,
+    "timing_category": "GOOD",
+    "timing_data_available": true,
+    "timing_reason": "trend",
+    "timing_score": 62,
+    "trend": "sideways",
+    "upside_pct": null,
+    "upside_reference_price": null,
+    "valuation_percentile": null
+   }
+  }
+ },
+ "pipeline:legacy": {
+  "prompts": {
+   "layer1": {
+    "max_tokens": 4096,
+    "prompt": "[MARKET REGIME \u2014 MANDATORY ALLOCATION CONTEXT]\nCurrent Regime: HIGH_VOLATILITY (confidence: 50%)\nTransition Stability: STABLE (1 trading days in current regime)\nPrevious Regime: UNKNOWN\nVolatility Signal: z-score 0.0\u03c3\nTrend Strength: 50/100\n\nRegime Allocation Mandate:\nELEVATED VOLATILITY REGIME. Capital preservation is the priority. Minimum cash 15%. Maximum single-stock position 18%. Suppress speculative positions. Tighten concentration limits. Reduce portfolio turnover.\n\nHard Constraints (regime-enforced \u2014 DO NOT override):\n  Minimum cash reserve:    15%\n  Max single position:     18%\n  Factor stance:           PRIORITIZE quality (high ROE, low debt) stocks; SUPPRESS speculative and high-beta positions\n\nAll allocation proposals MUST respect these regime-derived constraints.\nThe optimizer MUST NOT recommend cash below 15% in this regime.\n\n\n[TIMING INTELLIGENCE \u2014 Phase 4C.6H]\nEach symbol carries ts= (timing score 0-100) and pr= (execution priority: HIGH/MEDIUM/LOW/DEFER).\nTiming Score = entry quality: trend + momentum + relative strength + volume.\n  ts\u226580 / HIGH  : strong entry \u2192 increase conviction for BUY/ACCUMULATE ranking\n  ts 60-79 / MED: acceptable  \u2192 proceed normally\n  ts 40-59 / LOW : weak entry \u2192 reduce urgency; rank watchlist candidates lower\n  ts<40 / DEFER  : poor entry \u2192 note in sector_flags; still eligible as lower-ranked top_buy\nTiming informs urgency \u2014 it does not block. A DEFER symbol with strong fundamentals is still top_buys material at lower rank.\n\nYou are a STRATEGIST. Output swap targets in JSON only.\nNo explanation. No prose. Only valid JSON output.\n\nPortfolio: [{\"s\": \"AAA\", \"sec\": \"Other\", \"sector_status\": null, \"w\": 60.0, \"mv\": 600, \"fa\": 30, \"ta\": 0, \"sig\": \"SELL\", \"swap\": true, \"ts\": 0, \"pr\": null}, {\"s\": \"BBB\", \"sec\": \"Other\", \"sector_status\": null, \"w\": 20.0, \"mv\": 200, \"fa\": 0, \"ta\": 55, \"sig\": \"HOLD\", \"swap\": true, \"ts\": 62, \"pr\": null}]\nWatchlist: [{\"s\": \"WWW\", \"sec\": \"Other\", \"sector_status\": null, \"fa\": 60, \"ta\": 0, \"sig\": \"BUY\", \"ts\": 0, \"pr\": null}]\nSector limits: {\"default\": 40}\nSwap eligible: ['BBB']\nForced sells: ['AAA']\n\nSTOCK COUNT: 0/12 max unique stocks after rebalancing.\nSIGNALS: BUY=add aggressively, ACCUMULATE=add gradually, HOLD=keep, WATCH=monitor, REDUCE=trim, SELL=exit\n\nSTABILIZATION MANDATE \u2014 quality over quantity. Every proposed change must clear a high bar:\n- MINIMUM DRIFT: only propose allocation changes \u2265 3%. Smaller shifts create noise with no economic value.\n- HIGH CONVICTION: only propose swaps with strong, defensible signal quality improvement.\n- TURNOVER PENALTY: fewer trades are better. Each trade incurs real friction cost (~0.15% per 1% NAV).\n- PREFER holding well-positioned assets over constant micro-rotation.\n\nEVALUATE ALL FIVE \u2014 but only act if improvement is material:\n1. Flag sector exposure above advisory thresholds on invested equity excluding cash. Keep it separate from swaps, buys and the investment decision.\n2. Watchlist opportunities: BUY/ACCUMULATE candidate with clear edge over current holdings? \u2192 rank in top_buys\n3. Overweight positions: swap-eligible stock >25%? \u2192 consider REDUCE, but only if drift \u2265 3%\n4. Low-score holdings: weak fa+ta vs watchlist with 10+ score advantage? \u2192 consider swap\n5. Policy violations: active hard single-position CONCENTRATION_BREACH? \u2192 propose remediation (mandatory)\n\npriority=\"no_action\" when ALL of the following are true:\n- No hard position limit breach. A sector warning alone permits no_action.\n- No watchlist candidate has a clearly superior score (10+ advantage) over current holdings\n- All current positions are within 3% of their ideal weight\n- No urgent regime or policy signal\n\nOutput schema \u2014 nothing else. Max 550 tokens.\nswaps: max 3 (sell or buy may be null for one-sided REDUCE or ACCUMULATE from cash)\ntop_buys: max 5 watchlist symbols ranked by signal quality\nsector_flags: max 3 short strings\npriority: one word only\nsummary: exactly 2 sentences, written the way a strategist briefs a client \u2014 natural\n  investment language, not a status log. Sentence 1: what you reviewed and the\n  overall read (e.g. \"Sector weights are balanced and no position has drifted far\n  from target.\" / \"The portfolio still carries a sound risk posture heading into\n  this cycle.\"). Sentence 2: name what, if anything, cleared today's conviction bar\n  and why the rest did not (e.g. \"KBANK's concentration has crossed a line worth\n  trimming, but ADVANC and CENTEL don't yet show enough edge to displace what's\n  already held.\"). Vary phrasing and sentence structure run to run \u2014 do not reuse\n  the same template every time. Never restate the full allocation plan, that is\n  Layer 2's job. Avoid mechanical phrases like \"system\", \"threshold triggered\", or\n  \"no action detected\" \u2014 write as an analyst, not a machine.\n\"r\" = one reason for the swap, under 12 words (e.g. \"Technology at 45% > 30% limit\").\n\nIf running low on output budget, prioritize in this order: (1) swaps, (2) priority,\n(3) summary, (4) top_buys, (5) sector_flags.\n\n{\"swaps\":[{\"sell\":\"SYM|null\",\"buy\":\"SYM|null\",\"score_delta\":0.0,\"sector\":\"S\",\"type\":\"SELL|SWAP|REDUCE\",\"r\":\"<12 words\"}],\"top_buys\":[\"S\"],\"sector_flags\":[\"S 45%>30%\"],\"priority\":\"growth\",\"summary\":\"<2 natural-language sentences>\"}"
+   },
+   "layer2": {
+    "max_tokens": 8192,
+    "prompt": "You are an independent portfolio reviewer.\n[MARKET REGIME \u2014 MANDATORY ALLOCATION CONTEXT]\nCurrent Regime: HIGH_VOLATILITY (confidence: 50%)\nTransition Stability: STABLE (1 trading days in current regime)\nPrevious Regime: UNKNOWN\nVolatility Signal: z-score 0.0\u03c3\nTrend Strength: 50/100\n\nRegime Allocation Mandate:\nELEVATED VOLATILITY REGIME. Capital preservation is the priority. Minimum cash 15%. Maximum single-stock position 18%. Suppress speculative positions. Tighten concentration limits. Reduce portfolio turnover.\n\nHard Constraints (regime-enforced \u2014 DO NOT override):\n  Minimum cash reserve:    15%\n  Max single position:     18%\n  Factor stance:           PRIORITIZE quality (high ROE, low debt) stocks; SUPPRESS speculative and high-beta positions\n\nAll allocation proposals MUST respect these regime-derived constraints.\nThe optimizer MUST NOT recommend cash below 15% in this regime.\n\n\n[TIMING AWARENESS \u2014 CHALLENGER]\nEach symbol carries timing_score and execution_priority.\nChallenge BUY/ACCUMULATE recommendations where execution_priority=DEFER or timing_score<40.\nAdd to disagreements[]: \"TIMING_CONCERN: [SYM] poor entry timing (ts=[N], priority=DEFER) \u2014 waiting 2-4 weeks may improve entry.\"\nTiming does not invalidate a fundamentally attractive stock \u2014 document the concern, do not block.\n\nYour role: Independent risk-aware reviewer\n\nThe Strategist (Layer 1) proposed:\n- Priority: balanced\n- Swaps: [\n  {\n    \"sell_symbol\": \"AAA\",\n    \"buy_symbol\": null,\n    \"reason\": \"Forced exit: SELL signal.\",\n    \"score_improvement\": 0,\n    \"sector\": \"Other\",\n    \"type\": \"SELL\"\n  }\n]\n- Top watchlist picks: []\n- Sector observations: []\n\nFull portfolio data for your analysis:\n[\n  {\n    \"symbol\": \"AAA\",\n    \"sector\": \"Other\",\n    \"sector_classification\": null,\n    \"signal\": \"SELL\",\n    \"combined_score\": 0,\n    \"ta_score\": 0,\n    \"fa_score\": 30,\n    \"trend\": \"sideways\",\n    \"pe_ratio\": 40,\n    \"roe\": null,\n    \"allow_swap\": true,\n    \"weight_pct\": 60.0,\n    \"market_value\": 600.0,\n    \"current_price\": 10,\n    \"timing_score\": 0,\n    \"timing_data_available\": false,\n    \"execution_priority\": null,\n    \"momentum\": null\n  },\n  {\n    \"symbol\": \"BBB\",\n    \"sector\": \"Other\",\n    \"sector_classification\": null,\n    \"signal\": \"HOLD\",\n    \"combined_score\": 0,\n    \"ta_score\": 55,\n    \"fa_score\": 0,\n    \"trend\": \"sideways\",\n    \"pe_ratio\": 12,\n    \"roe\": 20.0,\n    \"allow_swap\": true,\n    \"weight_pct\": 20.0,\n    \"market_value\": 200.0,\n    \"current_price\": 10,\n    \"timing_score\": 62,\n    \"timing_data_available\": true,\n    \"execution_priority\": null,\n    \"momentum\": null\n  }\n]\n\nFull watchlist for your analysis:\n[\n  {\n    \"symbol\": \"WWW\",\n    \"current_price\": 5,\n    \"sector\": \"Other\",\n    \"sector_classification\": null,\n    \"signal\": \"BUY\",\n    \"combined_score\": 0,\n    \"ta_score\": 0,\n    \"fa_score\": 60,\n    \"trend\": \"sideways\",\n    \"pe_ratio\": 9,\n    \"roe\": null,\n    \"timing_score\": 0,\n    \"timing_data_available\": false,\n    \"execution_priority\": null,\n    \"momentum\": null\n  },\n  {\n    \"symbol\": \"ZZZ\",\n    \"current_price\": 5,\n    \"sector\": \"Other\",\n    \"sector_classification\": null,\n    \"signal\": \"HOLD\",\n    \"combined_score\": 0,\n    \"ta_score\": 0,\n    \"fa_score\": 0,\n    \"trend\": \"sideways\",\n    \"pe_ratio\": null,\n    \"roe\": null,\n    \"timing_score\": null,\n    \"timing_data_available\": false,\n    \"execution_priority\": null,\n    \"momentum\": null\n  }\n]\n\nTotal portfolio value: 1000, Cash balance: 200\nThai stocks end in .BK.\n\nSTABILIZATION PHILOSOPHY:\nUnnecessary portfolio churn destroys value through transaction costs, tax drag, and operational complexity.\n\nBEFORE proposing any rebalancing, apply this 3-step discipline:\n1. DRIFT TEST: Is any allocation change < 3%? If yes, suppress it \u2014 noise, not signal.\n2. CONVICTION TEST: Does the proposed change have a clear, measurable benefit (10+ score advantage or hard-policy breach repair)?\n3. COST TEST: Will the expected portfolio improvement exceed the ~0.15% trading cost per 1% NAV traded?\n\nstatus=\"NO_ACTION\" with rebalance_opportunity_score below 25 is STRONGLY ENCOURAGED when:\n- All positions are within 3% of their natural weight (drift tolerance band)\n- No watchlist candidate has a compelling 10+ score advantage over existing holdings\n- No hard-policy violations exist. A sector warning can coexist with NO_ACTION.\n- Market conditions are uncertain or data is insufficient to justify rebalancing\n\nPREFER large, high-conviction changes over many small adjustments.\nA portfolio with 2 targeted swaps beats one with 6 micro-adjustments.\n\nscore guide: 0-25=no action needed, 26-45=minor optimization, 46-70=moderate opportunity, 71-100=strong opportunity.\nno_action_reason enum (use null if status=REBALANCE):\n  WELL_BALANCED | LOW_CONFIDENCE | HIGH_DISAGREEMENT | CONSTRAINT_BLOCKED | MARKET_UNCERTAINTY | INSUFFICIENT_EDGE\n\nBuild a complete capital allocation plan. Challenge or confirm the Strategist's swaps.\n\nOUTPUT CONTRACT \u2014 this JSON is read by software, not a person; a separate step writes the human-readable\nreport later. Do not spend output tokens on prose. Follow this priority order if you are running low on\noutput budget: (1) allocations for existing holdings and BUY/ACCUMULATE/REDUCE/SELL decisions, (2) risk/\nconstraint-violation notes, (3) portfolio_assessment, (4) blocked_opportunities, (5) watchlist WATCH rows,\n(6) any optional explanation. Never drop an allocation row to make room for longer text.\n\nALLOCATIONS ARRAY:\n- Include every existing portfolio holding exactly once, with its action (ACCUMULATE|BUY|HOLD|REDUCE|SELL|WATCH).\n- Include a watchlist symbol only if you assign it BUY or ACCUMULATE, OR it is one of your top few WATCH-worthy\n  candidates with a specific reason (max 5 WATCH rows total). Do not add a row for every watchlist symbol \u2014\n  omit ones with no actionable signal completely.\n- Weights are FLAT PERCENTAGES (10.0 = 10% of portfolio), not monetary amounts.\n- Omit current weight \u2014 the backend already has it; send only the target.\n- \"r\" = one reason, under 20 words. State each idea once \u2014 do not repeat it in \"r\", disagreements, and\n  portfolio_assessment.\n\nIf a watchlist symbol with BUY/ACCUMULATE signal was evaluated but rejected (cash constraint,\nportfolio count cap), list it in blocked_opportunities \u2014 but only the highest-priority rejections, max 5.\nKeep each \"reason\" under 10 words (e.g. \"insufficient_cash\").\nSector thresholds alone cannot block BUY/ACCUMULATE or justify a SELL/REDUCE.\nPut optional sector-only reductions in sector_alternatives, using the same allocation row format.\nKeep the actionable allocation HOLD unless independently justified. Mark thesis-driven SELL/REDUCE\nwith decision_basis=INVESTMENT_THESIS. Judge agreement and opportunity only on actionable decisions.\n If the complete allocation forms a coherent optional strategy, label strategy_family as\n RAISE_CASH, DEFENSIVE_ROTATION or GROWTH_ROTATION; otherwise use null. Evidence refs may\n cite only observed fields: symbol:SYM:signal, symbol:SYM:fa_score, symbol:SYM:ta_score,\n symbol:SYM:pe_ratio, symbol:SYM:roe, symbol:SYM:timing_score, regime:regime,\n goal:ID:target_date, goal:ID:funding_gap or goal:ID:priority. A cited fact does not\n by itself prove the strategy is superior. Never cite a concentration threshold as support.\n\ndisagreements[]: only material disagreements with Layer 1 (wrong signal, missed breach, constraint conflict).\nSkip informational observations.\nMax 5 entries, each under 20 words.\n\nportfolio_assessment: 2-3 sentences max \u2014 a decision summary, not an essay.\n\nReturn JSON only. No markdown fences, no prose outside the JSON.\n\n{\n  \"status\": \"REBALANCE|NO_ACTION\",\n  \"rebalance_opportunity_score\": 50,\n  \"no_action_reason\": \"WELL_BALANCED|LOW_CONFIDENCE|HIGH_DISAGREEMENT|CONSTRAINT_BLOCKED|MARKET_UNCERTAINTY|INSUFFICIENT_EDGE|null\",\n  \"no_action_summary\": \"<20 words, null if REBALANCE\",\n  \"blocked_opportunities\": [{\"symbol\":\"X\",\"signal\":\"BUY\",\"reason\":\"insufficient_cash|portfolio_count_cap\"}],\n  \"agrees_with_layer1\": true,\n  \"disagreements\": [\"<20 words each>\"],\n  \"portfolio_assessment\": \"2-3 sentences\",\n  \"cash_balance_target\": 0.0,\n  \"allocations\": [\n    {\"s\":\"X\",\"tw\":0.0,\"sig\":\"BUY|ACCUMULATE|HOLD|REDUCE|SELL|WATCH\",\"r\":\"<20 words\"}\n  ]\n}"
+   },
+   "layer3": {
+    "max_tokens": 2048,
+    "prompt": "You are a portfolio risk auditor.\n[TIMING RISK ASSESSMENT \u2014 Phase 4C.6H]\nFlag MEDIUM severity when a new BUY or ACCUMULATE position has execution_priority=DEFER or timing_score<40.\nUse: {\"symbol\":\"X\",\"issue\":\"Poor entry timing (ts=[N], priority=DEFER) for new position\",\"severity\":\"MEDIUM\"}\nDo NOT escalate to HIGH or CRITICAL for timing alone \u2014 timing cautions, it does not block.\n\nYour role: Concentration risk and assumption validator\n\nEvaluate both allocation proposals for concentration risk and soundness.\n\n[AUTHORITATIVE POLICY CLAIM CONTRACT]\n{\"basket_guidance\": {\"enforced\": false, \"kind\": \"ADVISORY_CONCERN\", \"threshold_pct\": 40}, \"evidence\": {}, \"general_policy_limits\": {}, \"version\": \"wealth.auditor-policy-claims.v2\"}\nSector advisories in the contract are informational and excluded from risk_flags and safer_choice.\nAn optional sector comment can use SECTOR_ADVISORY with its exact evidence_ref.\nEvery risk flag must include claim_kind. POLICY_BREACH and EXECUTION_RESTRICTION must\nreference an exact evidence_ref from this contract, with the same symbol (PORTFOLIO for\nportfolio-wide evidence). Missing or mismatched evidence is unscored, unsupported model output.\nGeneral portfolio policy is separate from per-instrument execution caps. An execution cap\nis applicable only to proposed BUY/ACCUMULATE targets, never a universal holding limit.\nEXISTING_EXPOSURE above an execution cap requires no automatic liquidation; it is unscored context.\nADVISORY_CONCERN includes the prompt-only 40% DR basket guidance; it is not a governance breach.\nUse INVESTMENT_JUDGMENT for independent business, valuation, volatility or timing risk opinions\nonly, never assertions that a deterministic limit is breached. Model-only opinions are visible but\nunscored. Investment observations require a matching independently produced evidence_ref;\nthe model label alone never authorizes a risk penalty. Only existing contract evidence is scoreable.\nSeverity thresholds below guide opinions, not proof of a policy violation. Do not invent limits.\n\nLayer 1 (Strategist):\nPriority: balanced\nProposed swaps: [\n  {\n    \"sell_symbol\": \"AAA\",\n    \"buy_symbol\": null,\n    \"reason\": \"Forced exit: SELL signal.\",\n    \"score_improvement\": 0,\n    \"sector\": \"Other\",\n    \"type\": \"SELL\"\n  }\n]\n\nLayer 2 (Challenger):\nAgrees: True\nDisagreements: []\nAllocations: [\n  {\n    \"symbol\": \"AAA\",\n    \"current_weight\": 60.0,\n    \"target_weight\": 0.0,\n    \"action\": \"SELL\",\n    \"allocation_change_percent\": -60.0,\n    \"estimated_amount\": -600,\n    \"reason\": \"\",\n    \"decision_basis\": \"INVESTMENT_THESIS\",\n    \"ta_score\": 0,\n    \"fa_score\": 30,\n    \"pe_ratio\": 40,\n    \"sector\": \"Other\",\n    \"combined_score\": 0,\n    \"timing_score\": 0\n  },\n  {\n    \"symbol\": \"BBB\",\n    \"current_weight\": 20.0,\n    \"target_weight\": 20.0,\n    \"action\": \"HOLD\",\n    \"allocation_change_percent\": 0.0,\n    \"estimated_amount\": 0,\n    \"reason\": \"\",\n    \"ta_score\": 55,\n    \"fa_score\": 0,\n    \"pe_ratio\": 12,\n    \"roe\": 20.0,\n    \"sector\": \"Other\",\n    \"combined_score\": 0,\n    \"timing_score\": 62\n  }\n]\n\nCheck for (use exact resolved severity thresholds \u2014 derived from active policy, not hardcoded):\n- CRITICAL : single stock > 30% of NAV\n- HIGH     : single stock 26\u201330% OR weak fundamentals on large position\n- MEDIUM   : conflicting allocation math\n- LOW      : minor concentration risk, suboptimal but acceptable\n\nOnly flag positions that actually cross a threshold above \u2014 do not add a LOW-severity row for every position that\nis merely fine. Max 8 risk_flags, \"issue\" under 15 words each. \"auditor_notes\" is a 1-2 sentence verdict \u2014 do not\nrestate the risk_flags issue text there.\n\nEvery flag must have category INVESTMENT_RISK or OWNER_INTENT_REVIEW.\nUse OWNER_INTENT_REVIEW only for disagreement with owner Intent. Such disagreement is\nallowed: preserve it for owner review, but exclude it from final_risk_level, safer_choice\nand investment/governance/quality judgments. A real investment risk in the same symbol\nmust be a separate INVESTMENT_RISK flag. Never disguise investment risk as Intent review.\n\nReturn JSON only. No markdown fences.\n\n{\n  \"risk_flags\": [{\"symbol\":\"...\",\"issue\":\"...\",\"severity\":\"LOW|MEDIUM|HIGH|CRITICAL\",\"category\":\"INVESTMENT_RISK|OWNER_INTENT_REVIEW\",\"claim_kind\":\"POLICY_BREACH|EXECUTION_RESTRICTION|EXISTING_EXPOSURE|ADVISORY_CONCERN|SECTOR_ADVISORY|INVESTMENT_JUDGMENT\",\"evidence_ref\":\"exact contract key or null\"}],\n  \"safer_choice\": \"layer1|layer2|neither\",\n  \"final_risk_level\": \"low|medium|high\",\n  \"auditor_notes\": \"1-2 sentences.\"\n}"
+   }
+  },
+  "target_allocations": [
+   {
+    "action": "SELL",
+    "allocation_change_percent": -60.0,
+    "combined_score": 0,
+    "current_weight": 60.0,
+    "decision_basis": "INVESTMENT_THESIS",
+    "estimated_amount": -600,
+    "fa_score": 30,
+    "pe_ratio": 40,
+    "reason": "",
+    "sector": "Other",
+    "symbol": "AAA",
+    "ta_score": 0,
+    "target_weight": 0.0,
+    "timing_score": 0
+   },
+   {
+    "action": "HOLD",
+    "allocation_change_percent": 0.0,
+    "combined_score": 0,
+    "current_weight": 20.0,
+    "estimated_amount": 0,
+    "fa_score": 0,
+    "pe_ratio": 12,
+    "reason": "",
+    "roe": 20.0,
+    "sector": "Other",
+    "symbol": "BBB",
+    "ta_score": 55,
+    "target_weight": 20.0,
+    "timing_score": 62
+   }
+  ],
+  "target_cash_weight": 80
+ },
+ "pipeline:muji_v2_challenger": {
+  "prompts": {
+   "layer1": {
+    "max_tokens": 4096,
+    "prompt": "[MARKET REGIME \u2014 MANDATORY ALLOCATION CONTEXT]\nCurrent Regime: HIGH_VOLATILITY (confidence: 50%)\nTransition Stability: STABLE (1 trading days in current regime)\nPrevious Regime: UNKNOWN\nVolatility Signal: z-score 0.0\u03c3\nTrend Strength: 50/100\n\nRegime Allocation Mandate:\nElevated volatility favors capital preservation. Minimum cash 15%. Suppress speculative positions and reduce turnover.\n\nHard Constraints (regime-enforced \u2014 DO NOT override):\n  Minimum cash reserve:    15%\n  Factor stance:           PRIORITIZE quality (high ROE, low debt) stocks; SUPPRESS speculative and high-beta positions\n\nAll allocation proposals MUST respect these regime-derived constraints.\nThe optimizer MUST NOT recommend cash below 15% in this regime.\n\n\n[TIMING INTELLIGENCE \u2014 Phase 4C.6H]\nEach symbol carries ts= (timing score 0-100) and pr= (execution priority: HIGH/MEDIUM/LOW/DEFER).\nTiming Score = entry quality: trend + momentum + relative strength + volume.\n  ts\u226580 / HIGH  : strong entry \u2192 increase conviction for BUY/ACCUMULATE ranking\n  ts 60-79 / MED: acceptable  \u2192 proceed normally\n  ts 40-59 / LOW : weak entry \u2192 reduce urgency; rank watchlist candidates lower\n  ts<40 / DEFER  : poor entry \u2192 note in sector_flags; still eligible as lower-ranked top_buy\nTiming informs urgency \u2014 it does not block. A DEFER symbol with strong fundamentals is still top_buys material at lower rank.\n\nYou are a STRATEGIST. Output swap targets in JSON only.\nNo explanation. No prose. Only valid JSON output.\n\nPortfolio: [{\"s\": \"AAA\", \"sec\": \"Other\", \"sector_status\": null, \"w\": 60.0, \"mv\": 600, \"fa\": 30, \"ta\": 0, \"sig\": \"SELL\", \"swap\": true, \"ts\": 0, \"pr\": null}, {\"s\": \"BBB\", \"sec\": \"Other\", \"sector_status\": null, \"w\": 20.0, \"mv\": 200, \"fa\": 0, \"ta\": 55, \"sig\": \"HOLD\", \"swap\": true, \"ts\": 62, \"pr\": null}]\nWatchlist: [{\"s\": \"WWW\", \"sec\": \"Other\", \"sector_status\": null, \"fa\": 60, \"ta\": 0, \"sig\": \"BUY\", \"ts\": 0, \"pr\": null}]\n\nSwap eligible: ['BBB']\nForced sells: ['AAA']\n\nSTOCK COUNT: 0/12 max unique stocks after rebalancing.\nSIGNALS: BUY=add aggressively, ACCUMULATE=add gradually, HOLD=keep, WATCH=monitor, REDUCE=trim, SELL=exit\n\nSTABILIZATION MANDATE \u2014 quality over quantity. Every proposed change must clear a high bar:\nPosition NAV concentration, sector concentration and allocation drift are advisory diagnostics. They cannot by themselves justify or veto a trade, change its score, or rule out HOLD or NO_ACTION. Use available market, downside, valuation, portfolio and investor-goal evidence to justify each BUY, ACCUMULATE, REDUCE or SELL. A concentrated winner can remain a HOLD.\nPrefer high-conviction changes after transaction costs. Evaluate buying opportunities,\nindependently justified exits or reductions, and holding the current portfolio.\nReturn priority=\"no_action\" when no investment case warrants a change.\nPut concentration observations in sector_flags and keep them out of swaps and top_buys.\n\nOutput schema \u2014 nothing else. Max 550 tokens.\nswaps: max 3 (sell or buy may be null for one-sided REDUCE or ACCUMULATE from cash)\ntop_buys: max 5 watchlist symbols ranked by signal quality\nsector_flags: max 3 short strings\npriority: one word only\nsummary: exactly 2 sentences. Explain the portfolio outlook and the evidence supporting action or HOLD.\n\"r\" = one independent investment reason for each swap, under 12 words.\n\nIf running low on output budget, prioritize in this order: (1) swaps, (2) priority,\n(3) summary, (4) top_buys, (5) sector_flags.\n\n{\"swaps\":[{\"sell\":\"SYM|null\",\"buy\":\"SYM|null\",\"score_delta\":0.0,\"sector\":\"S\",\"type\":\"SELL|SWAP|REDUCE\",\"r\":\"<12 words\",\"decision_basis\":\"INVESTMENT_THESIS\"}],\"top_buys\":[\"S\"],\"sector_flags\":[\"S 45%>30%\"],\"priority\":\"growth\",\"summary\":\"<2 natural-language sentences>\"}"
+   },
+   "layer2": {
+    "max_tokens": 8192,
+    "prompt": "You are an independent portfolio reviewer.\n[MARKET REGIME \u2014 MANDATORY ALLOCATION CONTEXT]\nCurrent Regime: HIGH_VOLATILITY (confidence: 50%)\nTransition Stability: STABLE (1 trading days in current regime)\nPrevious Regime: UNKNOWN\nVolatility Signal: z-score 0.0\u03c3\nTrend Strength: 50/100\n\nRegime Allocation Mandate:\nElevated volatility favors capital preservation. Minimum cash 15%. Suppress speculative positions and reduce turnover.\n\nHard Constraints (regime-enforced \u2014 DO NOT override):\n  Minimum cash reserve:    15%\n  Factor stance:           PRIORITIZE quality (high ROE, low debt) stocks; SUPPRESS speculative and high-beta positions\n\nAll allocation proposals MUST respect these regime-derived constraints.\nThe optimizer MUST NOT recommend cash below 15% in this regime.\n\n\n[TIMING AWARENESS \u2014 CHALLENGER]\nEach symbol carries timing_score and execution_priority.\nChallenge BUY/ACCUMULATE recommendations where execution_priority=DEFER or timing_score<40.\nRecord material timing disagreements with basis=INVESTMENT_THESIS and include the symbol and timing evidence.\nTiming does not invalidate a fundamentally attractive stock \u2014 document the concern, do not block.\n\nYour role: Independent risk-aware reviewer\n\nThe Strategist (Layer 1) proposed:\n- Priority: balanced\n- Swaps: [\n  {\n    \"sell_symbol\": \"AAA\",\n    \"buy_symbol\": null,\n    \"reason\": \"Forced exit: SELL signal.\",\n    \"score_improvement\": 0,\n    \"sector\": \"Other\",\n    \"type\": \"SELL\"\n  }\n]\n- Top watchlist picks: []\n\n\nFull portfolio data for your analysis:\n[\n  {\n    \"symbol\": \"AAA\",\n    \"sector\": \"Other\",\n    \"sector_classification\": null,\n    \"signal\": \"SELL\",\n    \"combined_score\": 0,\n    \"ta_score\": 0,\n    \"fa_score\": 30,\n    \"trend\": \"sideways\",\n    \"pe_ratio\": 40,\n    \"roe\": null,\n    \"allow_swap\": true,\n    \"weight_pct\": 60.0,\n    \"market_value\": 600.0,\n    \"current_price\": 10,\n    \"timing_score\": 0,\n    \"timing_data_available\": false,\n    \"execution_priority\": null,\n    \"momentum\": null\n  },\n  {\n    \"symbol\": \"BBB\",\n    \"sector\": \"Other\",\n    \"sector_classification\": null,\n    \"signal\": \"HOLD\",\n    \"combined_score\": 0,\n    \"ta_score\": 55,\n    \"fa_score\": 0,\n    \"trend\": \"sideways\",\n    \"pe_ratio\": 12,\n    \"roe\": 20.0,\n    \"allow_swap\": true,\n    \"weight_pct\": 20.0,\n    \"market_value\": 200.0,\n    \"current_price\": 10,\n    \"timing_score\": 62,\n    \"timing_data_available\": true,\n    \"execution_priority\": null,\n    \"momentum\": null\n  }\n]\n\nFull watchlist for your analysis:\n[\n  {\n    \"symbol\": \"WWW\",\n    \"current_price\": 5,\n    \"sector\": \"Other\",\n    \"sector_classification\": null,\n    \"signal\": \"BUY\",\n    \"combined_score\": 0,\n    \"ta_score\": 0,\n    \"fa_score\": 60,\n    \"trend\": \"sideways\",\n    \"pe_ratio\": 9,\n    \"roe\": null,\n    \"timing_score\": 0,\n    \"timing_data_available\": false,\n    \"execution_priority\": null,\n    \"momentum\": null\n  },\n  {\n    \"symbol\": \"ZZZ\",\n    \"current_price\": 5,\n    \"sector\": \"Other\",\n    \"sector_classification\": null,\n    \"signal\": \"HOLD\",\n    \"combined_score\": 0,\n    \"ta_score\": 0,\n    \"fa_score\": 0,\n    \"trend\": \"sideways\",\n    \"pe_ratio\": null,\n    \"roe\": null,\n    \"timing_score\": null,\n    \"timing_data_available\": false,\n    \"execution_priority\": null,\n    \"momentum\": null\n  }\n]\n\nTotal portfolio value: 1000, Cash balance: 200\nThai stocks end in .BK.\n\nSTABILIZATION PHILOSOPHY:\nUnnecessary portfolio churn destroys value through transaction costs, tax drag, and operational complexity.\n\nPosition NAV concentration, sector concentration and allocation drift are advisory diagnostics. They cannot by themselves justify or veto a trade, change its score, or rule out HOLD or NO_ACTION. Use available market, downside, valuation, portfolio and investor-goal evidence to justify each BUY, ACCUMULATE, REDUCE or SELL. A concentrated winner can remain a HOLD.\nChallenge the Strategist with an independently supported alternative or confirm the proposal.\nCompare the expected benefit and trading costs against keeping the existing portfolio.\nUse NO_ACTION when the available evidence supports keeping the portfolio.\nKeep concentration observations separate from actionable allocations and opportunity scoring.\n\nscore guide: 0-25=no action needed, 26-45=minor optimization, 46-70=moderate opportunity, 71-100=strong opportunity.\nno_action_reason enum (use null if status=REBALANCE):\n  WELL_BALANCED | LOW_CONFIDENCE | HIGH_DISAGREEMENT | CONSTRAINT_BLOCKED | MARKET_UNCERTAINTY | INSUFFICIENT_EDGE\n\nBuild a complete capital allocation plan. Challenge or confirm the Strategist's swaps.\n\nOUTPUT CONTRACT \u2014 this JSON is read by software, not a person; a separate step writes the human-readable\nreport later. Do not spend output tokens on prose. Follow this priority order if you are running low on\noutput budget: (1) allocations for existing holdings and BUY/ACCUMULATE/REDUCE/SELL decisions, (2) risk/\nconstraint-violation notes, (3) portfolio_assessment, (4) blocked_opportunities, (5) watchlist WATCH rows,\n(6) any optional explanation. Never drop an allocation row to make room for longer text.\n\nALLOCATIONS ARRAY:\n- Include every existing portfolio holding exactly once, with its action (ACCUMULATE|BUY|HOLD|REDUCE|SELL|WATCH).\n- Include a watchlist symbol only if you assign it BUY or ACCUMULATE, OR it is one of your top few WATCH-worthy\n  candidates with a specific reason (max 5 WATCH rows total). Do not add a row for every watchlist symbol \u2014\n  omit ones with no actionable signal completely.\n- Weights are FLAT PERCENTAGES (10.0 = 10% of portfolio), not monetary amounts.\n- Omit current weight \u2014 the backend already has it; send only the target.\n- \"r\" = one reason, under 20 words. State each idea once \u2014 do not repeat it in \"r\", disagreements, and\n  portfolio_assessment.\n\nIf a watchlist symbol with BUY/ACCUMULATE signal was evaluated but rejected (cash constraint,\nportfolio count cap), list it in blocked_opportunities \u2014 but only the highest-priority rejections, max 5.\nKeep each \"reason\" under 10 words (e.g. \"insufficient_cash\").\nSector thresholds alone cannot block BUY/ACCUMULATE or justify a SELL/REDUCE.\nPut optional sector-only reductions in sector_alternatives, using the same allocation row format.\nKeep the actionable allocation HOLD unless independently justified. Mark thesis-driven SELL/REDUCE\nwith decision_basis=INVESTMENT_THESIS. Judge agreement and opportunity only on actionable decisions.\n If the complete allocation forms a coherent optional strategy, label strategy_family as\n RAISE_CASH, DEFENSIVE_ROTATION or GROWTH_ROTATION; otherwise use null. Evidence refs may\n cite only observed fields: symbol:SYM:signal, symbol:SYM:fa_score, symbol:SYM:ta_score,\n symbol:SYM:pe_ratio, symbol:SYM:roe, symbol:SYM:timing_score, regime:regime,\n goal:ID:target_date, goal:ID:funding_gap or goal:ID:priority. A cited fact does not\n by itself prove the strategy is superior. Never cite a concentration threshold as support.\n\ndisagreements[]: only material disagreements with Layer 1 (wrong signal, missed breach, constraint conflict).\nUse CONCENTRATION_ADVISORY for concentration-only comments. Other bases must identify the actionable disagreement.\nMax 5 entries, each under 20 words.\n\nportfolio_assessment: 2-3 sentences max \u2014 a decision summary, not an essay.\n\nReturn JSON only. No markdown fences, no prose outside the JSON.\n\n{\n  \"status\": \"REBALANCE|NO_ACTION\",\n  \"rebalance_opportunity_score\": 50,\n  \"no_action_reason\": \"WELL_BALANCED|LOW_CONFIDENCE|HIGH_DISAGREEMENT|CONSTRAINT_BLOCKED|MARKET_UNCERTAINTY|INSUFFICIENT_EDGE|null\",\n  \"no_action_summary\": \"<20 words, null if REBALANCE\",\n  \"blocked_opportunities\": [{\"symbol\":\"X\",\"signal\":\"BUY\",\"reason\":\"insufficient_cash|portfolio_count_cap\"}],\n  \"agrees_with_layer1\": true,\n  \"disagreements\": [{\"basis\":\"ACTION|SIZING|INVESTMENT_THESIS|HARD_POLICY|CONCENTRATION_ADVISORY\",\"issue\":\"<20 words>\"}],\n  \"portfolio_assessment\": \"2-3 sentences\",\n  \"cash_balance_target\": 0.0,\n  \"strategy_family\": \"RAISE_CASH|DEFENSIVE_ROTATION|GROWTH_ROTATION|null\", \"observed_evidence_refs\": [\"symbol:SYM:signal\"],\n  \"allocations\": [\n    {\"s\":\"X\",\"tw\":0.0,\"sig\":\"BUY|ACCUMULATE|HOLD|REDUCE|SELL|WATCH\",\"r\":\"<20 words\",\"decision_basis\":\"INVESTMENT_THESIS|CONCENTRATION_ADVISORY\"}\n  ]\n}"
+   },
+   "layer3": {
+    "max_tokens": 2048,
+    "prompt": "You are a portfolio risk auditor.\n[TIMING RISK ASSESSMENT \u2014 Phase 4C.6H]\nFlag MEDIUM severity when a new BUY or ACCUMULATE position has execution_priority=DEFER or timing_score<40.\nUse: {\"symbol\":\"X\",\"issue\":\"Poor entry timing (ts=[N], priority=DEFER) for new position\",\"severity\":\"MEDIUM\"}\nDo NOT escalate to HIGH or CRITICAL for timing alone \u2014 timing cautions, it does not block.\n\nYour role: Concentration risk and assumption validator\n\nEvaluate both allocation proposals for concentration risk and soundness.\n\n[AUTHORITATIVE POLICY CLAIM CONTRACT]\n{\"basket_guidance\": {\"enforced\": false, \"kind\": \"ADVISORY_CONCERN\", \"threshold_pct\": 40}, \"evidence\": {}, \"general_policy_limits\": {}, \"sector_advisories\": {\"CURRENT:effective_sector_limits:Other\": {\"basis\": \"EQUITY\", \"binding_source\": \"WORKSPACE_THRESHOLD_FALLBACK\", \"breach_amount\": 480.0, \"breach_pp\": 60.0, \"currency\": \"THB\", \"denominator\": 800.0, \"evidence_id\": \"CURRENT:effective_sector_limits:Other\", \"evidence_version\": \"wealth.policy-evidence.v2\", \"limit_pct\": 40.0, \"members\": [{\"symbol\": \"AAA\"}, {\"symbol\": \"BBB\"}], \"numerator\": 800.0, \"observed_pct\": 100.0, \"rule\": \"effective_sector_limits\", \"scope\": \"SECTOR\", \"sector\": \"Other\", \"stage\": \"CURRENT\", \"type\": \"CONCENTRATION_BREACH\"}, \"PROJECTED_TARGET:effective_sector_limits:Other\": {\"basis\": \"EQUITY\", \"binding_source\": \"WORKSPACE_THRESHOLD_FALLBACK\", \"breach_amount\": 120.0, \"breach_pp\": 60.0, \"currency\": \"THB\", \"denominator\": 200.0, \"evidence_id\": \"PROJECTED_TARGET:effective_sector_limits:Other\", \"evidence_version\": \"wealth.policy-evidence.v2\", \"limit_pct\": 40.0, \"members\": [{\"symbol\": \"BBB\"}], \"numerator\": 200.0, \"observed_pct\": 100.0, \"rule\": \"effective_sector_limits\", \"scope\": \"SECTOR\", \"sector\": \"Other\", \"stage\": \"PROJECTED_TARGET\", \"type\": \"CONCENTRATION_BREACH\"}}, \"version\": \"wealth.auditor-policy-claims.v2\"}\nSector advisories in the contract are informational and excluded from risk_flags and safer_choice.\nAn optional sector comment can use SECTOR_ADVISORY with its exact evidence_ref.\nEvery risk flag must include claim_kind. POLICY_BREACH and EXECUTION_RESTRICTION must\nreference an exact evidence_ref from this contract, with the same symbol (PORTFOLIO for\nportfolio-wide evidence). Missing or mismatched evidence is unscored, unsupported model output.\nGeneral portfolio policy is separate from per-instrument execution caps. An execution cap\nis applicable only to proposed BUY/ACCUMULATE targets, never a universal holding limit.\nEXISTING_EXPOSURE above an execution cap requires no automatic liquidation; it is unscored context.\nADVISORY_CONCERN includes the prompt-only 40% DR basket guidance; it is not a governance breach.\nUse INVESTMENT_JUDGMENT for independent business, valuation, volatility or timing risk opinions\nonly, never assertions that a deterministic limit is breached. Model-only opinions are visible but\nunscored. Investment observations require a matching independently produced evidence_ref;\nthe model label alone never authorizes a risk penalty. Only existing contract evidence is scoreable.\nSeverity thresholds below guide opinions, not proof of a policy violation. Do not invent limits.\n\nLayer 1 (Strategist):\nPriority: balanced\nProposed swaps: [\n  {\n    \"sell_symbol\": \"AAA\",\n    \"buy_symbol\": null,\n    \"reason\": \"Forced exit: SELL signal.\",\n    \"score_improvement\": 0,\n    \"sector\": \"Other\",\n    \"type\": \"SELL\"\n  }\n]\n\nLayer 2 (Challenger):\nAgrees: True\nDisagreements: []\nAllocations: [\n  {\n    \"symbol\": \"AAA\",\n    \"current_weight\": 60.0,\n    \"target_weight\": 0.0,\n    \"action\": \"SELL\",\n    \"allocation_change_percent\": -60.0,\n    \"estimated_amount\": -600,\n    \"reason\": \"\",\n    \"decision_basis\": \"INVESTMENT_THESIS\",\n    \"ta_score\": 0,\n    \"fa_score\": 30,\n    \"pe_ratio\": 40,\n    \"sector\": \"Other\",\n    \"combined_score\": 0,\n    \"timing_score\": 0\n  },\n  {\n    \"symbol\": \"BBB\",\n    \"current_weight\": 20.0,\n    \"target_weight\": 20.0,\n    \"action\": \"HOLD\",\n    \"allocation_change_percent\": 0.0,\n    \"estimated_amount\": 0,\n    \"reason\": \"\",\n    \"ta_score\": 55,\n    \"fa_score\": 0,\n    \"pe_ratio\": 12,\n    \"roe\": 20.0,\n    \"sector\": \"Other\",\n    \"combined_score\": 0,\n    \"timing_score\": 62\n  }\n]\n\nReport position concentration and drift as ADVISORY_CONCERN. Flag genuine instrument restrictions,\ninvestor restrictions and evidence-quality concerns with the relevant contract evidence.\nAssess independent investment risks using the evidence contract and its severity guidance.\n\nMax 8 risk_flags, \"issue\" under 15 words each. \"auditor_notes\" is a 1-2 sentence verdict \u2014 do not\nrestate the risk_flags issue text there.\n\nEvery flag must have category INVESTMENT_RISK or OWNER_INTENT_REVIEW.\nUse OWNER_INTENT_REVIEW only for disagreement with owner Intent. Such disagreement is\nallowed: preserve it for owner review, but exclude it from final_risk_level, safer_choice\nand investment/governance/quality judgments. A real investment risk in the same symbol\nmust be a separate INVESTMENT_RISK flag. Never disguise investment risk as Intent review.\n\nReturn JSON only. No markdown fences.\n\n{\n  \"risk_flags\": [{\"symbol\":\"...\",\"issue\":\"...\",\"severity\":\"LOW|MEDIUM|HIGH|CRITICAL\",\"category\":\"INVESTMENT_RISK|OWNER_INTENT_REVIEW\",\"claim_kind\":\"POLICY_BREACH|EXECUTION_RESTRICTION|EXISTING_EXPOSURE|ADVISORY_CONCERN|SECTOR_ADVISORY|INVESTMENT_JUDGMENT\",\"evidence_ref\":\"exact contract key or null\"}],\n  \"safer_choice\": \"layer1|layer2|neither\",\n  \"final_risk_level\": \"low|medium|high\",\n  \"auditor_notes\": \"1-2 sentences.\"\n}"
+   }
+  },
+  "target_allocations": [
+   {
+    "action": "SELL",
+    "allocation_change_percent": -60.0,
+    "combined_score": 0,
+    "current_weight": 60.0,
+    "decision_basis": "INVESTMENT_THESIS",
+    "estimated_amount": -600,
+    "fa_score": 30,
+    "pe_ratio": 40,
+    "reason": "",
+    "sector": "Other",
+    "symbol": "AAA",
+    "ta_score": 0,
+    "target_weight": 0.0,
+    "timing_score": 0
+   },
+   {
+    "action": "HOLD",
+    "allocation_change_percent": 0.0,
+    "combined_score": 0,
+    "current_weight": 20.0,
+    "estimated_amount": 0,
+    "fa_score": 0,
+    "pe_ratio": 12,
+    "reason": "",
+    "roe": 20.0,
+    "sector": "Other",
+    "symbol": "BBB",
+    "ta_score": 55,
+    "target_weight": 20.0,
+    "timing_score": 62
+   }
+  ],
+  "target_cash_weight": 80
+ },
+ "pipeline:sector_advisory_v1": {
+  "prompts": {
+   "layer1": {
+    "max_tokens": 4096,
+    "prompt": "[MARKET REGIME \u2014 MANDATORY ALLOCATION CONTEXT]\nCurrent Regime: HIGH_VOLATILITY (confidence: 50%)\nTransition Stability: STABLE (1 trading days in current regime)\nPrevious Regime: UNKNOWN\nVolatility Signal: z-score 0.0\u03c3\nTrend Strength: 50/100\n\nRegime Allocation Mandate:\nELEVATED VOLATILITY REGIME. Capital preservation is the priority. Minimum cash 15%. Maximum single-stock position 18%. Suppress speculative positions. Tighten concentration limits. Reduce portfolio turnover.\n\nHard Constraints (regime-enforced \u2014 DO NOT override):\n  Minimum cash reserve:    15%\n  Max single position:     18%\n  Factor stance:           PRIORITIZE quality (high ROE, low debt) stocks; SUPPRESS speculative and high-beta positions\n\nAll allocation proposals MUST respect these regime-derived constraints.\nThe optimizer MUST NOT recommend cash below 15% in this regime.\n\n\n[TIMING INTELLIGENCE \u2014 Phase 4C.6H]\nEach symbol carries ts= (timing score 0-100) and pr= (execution priority: HIGH/MEDIUM/LOW/DEFER).\nTiming Score = entry quality: trend + momentum + relative strength + volume.\n  ts\u226580 / HIGH  : strong entry \u2192 increase conviction for BUY/ACCUMULATE ranking\n  ts 60-79 / MED: acceptable  \u2192 proceed normally\n  ts 40-59 / LOW : weak entry \u2192 reduce urgency; rank watchlist candidates lower\n  ts<40 / DEFER  : poor entry \u2192 note in sector_flags; still eligible as lower-ranked top_buy\nTiming informs urgency \u2014 it does not block. A DEFER symbol with strong fundamentals is still top_buys material at lower rank.\n\nYou are a STRATEGIST. Output swap targets in JSON only.\nNo explanation. No prose. Only valid JSON output.\n\nPortfolio: [{\"s\": \"AAA\", \"sec\": \"Other\", \"sector_status\": null, \"w\": 60.0, \"mv\": 600, \"fa\": 30, \"ta\": 0, \"sig\": \"SELL\", \"swap\": true, \"ts\": 0, \"pr\": null}, {\"s\": \"BBB\", \"sec\": \"Other\", \"sector_status\": null, \"w\": 20.0, \"mv\": 200, \"fa\": 0, \"ta\": 55, \"sig\": \"HOLD\", \"swap\": true, \"ts\": 62, \"pr\": null}]\nWatchlist: [{\"s\": \"WWW\", \"sec\": \"Other\", \"sector_status\": null, \"fa\": 60, \"ta\": 0, \"sig\": \"BUY\", \"ts\": 0, \"pr\": null}]\n\nSwap eligible: ['BBB']\nForced sells: ['AAA']\n\nSTOCK COUNT: 0/12 max unique stocks after rebalancing.\nSIGNALS: BUY=add aggressively, ACCUMULATE=add gradually, HOLD=keep, WATCH=monitor, REDUCE=trim, SELL=exit\n\nSTABILIZATION MANDATE \u2014 quality over quantity. Every proposed change must clear a high bar:\n- MINIMUM DRIFT: only propose allocation changes \u2265 3%. Smaller shifts create noise with no economic value.\n- HIGH CONVICTION: only propose swaps with strong, defensible signal quality improvement.\n- TURNOVER PENALTY: fewer trades are better. Each trade incurs real friction cost (~0.15% per 1% NAV).\n- PREFER holding well-positioned assets over constant micro-rotation.\n\nEVALUATE ALL FIVE \u2014 but only act if improvement is material:\n1. Flag sector exposure above advisory thresholds on invested equity excluding cash. Keep it separate from swaps, buys and the investment decision.\n2. Watchlist opportunities: BUY/ACCUMULATE candidate with clear edge over current holdings? \u2192 rank in top_buys\n3. Overweight positions: swap-eligible stock >25%? \u2192 consider REDUCE, but only if drift \u2265 3%\n4. Low-score holdings: weak fa+ta vs watchlist with 10+ score advantage? \u2192 consider swap\n5. Policy violations: active hard single-position CONCENTRATION_BREACH? \u2192 propose remediation (mandatory)\n\npriority=\"no_action\" when ALL of the following are true:\n- No hard position limit breach. A sector warning alone permits no_action.\n- No watchlist candidate has a clearly superior score (10+ advantage) over current holdings\n- All current positions are within 3% of their ideal weight\n- No urgent regime or policy signal\n\nOutput schema \u2014 nothing else. Max 550 tokens.\nswaps: max 3 (sell or buy may be null for one-sided REDUCE or ACCUMULATE from cash)\ntop_buys: max 5 watchlist symbols ranked by signal quality\nsector_flags: max 3 short strings\npriority: one word only\nsummary: exactly 2 sentences, written the way a strategist briefs a client \u2014 natural\n  investment language, not a status log. Sentence 1: what you reviewed and the\n  overall read (e.g. \"Sector weights are balanced and no position has drifted far\n  from target.\" / \"The portfolio still carries a sound risk posture heading into\n  this cycle.\"). Sentence 2: name what, if anything, cleared today's conviction bar\n  and why the rest did not (e.g. \"KBANK's concentration has crossed a line worth\n  trimming, but ADVANC and CENTEL don't yet show enough edge to displace what's\n  already held.\"). Vary phrasing and sentence structure run to run \u2014 do not reuse\n  the same template every time. Never restate the full allocation plan, that is\n  Layer 2's job. Avoid mechanical phrases like \"system\", \"threshold triggered\", or\n  \"no action detected\" \u2014 write as an analyst, not a machine.\n\"r\" = one reason for the swap, under 12 words (e.g. \"Technology at 45% > 30% limit\").\n\nIf running low on output budget, prioritize in this order: (1) swaps, (2) priority,\n(3) summary, (4) top_buys, (5) sector_flags.\n\n{\"swaps\":[{\"sell\":\"SYM|null\",\"buy\":\"SYM|null\",\"score_delta\":0.0,\"sector\":\"S\",\"type\":\"SELL|SWAP|REDUCE\",\"r\":\"<12 words\"}],\"top_buys\":[\"S\"],\"sector_flags\":[\"S 45%>30%\"],\"priority\":\"growth\",\"summary\":\"<2 natural-language sentences>\"}"
+   },
+   "layer2": {
+    "max_tokens": 8192,
+    "prompt": "You are an independent portfolio reviewer.\n[MARKET REGIME \u2014 MANDATORY ALLOCATION CONTEXT]\nCurrent Regime: HIGH_VOLATILITY (confidence: 50%)\nTransition Stability: STABLE (1 trading days in current regime)\nPrevious Regime: UNKNOWN\nVolatility Signal: z-score 0.0\u03c3\nTrend Strength: 50/100\n\nRegime Allocation Mandate:\nELEVATED VOLATILITY REGIME. Capital preservation is the priority. Minimum cash 15%. Maximum single-stock position 18%. Suppress speculative positions. Tighten concentration limits. Reduce portfolio turnover.\n\nHard Constraints (regime-enforced \u2014 DO NOT override):\n  Minimum cash reserve:    15%\n  Max single position:     18%\n  Factor stance:           PRIORITIZE quality (high ROE, low debt) stocks; SUPPRESS speculative and high-beta positions\n\nAll allocation proposals MUST respect these regime-derived constraints.\nThe optimizer MUST NOT recommend cash below 15% in this regime.\n\n\n[TIMING AWARENESS \u2014 CHALLENGER]\nEach symbol carries timing_score and execution_priority.\nChallenge BUY/ACCUMULATE recommendations where execution_priority=DEFER or timing_score<40.\nRecord material timing disagreements with basis=INVESTMENT_THESIS and include the symbol and timing evidence.\nTiming does not invalidate a fundamentally attractive stock \u2014 document the concern, do not block.\n\nYour role: Independent risk-aware reviewer\n\nThe Strategist (Layer 1) proposed:\n- Priority: balanced\n- Swaps: [\n  {\n    \"sell_symbol\": \"AAA\",\n    \"buy_symbol\": null,\n    \"reason\": \"Forced exit: SELL signal.\",\n    \"score_improvement\": 0,\n    \"sector\": \"Other\",\n    \"type\": \"SELL\"\n  }\n]\n- Top watchlist picks: []\n\n\nFull portfolio data for your analysis:\n[\n  {\n    \"symbol\": \"AAA\",\n    \"sector\": \"Other\",\n    \"sector_classification\": null,\n    \"signal\": \"SELL\",\n    \"combined_score\": 0,\n    \"ta_score\": 0,\n    \"fa_score\": 30,\n    \"trend\": \"sideways\",\n    \"pe_ratio\": 40,\n    \"roe\": null,\n    \"allow_swap\": true,\n    \"weight_pct\": 60.0,\n    \"market_value\": 600.0,\n    \"current_price\": 10,\n    \"timing_score\": 0,\n    \"timing_data_available\": false,\n    \"execution_priority\": null,\n    \"momentum\": null\n  },\n  {\n    \"symbol\": \"BBB\",\n    \"sector\": \"Other\",\n    \"sector_classification\": null,\n    \"signal\": \"HOLD\",\n    \"combined_score\": 0,\n    \"ta_score\": 55,\n    \"fa_score\": 0,\n    \"trend\": \"sideways\",\n    \"pe_ratio\": 12,\n    \"roe\": 20.0,\n    \"allow_swap\": true,\n    \"weight_pct\": 20.0,\n    \"market_value\": 200.0,\n    \"current_price\": 10,\n    \"timing_score\": 62,\n    \"timing_data_available\": true,\n    \"execution_priority\": null,\n    \"momentum\": null\n  }\n]\n\nFull watchlist for your analysis:\n[\n  {\n    \"symbol\": \"WWW\",\n    \"current_price\": 5,\n    \"sector\": \"Other\",\n    \"sector_classification\": null,\n    \"signal\": \"BUY\",\n    \"combined_score\": 0,\n    \"ta_score\": 0,\n    \"fa_score\": 60,\n    \"trend\": \"sideways\",\n    \"pe_ratio\": 9,\n    \"roe\": null,\n    \"timing_score\": 0,\n    \"timing_data_available\": false,\n    \"execution_priority\": null,\n    \"momentum\": null\n  },\n  {\n    \"symbol\": \"ZZZ\",\n    \"current_price\": 5,\n    \"sector\": \"Other\",\n    \"sector_classification\": null,\n    \"signal\": \"HOLD\",\n    \"combined_score\": 0,\n    \"ta_score\": 0,\n    \"fa_score\": 0,\n    \"trend\": \"sideways\",\n    \"pe_ratio\": null,\n    \"roe\": null,\n    \"timing_score\": null,\n    \"timing_data_available\": false,\n    \"execution_priority\": null,\n    \"momentum\": null\n  }\n]\n\nTotal portfolio value: 1000, Cash balance: 200\nThai stocks end in .BK.\n\nSTABILIZATION PHILOSOPHY:\nUnnecessary portfolio churn destroys value through transaction costs, tax drag, and operational complexity.\n\nBEFORE proposing any rebalancing, apply this 3-step discipline:\n1. DRIFT TEST: Is any allocation change < 3%? If yes, suppress it \u2014 noise, not signal.\n2. CONVICTION TEST: Does the proposed change have a clear, measurable benefit (10+ score advantage or hard-policy breach repair)?\n3. COST TEST: Will the expected portfolio improvement exceed the ~0.15% trading cost per 1% NAV traded?\n\nstatus=\"NO_ACTION\" with rebalance_opportunity_score below 25 is STRONGLY ENCOURAGED when:\n- All positions are within 3% of their natural weight (drift tolerance band)\n- No watchlist candidate has a compelling 10+ score advantage over existing holdings\n- No hard-policy violations exist. A sector warning can coexist with NO_ACTION.\n- Market conditions are uncertain or data is insufficient to justify rebalancing\n\nPREFER large, high-conviction changes over many small adjustments.\nA portfolio with 2 targeted swaps beats one with 6 micro-adjustments.\n\nscore guide: 0-25=no action needed, 26-45=minor optimization, 46-70=moderate opportunity, 71-100=strong opportunity.\nno_action_reason enum (use null if status=REBALANCE):\n  WELL_BALANCED | LOW_CONFIDENCE | HIGH_DISAGREEMENT | CONSTRAINT_BLOCKED | MARKET_UNCERTAINTY | INSUFFICIENT_EDGE\n\nBuild a complete capital allocation plan. Challenge or confirm the Strategist's swaps.\n\nOUTPUT CONTRACT \u2014 this JSON is read by software, not a person; a separate step writes the human-readable\nreport later. Do not spend output tokens on prose. Follow this priority order if you are running low on\noutput budget: (1) allocations for existing holdings and BUY/ACCUMULATE/REDUCE/SELL decisions, (2) risk/\nconstraint-violation notes, (3) portfolio_assessment, (4) blocked_opportunities, (5) watchlist WATCH rows,\n(6) any optional explanation. Never drop an allocation row to make room for longer text.\n\nALLOCATIONS ARRAY:\n- Include every existing portfolio holding exactly once, with its action (ACCUMULATE|BUY|HOLD|REDUCE|SELL|WATCH).\n- Include a watchlist symbol only if you assign it BUY or ACCUMULATE, OR it is one of your top few WATCH-worthy\n  candidates with a specific reason (max 5 WATCH rows total). Do not add a row for every watchlist symbol \u2014\n  omit ones with no actionable signal completely.\n- Weights are FLAT PERCENTAGES (10.0 = 10% of portfolio), not monetary amounts.\n- Omit current weight \u2014 the backend already has it; send only the target.\n- \"r\" = one reason, under 20 words. State each idea once \u2014 do not repeat it in \"r\", disagreements, and\n  portfolio_assessment.\n\nIf a watchlist symbol with BUY/ACCUMULATE signal was evaluated but rejected (cash constraint,\nportfolio count cap), list it in blocked_opportunities \u2014 but only the highest-priority rejections, max 5.\nKeep each \"reason\" under 10 words (e.g. \"insufficient_cash\").\nSector thresholds alone cannot block BUY/ACCUMULATE or justify a SELL/REDUCE.\nPut optional sector-only reductions in sector_alternatives, using the same allocation row format.\nKeep the actionable allocation HOLD unless independently justified. Mark thesis-driven SELL/REDUCE\nwith decision_basis=INVESTMENT_THESIS. Judge agreement and opportunity only on actionable decisions.\n If the complete allocation forms a coherent optional strategy, label strategy_family as\n RAISE_CASH, DEFENSIVE_ROTATION or GROWTH_ROTATION; otherwise use null. Evidence refs may\n cite only observed fields: symbol:SYM:signal, symbol:SYM:fa_score, symbol:SYM:ta_score,\n symbol:SYM:pe_ratio, symbol:SYM:roe, symbol:SYM:timing_score, regime:regime,\n goal:ID:target_date, goal:ID:funding_gap or goal:ID:priority. A cited fact does not\n by itself prove the strategy is superior. Never cite a concentration threshold as support.\n\ndisagreements[]: only material disagreements with Layer 1 (wrong signal, missed breach, constraint conflict).\nUse SECTOR_ADVISORY for concentration-only comments. Other bases must identify the actionable disagreement.\nMax 5 entries, each under 20 words.\n\nportfolio_assessment: 2-3 sentences max \u2014 a decision summary, not an essay.\n\nReturn JSON only. No markdown fences, no prose outside the JSON.\n\n{\n  \"status\": \"REBALANCE|NO_ACTION\",\n  \"rebalance_opportunity_score\": 50,\n  \"no_action_reason\": \"WELL_BALANCED|LOW_CONFIDENCE|HIGH_DISAGREEMENT|CONSTRAINT_BLOCKED|MARKET_UNCERTAINTY|INSUFFICIENT_EDGE|null\",\n  \"no_action_summary\": \"<20 words, null if REBALANCE\",\n  \"blocked_opportunities\": [{\"symbol\":\"X\",\"signal\":\"BUY\",\"reason\":\"insufficient_cash|portfolio_count_cap\"}],\n  \"agrees_with_layer1\": true,\n  \"disagreements\": [{\"basis\":\"ACTION|SIZING|INVESTMENT_THESIS|HARD_POLICY|SECTOR_ADVISORY\",\"issue\":\"<20 words>\"}],\n  \"portfolio_assessment\": \"2-3 sentences\",\n  \"cash_balance_target\": 0.0,\n  \"allocations\": [\n    {\"s\":\"X\",\"tw\":0.0,\"sig\":\"BUY|ACCUMULATE|HOLD|REDUCE|SELL|WATCH\",\"r\":\"<20 words\"}\n  ]\n}"
+   },
+   "layer3": {
+    "max_tokens": 2048,
+    "prompt": "You are a portfolio risk auditor.\n[TIMING RISK ASSESSMENT \u2014 Phase 4C.6H]\nFlag MEDIUM severity when a new BUY or ACCUMULATE position has execution_priority=DEFER or timing_score<40.\nUse: {\"symbol\":\"X\",\"issue\":\"Poor entry timing (ts=[N], priority=DEFER) for new position\",\"severity\":\"MEDIUM\"}\nDo NOT escalate to HIGH or CRITICAL for timing alone \u2014 timing cautions, it does not block.\n\nYour role: Concentration risk and assumption validator\n\nEvaluate both allocation proposals for concentration risk and soundness.\n\n[AUTHORITATIVE POLICY CLAIM CONTRACT]\n{\"basket_guidance\": {\"enforced\": false, \"kind\": \"ADVISORY_CONCERN\", \"threshold_pct\": 40}, \"evidence\": {}, \"general_policy_limits\": {}, \"sector_advisories\": {\"CURRENT:effective_sector_limits:Other\": {\"basis\": \"EQUITY\", \"binding_source\": \"WORKSPACE_THRESHOLD_FALLBACK\", \"breach_amount\": 480.0, \"breach_pp\": 60.0, \"currency\": \"THB\", \"denominator\": 800.0, \"evidence_id\": \"CURRENT:effective_sector_limits:Other\", \"evidence_version\": \"wealth.policy-evidence.v2\", \"limit_pct\": 40.0, \"members\": [{\"symbol\": \"AAA\"}, {\"symbol\": \"BBB\"}], \"numerator\": 800.0, \"observed_pct\": 100.0, \"rule\": \"effective_sector_limits\", \"scope\": \"SECTOR\", \"sector\": \"Other\", \"stage\": \"CURRENT\", \"type\": \"CONCENTRATION_BREACH\"}, \"PROJECTED_TARGET:effective_sector_limits:Other\": {\"basis\": \"EQUITY\", \"binding_source\": \"WORKSPACE_THRESHOLD_FALLBACK\", \"breach_amount\": 120.0, \"breach_pp\": 60.0, \"currency\": \"THB\", \"denominator\": 200.0, \"evidence_id\": \"PROJECTED_TARGET:effective_sector_limits:Other\", \"evidence_version\": \"wealth.policy-evidence.v2\", \"limit_pct\": 40.0, \"members\": [{\"symbol\": \"BBB\"}], \"numerator\": 200.0, \"observed_pct\": 100.0, \"rule\": \"effective_sector_limits\", \"scope\": \"SECTOR\", \"sector\": \"Other\", \"stage\": \"PROJECTED_TARGET\", \"type\": \"CONCENTRATION_BREACH\"}}, \"version\": \"wealth.auditor-policy-claims.v2\"}\nSector advisories in the contract are informational and excluded from risk_flags and safer_choice.\nAn optional sector comment can use SECTOR_ADVISORY with its exact evidence_ref.\nEvery risk flag must include claim_kind. POLICY_BREACH and EXECUTION_RESTRICTION must\nreference an exact evidence_ref from this contract, with the same symbol (PORTFOLIO for\nportfolio-wide evidence). Missing or mismatched evidence is unscored, unsupported model output.\nGeneral portfolio policy is separate from per-instrument execution caps. An execution cap\nis applicable only to proposed BUY/ACCUMULATE targets, never a universal holding limit.\nEXISTING_EXPOSURE above an execution cap requires no automatic liquidation; it is unscored context.\nADVISORY_CONCERN includes the prompt-only 40% DR basket guidance; it is not a governance breach.\nUse INVESTMENT_JUDGMENT for independent business, valuation, volatility or timing risk opinions\nonly, never assertions that a deterministic limit is breached. Model-only opinions are visible but\nunscored. Investment observations require a matching independently produced evidence_ref;\nthe model label alone never authorizes a risk penalty. Only existing contract evidence is scoreable.\nSeverity thresholds below guide opinions, not proof of a policy violation. Do not invent limits.\n\nLayer 1 (Strategist):\nPriority: balanced\nProposed swaps: [\n  {\n    \"sell_symbol\": \"AAA\",\n    \"buy_symbol\": null,\n    \"reason\": \"Forced exit: SELL signal.\",\n    \"score_improvement\": 0,\n    \"sector\": \"Other\",\n    \"type\": \"SELL\"\n  }\n]\n\nLayer 2 (Challenger):\nAgrees: True\nDisagreements: []\nAllocations: [\n  {\n    \"symbol\": \"AAA\",\n    \"current_weight\": 60.0,\n    \"target_weight\": 0.0,\n    \"action\": \"SELL\",\n    \"allocation_change_percent\": -60.0,\n    \"estimated_amount\": -600,\n    \"reason\": \"\",\n    \"decision_basis\": \"INVESTMENT_THESIS\",\n    \"ta_score\": 0,\n    \"fa_score\": 30,\n    \"pe_ratio\": 40,\n    \"sector\": \"Other\",\n    \"combined_score\": 0,\n    \"timing_score\": 0\n  },\n  {\n    \"symbol\": \"BBB\",\n    \"current_weight\": 20.0,\n    \"target_weight\": 20.0,\n    \"action\": \"HOLD\",\n    \"allocation_change_percent\": 0.0,\n    \"estimated_amount\": 0,\n    \"reason\": \"\",\n    \"ta_score\": 55,\n    \"fa_score\": 0,\n    \"pe_ratio\": 12,\n    \"roe\": 20.0,\n    \"sector\": \"Other\",\n    \"combined_score\": 0,\n    \"timing_score\": 62\n  }\n]\n\nCheck for (use exact resolved severity thresholds \u2014 derived from active policy, not hardcoded):\n- CRITICAL : single stock > 30% of NAV\n- HIGH     : single stock 26\u201330% OR weak fundamentals on large position\n- MEDIUM   : conflicting allocation math\n- LOW      : minor concentration risk, suboptimal but acceptable\n\nOnly flag positions that actually cross a threshold above \u2014 do not add a LOW-severity row for every position that\nis merely fine. Max 8 risk_flags, \"issue\" under 15 words each. \"auditor_notes\" is a 1-2 sentence verdict \u2014 do not\nrestate the risk_flags issue text there.\n\nEvery flag must have category INVESTMENT_RISK or OWNER_INTENT_REVIEW.\nUse OWNER_INTENT_REVIEW only for disagreement with owner Intent. Such disagreement is\nallowed: preserve it for owner review, but exclude it from final_risk_level, safer_choice\nand investment/governance/quality judgments. A real investment risk in the same symbol\nmust be a separate INVESTMENT_RISK flag. Never disguise investment risk as Intent review.\n\nReturn JSON only. No markdown fences.\n\n{\n  \"risk_flags\": [{\"symbol\":\"...\",\"issue\":\"...\",\"severity\":\"LOW|MEDIUM|HIGH|CRITICAL\",\"category\":\"INVESTMENT_RISK|OWNER_INTENT_REVIEW\",\"claim_kind\":\"POLICY_BREACH|EXECUTION_RESTRICTION|EXISTING_EXPOSURE|ADVISORY_CONCERN|SECTOR_ADVISORY|INVESTMENT_JUDGMENT\",\"evidence_ref\":\"exact contract key or null\"}],\n  \"safer_choice\": \"layer1|layer2|neither\",\n  \"final_risk_level\": \"low|medium|high\",\n  \"auditor_notes\": \"1-2 sentences.\"\n}"
+   }
+  },
+  "target_allocations": [
+   {
+    "action": "SELL",
+    "allocation_change_percent": -60.0,
+    "combined_score": 0,
+    "current_weight": 60.0,
+    "decision_basis": "INVESTMENT_THESIS",
+    "estimated_amount": -600,
+    "fa_score": 30,
+    "pe_ratio": 40,
+    "reason": "",
+    "sector": "Other",
+    "symbol": "AAA",
+    "ta_score": 0,
+    "target_weight": 0.0,
+    "timing_score": 0
+   },
+   {
+    "action": "HOLD",
+    "allocation_change_percent": 0.0,
+    "combined_score": 0,
+    "current_weight": 20.0,
+    "estimated_amount": 0,
+    "fa_score": 0,
+    "pe_ratio": 12,
+    "reason": "",
+    "roe": 20.0,
+    "sector": "Other",
+    "symbol": "BBB",
+    "ta_score": 55,
+    "target_weight": 20.0,
+    "timing_score": 62
+   }
+  ],
+  "target_cash_weight": 80
+ }
+}

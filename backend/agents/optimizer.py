@@ -1436,6 +1436,9 @@ def _candidate_review_block(envelope: dict) -> str:
         "- material_conflicts: short descriptions of unresolved material conflicts; [] if none.\n"
         "- assessment: one sentence under 30 words. Model opinions are unscored.\n"
         "Use exact keys only. Never invent a reference or a value; missing information stays missing.\n"
+        "- unobserved_evidence: missing, failed or disabled analysis for these symbols. It is not\n"
+        "  evidence and not a neutral reading; never cite its keys. evidence_provenance_status\n"
+        "  NOT_SUPPLIED means the values were not provenance-checked.\n"
         "A review is not a selection. Do not use safer_choice as a selection vote.\n"
         f"CANDIDATES_FOR_REVIEW={json.dumps(view, sort_keys=True, default=str)}\n\n"
     )
@@ -1891,6 +1894,7 @@ def _run_single_shot_fallback(
     goal_decision_input: dict | None = None,
     regime_context: dict | None = None,
     strategy_selection_mode: str | None = None,
+    evidence_provenance: dict | None = None,
 ) -> dict:
     """Single-shot emergency fallback when the 3-layer pipeline fails completely.
 
@@ -1965,7 +1969,7 @@ def _run_single_shot_fallback(
                 {**result, "target_allocations": allocations,
                  "target_cash_weight": result.get("cash_balance_target")},
                 regime=regime_context, goals=goal_decision_input,
-                source_layer="SINGLE_SHOT_FALLBACK")
+                source_layer="SINGLE_SHOT_FALLBACK", provenance=evidence_provenance)
             hold = fallback_candidates["candidates"][0]
             hold_safe = hold["eligibility_status"] == "ELIGIBLE"
             if hold_safe:
@@ -2283,6 +2287,7 @@ def run_layered_optimizer(
     optimizer_policy_mode: str | None = None,
     goal_decision_input: dict | None = None,
     strategy_selection_mode: str | None = None,
+    evidence_provenance: dict | None = None,
 ) -> dict:
     """3-layer Dynamic Capital Allocation Engine with global single-shot fallback.
 
@@ -2294,7 +2299,13 @@ def run_layered_optimizer(
     present: frozen Intent prompt context for L1/L2/L3 (+ retry/fallback),
     common-NAV current weights for held positions when that basis resolves,
     and proposal-transition capture. It never changes an allocation decision.
+
+    evidence_provenance: per-symbol evidence provenance (Slice 4.2). Used only to
+    build the Committee opt-in evidence catalog (primary and fallback); ignored
+    when strategy selection is off, so no prompt or allocation changes there.
     """
+    if strategy_selection_mode != SELECTION_VERSION:
+        evidence_provenance = None
     # Keep one identity for all layer attempts, including the schema retry.
     policy_identity = dict(policy_context or {})
     for field, mode in (("sector_policy_mode", sector_policy_mode),
@@ -2612,6 +2623,7 @@ def run_layered_optimizer(
                     portfolio_data, watchlist_data, cash_balance, l2_result,
                     regime=regime_context, goals=goal_decision_input,
                     source_layer="CHALLENGER_DEGRADED" if l1_parse_failed or "error" in l2_result else "CHALLENGER",
+                    provenance=evidence_provenance,
                 )
                 for candidate in candidate_envelope["candidates"]:
                     if candidate["eligibility_status"] != "ELIGIBLE":
@@ -3090,5 +3102,6 @@ def run_layered_optimizer(
             goal_decision_input=goal_decision_input if muji_v2 else None,
             regime_context=regime_context if muji_v2 else None,
             strategy_selection_mode=strategy_selection_mode,
+            evidence_provenance=evidence_provenance,
             **({"advisory": advisory} if advisory is not None else {}),
         )

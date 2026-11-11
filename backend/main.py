@@ -4574,10 +4574,19 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
 
     semaphore = asyncio.Semaphore(5)
     opt_src = _get_analysis_sources(db, ws)
+    # Slice 4.2 — whether each signal/score below was observed or is a default
+    # (HOLD / 0). Kept outside scores_map so rows, prompts and snapshots are
+    # unchanged; passed only to the Committee opt-in evidence catalog.
+    from services.optimizer.evidence_provenance import (
+        analysis_provenance, signal_provenance, timing_provenance,
+    )
+    evidence_provenance: dict[str, dict] = {}
 
     async def _get_scores(symbol: str) -> dict:
         ta_cached = _get_agent_cache(db, symbol, "technical")   if opt_src.get("use_ta", True) else None
         fa_cached = _get_agent_cache(db, symbol, "fundamental") if opt_src.get("use_fa", True) else None
+        ta_source = "AGENT_CACHE" if ta_cached is not None else "LIVE"
+        fa_source = "AGENT_CACHE" if fa_cached is not None else "LIVE"
         live_tasks: list[tuple[str, object]] = []
         if opt_src.get("use_ta", True) and ta_cached is None:
             live_tasks.append(("technical", analyze_technical))
@@ -4594,6 +4603,13 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
         ta = (tech if tech and "error" not in tech else {}) if opt_src.get("use_ta", True) else {}
         fa = (fund if fund and "error" not in fund else {}) if opt_src.get("use_fa", True) else {}
         c = cache_map.get(symbol)
+        evidence_provenance[symbol] = {
+            "signal": signal_provenance(c),
+            "ta_score": analysis_provenance(tech, "ta_score", enabled=opt_src.get("use_ta", True),
+                                            source=ta_source),
+            "fa_score": analysis_provenance(fund, "fa_score", enabled=opt_src.get("use_fa", True),
+                                            source=fa_source),
+        }
         ta_score = ta.get("ta_score", 0)
         fa_score = fa.get("fa_score", 0)
         if opt_src.get("use_ta", True) and opt_src.get("use_fa", True):
@@ -4661,6 +4677,8 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
         )
     except Exception as _tc_err:
         _log.warning("analyze_optimizer: timing enrichment failed — continuing without: %s", _tc_err)
+    for sym, record in evidence_provenance.items():
+        record["timing_score"] = timing_provenance(timing_ctx_map.get(sym))
 
     # ── Phase 3B.10 — Execution quality context ───────────────────────────────
     execution_ctx: dict | None = None
@@ -4826,6 +4844,7 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
             optimizer_policy_mode=optimizer_policy_mode,
             goal_decision_input=wealth_goal_context,
             strategy_selection_mode=strategy_selection_mode,
+            **({"evidence_provenance": evidence_provenance} if strategy_selection_mode else {}),
             **({"advisory": advisory_run} if advisory_run is not None else {}),
         )
     except Exception:
