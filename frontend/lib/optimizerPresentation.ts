@@ -112,3 +112,71 @@ export function intentReviewSummary(result: OptimizerResult): string {
   if (review.coverage.all_resolved_and_consistent) return "Recommendation respects your intent at run time";
   return `Intent checked for ${review.coverage.resolved_count} of ${review.coverage.referenced_positive_held_count} held positions; remaining checks unavailable`;
 }
+
+const REGIME_SENTENCES: Record<string, string> = {
+  HIGH_VOLATILITY: "Market volatility is high.",
+  RISK_OFF: "Markets are in a risk-off phase.",
+  DEFENSIVE_REGIME: "Market conditions are defensive.",
+  TRANSITION_RISK_OFF: "Markets are shifting toward risk-off.",
+  TRANSITION_RISK_ON: "Markets are shifting toward risk-on.",
+  RISK_ON: "Markets are in a risk-on phase.",
+  SIDEWAYS: "Markets are moving sideways.",
+};
+
+const UNCERTAINTY_LABELS: Record<string, string> = {
+  NO_ELIGIBLE_ACTION: "No alternative action had enough verified evidence.",
+  AUDITOR_UNAVAILABLE: "Auditor review was unavailable.",
+  AUDITOR_REVIEWS_MISSING: "Auditor review was incomplete.",
+  INCOMPLETE_AUDITOR_COVERAGE: "Auditor review was incomplete.",
+  MATERIAL_CONFLICT_UNRESOLVED: "A material conflict in the evidence was not resolved.",
+  CURRENT_NAV_UNAVAILABLE: "Current portfolio value was unavailable.",
+  CURRENT_CASH_UNAVAILABLE: "Current cash balance was unavailable.",
+  MODEL_SCORE_ONLY_SUPPORT: "Support rests on model scores only.",
+  INDEPENDENT_SUPPORT_UNVERIFIED: "Independent support was not verified.",
+  BUY_SUPPORT_UNVERIFIED: "Support for buying was not verified.",
+  UNVERIFIED_SELL: "Support for selling was not verified.",
+  ADVISORY_ONLY_OR_UNVERIFIED: "Some evidence is advisory only or unverified.",
+};
+
+const humanize = (code: string) => {
+  const text = code.toLowerCase().replace(/_/g, " ");
+  return text.charAt(0).toUpperCase() + text.slice(1);
+};
+const uncertaintyText = (item: unknown): string | null => {
+  if (typeof item !== "string" || !item.trim()) return null;
+  if (UNCERTAINTY_LABELS[item]) return UNCERTAINTY_LABELS[item];
+  return /^[A-Z0-9_]+$/.test(item) ? `${humanize(item)}.` : item;
+};
+
+type CommitteeView = ReturnType<typeof committeeDecisionPresentation>;
+
+/** Plain-language summary derived only from existing run data. Presentation only. */
+export function committeeSummaryPresentation(result: OptimizerResult, view: CommitteeView) {
+  const regime = result.market_regime?.regime;
+  const regimeSentence = typeof regime === "string" ? REGIME_SENTENCES[regime] ?? null : null;
+  const join = (...parts: (string | null)[]) => parts.filter(Boolean).join(" ");
+  if (view.owner !== "Committee" || view.unavailable || !view.selection) {
+    return { headline: "Recommendation Unavailable", showHoldings: false,
+      explanation: "The Committee's selection evidence is missing or could not be validated, so no strategy decision is shown. The legacy consensus assessment is not a substitute for it.",
+      cautions: ["Missing evidence does not mean low risk."] };
+  }
+  const { selection, candidate } = view;
+  const cautions = [...new Set((selection.material_uncertainty ?? []).map(uncertaintyText)
+    .filter((item): item is string => item != null))];
+  if (selection.state === "ABSTAINED") return { cautions, showHoldings: false, headline: "No Recommendation",
+    explanation: join("The Committee abstained, so no strategy was selected or approved.", regimeSentence) };
+  if (selection.state === "HUMAN_REVIEW_REQUIRED") return { cautions, showHoldings: false, headline: "Human Review Required",
+    explanation: join("The evidence does not support an automatic recommendation. No strategy is approved for action.", regimeSentence) };
+  if (view.altered) cautions.push("Safeguards changed the selected plan; see technical details for the effective allocation.");
+  if (candidate?.id === "hold-current") {
+    const weakEvidence = selection.reason_codes?.includes("CAUTIONED_HOLD")
+      || selection.material_uncertainty?.includes("NO_ELIGIBLE_ACTION");
+    cautions.push("Holding is a cautious default, not a guarantee that it is the best outcome.");
+    return { cautions, showHoldings: true, headline: "Hold Current Portfolio",
+      explanation: join("Keep the current portfolio unchanged.", regimeSentence,
+        weakEvidence ? "The available evidence does not establish that rebalancing would be better." : null) };
+  }
+  return { cautions, showHoldings: true, headline: candidate ? humanize(candidate.family) : "Selected strategy",
+    explanation: join("The Committee selected this plan over holding the current portfolio.", regimeSentence,
+      "This is a recommendation, not a recorded transaction.") };
+}

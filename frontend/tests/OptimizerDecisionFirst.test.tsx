@@ -469,3 +469,98 @@ describe("Unavailable evidence and action safety", () => {
     expect(screen.getByText("Evidence provenance").parentElement).not.toHaveAttribute("open");
   });
 });
+
+describe("Committee primary summary and technical details", () => {
+  const withRegime = (result: OptimizerResult, regime: string) => {
+    result.market_regime = { regime, confidence_pct: 80 } as OptimizerResult["market_regime"];
+    return result;
+  };
+  const renderSummary = (result: OptimizerResult) =>
+    render(<OptimizerDecisionSummary result={result} historyId={244} historical loading={false} />);
+
+  it("leads with a plain-language HOLD recommendation derived from the run, with details collapsed", () => {
+    renderSummary(withRegime(optedInHold(), "HIGH_VOLATILITY"));
+    const primary = screen.getByTestId("committee-primary-summary");
+    expect(primary).toHaveTextContent("Hold Current Portfolio");
+    expect(primary).toHaveTextContent("Keep the current portfolio unchanged.");
+    expect(primary).toHaveTextContent("Market volatility is high.");
+    expect(primary).toHaveTextContent("does not establish that rebalancing would be better");
+    expect(primary).toHaveTextContent("not a guarantee");
+    expect(within(primary).getByText("Scheduled trades")).toBeInTheDocument();
+    expect(within(primary).getByText("Estimated cash after plan")).toBeInTheDocument();
+    for (const code of ["CAUTIONED_HOLD", "NO_ELIGIBLE_ACTION", "hold-current", "Committee · SELECTED"])
+      expect(primary).not.toHaveTextContent(code);
+    const details = screen.getByTestId("technical-details") as HTMLDetailsElement;
+    expect(details.open).toBe(false);
+    expect(details).toHaveTextContent("Decision owner: Committee · SELECTED");
+    expect(details).toHaveTextContent("CAUTIONED_HOLD");
+    expect(details).toHaveTextContent("Stored legacy consensus assessment");
+  });
+
+  it("does not hardcode the HOLD wording or regime sentence", () => {
+    const result = withRegime(optedInHold(), "RISK_ON");
+    renderSummary(result);
+    const primary = screen.getByTestId("committee-primary-summary");
+    expect(primary).not.toHaveTextContent("Market volatility is high");
+    expect(primary).toHaveTextContent("risk-on");
+  });
+
+  it("shows plain uncertainty text and caps visible cautions", () => {
+    const result = optedInHold();
+    result.strategy_selection!.material_uncertainty = ["AUDITOR_UNAVAILABLE", "SOMETHING_NEW_CODE", "Free text note", "MATERIAL_CONFLICT_UNRESOLVED"];
+    renderSummary(result);
+    const cautions = screen.getByTestId("committee-cautions");
+    expect(cautions).toHaveTextContent("Auditor review was unavailable.");
+    expect(cautions).toHaveTextContent("Something new code.");
+    expect(cautions).not.toHaveTextContent("AUDITOR_UNAVAILABLE");
+    expect(cautions).toHaveTextContent(/more caveats in technical details/);
+  });
+
+  it.each([["ABSTAINED", "No Recommendation"], ["HUMAN_REVIEW_REQUIRED", "Human Review Required"]] as const)(
+    "presents %s without a selected action or holdings", (state, headline) => {
+      const result = optedInHold();
+      result.strategy_selection = { version: "wealth.strategy-selection.v1", state, selected_candidate_id: null,
+        reason_codes: ["AUDITOR_UNAVAILABLE"], material_uncertainty: [] };
+      result.strategic_candidates = { version: "wealth.strategic-candidates.v1", status: "PREPARED_NOT_SELECTED", candidates: [] };
+      renderSummary(result);
+      const primary = screen.getByTestId("committee-primary-summary");
+      expect(primary).toHaveTextContent(headline);
+      expect(primary).not.toHaveTextContent("Hold Current Portfolio");
+      expect(within(primary).queryByText("Holdings")).not.toBeInTheDocument();
+    });
+
+  it("degrades gracefully for missing or malformed selection evidence without using legacy consensus", () => {
+    const result = optedInHold();
+    result.strategy_selection = null;
+    const { rerender } = renderSummary(result);
+    let primary = screen.getByTestId("committee-primary-summary");
+    expect(primary).toHaveTextContent("Recommendation Unavailable");
+    expect(primary).toHaveTextContent("Missing evidence does not mean low risk");
+    expect(primary).not.toHaveTextContent("Hold Current Portfolio");
+    expect(within(primary).queryByText("Holdings")).not.toBeInTheDocument();
+    result.strategy_selection = { version: "wealth.strategy-selection.v1", state: "SELECTED",
+      selected_candidate_id: "hold-current", reason_codes: "bad" as unknown as string[], material_uncertainty: [] };
+    rerender(<OptimizerDecisionSummary result={{ ...result }} historyId={244} historical loading={false} />);
+    primary = screen.getByTestId("committee-primary-summary");
+    expect(primary).toHaveTextContent("Recommendation Unavailable");
+  });
+
+  it("lists each holding with its recommended action and scheduled amount", () => {
+    const result = optedInHold();
+    result.target_allocations = [{ symbol: "AAA.BK", action: "HOLD", current_weight: 10, target_weight: 10,
+      allocation_change_percent: 0, estimated_amount: 0, reason: "r" }];
+    renderSummary(result);
+    const row = within(screen.getByTestId("committee-primary-summary")).getByText("AAA.BK").closest("li")!;
+    expect(row).toHaveTextContent("Hold");
+  });
+
+  it("leaves non-Committee MUJI and Challenger layouts unchanged", () => {
+    const result = optedInHold();
+    result.active_policy = { ...result.active_policy!, strategy_selection_mode: undefined };
+    renderSummary(result);
+    expect(screen.queryByTestId("committee-primary-summary")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("technical-details")).not.toBeInTheDocument();
+    expect(screen.getByText("Decision owner: Challenger")).toBeInTheDocument();
+    expect(screen.getByTestId("muji-primary-result")).toBeInTheDocument();
+  });
+});
