@@ -3617,4 +3617,4 @@ importance that the captured evidence cannot establish.
 **Invariants preserved:** opt-in OFF L3 prompts and budget are byte-identical (golden fixture `tests/fixtures/l3_prompt_optin_off_baseline.json`, captured from baseline `aada754` for Legacy, Sector Advisory v1 and Challenger-owned MUJI V2). Candidate eligibility, Committee prompt/budget, selection rules, Challenger ownership, safeguards and the monetary scheduler are unchanged. The single-shot fallback passes no `failure_reason`, so its recorded uncertainty is unchanged. A valid audit only makes the Committee reachable; it does not imply a non-HOLD selection.
 **Impact:** `agents/optimizer.py`, `services/optimizer/strategic_candidates.py`; tests `tests/test_auditor_review_contract.py` (16). No API, schema or frontend change; stored histories untouched. Whether a live Auditor model complies with the repaired contract is unverified until an owner-run opt-in dogfood run (no live runs were performed for this slice).
 
-**Disposition:** `IMPLEMENTED — NOT COMMITTED`
+**Disposition:** `IMPLEMENTED`
