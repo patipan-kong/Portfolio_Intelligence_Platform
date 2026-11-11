@@ -1213,6 +1213,75 @@ If running low on output budget, prioritize in this order: (1) swaps, (2) priori
 {{"swaps":[{{"sell":"SYM|null","buy":"SYM|null","score_delta":0.0,"sector":"S","type":"SELL|SWAP|REDUCE","r":"<12 words"{swap_basis}}}],"top_buys":["S"],"sector_flags":["S 45%>30%"],"priority":"growth","summary":"<2 natural-language sentences>"}}"""
 
 
+# MUJI V2 Slice 4.3 — Committee opt-in only. States the existing candidate evidence
+# rules so the Challenger can tell when a plan is supported; it does not change them.
+_CHALLENGER_EVIDENCE_GUIDANCE = """[CHALLENGER EVIDENCE GUIDANCE — COMMITTEE CANDIDATES]
+Keeping the current portfolio is always a Committee candidate. A strategy plan is optional:
+propose one only when observed evidence genuinely supports it, never to fill the output.
+- observed_evidence_refs must be exact keys of the frozen evidence catalog (symbol:SYM:field,
+  regime:regime, goal:ID:field) for values observed in this run; any other ref leaves the plan unverified.
+- Values under UNAVAILABLE EVIDENCE are defaults standing in for missing analysis, not observed facts.
+  Do not cite them or read them as low, neutral or poor.
+- Model scores (fa_score, ta_score, timing_score) alone never verify an action.
+- Each proposed change needs observed evidence supporting its direction for that symbol.
+  An observed SELL or REDUCE signal contradicts a BUY or ACCUMULATE.
+- An observed SELL signal for the holding is currently required to verify a SELL or REDUCE.
+- Policy violations, concentration figures and threshold diagnostics are context, not citable
+  investment evidence.
+- timing_score with timing_data_available=false means timing is unknown, not poor timing.
+- When no change is supported, return status=NO_ACTION, strategy_family=null and an empty
+  observed_evidence_refs list. That is a legitimate outcome, not a failure.
+- Never fabricate refs, cite facts that do not support the action, or construct trades to satisfy these rules.
+"""
+_ADDITIONAL_PLANS_GUIDANCE = (
+    "Optional additional_plans: up to two complete portfolio plans, each with "
+    "strategy_family, observed_evidence_refs, cash_balance_target, "
+    "portfolio_assessment, and allocations in the same format as the primary plan. "
+    "Omit when evidence is insufficient. These are candidates, not selected trades.\n"
+)
+_UNAVAILABLE_FIELD_ORDER = ("signal", "fa_score", "ta_score", "timing_score")
+
+
+def _unavailable_evidence_lines(preview: dict | None) -> str:
+    """Compact, deterministic listing of the refs the frozen catalog will exclude."""
+    if not preview or preview.get("evidence_provenance_status") != "SUPPLIED":
+        return ("UNAVAILABLE EVIDENCE: not determined for this run; signals and scores were not "
+                "provenance-checked and may include defaults.\n")
+    groups: dict[tuple[str, str], list[str]] = {}
+    for ref, status in (preview.get("unobserved_evidence") or {}).items():
+        symbol, field = ref.split(":", 1)[1].rsplit(":", 1)
+        groups.setdefault((field, str(status)), []).append(symbol)
+    if not groups:
+        return "UNAVAILABLE EVIDENCE: none; every signal and score shown was observed.\n"
+
+    def order(key):
+        field, status = key
+        rank = _UNAVAILABLE_FIELD_ORDER.index(field) if field in _UNAVAILABLE_FIELD_ORDER else len(_UNAVAILABLE_FIELD_ORDER)
+        return rank, field, status
+
+    lines = ["UNAVAILABLE EVIDENCE (row values are defaults; symbol:SYM:field is not in the catalog):"]
+    for key in sorted(groups, key=order):
+        lines.append(f"- {key[0]} {key[1]}: {', '.join(sorted(groups[key]))}")
+    return "\n".join(lines) + "\n"
+
+
+def _challenger_evidence_block(preview: dict | None, *, additional_plans: bool) -> str:
+    """Opt-in Challenger guidance, placed before the output instruction."""
+    return (_CHALLENGER_EVIDENCE_GUIDANCE + _unavailable_evidence_lines(preview)
+            + (_ADDITIONAL_PLANS_GUIDANCE if additional_plans else "") + "\n")
+
+
+def _challenger_evidence_guidance(holdings, watchlist, regime, goals, provenance, *,
+                                  additional_plans: bool) -> str:
+    """Guidance from the same frozen inputs the later prepare_candidates call uses."""
+    try:
+        preview = strategic_candidates.evidence_preview(holdings, watchlist, regime, goals, provenance)
+        return _challenger_evidence_block(preview, additional_plans=additional_plans)
+    except Exception as exc:  # guidance must never fail the Challenger call
+        logger.warning("Challenger evidence preview unavailable: %s", exc)
+        return _challenger_evidence_block(None, additional_plans=additional_plans)
+
+
 def _layer2_prompt(
     pc: list[dict],
     wc: list[dict],
@@ -1229,6 +1298,7 @@ def _layer2_prompt(
     sector_advisory: bool = False,
     muji_v2: bool = False,
     goal_decision_input: dict | None = None,
+    evidence_block: str = "",
 ) -> str:
     role_line = f"Your role: {role}\n\n" if role else ""
 
@@ -1391,7 +1461,7 @@ Max 5 entries, each under 20 words.
 
 portfolio_assessment: 2-3 sentences max — a decision summary, not an essay.
 
-Return JSON only. No markdown fences, no prose outside the JSON.
+{evidence_block}Return JSON only. No markdown fences, no prose outside the JSON.
 
 {{
   "status": "REBALANCE|NO_ACTION",
@@ -1806,6 +1876,7 @@ def _fallback_prompt(
     intent_block: str = "",
     sector_advisory: bool = False,
     muji_v2: bool = False,
+    evidence_block: str = "",
 ) -> str:
     allocation_basis = ',"decision_basis":"INVESTMENT_THESIS|CONCENTRATION_ADVISORY"' if muji_v2 else ""
     return f"""You are an emergency portfolio analyst. The multi-layer optimizer pipeline failed.
@@ -1847,7 +1918,7 @@ for concentration guidance. Do not assert a deterministic breach without evidenc
 Model-only opinions are visible but unscored; a model label never authorizes a penalty.
 Fallback execution has no deterministic DR target clamp; holding size does not mandate liquidation.
 
-Return ONLY valid JSON without markdown fences:
+{evidence_block}Return ONLY valid JSON without markdown fences:
 {{
   "status": "REBALANCE|NO_ACTION",
   "rebalance_opportunity_score": 50,
@@ -1930,6 +2001,9 @@ def _run_single_shot_fallback(
         pc, wc, sell_forced, locked, max_stocks, max_sector_pct,
         total_value, cash_balance, effective_policy_rules, sector_advisory=sector_advisory, muji_v2=muji_v2,
         **({"intent_block": _intent_block(advisory, _LAYER_FALLBACK)} if advisory is not None else {}),
+        **({"evidence_block": _challenger_evidence_guidance(
+            portfolio_data, wc, regime_context, goal_decision_input, evidence_provenance,
+            additional_plans=False)} if selection_enabled else {}),
     )
     from services.optimizer.execution_penalty import build_execution_prompt_block
     prompt = build_execution_prompt_block(execution_context or {}) + (
@@ -2539,12 +2613,11 @@ def run_layered_optimizer(
                                 goal_decision_input=goal_decision_input if muji_v2 else None,
                                execution_context=execution_context,
                                **({"intent_block": _intent_block(advisory, _LAYER_L2)}
-                                  if advisory is not None else {}))
-            if selection_enabled:
-                l2_prompt += ("\nOptional additional_plans: up to two complete portfolio plans, each with "
-                              "strategy_family, observed_evidence_refs, cash_balance_target, "
-                              "portfolio_assessment, and allocations in the same format as the primary plan. "
-                              "Omit when evidence is insufficient. These are candidates, not selected trades.\n")
+                                  if advisory is not None else {}),
+                               **({"evidence_block": _challenger_evidence_guidance(
+                                   portfolio_data, watchlist_data, regime_context, goal_decision_input,
+                                   evidence_provenance, additional_plans=True)}
+                                  if selection_enabled else {}))
             l2_raw = call_ai(
                 l2_prompt,
                 l2_cfg["provider"], l2_cfg["model"], max_tokens=8192,

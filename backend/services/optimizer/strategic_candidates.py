@@ -71,6 +71,20 @@ def _evidence(holdings: list[dict], watchlist: list[dict], regime: dict | None,
     return catalog, unobserved, as_of
 
 
+def evidence_preview(holdings: list[dict], watchlist: list[dict], regime: dict | None = None,
+                     goals: dict | None = None, provenance: dict | None = None) -> dict:
+    """What the frozen catalog will exclude, known before the Challenger runs.
+
+    Same inputs and rules as prepare_candidates, so ``unobserved_evidence`` here equals
+    the envelope's. Prompt guidance only; it decides and verifies nothing.
+    """
+    preview = {"evidence_provenance_status": "NOT_SUPPLIED" if provenance is None else "SUPPLIED"}
+    if provenance is not None:
+        unobserved = _evidence(holdings, watchlist, regime, goals, provenance)[1]
+        preview["unobserved_evidence"] = dict(sorted(unobserved.items()))
+    return preview
+
+
 def _evidence_catalog(holdings: list[dict], watchlist: list[dict], regime: dict | None,
                       goals: dict | None) -> dict[str, object]:
     """Legacy catalog without a provenance check."""
