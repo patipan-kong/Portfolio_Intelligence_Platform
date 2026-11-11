@@ -21,7 +21,7 @@ import OperationsTimeline from "@/components/operations-center/quant/OperationsT
 import ExecutionPlanCard from "@/components/optimizer/ExecutionPlanCard";
 import { sectorAdvisoryFor } from "@/components/optimizer/SectorConcentrationAdvisory";
 import OptimizerDecisionSummary from "@/components/optimizer/OptimizerDecisionSummary";
-import { assessment } from "@/lib/optimizerPresentation";
+import { assessment, OPTIMIZER_POLICY_MUJI_V2, STRATEGY_SELECTION_V1 } from "@/lib/optimizerPresentation";
 import AdvisoryIntentReviewCard from "@/components/optimizer/AdvisoryIntentReviewCard";
 import AuditorClaimFlag from "@/components/optimizer/AuditorClaimFlag";
 import GoalConstraintDisclosure from "@/components/optimizer/GoalConstraintDisclosure";
@@ -1264,7 +1264,7 @@ function AlignmentBar({ label, score, barColor }: { label: string; score: number
   );
 }
 
-function ConsensusSection({ consensus, historical }: { consensus: OptimizerConsensus; historical: boolean }) {
+function ConsensusSection({ consensus, historical, legacyAssessment = false }: { consensus: OptimizerConsensus; historical: boolean; legacyAssessment?: boolean }) {
   const ct = consensus.consensus_type;
 
   // Legacy path: old history rows without consensus_type
@@ -1278,9 +1278,9 @@ function ConsensusSection({ consensus, historical }: { consensus: OptimizerConse
     return (
       <section className={`border-2 rounded-xl p-5 shadow-sm space-y-3 ${isNoAction ? "bg-green-50 border-green-300" : "bg-white border-blue-200"}`}>
         <div className="flex items-center gap-2 flex-wrap">
-          <h3 className="font-semibold text-gray-800">Consensus Engine</h3>
+          <h3 className="font-semibold text-gray-800">{legacyAssessment ? "Legacy Consensus Assessment" : "Consensus Engine"}</h3>
           <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full border ${isNoAction ? "bg-green-100 border-green-300 text-green-700" : "bg-blue-100 border-blue-200 text-blue-700"}`}>
-            {isNoAction ? "No Action" : consensus.recommended === "layer1" || consensus.recommended === "layer2" ? "Rebalance" : "Decision unavailable"}
+            {legacyAssessment ? `Legacy assessment result: ${consensus.consensus_decision ?? "Unavailable"}` : isNoAction ? "No Action" : consensus.recommended === "layer1" || consensus.recommended === "layer2" ? "Rebalance" : "Decision unavailable"}
           </span>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
@@ -1334,7 +1334,7 @@ function ConsensusSection({ consensus, historical }: { consensus: OptimizerConse
     <section className={`border-2 rounded-xl p-5 shadow-sm space-y-4 ${cfg.section}`}>
       {/* Header row */}
       <div className="flex items-center gap-3 flex-wrap">
-        <h3 className="font-semibold text-gray-800">Consensus Engine</h3>
+        <h3 className="font-semibold text-gray-800">{legacyAssessment ? "Legacy Consensus Assessment" : "Consensus Engine"}</h3>
         <span className={`text-xs font-bold px-2.5 py-1 rounded-full border ${cfg.badge}`}>
           {cfg.icon} {cfg.label}
         </span>
@@ -1369,7 +1369,7 @@ function ConsensusSection({ consensus, historical }: { consensus: OptimizerConse
       {/* Committee Resolution — what the committee decided, not repeating the Challenger's reasons */}
       {consensus.disagreement_reasons && consensus.disagreement_reasons.length > 0 && (
         <div className="space-y-1">
-          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Committee Resolution</p>
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{legacyAssessment ? "Legacy consensus resolution" : "Committee Resolution"}</p>
           <p className="text-xs text-gray-600">
             Resolved {consensus.disagreement_reasons.length} disagreement{consensus.disagreement_reasons.length !== 1 ? "s" : ""}
             {consensus.recommended === "layer1" ? " — following Strategist"
@@ -1399,7 +1399,7 @@ function ConsensusSection({ consensus, historical }: { consensus: OptimizerConse
           <p className={`text-sm font-semibold ${cfg.badgeText}`}>{followLabel}</p>
         </div>
         <div className="bg-white/60 rounded-lg p-2.5">
-          <p className="text-xs text-gray-400 mb-0.5">Decision</p>
+          <p className="text-xs text-gray-400 mb-0.5">{legacyAssessment ? "Legacy assessment result" : "Decision"}</p>
           <p className={`text-sm font-semibold ${cfg.badgeText}`}>
             {consensus.consensus_decision ?? "—"}
           </p>
@@ -1409,7 +1409,7 @@ function ConsensusSection({ consensus, historical }: { consensus: OptimizerConse
       {/* Recommended action */}
       {consensus.recommended_action && (
         <div className="border-t border-white/50 pt-3">
-          <p className="text-xs font-medium text-gray-500 mb-1">{historical ? "Recorded historical recommendation — model claims not independently verified" : "Recommended action"}</p>
+          <p className="text-xs font-medium text-gray-500 mb-1">{legacyAssessment ? "Recorded legacy consensus rationale" : historical ? "Recorded historical recommendation — model claims not independently verified" : "Recommended action"}</p>
           <p className={`text-sm ${cfg.summaryText}`}>{consensus.recommended_action}</p>
         </div>
       )}
@@ -1732,10 +1732,12 @@ function CommitteeDecisionCard({
   consensus,
   allocations,
   historical,
+  legacyAssessment = false,
 }: {
   consensus: OptimizerConsensus;
   allocations?: TargetAllocation[];
   historical: boolean;
+  legacyAssessment?: boolean;
 }) {
   const ct = consensus.consensus_type;
   const cfg = ct ? (CONSENSUS_TYPE_CFG[ct] ?? CONSENSUS_TYPE_CFG.WEAK_CONSENSUS) : null;
@@ -1774,20 +1776,20 @@ function CommitteeDecisionCard({
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
           <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1">
-            Committee Decision
+            {legacyAssessment ? "Legacy Consensus Assessment" : "Committee Decision"}
           </p>
           {isDeadlock ? (
             <>
-              <h3 className="font-bold text-lg text-red-800">Human Review Required</h3>
+              <h3 className="font-bold text-lg text-red-800">{legacyAssessment ? "Strategic conflict (legacy assessment)" : "Human Review Required"}</h3>
               <p className="text-sm text-red-600 mt-0.5">No clear consensus between layers.</p>
             </>
           ) : (
             <>
               <h3 className="font-bold text-lg text-gray-900">
-                Following: <span className={cfg?.badgeText ?? "text-gray-800"}>{followLabel}</span>
+                {legacyAssessment ? "Legacy assessment: " : "Following: "}<span className={cfg?.badgeText ?? "text-gray-800"}>{followLabel}</span>
               </h3>
               <p className="text-xs text-gray-500 mt-0.5">
-                The AI's final call after reconciling Strategist, Challenger, and Risk Auditor.
+                {legacyAssessment ? "Recorded consensus assessment; the frozen Committee Selection above owns the current decision." : "The AI's final call after reconciling Strategist, Challenger, and Risk Auditor."}
               </p>
             </>
           )}
@@ -1902,6 +1904,8 @@ function ResultPanel({ result, loading, profiles, portfolioId, onForceRebalance,
   }
 
   const totalValue = result.total_value ?? 0;
+  const legacyAssessment = result.active_policy?.optimizer_policy_mode === OPTIMIZER_POLICY_MUJI_V2 &&
+    result.active_policy?.strategy_selection_mode === STRATEGY_SELECTION_V1;
   const riskMap: Record<string, string> = {};
   for (const flag of result.layer3_result?.risk_flags ?? []) {
     if (!result.layer3_result?.claim_validation_version || flag.category === "OWNER_INTENT_REVIEW" || flag.scoring_eligible !== true || flag.validation_status !== "VERIFIED") continue;
@@ -1978,16 +1982,17 @@ function ResultPanel({ result, loading, profiles, portfolioId, onForceRebalance,
             consensus={result.consensus}
             allocations={result.target_allocations}
             historical={!result.layer3_result?.claim_validation_version}
+            legacyAssessment={legacyAssessment}
           />
           {sectorAdvisoryFor(result) && <p className="text-xs text-gray-600">
-            Committee confidence describes agreement on the investment decision. Sector concentration is reviewed separately in the Execution Plan.
+            {legacyAssessment ? "Legacy consensus confidence describes model agreement, not the frozen Committee Selection. " : "Committee confidence describes agreement on the investment decision. "}Sector concentration is reviewed separately in the Execution Plan.
           </p>}
           <CollapsibleSection
             title="Full Consensus Detail"
-            summary="Alignment scores, strength matrix, and committee resolution"
+            summary={legacyAssessment ? "Recorded legacy alignment scores and consensus assessment" : "Alignment scores, strength matrix, and committee resolution"}
           >
             <p className="text-xs text-gray-600 mb-2">Stored assessment scores describe this run; they are not probabilities of returns. Historical model narratives are not independently verified evidence.</p>
-            <ConsensusSection consensus={result.consensus} historical={!result.layer3_result?.claim_validation_version} />
+            <ConsensusSection consensus={result.consensus} historical={!result.layer3_result?.claim_validation_version} legacyAssessment={legacyAssessment} />
           </CollapsibleSection>
         </div>
       )}

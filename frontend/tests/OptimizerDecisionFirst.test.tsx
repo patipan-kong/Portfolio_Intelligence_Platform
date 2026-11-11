@@ -47,6 +47,19 @@ vi.mock("@/components/WorkspaceScopeSwitcher", () => ({ default: () => <span>TA 
 vi.mock("@/components/operations-center/quant/OperationsTimeline", () => ({ default: () => null }));
 
 const fixture = (id: number) => structuredClone(id === 217 ? raw217 : raw218) as unknown as OptimizerResult;
+function optedInHold(): OptimizerResult {
+  const result = fixture(218);
+  result.active_policy = { ...result.active_policy!, optimizer_policy_mode: "wealth.optimizer-muji.v2",
+    strategy_selection_mode: "wealth.strategy-selection.v1" };
+  result.consensus = { ...result.consensus!, consensus_type: "STRATEGIC_CONFLICT",
+    consensus_decision: "REBALANCE" };
+  result.strategy_selection = { version: "wealth.strategy-selection.v1", state: "SELECTED",
+    selected_candidate_id: "hold-current", reason_codes: ["CAUTIONED_HOLD"],
+    material_uncertainty: ["NO_ELIGIBLE_ACTION"], comparison_against_hold: "No defensible action established." };
+  result.strategic_candidates = { version: "wealth.strategic-candidates.v1", status: "PREPARED_NOT_SELECTED",
+    candidates: [{ id: "hold-current", family: "HOLD", eligibility_status: "ELIGIBLE", proposed_allocations: [] }] };
+  return result;
+}
 const history = [218, 217].map((id) => ({ id, portfolio_name: "TA", analyzed_at: fixture(id).analyzed_at,
   swap_count: 0, optimizer_status: fixture(id).status, final_consensus_score: id === 218 ? 64 : 26 }));
 function navigate(url: string) {
@@ -76,6 +89,43 @@ beforeEach(() => {
 });
 
 describe("Selected historical journeys", () => {
+  it("keeps frozen Committee HOLD authoritative when legacy consensus conflicts and says REBALANCE", async () => {
+    api.getOptimizerHistory.mockResolvedValue(optedInHold());
+    render(<OptimizerPage />);
+    const decision = await screen.findByTestId("committee-decision");
+    expect(decision).toHaveTextContent("Decision owner: Committee · SELECTED");
+    expect(decision).toHaveTextContent("Selected strategy: HOLD · hold-current");
+    expect(screen.getByText("Legacy Consensus Assessment")).toBeInTheDocument();
+    expect(screen.getByText("Strategic conflict (legacy assessment)")).toBeInTheDocument();
+    expect(screen.queryByText("Human Review Required")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Full Consensus Detail/ }));
+    expect(screen.getByText("Legacy assessment result").parentElement).toHaveTextContent("REBALANCE");
+  });
+
+  it("retains the legacy consensus display without exact opt-in markers", async () => {
+    const result = optedInHold();
+    result.active_policy = { ...result.active_policy!, strategy_selection_mode: undefined };
+    api.getOptimizerHistory.mockResolvedValue(result);
+    render(<OptimizerPage />);
+    await screen.findByText("Decision owner: Challenger");
+    expect(screen.getByText("Committee Decision")).toBeInTheDocument();
+    expect(screen.getByText("Human Review Required")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Full Consensus Detail/ }));
+    expect(screen.getByText("REBALANCE")).toBeInTheDocument();
+  });
+
+  it("does not substitute legacy consensus for missing frozen selection evidence", async () => {
+    const result = optedInHold();
+    result.strategy_selection = null;
+    api.getOptimizerHistory.mockResolvedValue(result);
+    render(<OptimizerPage />);
+    await screen.findByText(/Selection Evidence Unavailable/);
+    expect(screen.getByText("Legacy Consensus Assessment")).toBeInTheDocument();
+    expect(screen.getByText("Strategic conflict (legacy assessment)")).toBeInTheDocument();
+    expect(screen.queryByText("Human Review Required")).not.toBeInTheDocument();
+    expect(screen.queryByText("Decision owner: Challenger")).not.toBeInTheDocument();
+  });
+
   it("keeps the per-run Committee opt-in off for history and sends it only when checked", async () => {
     api.runOptimizer.mockResolvedValue(fixture(218));
     render(<OptimizerPage />);
