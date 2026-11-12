@@ -3729,7 +3729,7 @@ importance that the captured evidence cannot establish.
 
 **Date:** 2026-11-12
 **Problem:** `main.analyze_optimizer` computes the investment score as `combined_score = 0.4 * ta_score + 0.6 * fa_score` (FA −4..+7, TA −7..+7, so about −5.2..+7.0; no normalization). `execution_penalty.apply_execution_score_penalties` then replaced it with `max(5.0, combined_score - combined_score_penalty)`. The floor and the 4/8/14 penalties assume a 0–100 scale. On the real scale, `combined_score - penalty` is always below 5, so every penalised instrument got exactly 5.0, whatever its actual score.
-- In production every DR is classified MEDIUM risk (no liquidity inputs reach the classifier), so all 19 Registry DRs in histories 247–249 got penalty 4.0 and a score of 5.0.
+- In production every DR is classified MEDIUM risk (no liquidity inputs reach the classifier), so all 19 DRs in histories 247–249 (4 Registry-confirmed DRs + 15 legacy-fallback DRs) got penalty 4.0 and a score of 5.0.
 - Their raw scores ranged from 0.2 to 4.6, so each one was raised, and together they ranked above every ordinary stock (highest raw score 3.8).
 - The defect has existed since the penalty was introduced in Phase 3B.10 (2026-05-26); it never lowered a score.
 - The distorted score reached the Challenger and fallback prompts, `target_allocations[].combined_score`, `watchlist_ranking[].combined_score`, the recommendation snapshot scores map and `signal_history.score_at_signal`.
@@ -3762,7 +3762,7 @@ The fixture `tests/fixtures/dr_execution_score_frozen.json` is a read-only expor
   - The `score_at_signal` "(0-100)" model comment is stale.
 **Live validation (history 250, after a backend restart; PASS WITH LIMITATIONS):**
 - Setup: same HIGH_VOLATILITY emergency regime, hard constraints and Committee opt-in as history 249. The backend restarted after the source change; no instrument carries `execution_penalized`.
-- Scores: all 89 instruments carry the raw `round(0.4 * ta_score + 0.6 * fa_score, 1)`. None of the 19 Registry DRs is at 5.0 any more: CATL01.BK 4.6, MICRON01.BK 4.2, NVDA01.BK 4.0, GOOGL01.BK 3.6, down to TSLA01.BK 0.2 and GOLDM01.BK 0.0 (its TA moved from 1 to 0). Five ordinary stocks changed only through a one-point TA move.
+- Scores: all 89 instruments carry the raw `round(0.4 * ta_score + 0.6 * fa_score, 1)`. None of the 19 DRs (4 Registry-confirmed DRs + 15 legacy-fallback DRs) is at 5.0 any more: CATL01.BK 4.6, MICRON01.BK 4.2, NVDA01.BK 4.0, GOOGL01.BK 3.6, down to TSLA01.BK 0.2 and GOLDM01.BK 0.0 (its TA moved from 1 to 0). Five ordinary stocks changed only through a one-point TA move.
 - The raw scores reach `target_allocations`, the Challenger's allocation rows, `watchlist_ranking`, and the snapshot scores map and projected allocations.
 - Execution safeguards unchanged: the execution context, including the canonical instrument context, matches history 249 exactly for all 89 symbols. That covers DR classification (19 DRs, MEDIUM, quality 52.2), the 15% DR position cap, the DR portfolio cap, warnings, slippage (DR 0.5%, equity 0.3%) and the informational 4.0 penalty estimate. Hard constraints and the emergency override are unchanged. The `concentration` and `scheduled_execution` differences come only from price moves (equity denominator 502,600 to 504,300).
 - The Strategist and Challenger proposed no trades. The Challenger returned NO_ACTION (INSUFFICIENT_EDGE) with five HOLD rows. No model text mentions penalties, deductions or 5.0 scores.
@@ -3778,3 +3778,61 @@ The fixture `tests/fixtures/dr_execution_score_frozen.json` is a read-only expor
   - The Challenger now agrees with the Strategist, and the Auditor's advisory severities shifted. This is model variance on a single run.
 
 **Disposition:** `IMPLEMENTED`
+
+## MUJI V2 Phase 4 Slice 4.4A / 4.4B — AMZN01 / META01 DR Registry Repair
+
+**Date:** 2026-11-12
+**Problem:** AMZN01.BK (asset 24) and META01.BK (asset 34) resolve from the Registry as EQUITY. Execution risk therefore gives them the EQUITY profile (`SHADOW_MISMATCH`), while the scores map, FA agent and sector lookup treat them as DRs.
+- The July 2026 ledger bootstrap mints every ledger symbol as `AssetType.EQUITY` (`services/bootstrap_planner.py`). DR form comes only from an outgoing `DEPOSITARY_RECEIPT_OF` relationship.
+- The 2026-10-08 controlled repair linked only the four DRs then held (AAPL01, GOOGL01, MICRON01, NVDA01). AMZN01 and META01 were outside its scope and have no underlying Asset.
+- In history 250, the DR profile comes from 4 Registry-confirmed DRs and 15 legacy-fallback DRs (no Registry Asset; DR only through the deletable compatibility classifier). AMZN01.BK and META01.BK are in neither group.
+**Authoritative evidence (owner-supplied SET announcements):**
+- AMZN01: https://www.set.or.th/th/market/news-and-alert/newsdetails?id=96733001&symbol=AMZN01. Depositary Receipt; issuer Bualuang Securities (BLS); underlying AMZN, Amazon.com, Inc., NASDAQ; DR : underlying 340 : 1; first traded on SET 2025-05-15.
+- META01: https://www.set.or.th/th/market/news-and-alert/newsdetails?id=96735401. Depositary Receipt; issuer BLS; underlying META, Meta Platforms, Inc., NASDAQ; DR : underlying 3400 : 1; first traded on SET 2025-05-15.
+- Corroboration only, not authority: at those ratios, the cached 2026-11-12 quotes imply USD/THB of about 33.5 (AMZN) and 33.8 (META). Ticker spelling is not used as evidence.
+**Decision (Option A; prepared in 4.4A, applied in 4.4B):** Repair the Registry data with the existing remediation runner, following the 2026-10-08 two-stage pattern. No code change.
+- Stage 1 `MINT_ASSET`: AMZN and META as EQUITY / US / NASDAQ / USD, tradable, one `PROVIDER_SYMBOL` identifier each, evidence source = the SET announcement.
+- Stage 2 `LINK_DR_RELATIONSHIP`: asset 24 → AMZN and asset 34 → META, using the asset ids returned by stage 1; `effective_date` stays null.
+- Local assets 24 and 34, their identifiers, ledger references and transactions are untouched. `lot_size` and `settlement_cycle` stay unset; `fractional_support=false` is the contract default, not verified brokerage capability.
+**Dry run (Slice 4.4A, no database writes):**
+- Live PostgreSQL was read only in read-only transactions. Preflight PASS: alembic `o7p8q9r0s1t2`; assets 24/34 are EQUITY/SET/THB with one `ledger:historical` identifier; no AMZN/META asset or identifier; no relationships or findings. Both mint instructions validate against live data and neither is already applied.
+- The runner's own dry-run issues INSERTs inside a rolled-back savepoint, and PostgreSQL sequences advance even on rollback. The runner was therefore exercised on an exact in-memory copy of the six Registry tables. Before the repair, that copy reproduces history 250's stored execution context exactly.
+- Stage 1 dry-run: 2 × `WOULD_APPLY`. Stage 2, after stage 1 on the copy: 2 × `WOULD_APPLY`. A full second pass: 4 × `ALREADY_APPLIED` with identical fingerprints. A conflicting underlying mint and a re-link to a different underlying are both refused.
+- Expected rows: assets AMZN (49) and META (50); identifiers 49 and 50; relationships 5 (24 → 49) and 6 (34 → 50). These ids assume the current sequences (48 / 48 / 4). No other row in any table changes. All 50 PostgreSQL table fingerprints and the sequences were identical before and after the dry run.
+**Expected effect on frozen history 250 inputs:**
+- Both resolve as RESOLVED / TRADABLE / DEPOSITARY_RECEIPT with unchanged THB / SET local facts.
+- Per symbol: EQUITY → DR; quality 66.8 → 52.2 (risk stays MEDIUM); position cap none → 15%; slippage 0.3% → 0.5%; warnings gain "DR - Execution Sensitive" and "Low Liquidity"; informational penalty estimate 0 → 4.0; `SHADOW_MISMATCH` cleared.
+- `dr_symbols` 19 → 21. The execution summary and the canonical cap list add both symbols. Held positions in the canonical context are unchanged; the prompt block hash changes.
+- `combined_score` is unchanged (AMZN01 3.8, META01 3.6) and the raw formula holds for all 89 symbols. The other 87 symbols' execution metadata is unchanged.
+- The fee schedule switches to DR_STANDARD, which has the same rates. Eligibility, the scheduler, policy and consensus do not read the instrument type.
+**Exclusions:** the 15 legacy-fallback DRs; AMZON01 (asset 25) and MICRON.BK (asset 35); the resolver, execution scoring, liquidity classifier, policy, candidate eligibility, scheduler and historical records.
+**Verification:** the existing suites pass unchanged (189 tests) after the 4.4A dry run and again after the 4.4B apply: remediation 12, Registry preparation 14, instrument facts 15, execution penalty 14, canonical instrument context 6, eligibility 15, registry service 19, registry lookup 18, asset registry 42, DR execution score 34.
+**Apply (Slice 4.4B, owner-approved, 2026-11-12 05:18 UTC):** the owner ran `artifacts/dr-registry-repair-20261112/repair.py --commit`. Verdict `REPAIR COMPLETE`.
+- One PostgreSQL transaction: `lock_timeout` 5 s and all 50 tables locked SHARE ROW EXCLUSIVE. The preflight was re-run inside the lock (both `ABSENT`). Stage 1 ran, then stage 2 with the ids returned by stage 1. Verification ran inside the transaction, then the outer COMMIT, then a read-only readback.
+- Actual underlying ids: AMZN 49 and META 50, as predicted. Exactly the six approved rows were inserted:
+  - `assets` 49 AMZN and 50 META: EQUITY / US / NASDAQ / USD / ACTIVE, tradable, `fractional_support` false, `lot_size` and `settlement_cycle` null.
+  - `asset_identifiers` 49 and 50: `PROVIDER_SYMBOL` AMZN / META, current, source = the SET announcement URL.
+  - `asset_relationships` 5 (24 → 49) and 6 (34 → 50): `DEPOSITARY_RECEIPT_OF`, `effective_date` null.
+- Only `assets`, `asset_identifiers` and `asset_relationships` changed. The other 47 table fingerprints were identical before and after, and no existing row changed. The in-transaction second pass returned 4 × `ALREADY_APPLIED` with no change.
+- Evidence (local, sanitized): `artifacts/dr-registry-repair-20261112/apply/` (`verified-before-commit.json`, `apply-report.json`) and `post-commit/post-commit-verification.json`.
+**Post-commit verification (separate session, read-only transactions only):**
+- The live fingerprints of all 50 tables equal the after-state recorded by the apply.
+- Registry counts: assets 29, asset_identifiers 29, asset_relationships 6, classifications 0, findings 0, bootstrap checkpoints 21. Sequences 50 / 50 / 6, with no gaps.
+- Relationships 1–6 are all `DEPOSITARY_RECEIPT_OF` with a null effective date: the four 2026-10-08 links unchanged, plus 24 → 49 and 34 → 50. No duplicate links; no asset has more than one outgoing link; no links point into 24 or 34; exactly one DR points at each underlying; no dangling references; exactly one AMZN and one META candidate. Local assets 24 and 34 and their `ledger:historical` identifiers are unchanged.
+- The preflight reports both symbols `ALREADY_APPLIED`. Read-only idempotency check: `_already_applied` and the runner's dry-run, run inside a read-only transaction, return `ALREADY_APPLIED` for all four instructions (mints → 49 / 50, links → 24 / 34).
+- Both resolve as RESOLVED / TRADABLE / DEPOSITARY_RECEIPT with underlying 49 / 50 and THB / SET local facts. DR profile: quality 52.2, cap 15%, slippage 0.5%, warnings "DR - Execution Sensitive" and "Low Liquidity", informational penalty estimate 4.0, no `SHADOW_MISMATCH`.
+- Frozen history 250 inputs against the live Registry, compared with the stored context:
+  - Only AMZN01.BK and META01.BK change. Besides the fields above, the DR profile defaults move the liquidity score 68 → 55 and the spread score 65 → 48. The other 87 symbols are unchanged.
+  - `dr_symbols` 19 → 21: exactly these two added, none removed.
+  - Context fields changed: `canonical_instrument_context` (two 15% cap limits added from Registry facts; held positions unchanged), `dr_symbols` and `execution_summary`.
+  - This matches the dry-run prediction exactly.
+  - `combined_score` is unchanged (AMZN01 3.8, META01 3.6), the scores map is not mutated, and the raw formula holds for all 89 symbols.
+- The verification left every table fingerprint and sequence unchanged.
+**Known limits:**
+- Current classification only; no historical effective date. Stored runs, snapshots and history 250 keep their recorded pre-repair context. The effect has been verified on frozen inputs only and will first appear in the next Optimizer run, which has not been run.
+- The 15 legacy-fallback DRs still have no Registry Asset and remain DRs only through the deletable compatibility classifier (out of scope).
+- "Low Liquidity" and the 52.2 quality are DR profile defaults, because no liquidity inputs reach the classifier (separate issue).
+- The 15% cap clamps BUY/ACCUMULATE targets only in primary layered finalization; the 40% DR basket remains prompt-only guidance.
+- The issuer factsheets could not be machine-read; the evidence rests on the owner-supplied SET announcements.
+
+**Disposition:** `APPLIED — VERIFIED`
