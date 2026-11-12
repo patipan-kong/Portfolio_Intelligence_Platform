@@ -3836,3 +3836,64 @@ The fixture `tests/fixtures/dr_execution_score_frozen.json` is a read-only expor
 - The issuer factsheets could not be machine-read; the evidence rests on the owner-supplied SET announcements.
 
 **Disposition:** `APPLIED — VERIFIED`
+
+## MUJI V2 Phase 4 Slice 4.5A — Observed Liquidity Evidence (Shadow Mode)
+
+**Date:** 2026-11-12
+**Problem (Slice 4.5 investigation):** `classify_execution` estimates average daily traded value as `avg_volume * current_price` against THB thresholds (1M / 5M / 20M / 100M), but `main.py` has never put volume into `scores_map`. Every instrument therefore gets its asset-type baseline: in histories 249 and 250 all 89 are MEDIUM, and the HIGH / CRITICAL risk levels and the 10% illiquid cap never fire.
+- Timing computes the 20-day average volume, then drops it. For DRs it reads the underlying (`NVDA`, `MU`, `300750.SZ`), a different instrument, venue and unit.
+- Wiring that timing volume in would make DRs look liquid.
+**Decision (Option A, shadow mode only):** Build observed-liquidity evidence from each instrument's own listing history, and the risk the existing classifier would assign from it. Keep it beside the active execution context, never inside it.
+- `services/optimizer/liquidity_evidence.py`: pure helper. `build_liquidity_evidence` and `build_liquidity_shadow` (schema `liquidity_shadow.v1`, `authoritative: false`).
+- The hypothetical profile is `classify_execution` itself, fed `avg_volume` and the listing price only. It never uses the single-day `volume` fallback.
+- `services/optimizer/liquidity_evidence_source.py`: plain SELECT loaders for `market_data_cache` unbound `history:{period}:1d` rows and for a stored run's scores map. No hit-count updates, cache writes or provider fetches.
+- `services/data_fetcher.py`: two read-only public accessors, `unbound_history_guard_reasons` (the WP3.3 refusal `fetch_history` applies) and `history_payload_to_frame` (the cache decoder).
+- `manage.py liquidity_shadow --history N [--json PATH]`: diagnostic in a READ ONLY transaction, always rolled back.
+**Evidence rules (one failure makes the evidence `UNOBSERVED` with a bounded reason):**
+- Listing identity: the exact listing symbol the optimizer quotes (`NVDA01.BK`, not `NVDA`). The DR-to-underlying resolver is never consulted.
+- Rows for another symbol: `HISTORY_SYMBOL_MISMATCH`.
+- Quarantine: a listing the conversion guard refuses: `LISTING_QUARANTINED`.
+- Units: listing currency THB from Registry facts, or the logged SET symbol convention when the Registry has no identity. Otherwise `CURRENCY_UNKNOWN`, or `UNSUPPORTED_CURRENCY` (also for a non-SET venue).
+- Complete sessions: exchange-local (Asia/Bangkok) bar dates strictly before the date of `min(fetched_at, as_of)`. A bar from the observation day is never used, so a partial session cannot enter the average.
+- Window: 20 complete sessions; fewer is `INSUFFICIENT_SESSIONS`.
+- Freshness: last complete session at most 7 calendar days before as-of; otherwise `STALE_HISTORY`. Cache TTL expiry is recorded but not by itself a rejection.
+- Volume: present, finite and positive across the window. Otherwise `VOLUME_MISSING`, `VOLUME_INVALID`, or `VOLUME_ZERO` (the provider emits 0 for both no-trade days and missing data).
+- Price: present, finite and positive (`PRICE_MISSING`, `PRICE_INVALID`). Within ×2 of the last complete close, as a unit guard (`PRICE_LISTING_MISMATCH`).
+- Several cached rows: a usable row wins, then the latest complete session, then more sessions, then the latest capture. Never query order.
+- `UNOBSERVED` produces no hypothetical profile and is never read as low liquidity.
+**Isolation:** no production module imports the shadow (enforced by a test).
+- Position caps, slippage, eligibility, candidates, allocations, scheduling, policy, consensus and every Strategist / Challenger / Auditor / Committee prompt read only the unchanged active context.
+- No change to `scores_map`, TA, FA, `combined_score`, the classifier thresholds or the Registry DR identity rules.
+- No tables, migrations, jobs or packages. Stored runs and snapshots are only read.
+**Result (history 250 universe, run-day cache, current Registry facts; same for 249):**
+- Evidence: 85 `OBSERVED`, 4 `UNOBSERVED`.
+  - `INSUFFICIENT_SESSIONS`: ABNB06, AIA06 (19 sessions each).
+  - `STALE_HISTORY`: BANPU (provider history ends 2026-08-11).
+  - `VOLUME_ZERO`: PIS (one zero-volume session).
+  - The conversion guard currently quarantines nothing.
+- Hypothetical risk: 59 LOW, 14 MEDIUM, 10 HIGH, 2 CRITICAL. The active risk is MEDIUM for all 89.
+  - EQUITY: 59 LOW, 5 MEDIUM, 2 HIGH (PREB, SYNTEC), 2 unobserved.
+  - DR: 9 MEDIUM, 8 HIGH, 2 CRITICAL, 2 unobserved.
+- Stricter position cap, 15% to 10% (10 DRs):
+  - HIGH: AAPL01, AMZN01, GOLDM01, META01, MSFT01, SMIC01, TSLA01, VRT01.
+  - CRITICAL: BABA01, ORCL01.
+  - The two HIGH equities keep no cap: the non-DR cap applies only at CRITICAL.
+**Verification:** `tests/test_liquidity_evidence_shadow.py`, 55 tests:
+- listing identity, including underlying decoys and the repaired AMZN01 / META01 Registry facts;
+- every evidence rule;
+- the 1M / 5M / 20M / 100M boundaries for EQUITY and DR;
+- pinned classifier constants;
+- byte-identical active context and prompt block for frozen histories 249 and 250;
+- the no-import isolation scan;
+- loaders that issue only SELECTs;
+- the history 250 report.
+The fixture `tests/fixtures/liquidity_evidence_shadow_frozen.json` is a read-only export.
+- Full backend suite, run file by file with read-only database connections: 4,478 passed, 21 failed.
+  - The failing, erroring and crashing files are exactly those of the Slice 4.3B baseline, with the same counts. No additional failures.
+  - Four ad-hoc network scripts with no pytest summary were skipped.
+**Known limits:** shadow only. The classifier thresholds are unchanged and not yet approved for active use, so nothing reaches decisions until a later slice approves them.
+- `VOLUME_ZERO` cannot tell a genuine no-trade day from missing data, so the thinnest names may stay unobserved.
+- The daily-history cache holds only whatever the TA agent last fetched (normally 1 month, 19–21 sessions), so recently listed DRs fall short.
+- ADTV uses the frozen quote times the 20-session mean volume, as the classifier does, not a per-session value-weighted turnover.
+
+**Disposition:** `IMPLEMENTED (SHADOW)`

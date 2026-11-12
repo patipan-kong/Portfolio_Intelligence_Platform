@@ -280,6 +280,28 @@ def resolve_successor_bindings(
     }
 
 
+def unbound_history_guard_reasons(symbols: list[str]) -> dict[str, str]:
+    """Read-only: the WP3.3 refusal ``fetch_history`` would apply to each unbound symbol.
+
+    Returns ``{symbol: QuarantineReason value}`` for every symbol an unbound
+    history request would refuse (converted, ambiguous, or guard source
+    unavailable). Reads the guard projection once; performs no fetch and no
+    cache access. Used by the Slice 4.5A liquidity shadow diagnostic.
+    """
+    projection = _read_conversion_guard_projection()
+    reasons: dict[str, str] = {}
+    for symbol in symbols:
+        result = _guard_result_from_projection(symbol, projection)
+        if result is not None:
+            reasons[symbol] = result.reason.value
+    return reasons
+
+
+def history_payload_to_frame(payload: dict) -> Optional[pd.DataFrame]:
+    """Public read-only decoder for a cached history payload (same as the cache path)."""
+    return _payload_to_df(payload)
+
+
 def _history_ttl(period: str, interval: str) -> int:
     if interval in ("1m", "2m", "5m", "15m", "30m", "60m", "1h"):
         return _TTL_HIST_INTRA

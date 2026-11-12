@@ -69,6 +69,11 @@ Seed Registry SECTOR classification from the static taxonomy (Classification
 Consolidation; defaults to dry run, never overwrites an existing fact):
     python manage.py seed_registry_classification
     python manage.py seed_registry_classification --commit
+
+Observed-liquidity shadow diagnostic for one stored optimizer run (Slice 4.5A;
+read-only, non-authoritative, never changes any execution decision):
+    python manage.py liquidity_shadow --history 250
+    python manage.py liquidity_shadow --history 250 --json shadow.json
 """
 from __future__ import annotations
 
@@ -1741,6 +1746,60 @@ def _cmd_backfill_recommendation_grades(args: argparse.Namespace) -> int:
     print(f"\n{_hr()}")
     print(f"Done in {elapsed:.2f}s")
     return 1 if errors else 0
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MUJI V2 Phase 4 Slice 4.5A: liquidity_shadow (read-only diagnostic)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _cmd_liquidity_shadow(args: argparse.Namespace) -> int:
+    """Observed-liquidity SHADOW report for one stored optimizer run.
+
+    Runs inside a READ ONLY transaction that is always rolled back. Reads the
+    stored scores map, current Registry facts and cached listing histories;
+    never fetches market data, never writes the cache, never changes a run.
+    """
+    from sqlalchemy import text as _sql_text
+    from services.optimizer.liquidity_evidence_source import evaluate_history_liquidity_shadow
+
+    db = SessionLocal()
+    try:
+        if db.get_bind().dialect.name == "postgresql":
+            db.execute(_sql_text("SET TRANSACTION READ ONLY"))
+        try:
+            report = evaluate_history_liquidity_shadow(db, args.history)
+        except LookupError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 1
+    finally:
+        db.rollback()
+        db.close()
+
+    summary = report["summary"]
+    print(f"\n{_hr()}")
+    print(f"Observed Liquidity Shadow  —  history {args.history}  —  SHADOW, NOT AUTHORITATIVE")
+    print(_hr())
+    print(f"  As of                 : {report['as_of']}")
+    print(f"  Instruments           : {summary['instruments']}")
+    print(f"  Evidence status       : {summary['evidence_status']}")
+    print(f"  Hypothetical risk     : {summary['hypothetical_risk']}")
+    for asset_type, counts in summary["by_active_asset_type"].items():
+        print(f"    {asset_type:<20}: {counts}")
+    print("\nUnobserved (active baseline retained; never treated as low liquidity)")
+    for reason, symbols in summary["unobserved_symbols"].items():
+        print(f"  {reason:<24}: {', '.join(symbols)}")
+    print(f"\nWould receive a stricter position cap  ({len(summary['stricter_position_cap'])})")
+    for row in summary["stricter_position_cap"]:
+        adtv = row["est_avg_daily_traded_value"]
+        print(f"  {row['symbol']:<14} {row['active_risk']:>8} -> {row['hypothetical_risk']:<8} "
+              f"cap {row['active_cap_pct']} -> {row['hypothetical_cap_pct']}  "
+              f"est. ADTV {adtv:,.0f} THB")
+    print(_hr())
+    if args.json:
+        with open(args.json, "w", encoding="utf-8") as fh:
+            json.dump(report, fh, indent=1, ensure_ascii=False, default=str)
+        print(f"JSON written to {args.json}")
+    return 0
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -5943,6 +6002,23 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Skip the confirmation prompt when --commit is used",
     )
 
+    # ── liquidity_shadow ─────────────────────────────────────────────────────
+    liquidity = sub.add_parser(
+        "liquidity_shadow",
+        help="Observed-liquidity shadow report for one optimizer run (read-only, non-authoritative)",
+        description=textwrap.dedent("""\
+            MUJI V2 Phase 4 Slice 4.5A. Builds observed-liquidity evidence from
+            each instrument's own listing history (never a DR's underlying) and
+            the execution risk the existing classifier would assign with it,
+            beside the active execution context. Shadow only: no position cap,
+            slippage, eligibility, allocation, policy or prompt reads it.
+            Read-only transaction; no market-data fetch; no cache writes.
+        """),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    liquidity.add_argument("--history", type=int, required=True, help="optimizer_history id")
+    liquidity.add_argument("--json", default=None, help="Also write the full report to this path")
+
     return parser
 
 
@@ -6013,6 +6089,9 @@ def main() -> None:
         sys.exit(exit_code)
     elif args.command == "seed_registry_classification":
         exit_code = _cmd_seed_registry_classification(args)
+        sys.exit(exit_code)
+    elif args.command == "liquidity_shadow":
+        exit_code = _cmd_liquidity_shadow(args)
         sys.exit(exit_code)
     else:
         parser.print_help()
