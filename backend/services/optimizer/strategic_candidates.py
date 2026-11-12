@@ -9,6 +9,7 @@ from math import isfinite
 
 VERSION = "wealth.strategic-candidates.v1"
 SELECTION_VERSION = "wealth.strategy-selection.v1"
+REVIEW_DIAGNOSTICS_VERSION = "wealth.candidate-review-diagnostics.v1"
 FAMILIES = frozenset({"RAISE_CASH", "DEFENSIVE_ROTATION", "GROWTH_ROTATION"})
 _BUY = frozenset({"BUY", "ACCUMULATE"})
 _SELL = frozenset({"SELL", "REDUCE"})
@@ -358,6 +359,46 @@ def validate_candidate_reviews(raw, envelope):
     if set(reviews) != set(candidates):
         return {"status": "UNAVAILABLE", "reason": "INCOMPLETE_AUDITOR_COVERAGE", "reviews": reviews}
     return {"status": "AVAILABLE", "reason": None, "reviews": reviews}
+
+
+def _ref_list(value):
+    return [ref for ref in value if isinstance(ref, str)] if isinstance(value, list) else []
+
+
+def candidate_review_diagnostics(raw, envelope):
+    """Diagnostic-only evidence-quality findings for Auditor candidate reviews.
+
+    Reports refs cited as both supporting and opposing, opposing refs outside the
+    relevant_evidence view the Auditor was shown, and HOLD candidates whose
+    contract has no cited refs and therefore cannot carry supporting evidence.
+    Never rejects a review and is never read by validate_candidate_reviews,
+    eligibility, the Committee gate or material-conflict handling.
+    """
+    candidates = [c for c in (envelope or {}).get("candidates") or [] if isinstance(c, dict)]
+    view_refs = set(candidate_review_view(envelope)["relevant_evidence"]) if candidates else set()
+    reviews = {}
+    items = raw.get("candidate_reviews") if isinstance(raw, dict) else None
+    for item in items if isinstance(items, list) else []:
+        if isinstance(item, dict) and isinstance(item.get("candidate_id"), str):
+            reviews.setdefault(item["candidate_id"], item)  # first review per candidate
+    findings = []
+    for candidate in candidates:
+        candidate_id = candidate.get("id")
+        review = reviews.get(candidate_id)
+        supporting = set(_ref_list((review or {}).get("supporting_refs")))
+        opposing = list(dict.fromkeys(_ref_list((review or {}).get("opposing_refs"))))
+        if candidate.get("family") == "HOLD" and not candidate.get("observed_evidence_refs"):
+            findings.append({"code": "HOLD_SUPPORT_UNREPRESENTABLE", "candidate_id": candidate_id,
+                             "opposing_ref_count": len(opposing), "reviewed": review is not None})
+        overlap = [ref for ref in opposing if ref in supporting]
+        if overlap:
+            findings.append({"code": "SUPPORT_OPPOSITION_OVERLAP", "candidate_id": candidate_id,
+                             "refs": overlap})
+        outside = [ref for ref in opposing if ref not in view_refs]
+        if outside:
+            findings.append({"code": "OPPOSING_OUTSIDE_REVIEW_VIEW", "candidate_id": candidate_id,
+                             "refs": outside})
+    return {"version": REVIEW_DIAGNOSTICS_VERSION, "diagnostic_only": True, "findings": findings}
 
 
 def decide_selection(envelope, audit, committee, *, hold_safe=True, failure_reason=None):

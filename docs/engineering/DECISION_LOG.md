@@ -3897,3 +3897,53 @@ The fixture `tests/fixtures/liquidity_evidence_shadow_frozen.json` is a read-onl
 - ADTV uses the frozen quote times the 20-session mean volume, as the classifier does, not a per-session value-weighted turnover.
 
 **Disposition:** `IMPLEMENTED (SHADOW)`
+
+## MUJI V2 Phase 4 Slice 4.6A — Auditor Evidence Validation and Diagnostics
+
+**Date:** 2026-11-12
+**Problem (Slice 4.6 investigation, histories 245–250):** two proven contract defects in Auditor evidence handling.
+- **D1 / D1b, sector advisories:** `validate_auditor_claims` marked any claim citing a supplied sector-advisory row as `ADVISORY` and attached the real evidence as provenance. It did not check the symbol, and it kept the model's issue text, claim kind, category and severity, while policy and execution claims get deterministic text. Examples:
+  - History 245: `BG.BK`, a symbol outside the run's 89-symbol universe, was stored as an advisory with Healthcare provenance.
+  - History 249: "30% threshold exceeded for Healthcare sector" (evidence: observed 30.56%, limit 24.5%), and "32.73% threshold exceeded for Technology sector" (32.73% is the observed value; the limit is 25%).
+  - One Technology row was accepted twice, once for NVDA01 and once for MICRON01.
+  - A claim labelled `SECTOR_ADVISORY` with an unknown evidence ID was marked `ADVISORY` with no provenance.
+- **D3 / D4, candidate reviews:** `validate_candidate_reviews` checks only that refs are known.
+  - The same ref may be cited as both supporting and opposing: histories 245 and 246.
+  - Opposing refs may come from the whole catalog, though the prompt names `relevant_evidence`.
+  - `hold-current` has no cited refs, so its contract cannot carry supporting evidence. In history 249 all five FA scores were cited as opposing HOLD while the assessment called the positions "well-supported".
+**Decision:** correct D1 / D1b and add diagnostics for D3 / D4. Investment decisions are unchanged.
+- **Sector advisories** (`services/optimizer/auditor_claims.py`, new `_sector_claim`; routing unchanged):
+  - A claim is a valid advisory only when its evidence ID is a supplied advisory row with a sector, a finite observed % and a finite limit %, and its symbol is `PORTFOLIO` or a member of that sector.
+  - Only the first valid claim per evidence ID is accepted. Later ones are `UNSUPPORTED` ("Duplicate sector advisory reference; first occurrence retained").
+  - Unknown, mismatched or incomplete evidence and non-member symbols are `UNSUPPORTED`, with a string reason instead of sector provenance.
+  - Accepted text is built from the evidence alone, for example "Healthcare sector 30.56% of invested equity vs 24.5% advisory limit (REGIME_POLICY, CURRENT); members: BH.BK".
+  - Accepted claims get fixed `claim_kind SECTOR_ADVISORY`, `category INVESTMENT_RISK` and `severity LOW`. These are presentation constants: advisories stay unscored, and the frontend `RiskFlag` type allows only these values.
+  - The model's wording remains in the existing `raw_model_output`.
+  - Every sector-routed claim still counts as a sector review, so the derived `auditor_notes` (read by consensus) are unchanged.
+  - `layer3_result.sector_claim_validation_version = wealth.sector-advisory-claims.v1` is added when sector advisories are supplied. The claim-contract `VERSION` is serialized into the Auditor prompt and is therefore unchanged.
+- **Candidate-review diagnostics** (`services/optimizer/strategic_candidates.py`, new pure `candidate_review_diagnostics`, `wealth.candidate-review-diagnostics.v1`):
+  - Codes: `SUPPORT_OPPOSITION_OVERLAP`, `OPPOSING_OUTSIDE_REVIEW_VIEW` (against the `candidate_review_view` the Auditor was shown) and `HOLD_SUPPORT_UNREPRESENTABLE` (a HOLD candidate with no cited refs, with its opposing-ref count).
+  - `agents/optimizer.py` computes it only when a prepared envelope was reviewed. The result is stored as `candidate_review_diagnostics` beside `candidate_audit`, never inside it, so the Committee prompt is unchanged. Findings are logged.
+  - A failure is recorded as `status: FAILED` and never stops the run.
+  - Nothing reads the diagnostics: no review is rejected, and review availability, candidate eligibility, Committee gates and `material_conflicts` handling are unchanged.
+**Invariants preserved (frozen histories 245–250):**
+- Validated risk flags, risk level (`low`), safer choice and Auditor notes are identical to the stored values.
+- Replayed consensus equals every stored consensus field. Risk alignment is 92 in all six runs. Removing every sector-routed claim leaves all decision inputs identical.
+- Replayed `candidate_audit` and `strategy_selection` (cautioned HOLD, `NO_ELIGIBLE_ACTION`; history 247 has selection off) equal the stored values, and the HOLD allocations equal the stored final targets. Stabilization's input (scored flags) is empty before and after, so scheduled trades are unchanged.
+- All Auditor, Challenger, Strategist and fallback prompt golden fixtures remain byte-identical. No prompt wording changed.
+**Deferred:**
+- D5: scoping the material-conflict veto to the selected candidate. It changes decision behaviour and needs an owner decision.
+- D6: validating `OWNER_INTENT_REVIEW` against the supplied Intent context.
+- Prompt contract repair: the sector labelling instructions, the "for new position" timing example, and explaining HOLD's empty support.
+**Impact:**
+- Code: `services/optimizer/auditor_claims.py`, `services/optimizer/strategic_candidates.py`, `agents/optimizer.py`.
+- New tests: `tests/test_auditor_evidence_validation.py` (32), with the read-only fixture `tests/fixtures/auditor_evidence_frozen_245_250.json` (stored results 245–250; the consensus L2 input is rebuilt from the stored reasons, as documented in the test module).
+- `tests/test_auditor_policy_claims.py`: one test now uses a complete advisory row, with unchanged assertions.
+- No API, schema, migration, frontend or prompt change. Stored histories are not rewritten; historical claim reviews keep their original labels and text.
+- Known limits:
+  - An unsupported or duplicate sector claim still shows the model's text under "Unsupported — unscored".
+  - The fallback path does not copy the new version marker; it supplies no advisory rows, so it never accepts a sector claim.
+  - Which side of an overlap is right remains model judgment.
+- No live runs were performed.
+
+**Disposition:** `IMPLEMENTED`

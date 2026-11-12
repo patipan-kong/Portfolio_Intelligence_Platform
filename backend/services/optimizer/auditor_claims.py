@@ -4,8 +4,11 @@ Unknown/legacy claims are preserved for review, never inferred to be opinions.
 Model labels/opinions never authorize scoring; matching producer evidence does.
 """
 from copy import deepcopy
+from math import isfinite
 
 VERSION = "wealth.auditor-policy-claims.v2"
+SECTOR_ADVISORY = "SECTOR_ADVISORY"
+SECTOR_CLAIM_VERSION = "wealth.sector-advisory-claims.v1"
 
 
 def build_claim_evidence(allocations, policy_details, execution_context, risk_inputs=None):
@@ -59,11 +62,54 @@ def build_claim_evidence(allocations, policy_details, execution_context, risk_in
                 (execution_context or {}).get("dr_portfolio_cap", 40), "enforced": False}}
 
 
+def _finite_number(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and isfinite(value)
+
+
+def _pct(value):
+    return f"{round(float(value), 2):g}%"
+
+
+def _sector_claim(flag, ref, evidence, accepted_refs):
+    """Validate one sector-routed claim against its frozen advisory evidence.
+
+    A valid claim cites a supplied advisory row, names PORTFOLIO or a member of
+    that sector, and is the first claim on that row. Its displayed text, kind,
+    category and severity are fixed from the evidence; the model's own wording
+    stays only in raw_model_output. Sector advisories are never scored.
+    """
+    flag["scoring_eligible"] = False
+    if evidence is None:
+        reason = "Unknown sector advisory evidence reference; unscored model claim"
+    elif not (isinstance(evidence.get("sector"), str) and _finite_number(evidence.get("observed_pct"))
+              and _finite_number(evidence.get("limit_pct"))):
+        reason = "Incomplete sector advisory evidence; unscored model claim"
+    else:
+        members = [m.get("symbol") for m in evidence.get("members") or [] if isinstance(m, dict)]
+        if flag.get("symbol") != "PORTFOLIO" and flag.get("symbol") not in members:
+            reason = "Symbol is not PORTFOLIO or a member of the cited sector; unscored model claim"
+        elif ref in accepted_refs:
+            reason = "Duplicate sector advisory reference; first occurrence retained"
+        else:
+            accepted_refs.add(ref)
+            basis = "of invested equity" if evidence.get("basis") == "EQUITY" else f"on {evidence.get('basis')} basis"
+            flag.update(
+                claim_kind=SECTOR_ADVISORY, category="INVESTMENT_RISK", severity="LOW",
+                issue=(f"{evidence['sector']} sector {_pct(evidence['observed_pct'])} {basis} vs "
+                       f"{_pct(evidence['limit_pct'])} advisory limit ({evidence.get('binding_source')}, "
+                       f"{evidence.get('stage')}); members: {', '.join(members) or 'none'}"),
+                validation_status="ADVISORY", provenance=deepcopy(evidence))
+            return flag
+    flag.update(validation_status="UNSUPPORTED", provenance=reason)
+    return flag
+
+
 def validate_auditor_claims(result, contract):
     """Return a new interpretation; never mutate frozen input or model evidence."""
     output = deepcopy(result)
     accepted, review, seen = [], [], set()
     sector_review_count = 0
+    sector_seen = set()
     for raw in result.get("risk_flags", []) or []:
         if not isinstance(raw, dict):
             review.append({"symbol": "UNKNOWN", "issue": "Malformed model flag", "severity": "LOW",
@@ -74,10 +120,10 @@ def validate_auditor_claims(result, contract):
         ref = flag.get("evidence_ref")
         sector_advisories = contract.get("sector_advisories")
         sector_evidence = (sector_advisories or {}).get(ref) if isinstance(ref, str) else None
-        if sector_evidence is not None or (sector_advisories is not None and kind == "SECTOR_ADVISORY"):
-            flag.update(validation_status="ADVISORY", scoring_eligible=False,
-                        provenance=deepcopy(sector_evidence))
-            review.append(flag)
+        if sector_evidence is not None or (sector_advisories is not None and kind == SECTOR_ADVISORY):
+            # Counted as a sector review whatever its status, so the derived
+            # notes (and every decision input) are unchanged by this check.
+            review.append(_sector_claim(flag, ref, sector_evidence, sector_seen))
             sector_review_count += 1
             continue
         if flag.get("category") == "OWNER_INTENT_REVIEW":
@@ -124,6 +170,9 @@ def validate_auditor_claims(result, contract):
     decision_review_count = len(review) - sector_review_count
     output["auditor_notes"] = f"{len(scored)} scored observations; {decision_review_count} unscored claims for review."
     if "sector_advisories" in contract:
+        # Marks reviews validated by _sector_claim; the contract VERSION is
+        # prompt-visible and therefore unchanged.
+        output["sector_claim_validation_version"] = SECTOR_CLAIM_VERSION
         # A free-form preference can restate even an unlinked claim. Only
         # independently scored evidence can change the actionable preference.
         output["safer_choice"] = "neither" if output["final_risk_level"] == "high" else "layer2"

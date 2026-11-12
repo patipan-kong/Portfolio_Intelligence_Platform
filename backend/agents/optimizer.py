@@ -2786,6 +2786,20 @@ def run_layered_optimizer(
         candidate_audit = (validate_candidate_reviews(l3_result.get("raw_model_output"), candidate_envelope)
                            if selection_enabled and candidate_envelope.get("status") == "PREPARED_NOT_SELECTED"
                            else {"status": "UNAVAILABLE", "reason": "CANDIDATE_ENVELOPE_UNAVAILABLE", "reviews": {}})
+        # Diagnostic only: kept beside candidate_audit (never inside it, so the
+        # Committee prompt and every gate are unchanged) and never fails a run.
+        candidate_diagnostics = None
+        if review_candidates:
+            try:
+                candidate_diagnostics = strategic_candidates.candidate_review_diagnostics(
+                    l3_result.get("raw_model_output"), candidate_envelope)
+                if candidate_diagnostics["findings"]:
+                    logger.info("Candidate-review diagnostics: %s", sorted(
+                        {f["code"] for f in candidate_diagnostics["findings"]}))
+            except Exception as exc:
+                candidate_diagnostics = {"version": strategic_candidates.REVIEW_DIAGNOSTICS_VERSION,
+                                         "diagnostic_only": True, "status": "FAILED",
+                                         "error_type": type(exc).__name__}
 
         # If L2 produced no allocations all three layers failed — trigger global fallback
         if "error" in l2_result and not l2_result.get("target_allocations"):
@@ -3130,6 +3144,8 @@ def run_layered_optimizer(
             output["strategic_candidates"] = candidate_envelope
             output["strategy_selection"] = strategy_selection
             output["candidate_audit"] = candidate_audit
+            if candidate_diagnostics is not None:
+                output["candidate_review_diagnostics"] = candidate_diagnostics
             output["active_policy"]["strategy_selection_mode"] = strategy_selection_mode
         elif muji_v2:
             from services.optimizer.strategic_candidates import VERSION
