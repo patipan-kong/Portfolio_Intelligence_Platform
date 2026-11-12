@@ -3676,3 +3676,51 @@ importance that the captured evidence cannot establish.
 - The Policy Engine score-scale issue remains unresolved.
 
 **Disposition:** `IMPLEMENTED`
+
+## MUJI V2 Phase 4 Slice 4.3A — Correct Invalid Policy Suppression Flags
+
+**Date:** 2026-11-12
+**Problem:** Whenever `suppress_speculative` was on (RISK_OFF, HIGH_VOLATILITY, DEFENSIVE, TRANSITION_OFF or any emergency), `policy_engine._detect_violations` added `POLICY_VIOLATION: <symbol> is low-quality (FA=…, TA=…) and should be suppressed per current policy` for every holding above 4% without a `SELL`/`REDUCE` signal. The rule (Phase 3B.4) compared `fa_score < 35 and ta_score < 35`, but the FA and TA agents emit small signed scores (FA −4..+7, TA about −5..+5) and nothing normalizes them first, so the condition was always true and could not tell healthy holdings from weak ones. Its fixtures used a 0–100 scale. Every stored run with suppression on (histories 237–248, all three policy modes) flagged every eligible holding, including FA=7, the highest score the FA agent can produce. The flags appeared under "Existing violations to resolve" in the mandatory policy block given to the Strategist, Challenger, fallback and Strategist retry. In Legacy and Sector Advisory v1 they also triggered the Strategist's "MUST be targeted for REDUCE … Do NOT output no_action" note and blocked Legacy stabilization's `NO_REBALANCE_REQUIRED` outcomes. In histories 247 and 248 the Challenger cited them as the reason for five unverified REDUCE rows.
+**Decision (Option A):** Remove the score-based low-quality violation. No replacement threshold was introduced.
+- `suppress_speculative` itself is unchanged. It still sets `SUPPRESS_SPECULATIVE: YES — avoid low-quality or high-beta positions` in the policy block and "speculative assets suppressed" in the emergency narrative. The regime block still says to suppress speculative and high-beta positions.
+- Every other violation is unchanged: single-position `CONCENTRATION_BREACH` (non-MUJI modes), `SECTOR_BREACH` (Legacy), and "has a SELL signal but remains held" (all modes).
+- Prompts, the Legacy reduce note, stabilization and the Ops Center risk desk all read the envelope's violation list, so removing the violation at its source corrects every consumer. No consumer changed.
+**Invariants preserved:**
+- **Baseline equality minus the false flags:** for Legacy, Sector Advisory v1 and MUJI V2 in SIDEWAYS, RISK_OFF and emergency regimes, plus a clean Legacy RISK_OFF portfolio, the serialized envelope equals the baseline (`71cbf19`) with only the false violations removed and the prompt block re-rendered by the baseline renderer. Fixture: `tests/fixtures/policy_suppression_baseline.json`.
+- Non-suppression regimes are byte-identical. Hard constraints, emergency override, cash floor, position and sector limits, `max_new_positions`, narrative, tilts and risk budget are unchanged.
+- Unchanged: FA/TA agents, the scores map, candidate eligibility, the Auditor, Committee selection, Challenger evidence guidance, the monetary scheduler, `execution_penalty.py`, locked positions, hard safeguards and stored history.
+**Verification:**
+- Offline replay of the frozen inputs of histories 247 and 248: the baseline reproduces the stored five violations exactly, and the corrected engine produces none. The emergency policy block loses only the "Existing violations to resolve" section, which listed only these flags.
+- New tests in `tests/test_policy_suppression_flags.py` cover:
+  - real-range scores;
+  - unchanged legitimate violations;
+  - active regime guidance;
+  - the emergency prompt;
+  - Strategist, Challenger, Auditor, retry and fallback prompt paths in all three modes;
+  - the Legacy reduce note;
+  - Legacy stabilization (a genuine SELL violation still blocks `NO_REBALANCE_REQUIRED`);
+  - the frozen 247/248 inputs.
+- 27 of these tests fail against the baseline engine.
+**Impact:** `services/optimizer/policy_engine.py` (violation detection only); new test file and fixture. No API, schema, frontend or prompt-template change. Known limits:
+- Stored runs keep their recorded violations. The Ops Center risk desk shows the latest stored policy until the next run.
+- `scripts/verify_adaptive_optimizer.py` still expects the removed flag (0–100 fixtures). It already fails at baseline on an unrelated stale unpack of `compute_policy_alignment_score` and is not maintained here.
+- No per-holding measure of "speculative" or "low-quality" exists any more. Suppression is regime guidance plus the existing emergency rules (cash floor, zero new positions, emergency buy freeze); defining a valid measure would be a separate, owner-approved decision.
+- UNVERIFIED Challenger reductions can still appear in `target_allocations` as DEFERRED review items with zero scheduled amount, and evaluation consumers that read target weights are untraced (separate issue).
+- The DR execution-penalty floor (`execution_penalty.py:408`) is a separate score-scale defect, not addressed here.
+**Live validation (history 249, after a backend restart; PASS WITH LIMITATIONS):**
+- Setup: same HIGH_VOLATILITY emergency regime, hard constraints and Committee opt-in as history 248.
+- The stored `violations` list is `[]`, so the five false suppression violations (BH.BK, GOOGL01.BK, GULF.BK, NVDA01.BK, MICRON01.BK) are gone. Replaying 249's stored inputs through the baseline engine still produces all five; the corrected engine reproduces the stored `[]`.
+- Unchanged:
+  - emergency override, EMERGENCY strictness, PRESERVATION bias and the "speculative assets suppressed" narrative;
+  - the 20.3% cash floor and zero new positions;
+  - advisory position and sector concentration evidence (BH.BK 20.7%, GULF.BK 17.0%, Healthcare 30.6%, Technology 32.7%).
+- Neither the Strategist nor the Challenger proposed reductions. The Challenger returned NO_ACTION (INSUFFICIENT_EDGE) with five HOLD rows. The Auditor candidate review was AVAILABLE.
+- The Committee model call was correctly not invoked: no eligible actionable candidate existed, so deterministic selection kept `hold-current` (`CAUTIONED_HOLD`, `NO_ELIGIBLE_ACTION`).
+- Final result: NO_ACTION, zero scheduled trades, no DEFERRED reductions, 0% turnover, cash 32.2%.
+- Limitations:
+  - The Auditor cites the holdings' FA scores as *opposing* HOLD yet calls the positions "well-supported", misstates two sector limits in its issue text, and calls a held DR a "new position".
+  - The Challenger reports `agrees_with_layer1=false` although neither layer proposed a trade.
+  - Position and sector concentration remain advisory and unaddressed under MUJI V2 by design.
+  - This is a single run, so the improved model behaviour is encouraging but not guaranteed in future runs.
+
+**Disposition:** `IMPLEMENTED`

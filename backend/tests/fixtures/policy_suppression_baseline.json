@@ -1,0 +1,996 @@
+{
+ "legacy/EMERGENCY/mixed": {
+  "baseline": {
+   "confidence_discount": 0.0,
+   "deployment_bias": "PRESERVATION",
+   "emergency_override": true,
+   "emergency_reason": "Extreme volatility (vol z-score 3.1σ ≥ 2.5σ) — capital preservation mode activated",
+   "hard_constraints": {
+    "beta_ceiling": null,
+    "max_new_positions": 0,
+    "max_sector_pct": 25.0,
+    "max_single_position_pct": 15.0,
+    "max_turnover_pct": 15.0,
+    "min_cash_pct": 20.0,
+    "suppress_speculative": true
+   },
+   "policy_narrative": "EMERGENCY POLICY — Extreme volatility (vol z-score 3.1σ ≥ 2.5σ) — capital preservation mode activated. Min cash 20%, max position 15%, speculative assets suppressed.",
+   "position_limit_source": "EMERGENCY_OVERRIDE",
+   "prompt_block": "[ACTIVE OPTIMIZATION POLICY — MANDATORY GOVERNANCE]\n⚠ EMERGENCY OVERRIDE ACTIVE — Extreme volatility (vol z-score 3.1σ ≥ 2.5σ) — capital preservation mode activated\nALL new aggressive allocations are FROZEN. Capital preservation is the ONLY objective.\n\nDEPLOYMENT_MODE:        PRESERVATION\nSTRICTNESS_LEVEL:       EMERGENCY\nRISK_BUDGET:            16/100\n\nCURRENT_CASH_MANDATE:   minimum 20% must remain undeployed\nMAX_SINGLE_STOCK_LIMIT: 15% of portfolio per stock\nMAX_SECTOR_LIMIT: 25% of invested equity market value per sector\nTURNOVER_CEILING:       15% of portfolio value this rebalance\nMAX_NEW_POSITIONS:      0 new stock(s) maximum\nSUPPRESS_SPECULATIVE:   YES — avoid low-quality or high-beta positions\n\nCONSTRAINT PRIORITY HIERARCHY (Tier 1 > Tier 2 > Tier 3):\n  Tier 1 — CRITICAL (enforce first): Single position limits, sector concentration, catastrophic exposure\n  Tier 2 — STRATEGIC (enforce second): Cash mandates, regime alignment, beta ceilings\n  Tier 3 — EFFICIENCY (flex when needed): Turnover limits, transaction friction\n  Rule: Recommend measurable Tier 1 repairs within the effective turnover cap. Report residual or infeasible sector breaches for human review. Volatility alone does not require a sale.\n\nACTIVE_FACTOR_TILT:     QUALITY (38%) > DIVIDEND (34%) > VALUE (24%)\n\nExisting violations to resolve:\n  • CONCENTRATION_BREACH: HEALTHY at 30.0% exceeds 15% single-position policy limit\n  • POLICY_VIOLATION: HEALTHY is low-quality (FA=7, TA=2) and should be suppressed per current policy\n  • CONCENTRATION_BREACH: STEADY at 20.0% exceeds 15% single-position policy limit\n  • POLICY_VIOLATION: STEADY is low-quality (FA=4, TA=0) and should be suppressed per current policy\n  • POLICY_VIOLATION: WEAKSELL has a SELL signal but remains held at 5.0%\nPolicy summary: EMERGENCY POLICY — Extreme volatility (vol z-score 3.1σ ≥ 2.5σ) — capital preservation mode activated. Min cash 20%, max position 15%, speculative assets suppressed.\n\nAll allocation proposals MUST comply with these constraints.\nPython evaluates proposals deterministically. Sector limits use invested equity market value excluding cash. Keep position targets, cash and turnover on the NAV basis.\n",
+   "rebalance_aggressiveness": 0.12,
+   "resolved_sector_limits": {},
+   "risk_budget": 16.4,
+   "sector_limit_sources": {
+    "default": "EMERGENCY_OVERRIDE"
+   },
+   "soft_factor_tilts": {
+    "dividend": 0.337,
+    "growth": 0.019,
+    "momentum": 0.019,
+    "quality": 0.385,
+    "value": 0.24
+   },
+   "strictness_level": "EMERGENCY",
+   "violation_evidence": [
+    {
+     "basis": "NAV",
+     "cash": 30000.0,
+     "evidence_version": "wealth.policy-evidence.v1",
+     "limit_pct": 15.0,
+     "nav": 100000.0,
+     "observed_pct": 30.0,
+     "position_value": 30000.0,
+     "rule": "hard_constraints.max_single_position_pct",
+     "scope": "SINGLE_POSITION",
+     "symbol": "HEALTHY",
+     "type": "CONCENTRATION_BREACH"
+    },
+    {
+     "basis": "NAV",
+     "cash": 30000.0,
+     "evidence_version": "wealth.policy-evidence.v1",
+     "limit_pct": 15.0,
+     "nav": 100000.0,
+     "observed_pct": 20.0,
+     "position_value": 20000.0,
+     "rule": "hard_constraints.max_single_position_pct",
+     "scope": "SINGLE_POSITION",
+     "symbol": "STEADY",
+     "type": "CONCENTRATION_BREACH"
+    }
+   ],
+   "violations": [
+    "CONCENTRATION_BREACH: HEALTHY at 30.0% exceeds 15% single-position policy limit",
+    "POLICY_VIOLATION: HEALTHY is low-quality (FA=7, TA=2) and should be suppressed per current policy",
+    "CONCENTRATION_BREACH: STEADY at 20.0% exceeds 15% single-position policy limit",
+    "POLICY_VIOLATION: STEADY is low-quality (FA=4, TA=0) and should be suppressed per current policy",
+    "POLICY_VIOLATION: WEAKSELL has a SELL signal but remains held at 5.0%",
+    "POLICY_VIOLATION: DEFAULTED is low-quality (FA=0, TA=0) and should be suppressed per current policy",
+    "SECTOR_BREACH: Healthcare at 28.6% exceeds 25% resolved sector limit (invested equity)",
+    "SECTOR_BREACH: Technology at 42.9% exceeds 25% resolved sector limit (invested equity)"
+   ]
+  },
+  "expected": {
+   "confidence_discount": 0.0,
+   "deployment_bias": "PRESERVATION",
+   "emergency_override": true,
+   "emergency_reason": "Extreme volatility (vol z-score 3.1σ ≥ 2.5σ) — capital preservation mode activated",
+   "hard_constraints": {
+    "beta_ceiling": null,
+    "max_new_positions": 0,
+    "max_sector_pct": 25.0,
+    "max_single_position_pct": 15.0,
+    "max_turnover_pct": 15.0,
+    "min_cash_pct": 20.0,
+    "suppress_speculative": true
+   },
+   "policy_narrative": "EMERGENCY POLICY — Extreme volatility (vol z-score 3.1σ ≥ 2.5σ) — capital preservation mode activated. Min cash 20%, max position 15%, speculative assets suppressed.",
+   "position_limit_source": "EMERGENCY_OVERRIDE",
+   "prompt_block": "[ACTIVE OPTIMIZATION POLICY — MANDATORY GOVERNANCE]\n⚠ EMERGENCY OVERRIDE ACTIVE — Extreme volatility (vol z-score 3.1σ ≥ 2.5σ) — capital preservation mode activated\nALL new aggressive allocations are FROZEN. Capital preservation is the ONLY objective.\n\nDEPLOYMENT_MODE:        PRESERVATION\nSTRICTNESS_LEVEL:       EMERGENCY\nRISK_BUDGET:            16/100\n\nCURRENT_CASH_MANDATE:   minimum 20% must remain undeployed\nMAX_SINGLE_STOCK_LIMIT: 15% of portfolio per stock\nMAX_SECTOR_LIMIT: 25% of invested equity market value per sector\nTURNOVER_CEILING:       15% of portfolio value this rebalance\nMAX_NEW_POSITIONS:      0 new stock(s) maximum\nSUPPRESS_SPECULATIVE:   YES — avoid low-quality or high-beta positions\n\nCONSTRAINT PRIORITY HIERARCHY (Tier 1 > Tier 2 > Tier 3):\n  Tier 1 — CRITICAL (enforce first): Single position limits, sector concentration, catastrophic exposure\n  Tier 2 — STRATEGIC (enforce second): Cash mandates, regime alignment, beta ceilings\n  Tier 3 — EFFICIENCY (flex when needed): Turnover limits, transaction friction\n  Rule: Recommend measurable Tier 1 repairs within the effective turnover cap. Report residual or infeasible sector breaches for human review. Volatility alone does not require a sale.\n\nACTIVE_FACTOR_TILT:     QUALITY (38%) > DIVIDEND (34%) > VALUE (24%)\n\nExisting violations to resolve:\n  • CONCENTRATION_BREACH: HEALTHY at 30.0% exceeds 15% single-position policy limit\n  • CONCENTRATION_BREACH: STEADY at 20.0% exceeds 15% single-position policy limit\n  • POLICY_VIOLATION: WEAKSELL has a SELL signal but remains held at 5.0%\n  • SECTOR_BREACH: Healthcare at 28.6% exceeds 25% resolved sector limit (invested equity)\n  • SECTOR_BREACH: Technology at 42.9% exceeds 25% resolved sector limit (invested equity)\nPolicy summary: EMERGENCY POLICY — Extreme volatility (vol z-score 3.1σ ≥ 2.5σ) — capital preservation mode activated. Min cash 20%, max position 15%, speculative assets suppressed.\n\nAll allocation proposals MUST comply with these constraints.\nPython evaluates proposals deterministically. Sector limits use invested equity market value excluding cash. Keep position targets, cash and turnover on the NAV basis.\n",
+   "rebalance_aggressiveness": 0.12,
+   "resolved_sector_limits": {},
+   "risk_budget": 16.4,
+   "sector_limit_sources": {
+    "default": "EMERGENCY_OVERRIDE"
+   },
+   "soft_factor_tilts": {
+    "dividend": 0.337,
+    "growth": 0.019,
+    "momentum": 0.019,
+    "quality": 0.385,
+    "value": 0.24
+   },
+   "strictness_level": "EMERGENCY",
+   "violation_evidence": [
+    {
+     "basis": "NAV",
+     "cash": 30000.0,
+     "evidence_version": "wealth.policy-evidence.v1",
+     "limit_pct": 15.0,
+     "nav": 100000.0,
+     "observed_pct": 30.0,
+     "position_value": 30000.0,
+     "rule": "hard_constraints.max_single_position_pct",
+     "scope": "SINGLE_POSITION",
+     "symbol": "HEALTHY",
+     "type": "CONCENTRATION_BREACH"
+    },
+    {
+     "basis": "NAV",
+     "cash": 30000.0,
+     "evidence_version": "wealth.policy-evidence.v1",
+     "limit_pct": 15.0,
+     "nav": 100000.0,
+     "observed_pct": 20.0,
+     "position_value": 20000.0,
+     "rule": "hard_constraints.max_single_position_pct",
+     "scope": "SINGLE_POSITION",
+     "symbol": "STEADY",
+     "type": "CONCENTRATION_BREACH"
+    }
+   ],
+   "violations": [
+    "CONCENTRATION_BREACH: HEALTHY at 30.0% exceeds 15% single-position policy limit",
+    "CONCENTRATION_BREACH: STEADY at 20.0% exceeds 15% single-position policy limit",
+    "POLICY_VIOLATION: WEAKSELL has a SELL signal but remains held at 5.0%",
+    "SECTOR_BREACH: Healthcare at 28.6% exceeds 25% resolved sector limit (invested equity)",
+    "SECTOR_BREACH: Technology at 42.9% exceeds 25% resolved sector limit (invested equity)"
+   ]
+  }
+ },
+ "legacy/RISK_OFF/clean": {
+  "baseline": {
+   "confidence_discount": 0.0,
+   "deployment_bias": "DEFENSIVE",
+   "emergency_override": false,
+   "emergency_reason": null,
+   "hard_constraints": {
+    "beta_ceiling": null,
+    "max_new_positions": 2,
+    "max_sector_pct": 40.0,
+    "max_single_position_pct": 20.0,
+    "max_turnover_pct": 28.0,
+    "min_cash_pct": 10.0,
+    "suppress_speculative": true
+   },
+   "policy_narrative": "Balanced persona under RISK_OFF → DEFENSIVE deployment. Cash ≥10%, position cap 20%, dominant tilt QUALITY (43%). Strictness: STRICT.",
+   "position_limit_source": "POLICY_ENGINE",
+   "prompt_block": "[ACTIVE OPTIMIZATION POLICY — MANDATORY GOVERNANCE]\nDEPLOYMENT_MODE:        DEFENSIVE\nSTRICTNESS_LEVEL:       STRICT\nRISK_BUDGET:            29/100\n\nCURRENT_CASH_MANDATE:   minimum 10% must remain undeployed\nMAX_SINGLE_STOCK_LIMIT: 20% of portfolio per stock\nMAX_SECTOR_LIMIT: 40% of invested equity market value per sector\nTURNOVER_CEILING:       28% of portfolio value this rebalance\nMAX_NEW_POSITIONS:      2 new stock(s) maximum\nSUPPRESS_SPECULATIVE:   YES — avoid low-quality or high-beta positions\n\nCONSTRAINT PRIORITY HIERARCHY (Tier 1 > Tier 2 > Tier 3):\n  Tier 1 — CRITICAL (enforce first): Single position limits, sector concentration, catastrophic exposure\n  Tier 2 — STRATEGIC (enforce second): Cash mandates, regime alignment, beta ceilings\n  Tier 3 — EFFICIENCY (flex when needed): Turnover limits, transaction friction\n  Rule: Recommend measurable Tier 1 repairs within the effective turnover cap. Report residual or infeasible sector breaches for human review. Volatility alone does not require a sale.\n\nACTIVE_FACTOR_TILT:     QUALITY (43%) > DIVIDEND (36%) > VALUE (17%)\n\nExisting violations to resolve:\n  • POLICY_VIOLATION: C1 is low-quality (FA=7, TA=2) and should be suppressed per current policy\n  • POLICY_VIOLATION: C2 is low-quality (FA=4, TA=0) and should be suppressed per current policy\n  • POLICY_VIOLATION: C3 is low-quality (FA=5, TA=-1) and should be suppressed per current policy\n  • POLICY_VIOLATION: C4 is low-quality (FA=6, TA=1) and should be suppressed per current policy\n  • POLICY_VIOLATION: C5 is low-quality (FA=3, TA=0) and should be suppressed per current policy\nPolicy summary: Balanced persona under RISK_OFF → DEFENSIVE deployment. Cash ≥10%, position cap 20%, dominant tilt QUALITY (43%). Strictness: STRICT.\n\nAll allocation proposals MUST comply with these constraints.\nPython evaluates proposals deterministically. Sector limits use invested equity market value excluding cash. Keep position targets, cash and turnover on the NAV basis.\n",
+   "rebalance_aggressiveness": 0.35,
+   "resolved_sector_limits": {},
+   "risk_budget": 29.2,
+   "sector_limit_sources": {},
+   "soft_factor_tilts": {
+    "dividend": 0.357,
+    "growth": 0.029,
+    "momentum": 0.019,
+    "quality": 0.429,
+    "value": 0.167
+   },
+   "strictness_level": "STRICT",
+   "violation_evidence": [],
+   "violations": [
+    "POLICY_VIOLATION: C1 is low-quality (FA=7, TA=2) and should be suppressed per current policy",
+    "POLICY_VIOLATION: C2 is low-quality (FA=4, TA=0) and should be suppressed per current policy",
+    "POLICY_VIOLATION: C3 is low-quality (FA=5, TA=-1) and should be suppressed per current policy",
+    "POLICY_VIOLATION: C4 is low-quality (FA=6, TA=1) and should be suppressed per current policy",
+    "POLICY_VIOLATION: C5 is low-quality (FA=3, TA=0) and should be suppressed per current policy"
+   ]
+  },
+  "expected": {
+   "confidence_discount": 0.0,
+   "deployment_bias": "DEFENSIVE",
+   "emergency_override": false,
+   "emergency_reason": null,
+   "hard_constraints": {
+    "beta_ceiling": null,
+    "max_new_positions": 2,
+    "max_sector_pct": 40.0,
+    "max_single_position_pct": 20.0,
+    "max_turnover_pct": 28.0,
+    "min_cash_pct": 10.0,
+    "suppress_speculative": true
+   },
+   "policy_narrative": "Balanced persona under RISK_OFF → DEFENSIVE deployment. Cash ≥10%, position cap 20%, dominant tilt QUALITY (43%). Strictness: STRICT.",
+   "position_limit_source": "POLICY_ENGINE",
+   "prompt_block": "[ACTIVE OPTIMIZATION POLICY — MANDATORY GOVERNANCE]\nDEPLOYMENT_MODE:        DEFENSIVE\nSTRICTNESS_LEVEL:       STRICT\nRISK_BUDGET:            29/100\n\nCURRENT_CASH_MANDATE:   minimum 10% must remain undeployed\nMAX_SINGLE_STOCK_LIMIT: 20% of portfolio per stock\nMAX_SECTOR_LIMIT: 40% of invested equity market value per sector\nTURNOVER_CEILING:       28% of portfolio value this rebalance\nMAX_NEW_POSITIONS:      2 new stock(s) maximum\nSUPPRESS_SPECULATIVE:   YES — avoid low-quality or high-beta positions\n\nCONSTRAINT PRIORITY HIERARCHY (Tier 1 > Tier 2 > Tier 3):\n  Tier 1 — CRITICAL (enforce first): Single position limits, sector concentration, catastrophic exposure\n  Tier 2 — STRATEGIC (enforce second): Cash mandates, regime alignment, beta ceilings\n  Tier 3 — EFFICIENCY (flex when needed): Turnover limits, transaction friction\n  Rule: Recommend measurable Tier 1 repairs within the effective turnover cap. Report residual or infeasible sector breaches for human review. Volatility alone does not require a sale.\n\nACTIVE_FACTOR_TILT:     QUALITY (43%) > DIVIDEND (36%) > VALUE (17%)\n\nPolicy summary: Balanced persona under RISK_OFF → DEFENSIVE deployment. Cash ≥10%, position cap 20%, dominant tilt QUALITY (43%). Strictness: STRICT.\n\nAll allocation proposals MUST comply with these constraints.\nPython evaluates proposals deterministically. Sector limits use invested equity market value excluding cash. Keep position targets, cash and turnover on the NAV basis.\n",
+   "rebalance_aggressiveness": 0.35,
+   "resolved_sector_limits": {},
+   "risk_budget": 29.2,
+   "sector_limit_sources": {},
+   "soft_factor_tilts": {
+    "dividend": 0.357,
+    "growth": 0.029,
+    "momentum": 0.019,
+    "quality": 0.429,
+    "value": 0.167
+   },
+   "strictness_level": "STRICT",
+   "violation_evidence": [],
+   "violations": []
+  }
+ },
+ "legacy/RISK_OFF/mixed": {
+  "baseline": {
+   "confidence_discount": 0.0,
+   "deployment_bias": "DEFENSIVE",
+   "emergency_override": false,
+   "emergency_reason": null,
+   "hard_constraints": {
+    "beta_ceiling": null,
+    "max_new_positions": 2,
+    "max_sector_pct": 40.0,
+    "max_single_position_pct": 20.0,
+    "max_turnover_pct": 28.0,
+    "min_cash_pct": 10.0,
+    "suppress_speculative": true
+   },
+   "policy_narrative": "Balanced persona under RISK_OFF → DEFENSIVE deployment. Cash ≥10%, position cap 20%, dominant tilt QUALITY (43%). Strictness: STRICT.",
+   "position_limit_source": "POLICY_ENGINE",
+   "prompt_block": "[ACTIVE OPTIMIZATION POLICY — MANDATORY GOVERNANCE]\nDEPLOYMENT_MODE:        DEFENSIVE\nSTRICTNESS_LEVEL:       STRICT\nRISK_BUDGET:            28/100\n\nCURRENT_CASH_MANDATE:   minimum 10% must remain undeployed\nMAX_SINGLE_STOCK_LIMIT: 20% of portfolio per stock\nMAX_SECTOR_LIMIT: 40% of invested equity market value per sector\nTURNOVER_CEILING:       28% of portfolio value this rebalance\nMAX_NEW_POSITIONS:      2 new stock(s) maximum\nSUPPRESS_SPECULATIVE:   YES — avoid low-quality or high-beta positions\n\nCONSTRAINT PRIORITY HIERARCHY (Tier 1 > Tier 2 > Tier 3):\n  Tier 1 — CRITICAL (enforce first): Single position limits, sector concentration, catastrophic exposure\n  Tier 2 — STRATEGIC (enforce second): Cash mandates, regime alignment, beta ceilings\n  Tier 3 — EFFICIENCY (flex when needed): Turnover limits, transaction friction\n  Rule: Recommend measurable Tier 1 repairs within the effective turnover cap. Report residual or infeasible sector breaches for human review. Volatility alone does not require a sale.\n\nACTIVE_FACTOR_TILT:     QUALITY (43%) > DIVIDEND (36%) > VALUE (17%)\n\nExisting violations to resolve:\n  • CONCENTRATION_BREACH: HEALTHY at 30.0% exceeds 20% single-position policy limit\n  • POLICY_VIOLATION: HEALTHY is low-quality (FA=7, TA=2) and should be suppressed per current policy\n  • POLICY_VIOLATION: STEADY is low-quality (FA=4, TA=0) and should be suppressed per current policy\n  • POLICY_VIOLATION: WEAKSELL has a SELL signal but remains held at 5.0%\n  • POLICY_VIOLATION: DEFAULTED is low-quality (FA=0, TA=0) and should be suppressed per current policy\nPolicy summary: Balanced persona under RISK_OFF → DEFENSIVE deployment. Cash ≥10%, position cap 20%, dominant tilt QUALITY (43%). Strictness: STRICT.\n\nAll allocation proposals MUST comply with these constraints.\nPython evaluates proposals deterministically. Sector limits use invested equity market value excluding cash. Keep position targets, cash and turnover on the NAV basis.\n",
+   "rebalance_aggressiveness": 0.35,
+   "resolved_sector_limits": {},
+   "risk_budget": 27.5,
+   "sector_limit_sources": {},
+   "soft_factor_tilts": {
+    "dividend": 0.357,
+    "growth": 0.029,
+    "momentum": 0.019,
+    "quality": 0.429,
+    "value": 0.167
+   },
+   "strictness_level": "STRICT",
+   "violation_evidence": [
+    {
+     "basis": "NAV",
+     "cash": 30000.0,
+     "evidence_version": "wealth.policy-evidence.v1",
+     "limit_pct": 20.0,
+     "nav": 100000.0,
+     "observed_pct": 30.0,
+     "position_value": 30000.0,
+     "rule": "hard_constraints.max_single_position_pct",
+     "scope": "SINGLE_POSITION",
+     "symbol": "HEALTHY",
+     "type": "CONCENTRATION_BREACH"
+    }
+   ],
+   "violations": [
+    "CONCENTRATION_BREACH: HEALTHY at 30.0% exceeds 20% single-position policy limit",
+    "POLICY_VIOLATION: HEALTHY is low-quality (FA=7, TA=2) and should be suppressed per current policy",
+    "POLICY_VIOLATION: STEADY is low-quality (FA=4, TA=0) and should be suppressed per current policy",
+    "POLICY_VIOLATION: WEAKSELL has a SELL signal but remains held at 5.0%",
+    "POLICY_VIOLATION: DEFAULTED is low-quality (FA=0, TA=0) and should be suppressed per current policy",
+    "SECTOR_BREACH: Technology at 42.9% exceeds 40% resolved sector limit (invested equity)"
+   ]
+  },
+  "expected": {
+   "confidence_discount": 0.0,
+   "deployment_bias": "DEFENSIVE",
+   "emergency_override": false,
+   "emergency_reason": null,
+   "hard_constraints": {
+    "beta_ceiling": null,
+    "max_new_positions": 2,
+    "max_sector_pct": 40.0,
+    "max_single_position_pct": 20.0,
+    "max_turnover_pct": 28.0,
+    "min_cash_pct": 10.0,
+    "suppress_speculative": true
+   },
+   "policy_narrative": "Balanced persona under RISK_OFF → DEFENSIVE deployment. Cash ≥10%, position cap 20%, dominant tilt QUALITY (43%). Strictness: STRICT.",
+   "position_limit_source": "POLICY_ENGINE",
+   "prompt_block": "[ACTIVE OPTIMIZATION POLICY — MANDATORY GOVERNANCE]\nDEPLOYMENT_MODE:        DEFENSIVE\nSTRICTNESS_LEVEL:       STRICT\nRISK_BUDGET:            28/100\n\nCURRENT_CASH_MANDATE:   minimum 10% must remain undeployed\nMAX_SINGLE_STOCK_LIMIT: 20% of portfolio per stock\nMAX_SECTOR_LIMIT: 40% of invested equity market value per sector\nTURNOVER_CEILING:       28% of portfolio value this rebalance\nMAX_NEW_POSITIONS:      2 new stock(s) maximum\nSUPPRESS_SPECULATIVE:   YES — avoid low-quality or high-beta positions\n\nCONSTRAINT PRIORITY HIERARCHY (Tier 1 > Tier 2 > Tier 3):\n  Tier 1 — CRITICAL (enforce first): Single position limits, sector concentration, catastrophic exposure\n  Tier 2 — STRATEGIC (enforce second): Cash mandates, regime alignment, beta ceilings\n  Tier 3 — EFFICIENCY (flex when needed): Turnover limits, transaction friction\n  Rule: Recommend measurable Tier 1 repairs within the effective turnover cap. Report residual or infeasible sector breaches for human review. Volatility alone does not require a sale.\n\nACTIVE_FACTOR_TILT:     QUALITY (43%) > DIVIDEND (36%) > VALUE (17%)\n\nExisting violations to resolve:\n  • CONCENTRATION_BREACH: HEALTHY at 30.0% exceeds 20% single-position policy limit\n  • POLICY_VIOLATION: WEAKSELL has a SELL signal but remains held at 5.0%\n  • SECTOR_BREACH: Technology at 42.9% exceeds 40% resolved sector limit (invested equity)\nPolicy summary: Balanced persona under RISK_OFF → DEFENSIVE deployment. Cash ≥10%, position cap 20%, dominant tilt QUALITY (43%). Strictness: STRICT.\n\nAll allocation proposals MUST comply with these constraints.\nPython evaluates proposals deterministically. Sector limits use invested equity market value excluding cash. Keep position targets, cash and turnover on the NAV basis.\n",
+   "rebalance_aggressiveness": 0.35,
+   "resolved_sector_limits": {},
+   "risk_budget": 27.5,
+   "sector_limit_sources": {},
+   "soft_factor_tilts": {
+    "dividend": 0.357,
+    "growth": 0.029,
+    "momentum": 0.019,
+    "quality": 0.429,
+    "value": 0.167
+   },
+   "strictness_level": "STRICT",
+   "violation_evidence": [
+    {
+     "basis": "NAV",
+     "cash": 30000.0,
+     "evidence_version": "wealth.policy-evidence.v1",
+     "limit_pct": 20.0,
+     "nav": 100000.0,
+     "observed_pct": 30.0,
+     "position_value": 30000.0,
+     "rule": "hard_constraints.max_single_position_pct",
+     "scope": "SINGLE_POSITION",
+     "symbol": "HEALTHY",
+     "type": "CONCENTRATION_BREACH"
+    }
+   ],
+   "violations": [
+    "CONCENTRATION_BREACH: HEALTHY at 30.0% exceeds 20% single-position policy limit",
+    "POLICY_VIOLATION: WEAKSELL has a SELL signal but remains held at 5.0%",
+    "SECTOR_BREACH: Technology at 42.9% exceeds 40% resolved sector limit (invested equity)"
+   ]
+  }
+ },
+ "legacy/SIDEWAYS/mixed": {
+  "baseline": {
+   "confidence_discount": 0.0,
+   "deployment_bias": "SELECTIVE",
+   "emergency_override": false,
+   "emergency_reason": null,
+   "hard_constraints": {
+    "beta_ceiling": null,
+    "max_new_positions": 2,
+    "max_sector_pct": 40.0,
+    "max_single_position_pct": 22.0,
+    "max_turnover_pct": 32.0,
+    "min_cash_pct": 5.0,
+    "suppress_speculative": false
+   },
+   "policy_narrative": "Balanced persona under SIDEWAYS → SELECTIVE deployment. Cash ≥5%, position cap 22%, dominant tilt DIVIDEND (35%). Strictness: NORMAL.",
+   "position_limit_source": "POLICY_ENGINE",
+   "prompt_block": "[ACTIVE OPTIMIZATION POLICY — MANDATORY GOVERNANCE]\nDEPLOYMENT_MODE:        SELECTIVE\nSTRICTNESS_LEVEL:       NORMAL\nRISK_BUDGET:            50/100\n\nCURRENT_CASH_MANDATE:   minimum 5% must remain undeployed\nMAX_SINGLE_STOCK_LIMIT: 22% of portfolio per stock\nMAX_SECTOR_LIMIT: 40% of invested equity market value per sector\nTURNOVER_CEILING:       32% of portfolio value this rebalance\nMAX_NEW_POSITIONS:      2 new stock(s) maximum\nSUPPRESS_SPECULATIVE:   NO\n\nCONSTRAINT PRIORITY HIERARCHY (Tier 1 > Tier 2 > Tier 3):\n  Tier 1 — CRITICAL (enforce first): Single position limits, sector concentration, catastrophic exposure\n  Tier 2 — STRATEGIC (enforce second): Cash mandates, regime alignment, beta ceilings\n  Tier 3 — EFFICIENCY (flex when needed): Turnover limits, transaction friction\n  Rule: Recommend measurable Tier 1 repairs within the effective turnover cap. Report residual or infeasible sector breaches for human review. Volatility alone does not require a sale.\n\nACTIVE_FACTOR_TILT:     DIVIDEND (35%) > VALUE (20%) > QUALITY (20%)\n\nExisting violations to resolve:\n  • CONCENTRATION_BREACH: HEALTHY at 30.0% exceeds 22% single-position policy limit\n  • POLICY_VIOLATION: WEAKSELL has a SELL signal but remains held at 5.0%\n  • SECTOR_BREACH: Technology at 42.9% exceeds 40% resolved sector limit (invested equity)\nPolicy summary: Balanced persona under SIDEWAYS → SELECTIVE deployment. Cash ≥5%, position cap 22%, dominant tilt DIVIDEND (35%). Strictness: NORMAL.\n\nAll allocation proposals MUST comply with these constraints.\nPython evaluates proposals deterministically. Sector limits use invested equity market value excluding cash. Keep position targets, cash and turnover on the NAV basis.\n",
+   "rebalance_aggressiveness": 0.4,
+   "resolved_sector_limits": {},
+   "risk_budget": 50.5,
+   "sector_limit_sources": {},
+   "soft_factor_tilts": {
+    "dividend": 0.35,
+    "growth": 0.13,
+    "momentum": 0.12,
+    "quality": 0.2,
+    "value": 0.2
+   },
+   "strictness_level": "NORMAL",
+   "violation_evidence": [
+    {
+     "basis": "NAV",
+     "cash": 30000.0,
+     "evidence_version": "wealth.policy-evidence.v1",
+     "limit_pct": 22.0,
+     "nav": 100000.0,
+     "observed_pct": 30.0,
+     "position_value": 30000.0,
+     "rule": "hard_constraints.max_single_position_pct",
+     "scope": "SINGLE_POSITION",
+     "symbol": "HEALTHY",
+     "type": "CONCENTRATION_BREACH"
+    }
+   ],
+   "violations": [
+    "CONCENTRATION_BREACH: HEALTHY at 30.0% exceeds 22% single-position policy limit",
+    "POLICY_VIOLATION: WEAKSELL has a SELL signal but remains held at 5.0%",
+    "SECTOR_BREACH: Technology at 42.9% exceeds 40% resolved sector limit (invested equity)"
+   ]
+  },
+  "expected": {
+   "confidence_discount": 0.0,
+   "deployment_bias": "SELECTIVE",
+   "emergency_override": false,
+   "emergency_reason": null,
+   "hard_constraints": {
+    "beta_ceiling": null,
+    "max_new_positions": 2,
+    "max_sector_pct": 40.0,
+    "max_single_position_pct": 22.0,
+    "max_turnover_pct": 32.0,
+    "min_cash_pct": 5.0,
+    "suppress_speculative": false
+   },
+   "policy_narrative": "Balanced persona under SIDEWAYS → SELECTIVE deployment. Cash ≥5%, position cap 22%, dominant tilt DIVIDEND (35%). Strictness: NORMAL.",
+   "position_limit_source": "POLICY_ENGINE",
+   "prompt_block": "[ACTIVE OPTIMIZATION POLICY — MANDATORY GOVERNANCE]\nDEPLOYMENT_MODE:        SELECTIVE\nSTRICTNESS_LEVEL:       NORMAL\nRISK_BUDGET:            50/100\n\nCURRENT_CASH_MANDATE:   minimum 5% must remain undeployed\nMAX_SINGLE_STOCK_LIMIT: 22% of portfolio per stock\nMAX_SECTOR_LIMIT: 40% of invested equity market value per sector\nTURNOVER_CEILING:       32% of portfolio value this rebalance\nMAX_NEW_POSITIONS:      2 new stock(s) maximum\nSUPPRESS_SPECULATIVE:   NO\n\nCONSTRAINT PRIORITY HIERARCHY (Tier 1 > Tier 2 > Tier 3):\n  Tier 1 — CRITICAL (enforce first): Single position limits, sector concentration, catastrophic exposure\n  Tier 2 — STRATEGIC (enforce second): Cash mandates, regime alignment, beta ceilings\n  Tier 3 — EFFICIENCY (flex when needed): Turnover limits, transaction friction\n  Rule: Recommend measurable Tier 1 repairs within the effective turnover cap. Report residual or infeasible sector breaches for human review. Volatility alone does not require a sale.\n\nACTIVE_FACTOR_TILT:     DIVIDEND (35%) > VALUE (20%) > QUALITY (20%)\n\nExisting violations to resolve:\n  • CONCENTRATION_BREACH: HEALTHY at 30.0% exceeds 22% single-position policy limit\n  • POLICY_VIOLATION: WEAKSELL has a SELL signal but remains held at 5.0%\n  • SECTOR_BREACH: Technology at 42.9% exceeds 40% resolved sector limit (invested equity)\nPolicy summary: Balanced persona under SIDEWAYS → SELECTIVE deployment. Cash ≥5%, position cap 22%, dominant tilt DIVIDEND (35%). Strictness: NORMAL.\n\nAll allocation proposals MUST comply with these constraints.\nPython evaluates proposals deterministically. Sector limits use invested equity market value excluding cash. Keep position targets, cash and turnover on the NAV basis.\n",
+   "rebalance_aggressiveness": 0.4,
+   "resolved_sector_limits": {},
+   "risk_budget": 50.5,
+   "sector_limit_sources": {},
+   "soft_factor_tilts": {
+    "dividend": 0.35,
+    "growth": 0.13,
+    "momentum": 0.12,
+    "quality": 0.2,
+    "value": 0.2
+   },
+   "strictness_level": "NORMAL",
+   "violation_evidence": [
+    {
+     "basis": "NAV",
+     "cash": 30000.0,
+     "evidence_version": "wealth.policy-evidence.v1",
+     "limit_pct": 22.0,
+     "nav": 100000.0,
+     "observed_pct": 30.0,
+     "position_value": 30000.0,
+     "rule": "hard_constraints.max_single_position_pct",
+     "scope": "SINGLE_POSITION",
+     "symbol": "HEALTHY",
+     "type": "CONCENTRATION_BREACH"
+    }
+   ],
+   "violations": [
+    "CONCENTRATION_BREACH: HEALTHY at 30.0% exceeds 22% single-position policy limit",
+    "POLICY_VIOLATION: WEAKSELL has a SELL signal but remains held at 5.0%",
+    "SECTOR_BREACH: Technology at 42.9% exceeds 40% resolved sector limit (invested equity)"
+   ]
+  }
+ },
+ "muji_v2/EMERGENCY/mixed": {
+  "baseline": {
+   "confidence_discount": 0.0,
+   "deployment_bias": "PRESERVATION",
+   "emergency_override": true,
+   "emergency_reason": "Extreme volatility (vol z-score 3.1σ ≥ 2.5σ) — capital preservation mode activated",
+   "hard_constraints": {
+    "beta_ceiling": null,
+    "max_new_positions": 0,
+    "max_sector_pct": 25.0,
+    "max_single_position_pct": 15.0,
+    "max_turnover_pct": 15.0,
+    "min_cash_pct": 20.0,
+    "suppress_speculative": true
+   },
+   "optimizer_policy_mode": "wealth.optimizer-muji.v2",
+   "policy_narrative": "EMERGENCY POLICY — Extreme volatility (vol z-score 3.1σ ≥ 2.5σ) — capital preservation mode activated. Min cash 20%, speculative assets suppressed.",
+   "position_limit_source": "EMERGENCY_OVERRIDE",
+   "prompt_block": "[ACTIVE OPTIMIZATION POLICY — MANDATORY GOVERNANCE]\n⚠ EMERGENCY OVERRIDE ACTIVE — Extreme volatility (vol z-score 3.1σ ≥ 2.5σ) — capital preservation mode activated\nALL new aggressive allocations are FROZEN. Capital preservation is the ONLY objective.\n\nDEPLOYMENT_MODE:        PRESERVATION\nSTRICTNESS_LEVEL:       EMERGENCY\nRISK_BUDGET:            16/100\nCURRENT_CASH_MANDATE:   minimum 20% must remain undeployed\nTURNOVER_CEILING:       15% of NAV\nMAX_NEW_POSITIONS:      0 new stock(s) maximum\nSUPPRESS_SPECULATIVE:   YES — avoid low-quality or high-beta positions\nACTIVE_FACTOR_TILT:     QUALITY (38%) > DIVIDEND (34%) > VALUE (24%)\n\nExisting violations to resolve:\n  • POLICY_VIOLATION: HEALTHY is low-quality (FA=7, TA=2) and should be suppressed per current policy\n  • POLICY_VIOLATION: STEADY is low-quality (FA=4, TA=0) and should be suppressed per current policy\n  • POLICY_VIOLATION: WEAKSELL has a SELL signal but remains held at 5.0%\n  • POLICY_VIOLATION: DEFAULTED is low-quality (FA=0, TA=0) and should be suppressed per current policy\nPolicy summary: EMERGENCY POLICY — Extreme volatility (vol z-score 3.1σ ≥ 2.5σ) — capital preservation mode activated. Min cash 20%, speculative assets suppressed.\nObserve genuine policy restrictions. Position and sector concentration and allocation drift are advisory.\nUse NAV for position targets, cash and turnover.\n",
+   "rebalance_aggressiveness": 0.12,
+   "resolved_sector_limits": {},
+   "risk_budget": 16.4,
+   "sector_limit_sources": {
+    "default": "EMERGENCY_OVERRIDE"
+   },
+   "sector_policy_mode": "wealth.optimizer-sector-advisory.v1",
+   "soft_factor_tilts": {
+    "dividend": 0.337,
+    "growth": 0.019,
+    "momentum": 0.019,
+    "quality": 0.385,
+    "value": 0.24
+   },
+   "strictness_level": "EMERGENCY",
+   "violation_evidence": [],
+   "violations": [
+    "POLICY_VIOLATION: HEALTHY is low-quality (FA=7, TA=2) and should be suppressed per current policy",
+    "POLICY_VIOLATION: STEADY is low-quality (FA=4, TA=0) and should be suppressed per current policy",
+    "POLICY_VIOLATION: WEAKSELL has a SELL signal but remains held at 5.0%",
+    "POLICY_VIOLATION: DEFAULTED is low-quality (FA=0, TA=0) and should be suppressed per current policy"
+   ]
+  },
+  "expected": {
+   "confidence_discount": 0.0,
+   "deployment_bias": "PRESERVATION",
+   "emergency_override": true,
+   "emergency_reason": "Extreme volatility (vol z-score 3.1σ ≥ 2.5σ) — capital preservation mode activated",
+   "hard_constraints": {
+    "beta_ceiling": null,
+    "max_new_positions": 0,
+    "max_sector_pct": 25.0,
+    "max_single_position_pct": 15.0,
+    "max_turnover_pct": 15.0,
+    "min_cash_pct": 20.0,
+    "suppress_speculative": true
+   },
+   "optimizer_policy_mode": "wealth.optimizer-muji.v2",
+   "policy_narrative": "EMERGENCY POLICY — Extreme volatility (vol z-score 3.1σ ≥ 2.5σ) — capital preservation mode activated. Min cash 20%, speculative assets suppressed.",
+   "position_limit_source": "EMERGENCY_OVERRIDE",
+   "prompt_block": "[ACTIVE OPTIMIZATION POLICY — MANDATORY GOVERNANCE]\n⚠ EMERGENCY OVERRIDE ACTIVE — Extreme volatility (vol z-score 3.1σ ≥ 2.5σ) — capital preservation mode activated\nALL new aggressive allocations are FROZEN. Capital preservation is the ONLY objective.\n\nDEPLOYMENT_MODE:        PRESERVATION\nSTRICTNESS_LEVEL:       EMERGENCY\nRISK_BUDGET:            16/100\nCURRENT_CASH_MANDATE:   minimum 20% must remain undeployed\nTURNOVER_CEILING:       15% of NAV\nMAX_NEW_POSITIONS:      0 new stock(s) maximum\nSUPPRESS_SPECULATIVE:   YES — avoid low-quality or high-beta positions\nACTIVE_FACTOR_TILT:     QUALITY (38%) > DIVIDEND (34%) > VALUE (24%)\n\nExisting violations to resolve:\n  • POLICY_VIOLATION: WEAKSELL has a SELL signal but remains held at 5.0%\nPolicy summary: EMERGENCY POLICY — Extreme volatility (vol z-score 3.1σ ≥ 2.5σ) — capital preservation mode activated. Min cash 20%, speculative assets suppressed.\nObserve genuine policy restrictions. Position and sector concentration and allocation drift are advisory.\nUse NAV for position targets, cash and turnover.\n",
+   "rebalance_aggressiveness": 0.12,
+   "resolved_sector_limits": {},
+   "risk_budget": 16.4,
+   "sector_limit_sources": {
+    "default": "EMERGENCY_OVERRIDE"
+   },
+   "sector_policy_mode": "wealth.optimizer-sector-advisory.v1",
+   "soft_factor_tilts": {
+    "dividend": 0.337,
+    "growth": 0.019,
+    "momentum": 0.019,
+    "quality": 0.385,
+    "value": 0.24
+   },
+   "strictness_level": "EMERGENCY",
+   "violation_evidence": [],
+   "violations": [
+    "POLICY_VIOLATION: WEAKSELL has a SELL signal but remains held at 5.0%"
+   ]
+  }
+ },
+ "muji_v2/RISK_OFF/mixed": {
+  "baseline": {
+   "confidence_discount": 0.0,
+   "deployment_bias": "DEFENSIVE",
+   "emergency_override": false,
+   "emergency_reason": null,
+   "hard_constraints": {
+    "beta_ceiling": null,
+    "max_new_positions": 2,
+    "max_sector_pct": 40.0,
+    "max_single_position_pct": 20.0,
+    "max_turnover_pct": 28.0,
+    "min_cash_pct": 10.0,
+    "suppress_speculative": true
+   },
+   "optimizer_policy_mode": "wealth.optimizer-muji.v2",
+   "policy_narrative": "Balanced persona under RISK_OFF → DEFENSIVE deployment. Cash ≥10%, dominant tilt QUALITY (43%). Strictness: STRICT.",
+   "position_limit_source": "POLICY_ENGINE",
+   "prompt_block": "[ACTIVE OPTIMIZATION POLICY — MANDATORY GOVERNANCE]\nDEPLOYMENT_MODE:        DEFENSIVE\nSTRICTNESS_LEVEL:       STRICT\nRISK_BUDGET:            28/100\nCURRENT_CASH_MANDATE:   minimum 10% must remain undeployed\nTURNOVER_CEILING:       28% of NAV\nMAX_NEW_POSITIONS:      2 new stock(s) maximum\nSUPPRESS_SPECULATIVE:   YES — avoid low-quality or high-beta positions\nACTIVE_FACTOR_TILT:     QUALITY (43%) > DIVIDEND (36%) > VALUE (17%)\n\nExisting violations to resolve:\n  • POLICY_VIOLATION: HEALTHY is low-quality (FA=7, TA=2) and should be suppressed per current policy\n  • POLICY_VIOLATION: STEADY is low-quality (FA=4, TA=0) and should be suppressed per current policy\n  • POLICY_VIOLATION: WEAKSELL has a SELL signal but remains held at 5.0%\n  • POLICY_VIOLATION: DEFAULTED is low-quality (FA=0, TA=0) and should be suppressed per current policy\nPolicy summary: Balanced persona under RISK_OFF → DEFENSIVE deployment. Cash ≥10%, dominant tilt QUALITY (43%). Strictness: STRICT.\nObserve genuine policy restrictions. Position and sector concentration and allocation drift are advisory.\nUse NAV for position targets, cash and turnover.\n",
+   "rebalance_aggressiveness": 0.35,
+   "resolved_sector_limits": {},
+   "risk_budget": 27.5,
+   "sector_limit_sources": {},
+   "sector_policy_mode": "wealth.optimizer-sector-advisory.v1",
+   "soft_factor_tilts": {
+    "dividend": 0.357,
+    "growth": 0.029,
+    "momentum": 0.019,
+    "quality": 0.429,
+    "value": 0.167
+   },
+   "strictness_level": "STRICT",
+   "violation_evidence": [],
+   "violations": [
+    "POLICY_VIOLATION: HEALTHY is low-quality (FA=7, TA=2) and should be suppressed per current policy",
+    "POLICY_VIOLATION: STEADY is low-quality (FA=4, TA=0) and should be suppressed per current policy",
+    "POLICY_VIOLATION: WEAKSELL has a SELL signal but remains held at 5.0%",
+    "POLICY_VIOLATION: DEFAULTED is low-quality (FA=0, TA=0) and should be suppressed per current policy"
+   ]
+  },
+  "expected": {
+   "confidence_discount": 0.0,
+   "deployment_bias": "DEFENSIVE",
+   "emergency_override": false,
+   "emergency_reason": null,
+   "hard_constraints": {
+    "beta_ceiling": null,
+    "max_new_positions": 2,
+    "max_sector_pct": 40.0,
+    "max_single_position_pct": 20.0,
+    "max_turnover_pct": 28.0,
+    "min_cash_pct": 10.0,
+    "suppress_speculative": true
+   },
+   "optimizer_policy_mode": "wealth.optimizer-muji.v2",
+   "policy_narrative": "Balanced persona under RISK_OFF → DEFENSIVE deployment. Cash ≥10%, dominant tilt QUALITY (43%). Strictness: STRICT.",
+   "position_limit_source": "POLICY_ENGINE",
+   "prompt_block": "[ACTIVE OPTIMIZATION POLICY — MANDATORY GOVERNANCE]\nDEPLOYMENT_MODE:        DEFENSIVE\nSTRICTNESS_LEVEL:       STRICT\nRISK_BUDGET:            28/100\nCURRENT_CASH_MANDATE:   minimum 10% must remain undeployed\nTURNOVER_CEILING:       28% of NAV\nMAX_NEW_POSITIONS:      2 new stock(s) maximum\nSUPPRESS_SPECULATIVE:   YES — avoid low-quality or high-beta positions\nACTIVE_FACTOR_TILT:     QUALITY (43%) > DIVIDEND (36%) > VALUE (17%)\n\nExisting violations to resolve:\n  • POLICY_VIOLATION: WEAKSELL has a SELL signal but remains held at 5.0%\nPolicy summary: Balanced persona under RISK_OFF → DEFENSIVE deployment. Cash ≥10%, dominant tilt QUALITY (43%). Strictness: STRICT.\nObserve genuine policy restrictions. Position and sector concentration and allocation drift are advisory.\nUse NAV for position targets, cash and turnover.\n",
+   "rebalance_aggressiveness": 0.35,
+   "resolved_sector_limits": {},
+   "risk_budget": 27.5,
+   "sector_limit_sources": {},
+   "sector_policy_mode": "wealth.optimizer-sector-advisory.v1",
+   "soft_factor_tilts": {
+    "dividend": 0.357,
+    "growth": 0.029,
+    "momentum": 0.019,
+    "quality": 0.429,
+    "value": 0.167
+   },
+   "strictness_level": "STRICT",
+   "violation_evidence": [],
+   "violations": [
+    "POLICY_VIOLATION: WEAKSELL has a SELL signal but remains held at 5.0%"
+   ]
+  }
+ },
+ "muji_v2/SIDEWAYS/mixed": {
+  "baseline": {
+   "confidence_discount": 0.0,
+   "deployment_bias": "SELECTIVE",
+   "emergency_override": false,
+   "emergency_reason": null,
+   "hard_constraints": {
+    "beta_ceiling": null,
+    "max_new_positions": 2,
+    "max_sector_pct": 40.0,
+    "max_single_position_pct": 22.0,
+    "max_turnover_pct": 32.0,
+    "min_cash_pct": 5.0,
+    "suppress_speculative": false
+   },
+   "optimizer_policy_mode": "wealth.optimizer-muji.v2",
+   "policy_narrative": "Balanced persona under SIDEWAYS → SELECTIVE deployment. Cash ≥5%, dominant tilt DIVIDEND (35%). Strictness: NORMAL.",
+   "position_limit_source": "POLICY_ENGINE",
+   "prompt_block": "[ACTIVE OPTIMIZATION POLICY — MANDATORY GOVERNANCE]\nDEPLOYMENT_MODE:        SELECTIVE\nSTRICTNESS_LEVEL:       NORMAL\nRISK_BUDGET:            50/100\nCURRENT_CASH_MANDATE:   minimum 5% must remain undeployed\nTURNOVER_CEILING:       32% of NAV\nMAX_NEW_POSITIONS:      2 new stock(s) maximum\nSUPPRESS_SPECULATIVE:   NO\nACTIVE_FACTOR_TILT:     DIVIDEND (35%) > VALUE (20%) > QUALITY (20%)\n\nExisting violations to resolve:\n  • POLICY_VIOLATION: WEAKSELL has a SELL signal but remains held at 5.0%\nPolicy summary: Balanced persona under SIDEWAYS → SELECTIVE deployment. Cash ≥5%, dominant tilt DIVIDEND (35%). Strictness: NORMAL.\nObserve genuine policy restrictions. Position and sector concentration and allocation drift are advisory.\nUse NAV for position targets, cash and turnover.\n",
+   "rebalance_aggressiveness": 0.4,
+   "resolved_sector_limits": {},
+   "risk_budget": 50.5,
+   "sector_limit_sources": {},
+   "sector_policy_mode": "wealth.optimizer-sector-advisory.v1",
+   "soft_factor_tilts": {
+    "dividend": 0.35,
+    "growth": 0.13,
+    "momentum": 0.12,
+    "quality": 0.2,
+    "value": 0.2
+   },
+   "strictness_level": "NORMAL",
+   "violation_evidence": [],
+   "violations": [
+    "POLICY_VIOLATION: WEAKSELL has a SELL signal but remains held at 5.0%"
+   ]
+  },
+  "expected": {
+   "confidence_discount": 0.0,
+   "deployment_bias": "SELECTIVE",
+   "emergency_override": false,
+   "emergency_reason": null,
+   "hard_constraints": {
+    "beta_ceiling": null,
+    "max_new_positions": 2,
+    "max_sector_pct": 40.0,
+    "max_single_position_pct": 22.0,
+    "max_turnover_pct": 32.0,
+    "min_cash_pct": 5.0,
+    "suppress_speculative": false
+   },
+   "optimizer_policy_mode": "wealth.optimizer-muji.v2",
+   "policy_narrative": "Balanced persona under SIDEWAYS → SELECTIVE deployment. Cash ≥5%, dominant tilt DIVIDEND (35%). Strictness: NORMAL.",
+   "position_limit_source": "POLICY_ENGINE",
+   "prompt_block": "[ACTIVE OPTIMIZATION POLICY — MANDATORY GOVERNANCE]\nDEPLOYMENT_MODE:        SELECTIVE\nSTRICTNESS_LEVEL:       NORMAL\nRISK_BUDGET:            50/100\nCURRENT_CASH_MANDATE:   minimum 5% must remain undeployed\nTURNOVER_CEILING:       32% of NAV\nMAX_NEW_POSITIONS:      2 new stock(s) maximum\nSUPPRESS_SPECULATIVE:   NO\nACTIVE_FACTOR_TILT:     DIVIDEND (35%) > VALUE (20%) > QUALITY (20%)\n\nExisting violations to resolve:\n  • POLICY_VIOLATION: WEAKSELL has a SELL signal but remains held at 5.0%\nPolicy summary: Balanced persona under SIDEWAYS → SELECTIVE deployment. Cash ≥5%, dominant tilt DIVIDEND (35%). Strictness: NORMAL.\nObserve genuine policy restrictions. Position and sector concentration and allocation drift are advisory.\nUse NAV for position targets, cash and turnover.\n",
+   "rebalance_aggressiveness": 0.4,
+   "resolved_sector_limits": {},
+   "risk_budget": 50.5,
+   "sector_limit_sources": {},
+   "sector_policy_mode": "wealth.optimizer-sector-advisory.v1",
+   "soft_factor_tilts": {
+    "dividend": 0.35,
+    "growth": 0.13,
+    "momentum": 0.12,
+    "quality": 0.2,
+    "value": 0.2
+   },
+   "strictness_level": "NORMAL",
+   "violation_evidence": [],
+   "violations": [
+    "POLICY_VIOLATION: WEAKSELL has a SELL signal but remains held at 5.0%"
+   ]
+  }
+ },
+ "sector_advisory_v1/EMERGENCY/mixed": {
+  "baseline": {
+   "confidence_discount": 0.0,
+   "deployment_bias": "PRESERVATION",
+   "emergency_override": true,
+   "emergency_reason": "Extreme volatility (vol z-score 3.1σ ≥ 2.5σ) — capital preservation mode activated",
+   "hard_constraints": {
+    "beta_ceiling": null,
+    "max_new_positions": 0,
+    "max_sector_pct": 25.0,
+    "max_single_position_pct": 15.0,
+    "max_turnover_pct": 15.0,
+    "min_cash_pct": 20.0,
+    "suppress_speculative": true
+   },
+   "policy_narrative": "EMERGENCY POLICY — Extreme volatility (vol z-score 3.1σ ≥ 2.5σ) — capital preservation mode activated. Min cash 20%, max position 15%, speculative assets suppressed.",
+   "position_limit_source": "EMERGENCY_OVERRIDE",
+   "prompt_block": "[ACTIVE OPTIMIZATION POLICY — MANDATORY GOVERNANCE]\n⚠ EMERGENCY OVERRIDE ACTIVE — Extreme volatility (vol z-score 3.1σ ≥ 2.5σ) — capital preservation mode activated\nALL new aggressive allocations are FROZEN. Capital preservation is the ONLY objective.\n\nDEPLOYMENT_MODE:        PRESERVATION\nSTRICTNESS_LEVEL:       EMERGENCY\nRISK_BUDGET:            16/100\n\nCURRENT_CASH_MANDATE:   minimum 20% must remain undeployed\nMAX_SINGLE_STOCK_LIMIT: 15% of portfolio per stock\nSector concentration is reviewed separately as advisory exposure.\nTURNOVER_CEILING:       15% of portfolio value this rebalance\nMAX_NEW_POSITIONS:      0 new stock(s) maximum\nSUPPRESS_SPECULATIVE:   YES — avoid low-quality or high-beta positions\n\nCONSTRAINT PRIORITY HIERARCHY (Tier 1 > Tier 2 > Tier 3):\n  Tier 1 — CRITICAL (enforce first): Single position limits, catastrophic exposure\n  Tier 2 — STRATEGIC (enforce second): Cash mandates, regime alignment, beta ceilings\n  Tier 3 — EFFICIENCY (flex when needed): Turnover limits, transaction friction\n  Rule: Recommend measurable Tier 1 repairs within the effective turnover cap. Report residual or infeasible sector breaches for human review. Volatility alone does not require a sale.\n\nACTIVE_FACTOR_TILT:     QUALITY (38%) > DIVIDEND (34%) > VALUE (24%)\n\nExisting violations to resolve:\n  • CONCENTRATION_BREACH: HEALTHY at 30.0% exceeds 15% single-position policy limit\n  • POLICY_VIOLATION: HEALTHY is low-quality (FA=7, TA=2) and should be suppressed per current policy\n  • CONCENTRATION_BREACH: STEADY at 20.0% exceeds 15% single-position policy limit\n  • POLICY_VIOLATION: STEADY is low-quality (FA=4, TA=0) and should be suppressed per current policy\n  • POLICY_VIOLATION: WEAKSELL has a SELL signal but remains held at 5.0%\nPolicy summary: EMERGENCY POLICY — Extreme volatility (vol z-score 3.1σ ≥ 2.5σ) — capital preservation mode activated. Min cash 20%, max position 15%, speculative assets suppressed.\n\nAll allocation proposals MUST comply with these constraints.\nPython evaluates proposals deterministically. Sector limits use invested equity market value excluding cash. Keep position targets, cash and turnover on the NAV basis.\n",
+   "rebalance_aggressiveness": 0.12,
+   "resolved_sector_limits": {},
+   "risk_budget": 16.4,
+   "sector_limit_sources": {
+    "default": "EMERGENCY_OVERRIDE"
+   },
+   "sector_policy_mode": "wealth.optimizer-sector-advisory.v1",
+   "soft_factor_tilts": {
+    "dividend": 0.337,
+    "growth": 0.019,
+    "momentum": 0.019,
+    "quality": 0.385,
+    "value": 0.24
+   },
+   "strictness_level": "EMERGENCY",
+   "violation_evidence": [
+    {
+     "basis": "NAV",
+     "cash": 30000.0,
+     "evidence_version": "wealth.policy-evidence.v1",
+     "limit_pct": 15.0,
+     "nav": 100000.0,
+     "observed_pct": 30.0,
+     "position_value": 30000.0,
+     "rule": "hard_constraints.max_single_position_pct",
+     "scope": "SINGLE_POSITION",
+     "symbol": "HEALTHY",
+     "type": "CONCENTRATION_BREACH"
+    },
+    {
+     "basis": "NAV",
+     "cash": 30000.0,
+     "evidence_version": "wealth.policy-evidence.v1",
+     "limit_pct": 15.0,
+     "nav": 100000.0,
+     "observed_pct": 20.0,
+     "position_value": 20000.0,
+     "rule": "hard_constraints.max_single_position_pct",
+     "scope": "SINGLE_POSITION",
+     "symbol": "STEADY",
+     "type": "CONCENTRATION_BREACH"
+    }
+   ],
+   "violations": [
+    "CONCENTRATION_BREACH: HEALTHY at 30.0% exceeds 15% single-position policy limit",
+    "POLICY_VIOLATION: HEALTHY is low-quality (FA=7, TA=2) and should be suppressed per current policy",
+    "CONCENTRATION_BREACH: STEADY at 20.0% exceeds 15% single-position policy limit",
+    "POLICY_VIOLATION: STEADY is low-quality (FA=4, TA=0) and should be suppressed per current policy",
+    "POLICY_VIOLATION: WEAKSELL has a SELL signal but remains held at 5.0%",
+    "POLICY_VIOLATION: DEFAULTED is low-quality (FA=0, TA=0) and should be suppressed per current policy"
+   ]
+  },
+  "expected": {
+   "confidence_discount": 0.0,
+   "deployment_bias": "PRESERVATION",
+   "emergency_override": true,
+   "emergency_reason": "Extreme volatility (vol z-score 3.1σ ≥ 2.5σ) — capital preservation mode activated",
+   "hard_constraints": {
+    "beta_ceiling": null,
+    "max_new_positions": 0,
+    "max_sector_pct": 25.0,
+    "max_single_position_pct": 15.0,
+    "max_turnover_pct": 15.0,
+    "min_cash_pct": 20.0,
+    "suppress_speculative": true
+   },
+   "policy_narrative": "EMERGENCY POLICY — Extreme volatility (vol z-score 3.1σ ≥ 2.5σ) — capital preservation mode activated. Min cash 20%, max position 15%, speculative assets suppressed.",
+   "position_limit_source": "EMERGENCY_OVERRIDE",
+   "prompt_block": "[ACTIVE OPTIMIZATION POLICY — MANDATORY GOVERNANCE]\n⚠ EMERGENCY OVERRIDE ACTIVE — Extreme volatility (vol z-score 3.1σ ≥ 2.5σ) — capital preservation mode activated\nALL new aggressive allocations are FROZEN. Capital preservation is the ONLY objective.\n\nDEPLOYMENT_MODE:        PRESERVATION\nSTRICTNESS_LEVEL:       EMERGENCY\nRISK_BUDGET:            16/100\n\nCURRENT_CASH_MANDATE:   minimum 20% must remain undeployed\nMAX_SINGLE_STOCK_LIMIT: 15% of portfolio per stock\nSector concentration is reviewed separately as advisory exposure.\nTURNOVER_CEILING:       15% of portfolio value this rebalance\nMAX_NEW_POSITIONS:      0 new stock(s) maximum\nSUPPRESS_SPECULATIVE:   YES — avoid low-quality or high-beta positions\n\nCONSTRAINT PRIORITY HIERARCHY (Tier 1 > Tier 2 > Tier 3):\n  Tier 1 — CRITICAL (enforce first): Single position limits, catastrophic exposure\n  Tier 2 — STRATEGIC (enforce second): Cash mandates, regime alignment, beta ceilings\n  Tier 3 — EFFICIENCY (flex when needed): Turnover limits, transaction friction\n  Rule: Recommend measurable Tier 1 repairs within the effective turnover cap. Report residual or infeasible sector breaches for human review. Volatility alone does not require a sale.\n\nACTIVE_FACTOR_TILT:     QUALITY (38%) > DIVIDEND (34%) > VALUE (24%)\n\nExisting violations to resolve:\n  • CONCENTRATION_BREACH: HEALTHY at 30.0% exceeds 15% single-position policy limit\n  • CONCENTRATION_BREACH: STEADY at 20.0% exceeds 15% single-position policy limit\n  • POLICY_VIOLATION: WEAKSELL has a SELL signal but remains held at 5.0%\nPolicy summary: EMERGENCY POLICY — Extreme volatility (vol z-score 3.1σ ≥ 2.5σ) — capital preservation mode activated. Min cash 20%, max position 15%, speculative assets suppressed.\n\nAll allocation proposals MUST comply with these constraints.\nPython evaluates proposals deterministically. Sector limits use invested equity market value excluding cash. Keep position targets, cash and turnover on the NAV basis.\n",
+   "rebalance_aggressiveness": 0.12,
+   "resolved_sector_limits": {},
+   "risk_budget": 16.4,
+   "sector_limit_sources": {
+    "default": "EMERGENCY_OVERRIDE"
+   },
+   "sector_policy_mode": "wealth.optimizer-sector-advisory.v1",
+   "soft_factor_tilts": {
+    "dividend": 0.337,
+    "growth": 0.019,
+    "momentum": 0.019,
+    "quality": 0.385,
+    "value": 0.24
+   },
+   "strictness_level": "EMERGENCY",
+   "violation_evidence": [
+    {
+     "basis": "NAV",
+     "cash": 30000.0,
+     "evidence_version": "wealth.policy-evidence.v1",
+     "limit_pct": 15.0,
+     "nav": 100000.0,
+     "observed_pct": 30.0,
+     "position_value": 30000.0,
+     "rule": "hard_constraints.max_single_position_pct",
+     "scope": "SINGLE_POSITION",
+     "symbol": "HEALTHY",
+     "type": "CONCENTRATION_BREACH"
+    },
+    {
+     "basis": "NAV",
+     "cash": 30000.0,
+     "evidence_version": "wealth.policy-evidence.v1",
+     "limit_pct": 15.0,
+     "nav": 100000.0,
+     "observed_pct": 20.0,
+     "position_value": 20000.0,
+     "rule": "hard_constraints.max_single_position_pct",
+     "scope": "SINGLE_POSITION",
+     "symbol": "STEADY",
+     "type": "CONCENTRATION_BREACH"
+    }
+   ],
+   "violations": [
+    "CONCENTRATION_BREACH: HEALTHY at 30.0% exceeds 15% single-position policy limit",
+    "CONCENTRATION_BREACH: STEADY at 20.0% exceeds 15% single-position policy limit",
+    "POLICY_VIOLATION: WEAKSELL has a SELL signal but remains held at 5.0%"
+   ]
+  }
+ },
+ "sector_advisory_v1/RISK_OFF/mixed": {
+  "baseline": {
+   "confidence_discount": 0.0,
+   "deployment_bias": "DEFENSIVE",
+   "emergency_override": false,
+   "emergency_reason": null,
+   "hard_constraints": {
+    "beta_ceiling": null,
+    "max_new_positions": 2,
+    "max_sector_pct": 40.0,
+    "max_single_position_pct": 20.0,
+    "max_turnover_pct": 28.0,
+    "min_cash_pct": 10.0,
+    "suppress_speculative": true
+   },
+   "policy_narrative": "Balanced persona under RISK_OFF → DEFENSIVE deployment. Cash ≥10%, position cap 20%, dominant tilt QUALITY (43%). Strictness: STRICT.",
+   "position_limit_source": "POLICY_ENGINE",
+   "prompt_block": "[ACTIVE OPTIMIZATION POLICY — MANDATORY GOVERNANCE]\nDEPLOYMENT_MODE:        DEFENSIVE\nSTRICTNESS_LEVEL:       STRICT\nRISK_BUDGET:            28/100\n\nCURRENT_CASH_MANDATE:   minimum 10% must remain undeployed\nMAX_SINGLE_STOCK_LIMIT: 20% of portfolio per stock\nSector concentration is reviewed separately as advisory exposure.\nTURNOVER_CEILING:       28% of portfolio value this rebalance\nMAX_NEW_POSITIONS:      2 new stock(s) maximum\nSUPPRESS_SPECULATIVE:   YES — avoid low-quality or high-beta positions\n\nCONSTRAINT PRIORITY HIERARCHY (Tier 1 > Tier 2 > Tier 3):\n  Tier 1 — CRITICAL (enforce first): Single position limits, catastrophic exposure\n  Tier 2 — STRATEGIC (enforce second): Cash mandates, regime alignment, beta ceilings\n  Tier 3 — EFFICIENCY (flex when needed): Turnover limits, transaction friction\n  Rule: Recommend measurable Tier 1 repairs within the effective turnover cap. Report residual or infeasible sector breaches for human review. Volatility alone does not require a sale.\n\nACTIVE_FACTOR_TILT:     QUALITY (43%) > DIVIDEND (36%) > VALUE (17%)\n\nExisting violations to resolve:\n  • CONCENTRATION_BREACH: HEALTHY at 30.0% exceeds 20% single-position policy limit\n  • POLICY_VIOLATION: HEALTHY is low-quality (FA=7, TA=2) and should be suppressed per current policy\n  • POLICY_VIOLATION: STEADY is low-quality (FA=4, TA=0) and should be suppressed per current policy\n  • POLICY_VIOLATION: WEAKSELL has a SELL signal but remains held at 5.0%\n  • POLICY_VIOLATION: DEFAULTED is low-quality (FA=0, TA=0) and should be suppressed per current policy\nPolicy summary: Balanced persona under RISK_OFF → DEFENSIVE deployment. Cash ≥10%, position cap 20%, dominant tilt QUALITY (43%). Strictness: STRICT.\n\nAll allocation proposals MUST comply with these constraints.\nPython evaluates proposals deterministically. Sector limits use invested equity market value excluding cash. Keep position targets, cash and turnover on the NAV basis.\n",
+   "rebalance_aggressiveness": 0.35,
+   "resolved_sector_limits": {},
+   "risk_budget": 27.5,
+   "sector_limit_sources": {},
+   "sector_policy_mode": "wealth.optimizer-sector-advisory.v1",
+   "soft_factor_tilts": {
+    "dividend": 0.357,
+    "growth": 0.029,
+    "momentum": 0.019,
+    "quality": 0.429,
+    "value": 0.167
+   },
+   "strictness_level": "STRICT",
+   "violation_evidence": [
+    {
+     "basis": "NAV",
+     "cash": 30000.0,
+     "evidence_version": "wealth.policy-evidence.v1",
+     "limit_pct": 20.0,
+     "nav": 100000.0,
+     "observed_pct": 30.0,
+     "position_value": 30000.0,
+     "rule": "hard_constraints.max_single_position_pct",
+     "scope": "SINGLE_POSITION",
+     "symbol": "HEALTHY",
+     "type": "CONCENTRATION_BREACH"
+    }
+   ],
+   "violations": [
+    "CONCENTRATION_BREACH: HEALTHY at 30.0% exceeds 20% single-position policy limit",
+    "POLICY_VIOLATION: HEALTHY is low-quality (FA=7, TA=2) and should be suppressed per current policy",
+    "POLICY_VIOLATION: STEADY is low-quality (FA=4, TA=0) and should be suppressed per current policy",
+    "POLICY_VIOLATION: WEAKSELL has a SELL signal but remains held at 5.0%",
+    "POLICY_VIOLATION: DEFAULTED is low-quality (FA=0, TA=0) and should be suppressed per current policy"
+   ]
+  },
+  "expected": {
+   "confidence_discount": 0.0,
+   "deployment_bias": "DEFENSIVE",
+   "emergency_override": false,
+   "emergency_reason": null,
+   "hard_constraints": {
+    "beta_ceiling": null,
+    "max_new_positions": 2,
+    "max_sector_pct": 40.0,
+    "max_single_position_pct": 20.0,
+    "max_turnover_pct": 28.0,
+    "min_cash_pct": 10.0,
+    "suppress_speculative": true
+   },
+   "policy_narrative": "Balanced persona under RISK_OFF → DEFENSIVE deployment. Cash ≥10%, position cap 20%, dominant tilt QUALITY (43%). Strictness: STRICT.",
+   "position_limit_source": "POLICY_ENGINE",
+   "prompt_block": "[ACTIVE OPTIMIZATION POLICY — MANDATORY GOVERNANCE]\nDEPLOYMENT_MODE:        DEFENSIVE\nSTRICTNESS_LEVEL:       STRICT\nRISK_BUDGET:            28/100\n\nCURRENT_CASH_MANDATE:   minimum 10% must remain undeployed\nMAX_SINGLE_STOCK_LIMIT: 20% of portfolio per stock\nSector concentration is reviewed separately as advisory exposure.\nTURNOVER_CEILING:       28% of portfolio value this rebalance\nMAX_NEW_POSITIONS:      2 new stock(s) maximum\nSUPPRESS_SPECULATIVE:   YES — avoid low-quality or high-beta positions\n\nCONSTRAINT PRIORITY HIERARCHY (Tier 1 > Tier 2 > Tier 3):\n  Tier 1 — CRITICAL (enforce first): Single position limits, catastrophic exposure\n  Tier 2 — STRATEGIC (enforce second): Cash mandates, regime alignment, beta ceilings\n  Tier 3 — EFFICIENCY (flex when needed): Turnover limits, transaction friction\n  Rule: Recommend measurable Tier 1 repairs within the effective turnover cap. Report residual or infeasible sector breaches for human review. Volatility alone does not require a sale.\n\nACTIVE_FACTOR_TILT:     QUALITY (43%) > DIVIDEND (36%) > VALUE (17%)\n\nExisting violations to resolve:\n  • CONCENTRATION_BREACH: HEALTHY at 30.0% exceeds 20% single-position policy limit\n  • POLICY_VIOLATION: WEAKSELL has a SELL signal but remains held at 5.0%\nPolicy summary: Balanced persona under RISK_OFF → DEFENSIVE deployment. Cash ≥10%, position cap 20%, dominant tilt QUALITY (43%). Strictness: STRICT.\n\nAll allocation proposals MUST comply with these constraints.\nPython evaluates proposals deterministically. Sector limits use invested equity market value excluding cash. Keep position targets, cash and turnover on the NAV basis.\n",
+   "rebalance_aggressiveness": 0.35,
+   "resolved_sector_limits": {},
+   "risk_budget": 27.5,
+   "sector_limit_sources": {},
+   "sector_policy_mode": "wealth.optimizer-sector-advisory.v1",
+   "soft_factor_tilts": {
+    "dividend": 0.357,
+    "growth": 0.029,
+    "momentum": 0.019,
+    "quality": 0.429,
+    "value": 0.167
+   },
+   "strictness_level": "STRICT",
+   "violation_evidence": [
+    {
+     "basis": "NAV",
+     "cash": 30000.0,
+     "evidence_version": "wealth.policy-evidence.v1",
+     "limit_pct": 20.0,
+     "nav": 100000.0,
+     "observed_pct": 30.0,
+     "position_value": 30000.0,
+     "rule": "hard_constraints.max_single_position_pct",
+     "scope": "SINGLE_POSITION",
+     "symbol": "HEALTHY",
+     "type": "CONCENTRATION_BREACH"
+    }
+   ],
+   "violations": [
+    "CONCENTRATION_BREACH: HEALTHY at 30.0% exceeds 20% single-position policy limit",
+    "POLICY_VIOLATION: WEAKSELL has a SELL signal but remains held at 5.0%"
+   ]
+  }
+ },
+ "sector_advisory_v1/SIDEWAYS/mixed": {
+  "baseline": {
+   "confidence_discount": 0.0,
+   "deployment_bias": "SELECTIVE",
+   "emergency_override": false,
+   "emergency_reason": null,
+   "hard_constraints": {
+    "beta_ceiling": null,
+    "max_new_positions": 2,
+    "max_sector_pct": 40.0,
+    "max_single_position_pct": 22.0,
+    "max_turnover_pct": 32.0,
+    "min_cash_pct": 5.0,
+    "suppress_speculative": false
+   },
+   "policy_narrative": "Balanced persona under SIDEWAYS → SELECTIVE deployment. Cash ≥5%, position cap 22%, dominant tilt DIVIDEND (35%). Strictness: NORMAL.",
+   "position_limit_source": "POLICY_ENGINE",
+   "prompt_block": "[ACTIVE OPTIMIZATION POLICY — MANDATORY GOVERNANCE]\nDEPLOYMENT_MODE:        SELECTIVE\nSTRICTNESS_LEVEL:       NORMAL\nRISK_BUDGET:            50/100\n\nCURRENT_CASH_MANDATE:   minimum 5% must remain undeployed\nMAX_SINGLE_STOCK_LIMIT: 22% of portfolio per stock\nSector concentration is reviewed separately as advisory exposure.\nTURNOVER_CEILING:       32% of portfolio value this rebalance\nMAX_NEW_POSITIONS:      2 new stock(s) maximum\nSUPPRESS_SPECULATIVE:   NO\n\nCONSTRAINT PRIORITY HIERARCHY (Tier 1 > Tier 2 > Tier 3):\n  Tier 1 — CRITICAL (enforce first): Single position limits, catastrophic exposure\n  Tier 2 — STRATEGIC (enforce second): Cash mandates, regime alignment, beta ceilings\n  Tier 3 — EFFICIENCY (flex when needed): Turnover limits, transaction friction\n  Rule: Recommend measurable Tier 1 repairs within the effective turnover cap. Report residual or infeasible sector breaches for human review. Volatility alone does not require a sale.\n\nACTIVE_FACTOR_TILT:     DIVIDEND (35%) > VALUE (20%) > QUALITY (20%)\n\nExisting violations to resolve:\n  • CONCENTRATION_BREACH: HEALTHY at 30.0% exceeds 22% single-position policy limit\n  • POLICY_VIOLATION: WEAKSELL has a SELL signal but remains held at 5.0%\nPolicy summary: Balanced persona under SIDEWAYS → SELECTIVE deployment. Cash ≥5%, position cap 22%, dominant tilt DIVIDEND (35%). Strictness: NORMAL.\n\nAll allocation proposals MUST comply with these constraints.\nPython evaluates proposals deterministically. Sector limits use invested equity market value excluding cash. Keep position targets, cash and turnover on the NAV basis.\n",
+   "rebalance_aggressiveness": 0.4,
+   "resolved_sector_limits": {},
+   "risk_budget": 50.5,
+   "sector_limit_sources": {},
+   "sector_policy_mode": "wealth.optimizer-sector-advisory.v1",
+   "soft_factor_tilts": {
+    "dividend": 0.35,
+    "growth": 0.13,
+    "momentum": 0.12,
+    "quality": 0.2,
+    "value": 0.2
+   },
+   "strictness_level": "NORMAL",
+   "violation_evidence": [
+    {
+     "basis": "NAV",
+     "cash": 30000.0,
+     "evidence_version": "wealth.policy-evidence.v1",
+     "limit_pct": 22.0,
+     "nav": 100000.0,
+     "observed_pct": 30.0,
+     "position_value": 30000.0,
+     "rule": "hard_constraints.max_single_position_pct",
+     "scope": "SINGLE_POSITION",
+     "symbol": "HEALTHY",
+     "type": "CONCENTRATION_BREACH"
+    }
+   ],
+   "violations": [
+    "CONCENTRATION_BREACH: HEALTHY at 30.0% exceeds 22% single-position policy limit",
+    "POLICY_VIOLATION: WEAKSELL has a SELL signal but remains held at 5.0%"
+   ]
+  },
+  "expected": {
+   "confidence_discount": 0.0,
+   "deployment_bias": "SELECTIVE",
+   "emergency_override": false,
+   "emergency_reason": null,
+   "hard_constraints": {
+    "beta_ceiling": null,
+    "max_new_positions": 2,
+    "max_sector_pct": 40.0,
+    "max_single_position_pct": 22.0,
+    "max_turnover_pct": 32.0,
+    "min_cash_pct": 5.0,
+    "suppress_speculative": false
+   },
+   "policy_narrative": "Balanced persona under SIDEWAYS → SELECTIVE deployment. Cash ≥5%, position cap 22%, dominant tilt DIVIDEND (35%). Strictness: NORMAL.",
+   "position_limit_source": "POLICY_ENGINE",
+   "prompt_block": "[ACTIVE OPTIMIZATION POLICY — MANDATORY GOVERNANCE]\nDEPLOYMENT_MODE:        SELECTIVE\nSTRICTNESS_LEVEL:       NORMAL\nRISK_BUDGET:            50/100\n\nCURRENT_CASH_MANDATE:   minimum 5% must remain undeployed\nMAX_SINGLE_STOCK_LIMIT: 22% of portfolio per stock\nSector concentration is reviewed separately as advisory exposure.\nTURNOVER_CEILING:       32% of portfolio value this rebalance\nMAX_NEW_POSITIONS:      2 new stock(s) maximum\nSUPPRESS_SPECULATIVE:   NO\n\nCONSTRAINT PRIORITY HIERARCHY (Tier 1 > Tier 2 > Tier 3):\n  Tier 1 — CRITICAL (enforce first): Single position limits, catastrophic exposure\n  Tier 2 — STRATEGIC (enforce second): Cash mandates, regime alignment, beta ceilings\n  Tier 3 — EFFICIENCY (flex when needed): Turnover limits, transaction friction\n  Rule: Recommend measurable Tier 1 repairs within the effective turnover cap. Report residual or infeasible sector breaches for human review. Volatility alone does not require a sale.\n\nACTIVE_FACTOR_TILT:     DIVIDEND (35%) > VALUE (20%) > QUALITY (20%)\n\nExisting violations to resolve:\n  • CONCENTRATION_BREACH: HEALTHY at 30.0% exceeds 22% single-position policy limit\n  • POLICY_VIOLATION: WEAKSELL has a SELL signal but remains held at 5.0%\nPolicy summary: Balanced persona under SIDEWAYS → SELECTIVE deployment. Cash ≥5%, position cap 22%, dominant tilt DIVIDEND (35%). Strictness: NORMAL.\n\nAll allocation proposals MUST comply with these constraints.\nPython evaluates proposals deterministically. Sector limits use invested equity market value excluding cash. Keep position targets, cash and turnover on the NAV basis.\n",
+   "rebalance_aggressiveness": 0.4,
+   "resolved_sector_limits": {},
+   "risk_budget": 50.5,
+   "sector_limit_sources": {},
+   "sector_policy_mode": "wealth.optimizer-sector-advisory.v1",
+   "soft_factor_tilts": {
+    "dividend": 0.35,
+    "growth": 0.13,
+    "momentum": 0.12,
+    "quality": 0.2,
+    "value": 0.2
+   },
+   "strictness_level": "NORMAL",
+   "violation_evidence": [
+    {
+     "basis": "NAV",
+     "cash": 30000.0,
+     "evidence_version": "wealth.policy-evidence.v1",
+     "limit_pct": 22.0,
+     "nav": 100000.0,
+     "observed_pct": 30.0,
+     "position_value": 30000.0,
+     "rule": "hard_constraints.max_single_position_pct",
+     "scope": "SINGLE_POSITION",
+     "symbol": "HEALTHY",
+     "type": "CONCENTRATION_BREACH"
+    }
+   ],
+   "violations": [
+    "CONCENTRATION_BREACH: HEALTHY at 30.0% exceeds 22% single-position policy limit",
+    "POLICY_VIOLATION: WEAKSELL has a SELL signal but remains held at 5.0%"
+   ]
+  }
+ }
+}
