@@ -388,6 +388,10 @@ def _detect_violations(
     violations: list[str] = []
 
     # ── Per-position checks ───────────────────────────────────────────────────
+    # No FA/TA score-based "low-quality" suppression violation: the agents emit
+    # small signed scores, so a fixed 0-100 cut-off flagged every holding
+    # (DECISION_LOG Slice 4.3A). suppress_speculative still drives regime
+    # guidance in the prompt block and narrative.
     for item in portfolio_data:
         w   = item.get("weight_pct") or 0
         sym = item.get("symbol", "?")
@@ -396,15 +400,6 @@ def _detect_violations(
                 f"CONCENTRATION_BREACH: {sym} at {w:.1f}% exceeds "
                 f"{hard.max_single_position_pct:.0f}% single-position policy limit"
             )
-        if hard.suppress_speculative:
-            fa  = item.get("fa_score") or 0
-            ta  = item.get("ta_score") or 0
-            sig = (item.get("signal") or "HOLD").upper()
-            if fa < 35 and ta < 35 and sig not in ("SELL", "REDUCE") and w > 4:
-                violations.append(
-                    f"POLICY_VIOLATION: {sym} is low-quality (FA={fa}, TA={ta}) and should be "
-                    "suppressed per current policy"
-                )
         if (item.get("signal") or "HOLD").upper() == "SELL" and w > 0:
             violations.append(
                 f"POLICY_VIOLATION: {sym} has a SELL signal but remains held at {w:.1f}%"
