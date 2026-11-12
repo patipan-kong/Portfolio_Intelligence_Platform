@@ -3724,3 +3724,57 @@ importance that the captured evidence cannot establish.
   - This is a single run, so the improved model behaviour is encouraging but not guaranteed in future runs.
 
 **Disposition:** `IMPLEMENTED`
+
+## MUJI V2 Phase 4 Slice 4.3B — Stop Execution Penalty Rewriting combined_score
+
+**Date:** 2026-11-12
+**Problem:** `main.analyze_optimizer` computes the investment score as `combined_score = 0.4 * ta_score + 0.6 * fa_score` (FA −4..+7, TA −7..+7, so about −5.2..+7.0; no normalization). `execution_penalty.apply_execution_score_penalties` then replaced it with `max(5.0, combined_score - combined_score_penalty)`. The floor and the 4/8/14 penalties assume a 0–100 scale. On the real scale, `combined_score - penalty` is always below 5, so every penalised instrument got exactly 5.0, whatever its actual score.
+- In production every DR is classified MEDIUM risk (no liquidity inputs reach the classifier), so all 19 Registry DRs in histories 247–249 got penalty 4.0 and a score of 5.0.
+- Their raw scores ranged from 0.2 to 4.6, so each one was raised, and together they ranked above every ordinary stock (highest raw score 3.8).
+- The defect has existed since the penalty was introduced in Phase 3B.10 (2026-05-26); it never lowered a score.
+- The distorted score reached the Challenger and fallback prompts, `target_allocations[].combined_score`, `watchlist_ranking[].combined_score`, the recommendation snapshot scores map and `signal_history.score_at_signal`.
+- No deterministic stage reads `combined_score`: the Policy Engine, consensus, candidate gates, Committee selection, execution caps and scheduler are unaffected.
+**Decision (Option C):** Stop changing `combined_score` for execution risk. The scoring formula itself is unchanged.
+- `apply_execution_score_penalties` and its call in `main.py` are removed, along with the unread `execution_penalized` marker.
+- `combined_score_penalty` stays in the execution context and in the canonical instrument context with the same name, values and JSON shape. It is documented as an informational legacy penalty estimate, NOT a deduction from `combined_score`.
+- No new penalty magnitudes, thresholds, normalization or adjustment formula.
+**Invariants preserved:**
+- Execution-risk classification, execution-quality scores, DR and illiquid position caps, liquidity and spread warnings, slippage estimates, the execution prompt block and the canonical instrument context are unchanged. Replaying the frozen execution context for histories 247–249 reproduces it exactly.
+- The Strategist prompt is byte-identical.
+- In the Challenger, Auditor, Committee and fallback prompts, only `combined_score` values change, plus Challenger candidate ids. Those ids hash the proposal rows, which carry `combined_score`.
+- Policy, consensus, candidate eligibility, Committee selection, final allocations and scheduling are otherwise identical, in Legacy, Sector Advisory v1, MUJI V2 and MUJI V2 with the Committee opt-in.
+- Emergency safeguards, the Registry, the TA/FA agents and stored history are unchanged.
+**Verification:** `tests/test_dr_execution_score.py` (34 tests; the 4 endpoint-boundary tests fail against the baseline) covers:
+- raw scores at the `main.py` boundary (DRs at 4.6, 3.6, 0.4 and 0.2; ordinary stocks unchanged; no score increase);
+- the informational penalty estimate;
+- snapshot and signal-history construction, with rows intercepted and nothing written;
+- the frozen 247–249 replay (19 DRs at 5.0 before, raw scores after, identical execution context and prompt block);
+- prompt, finalization and Committee invariance across all modes on the primary and fallback paths.
+The fixture `tests/fixtures/dr_execution_score_frozen.json` is a read-only export.
+**Impact:** `main.py` (call removed) and `services/optimizer/execution_penalty.py` (function removed, docs); new test file and fixture. No API, schema or frontend change. Known limits:
+- Stored runs, snapshots and the existing `signal_history` rows keep the distorted 5.0 values (181 DR rows). Stored snapshots carry `execution_penalized` and can identify them. Historical analytics are not corrected here.
+- The canonical instrument prompt still shows `combined_score_penalty` for held DRs without saying it is informational; the prompt is unchanged in this slice.
+- DRs now show their true lower scores to the Challenger and fallback model, so model behaviour may shift.
+- The execution penalty no longer affects any score. Execution risk is expressed only through caps, warnings, slippage and prompt guidance.
+- Separate and not addressed:
+  - Liquidity inputs (volume, average volume) never reach the classifier, so HIGH and CRITICAL risk cannot occur.
+  - AMZN01.BK and META01.BK have Registry EQUITY facts despite DR-style names.
+  - The `score_at_signal` "(0-100)" model comment is stale.
+**Live validation (history 250, after a backend restart; PASS WITH LIMITATIONS):**
+- Setup: same HIGH_VOLATILITY emergency regime, hard constraints and Committee opt-in as history 249. The backend restarted after the source change; no instrument carries `execution_penalized`.
+- Scores: all 89 instruments carry the raw `round(0.4 * ta_score + 0.6 * fa_score, 1)`. None of the 19 Registry DRs is at 5.0 any more: CATL01.BK 4.6, MICRON01.BK 4.2, NVDA01.BK 4.0, GOOGL01.BK 3.6, down to TSLA01.BK 0.2 and GOLDM01.BK 0.0 (its TA moved from 1 to 0). Five ordinary stocks changed only through a one-point TA move.
+- The raw scores reach `target_allocations`, the Challenger's allocation rows, `watchlist_ranking`, and the snapshot scores map and projected allocations.
+- Execution safeguards unchanged: the execution context, including the canonical instrument context, matches history 249 exactly for all 89 symbols. That covers DR classification (19 DRs, MEDIUM, quality 52.2), the 15% DR position cap, the DR portfolio cap, warnings, slippage (DR 0.5%, equity 0.3%) and the informational 4.0 penalty estimate. Hard constraints and the emergency override are unchanged. The `concentration` and `scheduled_execution` differences come only from price moves (equity denominator 502,600 to 504,300).
+- The Strategist and Challenger proposed no trades. The Challenger returned NO_ACTION (INSUFFICIENT_EDGE) with five HOLD rows. No model text mentions penalties, deductions or 5.0 scores.
+- The Auditor candidate review was AVAILABLE.
+- The Committee model call was correctly not invoked: no eligible actionable candidate existed, so deterministic selection kept `hold-current` (`CAUTIONED_HOLD`, `NO_ELIGIBLE_ACTION`).
+- Final result: NO_ACTION, five HOLD allocations, zero scheduled trades, 0% turnover, cash unchanged at 32.1%. No unsupported trade became executable.
+- Limitations:
+  - Signal-history writes were not exercised: there was no actionable allocation, so no row was written. The latest stored rows (history 247) still carry 5.0.
+  - The fallback prompt path was not exercised. Prompts are not persisted, so raw scores in the Challenger context are inferred from its echoed allocation rows.
+  - The Committee model was not exercised.
+  - AMZN01.BK and META01.BK are flagged `is_dr` in the scores map but have Registry EQUITY facts (pre-existing).
+  - `watchlist_ranking` is ordered by FA + TA, not `combined_score` (pre-existing).
+  - The Challenger now agrees with the Strategist, and the Auditor's advisory severities shifted. This is model variance on a single run.
+
+**Disposition:** `IMPLEMENTED`

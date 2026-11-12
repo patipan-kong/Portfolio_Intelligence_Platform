@@ -4685,16 +4685,15 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
     execution_facts: dict = {}
     try:
         from services.execution_instrument_facts import resolve_execution_instruments
-        from services.optimizer.execution_penalty import (
-            compute_portfolio_execution_context,
-            apply_execution_score_penalties,
-        )
+        from services.optimizer.execution_penalty import compute_portfolio_execution_context
         execution_facts = resolve_execution_instruments(db, tuple(dict.fromkeys((*scores_map, *(h.symbol for h in holdings)))))
+        # Read-only: combined_score stays the raw 0.4*TA + 0.6*FA score. The
+        # combined_score_penalty in execution_ctx is informational only
+        # (DECISION_LOG Slice 4.3B).
         execution_ctx = compute_portfolio_execution_context(
             scores_map,
             facts_by_symbol=execution_facts,
         )
-        apply_execution_score_penalties(scores_map, execution_ctx)
         _log.info(
             "analyze_optimizer: execution_ctx — dr_assets=%d high_risk=%d",
             len(execution_ctx.get("dr_symbols", [])),
