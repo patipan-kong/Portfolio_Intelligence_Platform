@@ -5,7 +5,10 @@ metadata from those facts plus available volume and price estimates. This
 module does not resolve Registry identity and contains no symbol taxonomy.
 
 Returns per-symbol ExecutionMetadata that is used to:
-  1. Apply soft combined_score penalties for illiquid/DR assets
+  1. Report combined_score_penalty, an informational legacy penalty estimate.
+     It is NOT deducted from the investment combined_score (DECISION_LOG
+     Slice 4.3B): the former max(5.0, combined - penalty) assumed a 0-100
+     scale and set every penalised DR to 5.0.
   2. Enforce reduced max-position caps for DRs (hard-capped at DR_MAX_POSITION_PCT)
   3. Generate execution warning labels injected into L1/L2 AI prompts
   4. Surface execution risk badges in the optimizer UI
@@ -54,8 +57,9 @@ DR_MAX_POSITION_PCT        = 15.0    # hard cap per DR asset (vs normal 20-30%)
 DR_MAX_PORTFOLIO_PCT       = 40.0    # total DR basket capped at 40% of portfolio
 ILLIQUID_POSITION_CAP_PCT  = 10.0    # extra cap for critically illiquid assets
 
-# ── Soft combined_score penalties ─────────────────────────────────────────────
-# Applied additively: a DR with HIGH execution risk gets 4 + (8-4) = 8 pts penalty.
+# ── Informational legacy combined_score penalty estimates ─────────────────────
+# Reported as combined_score_penalty only; never deducted from combined_score
+# (DECISION_LOG Slice 4.3B). A DR with HIGH execution risk reports 8.
 _PENALTY_DR              = 4.0   # base penalty for any DR asset
 _PENALTY_HIGH_RISK       = 8.0   # penalty for HIGH execution risk (replaces DR base if higher)
 _PENALTY_CRITICAL_RISK   = 14.0  # penalty for CRITICAL execution risk
@@ -100,7 +104,7 @@ class ExecutionMetadata:
     execution_warnings:      list[str]      # short warning labels for UI
     position_cap_pct:        float | None   # reduced position cap; None = use standard
     slippage_cost_est_pct:   float          # estimated round-trip slippage %
-    combined_score_penalty:  float          # soft score reduction to apply
+    combined_score_penalty:  float          # informational legacy estimate; NOT applied to combined_score
     resolution_status:       str            # RESOLVED | UNKNOWN | AMBIGUOUS | NOT_TRADABLE
     instrument_form:         str            # authoritative Registry facts form
     execution_role:          str            # TRADABLE | REFERENCE | UNKNOWN
@@ -286,7 +290,7 @@ def classify_execution(
     base_slip = _SLIPPAGE_ESTIMATES[risk]
     slippage  = round(base_slip + (_DR_SLIPPAGE_PREMIUM if asset_type == ASSET_DR else 0.0), 2)
 
-    # ── Soft score penalty ─────────────────────────────────────────────────────
+    # ── Informational legacy penalty estimate (not applied to combined_score) ──
     if asset_type == ASSET_DR:
         penalty = max(_PENALTY_DR, _PENALTY_HIGH_RISK if risk == RISK_HIGH
                       else _PENALTY_CRITICAL_RISK if risk == RISK_CRITICAL else _PENALTY_DR)
@@ -389,24 +393,6 @@ def compute_portfolio_execution_context(
         "dr_portfolio_cap":  DR_MAX_PORTFOLIO_PCT,
         "execution_summary": summary,
     }
-
-
-def apply_execution_score_penalties(
-    scores_map: dict[str, dict],
-    execution_ctx: dict,
-) -> None:
-    """Mutate scores_map in-place: reduce combined_score by execution penalty.
-
-    Only affects combined_score when penalty > 0 (DRs / illiquid assets).
-    The penalty is capped so combined_score never goes below 5.
-    """
-    per_sym = execution_ctx.get("per_symbol", {})
-    for sym, meta in per_sym.items():
-        penalty = float(meta.get("combined_score_penalty", 0.0))
-        if penalty > 0 and sym in scores_map:
-            original = float(scores_map[sym].get("combined_score", 0))
-            scores_map[sym]["combined_score"] = round(max(5.0, original - penalty), 1)
-            scores_map[sym]["execution_penalized"] = True
 
 
 def build_execution_prompt_block(execution_ctx: dict) -> str:
