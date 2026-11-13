@@ -166,6 +166,122 @@ def test_auditor_conflict_and_invalid_committee_do_not_select_action():
     assert decide_selection(envelope, audit, {"selected_candidate_id": []})["selected_candidate_id"] == "hold-current"
 
 
+# ── Slice 4.6B: candidate-scoped material-conflict veto (B1) ─────────────────
+# Candidate-scoped, NOT evidence-verified: conflict text is model-authored and
+# is never checked against observed evidence.
+
+def _three_candidate_envelope():
+    primary = _proposal()
+    defensive = _proposal("DEFENSIVE_ROTATION")
+    defensive["target_allocations"][1].update(action="BUY", target_weight=30,
+                                                allocation_change_percent=10)
+    defensive["target_cash_weight"] = 70
+    defensive["observed_evidence_refs"].append("symbol:BBB:pe_ratio")
+    primary["additional_plans"] = [defensive]
+    envelope = prepare_candidates(HOLDINGS, [], 200, primary)
+    assert [(c["family"], c["eligibility_status"]) for c in envelope["candidates"]] == [
+        ("HOLD", "ELIGIBLE"), ("RAISE_CASH", "ELIGIBLE"), ("DEFENSIVE_ROTATION", "ELIGIBLE")]
+    return envelope
+
+
+def _conflict_audit(envelope, conflicts):
+    """Valid reviews for every candidate; conflicts keyed by candidate family."""
+    audit = validate_candidate_reviews({"candidate_reviews": [
+        {"candidate_id": c["id"], "supporting_refs": list(c["observed_evidence_refs"]),
+         "opposing_refs": [], "material_conflicts": conflicts.get(c["family"], [])}
+        for c in envelope["candidates"]]}, envelope)
+    assert audit["status"] == "AVAILABLE"
+    return audit
+
+
+def _committee_choice(envelope, audit, family="RAISE_CASH", uncertainty=()):
+    candidate = next(c for c in envelope["candidates"] if c["family"] == family)
+    return candidate["id"], decide_selection(envelope, audit, {
+        "selected_candidate_id": candidate["id"],
+        "supporting_evidence_refs": [] if family == "HOLD" else ["symbol:AAA:signal"],
+        "opposing_evidence_refs": [], "comparison_against_hold": "Preferred to the current portfolio.",
+        "decision_rationale": "Observed evidence supports this candidate.",
+        "material_uncertainty": list(uncertainty)})
+
+
+def test_selected_candidate_conflict_vetoes_and_records_its_text():
+    envelope = _three_candidate_envelope()
+    audit = _conflict_audit(envelope, {"RAISE_CASH": ["Earnings data conflict"]})
+    _, decision = _committee_choice(envelope, audit)
+    assert (decision["state"], decision["selected_candidate_id"], decision["reason_codes"]) == (
+        "SELECTED", "hold-current", ["CAUTIONED_HOLD"])
+    assert decision["material_uncertainty"] == ["MATERIAL_CONFLICT_UNRESOLVED", "Earnings data conflict"]
+    assert decision["supporting_evidence_refs"] == []
+
+
+def test_duplicate_and_padded_conflicts_are_recorded_once():
+    envelope = _three_candidate_envelope()
+    audit = _conflict_audit(envelope, {"RAISE_CASH": ["Earnings data conflict", "  Earnings data conflict ",
+                                                     "Earnings data conflict", "MATERIAL_CONFLICT_UNRESOLVED"]})
+    _, decision = _committee_choice(envelope, audit)
+    assert decision["material_uncertainty"] == ["MATERIAL_CONFLICT_UNRESOLVED", "Earnings data conflict"]
+
+
+@pytest.mark.parametrize("family", ["HOLD", "DEFENSIVE_ROTATION"])
+def test_conflict_on_hold_or_other_candidate_cannot_veto_selected_action(family):
+    envelope = _three_candidate_envelope()
+    text = "Technology sector 32.73% exceeds the advisory limit"
+    audit = _conflict_audit(envelope, {family: [text]})
+    selected_id, decision = _committee_choice(envelope, audit)
+    assert (decision["state"], decision["selected_candidate_id"], decision["reason_codes"]) == (
+        "SELECTED", selected_id, ["COMMITTEE_SELECTED"])
+    # Another candidate's text is not attached to the selected plan...
+    assert decision["material_uncertainty"] == []
+    # ...and its original review record is preserved in candidate_audit.
+    other_id = next(c["id"] for c in envelope["candidates"] if c["family"] == family)
+    assert audit["reviews"][other_id]["material_conflicts"] == [text]
+
+
+@pytest.mark.parametrize("conflicts", [[""], ["   "], ["\t\n"], ["", "  "], [None, 7, {"issue": "x"}]])
+def test_blank_or_non_string_conflicts_cannot_veto(conflicts):
+    envelope = _three_candidate_envelope()
+    audit = validate_candidate_reviews({"candidate_reviews": [
+        {"candidate_id": c["id"], "supporting_refs": list(c["observed_evidence_refs"]), "opposing_refs": [],
+         "material_conflicts": conflicts if c["family"] == "RAISE_CASH" else []}
+        for c in envelope["candidates"]]}, envelope)
+    selected_id, decision = _committee_choice(envelope, audit)
+    assert decision["selected_candidate_id"] == selected_id
+    assert decision["material_uncertainty"] == []
+
+
+def test_selected_candidate_missing_analysis_text_still_vetoes_known_b1_limitation():
+    # B1 does not classify model text: a statement of missing information on the
+    # selected candidate's own review still vetoes it (uncertainty, not proven conflict).
+    envelope = _three_candidate_envelope()
+    audit = _conflict_audit(envelope, {"RAISE_CASH": ["Missing timing analysis for AAA"]})
+    _, decision = _committee_choice(envelope, audit)
+    assert decision["selected_candidate_id"] == "hold-current"
+    assert decision["material_uncertainty"] == ["MATERIAL_CONFLICT_UNRESOLVED", "Missing timing analysis for AAA"]
+
+
+def test_hold_remains_selectable_despite_conflicts_and_records_only_its_own():
+    envelope = _three_candidate_envelope()
+    audit = _conflict_audit(envelope, {"HOLD": [" Hold leaves exposure unresolved ", "Shared note"],
+                                       "RAISE_CASH": ["Earnings data conflict"],
+                                       "DEFENSIVE_ROTATION": ["Valuation conflict"]})
+    _, decision = _committee_choice(envelope, audit, family="HOLD", uncertainty=["Shared note"])
+    assert (decision["state"], decision["selected_candidate_id"], decision["reason_codes"]) == (
+        "SELECTED", "hold-current", ["COMMITTEE_SELECTED"])
+    assert decision["material_uncertainty"] == ["Shared note", "Hold leaves exposure unresolved"]
+
+
+def test_unknown_opposing_ref_still_fails_the_audit_closed():
+    envelope = _three_candidate_envelope()
+    audit = validate_candidate_reviews({"candidate_reviews": [
+        {"candidate_id": c["id"], "supporting_refs": list(c["observed_evidence_refs"]),
+         "opposing_refs": ["symbol:ZZZ:signal"] if c["family"] == "HOLD" else [], "material_conflicts": []}
+        for c in envelope["candidates"]]}, envelope)
+    assert (audit["status"], audit["reason"]) == ("UNAVAILABLE", "UNKNOWN_AUDITOR_REFERENCE")
+    _, decision = _committee_choice(envelope, audit)
+    assert (decision["selected_candidate_id"], decision["reason_codes"]) == ("hold-current", ["CAUTIONED_HOLD"])
+    assert decision["material_uncertainty"] == ["UNKNOWN_AUDITOR_REFERENCE"]
+
+
 def test_new_mode_ignores_forced_sell_when_committee_selects_hold(monkeypatch):
     replies = {
         "layer1": {"swaps": [], "top_buys": []},

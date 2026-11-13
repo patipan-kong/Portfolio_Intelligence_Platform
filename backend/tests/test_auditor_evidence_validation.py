@@ -199,6 +199,39 @@ def test_diagnostics_change_no_review_status_eligibility_or_selection(run):
     assert audit == data["candidate_audit"]
 
 
+def test_run245_real_conflict_is_scoped_to_its_own_candidate():
+    """Slice 4.6B counterfactual: history 245's proposal was UNVERIFIED, so the
+    Committee never ran. Marking it ELIGIBLE in a copy sends the real Auditor
+    conflict text through actual selection (B1: candidate-scoped, not verified)."""
+    data = RUNS["245"]
+    envelope = copy.deepcopy(data["strategic_candidates"])
+    proposal = next(c for c in envelope["candidates"] if c["id"] == "proposal-633bb49f9c7e")
+    proposal["eligibility_status"] = "ELIGIBLE"
+    raw = copy.deepcopy(data["layer3_raw_model_output"])
+    audit = validate_candidate_reviews(raw, envelope)
+    review = audit["reviews"][proposal["id"]]
+    text = "Conflicting evidence on divisional management for GOOGL01.BK and GULF.BK."
+    assert audit["status"] == "AVAILABLE" and review["material_conflicts"] == [text]
+    committee = {"selected_candidate_id": proposal["id"], "supporting_evidence_refs": ["symbol:BH.BK:fa_score"],
+                 "opposing_evidence_refs": list(review["opposing_refs"]),
+                 "comparison_against_hold": "Counterfactual comparison.", "decision_rationale": "Counterfactual.",
+                 "material_uncertainty": []}
+    vetoed = decide_selection(envelope, audit, committee)
+    assert (vetoed["selected_candidate_id"], vetoed["reason_codes"]) == ("hold-current", ["CAUTIONED_HOLD"])
+    assert vetoed["material_uncertainty"] == ["MATERIAL_CONFLICT_UNRESOLVED", text]
+
+    # The same text on HOLD's review no longer vetoes the proposal, is not attached
+    # to it, and stays in the audit record.
+    reviews = {r["candidate_id"]: r for r in raw["candidate_reviews"]}
+    reviews["hold-current"]["material_conflicts"] = reviews[proposal["id"]]["material_conflicts"]
+    reviews[proposal["id"]]["material_conflicts"] = []
+    moved = validate_candidate_reviews(raw, envelope)
+    selected = decide_selection(envelope, moved, committee)
+    assert (selected["selected_candidate_id"], selected["reason_codes"]) == (proposal["id"], ["COMMITTEE_SELECTED"])
+    assert selected["material_uncertainty"] == []
+    assert moved["reviews"]["hold-current"]["material_conflicts"] == [text]
+
+
 @pytest.mark.parametrize("raw", [None, "text", {"candidate_reviews": "none"}, {"candidate_reviews": [1, {}]}])
 def test_malformed_reviews_never_raise(raw):
     result = candidate_review_diagnostics(raw, RUNS["249"]["strategic_candidates"])
