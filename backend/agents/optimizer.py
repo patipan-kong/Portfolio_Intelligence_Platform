@@ -1666,6 +1666,44 @@ must be a separate INVESTMENT_RISK flag. Never disguise investment risk as Inten
 }}"""
 
 
+def _explicit_new_position_limit(policy_context: dict | None) -> int | None:
+    """max_new_positions when explicitly present as a nonnegative int; otherwise None (no rule)."""
+    hard = (policy_context or {}).get("hard_constraints")
+    limit = hard.get("max_new_positions") if isinstance(hard, dict) else None
+    if isinstance(limit, int) and not isinstance(limit, bool) and limit >= 0:
+        return limit
+    return None
+
+
+def _limit_new_positions(allocations: list[dict], held_symbols, limit: int, observer=None) -> None:
+    """Keep at most `limit` distinct newly opened symbols; the rest become HOLD at 0%.
+
+    A new position is a BUY/ACCUMULATE with a positive target on a symbol absent from the
+    authoritative holdings set. Model-reported current weights are never consulted, sells do
+    not create replacement allowances, and duplicate rows count once. Survivors are the highest
+    target weights, ties broken by symbol ascending.
+    """
+    held = set(held_symbols)
+    weights: dict[str, float] = {}
+    for row in allocations:
+        symbol = row.get("symbol")
+        target = float(row.get("target_weight") or 0)
+        if row.get("action") in ("BUY", "ACCUMULATE") and symbol not in held and target > 0:
+            weights[symbol] = max(weights.get(symbol, 0.0), target)
+    keep = set(sorted(weights, key=lambda s: (-weights[s], str(s)))[:limit])
+    for row in allocations:
+        symbol = row.get("symbol")
+        if symbol in weights and symbol not in keep and row.get("action") in ("BUY", "ACCUMULATE"):
+            logger.info("[POLICY] %s BUY→HOLD (max_new_positions=%d)", symbol, limit)
+            before = _alloc_basis(row)
+            # Not held, so the authoritative current weight is 0 (later HOLD pinning keeps it at 0).
+            row.update(action="HOLD", current_weight=0.0, target_weight=0.0,
+                       allocation_change_percent=0.0, estimated_amount=0)
+            _observe(observer, symbol, before, row, stage=_STAGE_HARD_POLICY,
+                     source=_SRC_POLICY, effect=_SUPPRESS, reason_code="NEW_POSITION_LIMIT",
+                     reason_text=f"Policy allows at most {limit} new position(s) in one rebalance.")
+
+
 def _enforce_hard_policy(
     allocations: list[dict],
     *,
@@ -1674,10 +1712,13 @@ def _enforce_hard_policy(
     regime_context: dict | None,
     observer=None,
     muji_v2: bool = False,
+    held_symbols=None,
 ) -> None:
     """Apply the existing Goal-agnostic deterministic hard-policy sequence.
 
     observer: optional Advisory Integration V1 run; records each mutation.
+    held_symbols: authoritative symbols held before the run. Required for the
+        max_new_positions rule, which applies only when the policy states that limit.
     """
     if policy_context:
         pc_hard = policy_context.get("hard_constraints", {})
@@ -1700,6 +1741,10 @@ def _enforce_hard_policy(
                     _observe(observer, allocation["symbol"], before, allocation, stage=_STAGE_HARD_POLICY,
                              source=_SRC_POLICY, effect=_SUPPRESS, reason_code="EMERGENCY_BUY_FREEZE",
                              reason_text="Emergency policy override freezes new buying.")
+
+        new_position_limit = _explicit_new_position_limit(policy_context)
+        if new_position_limit is not None and held_symbols is not None:
+            _limit_new_positions(allocations, held_symbols, new_position_limit, observer)
 
         for allocation in allocations:
             if (
@@ -2074,7 +2119,8 @@ def _run_single_shot_fallback(
                 trial = deepcopy(hold["proposed_allocations"])
                 _enforce_hard_policy(trial, total_value=total_value,
                                      policy_context=policy_context,
-                                     regime_context=regime_context, muji_v2=True)
+                                     regime_context=regime_context, muji_v2=True,
+                                     held_symbols=pc_map.keys())
                 hold_safe = trial == hold["proposed_allocations"]
                 floor_pct = (policy_context or {}).get("hard_constraints", {}).get("min_cash_pct")
                 if floor_pct is not None and total_value > 0 and cash_balance / total_value * 100 < floor_pct:
@@ -2111,6 +2157,7 @@ def _run_single_shot_fallback(
                 policy_context=policy_context,
                 regime_context=None,
                 muji_v2=muji_v2,
+                held_symbols=pc_map.keys(),
                 **_observer_kw,
             )
             if policy_context and not sector_advisory:
@@ -2730,7 +2777,8 @@ def run_layered_optimizer(
                     trial = deepcopy(candidate["proposed_allocations"])
                     _enforce_hard_policy(trial, total_value=total_value,
                                          policy_context=policy_context,
-                                         regime_context=regime_context, muji_v2=True)
+                                         regime_context=regime_context, muji_v2=True,
+                                         held_symbols=pc_map.keys())
                     if any((a.get("action"), a.get("target_weight")) !=
                            (b.get("action"), b.get("target_weight"))
                            for a, b in zip(candidate["proposed_allocations"], trial)):
@@ -2935,6 +2983,7 @@ def run_layered_optimizer(
                 policy_context=policy_context,
                 regime_context=regime_context,
                 muji_v2=muji_v2,
+                held_symbols=pc_map.keys(),
                 **_observer_kw,
             )
         except Exception as exc:
