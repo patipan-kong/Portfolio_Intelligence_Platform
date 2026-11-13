@@ -280,3 +280,58 @@ def test_muji_report_card_keeps_deferred_buy_recommendation_visible(db, book):
         "symbol": "BUY1", "action": "BUY", "rationale": "Deferred proposal",
     }
     assert plan["buy_trades"] == []
+
+
+def test_neutralized_committee_selection_round_trips_to_report_card(db, book, monkeypatch):
+    # D4: real offline optimizer output -> write_recommendation_snapshot ->
+    # get_report_card, for the Phase 4.7 D3 scenario (Committee BUY BBB fully
+    # neutralized by the 15% execution cap).
+    import logging
+
+    from models.database import OptimizerHistory
+    from services.advisory_intent_review import apply_response_views
+    from services.decision_memory.snapshot_writer import write_recommendation_snapshot
+    from services.optimizer.sector_policy import EVIDENCE_VERSION, attach_target_evaluation
+    from tests.test_strategy_selection import BUY_BBB_PLAN, _run_e2e
+
+    result, _, ids = _run_e2e(monkeypatch, BUY_BBB_PLAN, pick=lambda ids: ids[1],
+                              execution_context={"per_symbol": {"BBB": {"position_cap_pct": 15}}})
+    # Mirrors the inline schedule freeze in main.py analyze_optimizer ("Freeze the
+    # scheduled view ..."): attach_target_evaluation, apply_response_views on a
+    # copy, then active_policy.scheduled_execution / scheduled_action_summary.
+    # MUJI V2 report cards reject snapshots without it. Keep in sync with that block.
+    result["execution_policy_version"] = EVIDENCE_VERSION
+    attach_target_evaluation(result)
+    response = copy.deepcopy(result)
+    apply_response_views(response, None, logging.getLogger(__name__))
+    result["active_policy"]["scheduled_execution"] = response["execution_optimization"]
+    result["active_policy"]["scheduled_action_summary"] = response.get("action_summary", {})
+    ws, portfolio = book
+    oh = OptimizerHistory(workspace_id=ws.id, portfolio_id=portfolio.id, portfolio_name="P1",
+                          analyzed_at=datetime.utcnow(), swap_count=0, result_json=json.dumps(result))
+    db.add(oh)
+    db.commit()
+    snap_id = write_recommendation_snapshot(db, ws.id, portfolio.id, oh.id, result)
+    assert snap_id is not None
+
+    plan = get_report_card(db, portfolio.id, snap_id)["plan"]
+    evidence = plan["selection_evidence"]
+    assert evidence["status"] == "available"
+    selection = evidence["strategy_selection"]
+    assert (selection["state"], selection["selected_candidate_id"]) == ("SELECTED", ids[1])
+    assert selection["reason_codes"] == ["COMMITTEE_SELECTED"]
+    assert selection["downstream_outcome"] == {                  # tuples stored as JSON arrays
+        "status": "ALTERED_BY_SAFEGUARDS",
+        "original": {"AAA": ["HOLD", 60], "BBB": ["BUY", 30]},
+        "result": {"AAA": ["HOLD", 60], "BBB": ["HOLD", 20]}}
+    [selected] = [c for c in evidence["strategic_candidates"]["candidates"] if c["id"] == ids[1]]
+    assert [(r["symbol"], r["action"], r["target_weight"]) for r in selected["proposed_allocations"]] == [
+        ("AAA", "HOLD", 60), ("BBB", "BUY", 30)]
+    # Final executable plan: every row HOLD; the original BUY stays traceable.
+    effective = evidence["effective_allocations"]
+    assert [(r["symbol"], r["action"], r["target_weight"]) for r in effective] == [
+        ("AAA", "HOLD", 60), ("BBB", "HOLD", 20)]
+    assert (effective[1]["original_action"], effective[1]["execution_capped"]) == ("BUY", True)
+    # Original recommendation vs final plan stay distinct; nothing is scheduled.
+    assert [(a["symbol"], a["action"]) for a in plan["recommended_actions"]] == [("AAA", "HOLD"), ("BBB", "BUY")]
+    assert plan["buy_trades"] == [] and plan["sell_reduce_trades"] == []

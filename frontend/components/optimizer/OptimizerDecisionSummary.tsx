@@ -1,5 +1,5 @@
 import type { OptimizerResult, ActivePolicy, StrategySelection, StrategicCandidateEnvelope, CandidateAudit, TargetAllocation } from "@/lib/api";
-import { OPTIMIZER_POLICY_MUJI_V2, assessment, committeeDecisionPresentation, committeeSummaryPresentation, economicRecommendation, executionEvidenceAvailable, intentReviewSummary, primarySchedulingReason, scheduledTradeCount } from "@/lib/optimizerPresentation";
+import { OPTIMIZER_POLICY_MUJI_V2, assessment, committeeDecisionPresentation, committeeSummaryPresentation, economicRecommendation, executionEvidenceAvailable, intentReviewSummary, primarySchedulingReason, safeguardsRemovedAllTrades, scheduledTradeCount } from "@/lib/optimizerPresentation";
 
 export function CommitteeDecisionBlock({ evidence }: { evidence: {
   active_policy?: Pick<ActivePolicy, "optimizer_policy_mode" | "strategy_selection_mode"> | null;
@@ -12,7 +12,8 @@ export function CommitteeDecisionBlock({ evidence }: { evidence: {
   if (view.owner === "Challenger") return <p className="text-xs text-gray-500">Decision owner: Challenger</p>;
   if (view.unavailable || !view.selection) return <p className="text-sm text-amber-700">Decision owner: Committee · Selection Evidence Unavailable</p>;
   const { selection, candidate } = view;
-  const actionable = selection.state === "SELECTED" && candidate?.id !== "hold-current";
+  const neutralized = safeguardsRemovedAllTrades(view);
+  const actionable = selection.state === "SELECTED" && candidate?.id !== "hold-current" && !neutralized;
   return <div className="text-sm space-y-1" data-testid="committee-decision">
     <p className="font-semibold">Decision owner: Committee · {selection.state.replace(/_/g, " ")}</p>
     {candidate && <p>Selected strategy: {candidate.family.replace(/_/g, " ")} · {candidate.id}</p>}
@@ -28,6 +29,7 @@ export function CommitteeDecisionBlock({ evidence }: { evidence: {
     {view.altered && candidate && <div className="border-l-2 border-amber-300 pl-2 space-y-1">
       <p>Safeguards changed the selected plan. Proposed allocation: {candidate.proposed_allocations.map((row) => `${row.action} ${row.symbol} ${row.target_weight}%`).join("; ") || "Unavailable"}.</p>
       <p>Effective post-safeguard allocation: {Array.isArray(view.effective) ? view.effective.map((row) => `${row.action} ${row.symbol} ${row.target_weight}%`).join("; ") || "No actionable allocation" : "Unavailable"}.</p>
+      {neutralized && <p>Safeguards removed every proposed trade; no actionable trade remains in the effective plan.</p>}
     </div>}
     {actionable && <p className="text-xs text-gray-500">Selection is a recommendation. Scheduled advisory amounts and estimated friction appear in the Execution Plan; they are not recorded transactions.</p>}
   </div>;
