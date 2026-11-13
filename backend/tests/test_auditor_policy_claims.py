@@ -33,7 +33,10 @@ def test_sector_advisory_does_not_change_safer_choice_or_committee(claim_kind):
     hard_flag = flag("EXECUTION_RESTRICTION", ref="execution:1")
     baseline = interpret([hard_flag], evidence)
     sector_ref = "PROJECTED_TARGET:effective_sector_limits:Technology"
-    evidence["sector_advisories"] = {sector_ref: {"basis": "EQUITY", "breach_pp": 40}}
+    # A complete advisory row: Slice 4.6A rejects incomplete sector evidence.
+    evidence["sector_advisories"] = {sector_ref: {
+        "basis": "EQUITY", "breach_pp": 40, "sector": "Technology", "observed_pct": 65.0, "limit_pct": 25.0,
+        "binding_source": "POLICY_ENGINE", "stage": "PROJECTED_TARGET", "members": [{"symbol": "MICRON01.BK"}]}}
     sector_flag = {**flag(claim_kind, symbol="PORTFOLIO", ref=sector_ref), "severity": "CRITICAL"}
     advisory = interpret([hard_flag, sector_flag], evidence)
     assert advisory["claim_reviews"][0]["validation_status"] == "ADVISORY"
