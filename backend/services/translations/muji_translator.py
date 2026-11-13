@@ -76,7 +76,18 @@ DECISION_TH: dict[str, dict[str, str]] = {
         "action_th": "แนะนำให้ปรับสัดส่วนพอร์ต — ดูแผนการลงทุนเพื่อดูรายละเอียด",
         "severity": "ACTION",
     },
+    # Recommendation cooldown: the latest plan is kept but paused because a
+    # recent recommendation started the cooldown. It says nothing about trades
+    # having been executed, and it is not "all clear" (INFO renders green).
+    "COOLDOWN_ACTIVE": {
+        "action_th": "ระบบพักคำแนะนำการปรับพอร์ตไว้ชั่วคราว (ช่วงพักหลังคำแนะนำครั้งก่อน) — ดูแผนการลงทุนล่าสุดเพื่อดูรายละเอียด",
+        "severity": "WARN",
+    },
 }
+
+COOLDOWN_HEADLINE_TH = "อยู่ในช่วงพักคำแนะนำการปรับพอร์ต"
+COOLDOWN_RISK_NOTE_TH = "มีข้อกังวลด้านความเสี่ยงจากการวิเคราะห์ล่าสุดที่ควรตรวจสอบ"
+_RISK_CONSENSUS_TYPES = ("RISK_CONFLICT",)
 
 _DECISION_FALLBACK: dict[str, str] = {
     "action_th": "ยังไม่มีคำแนะนำ — ลองอัปเดตมุมมองพอร์ตครั้งแรก",
@@ -149,9 +160,15 @@ def build_muji_translation(
       3. decision REBALANCE          -> rebalance recommended
       4. decision REVIEW             -> something to review
       5. decision NO_ACTION          -> healthy, nothing to do
-      6. no optimizer run ever       -> first-run prompt
+      6. decision COOLDOWN_ACTIVE    -> recommendation cooldown
+      7. no optimizer run ever       -> first-run prompt
+
+    A cooldown keeps any risk warning: a RED station still wins the headline,
+    and a RISK_CONFLICT consensus adds a risk note to the cooldown action.
     """
     decision = (consensus_decision or "").upper() or None
+    cooldown = decision == "COOLDOWN_ACTIVE"
+    risk_conflict = (consensus_type or "").upper() in _RISK_CONSENSUS_TYPES
     red_stations = [k for k, v in station_statuses.items() if v == "RED"]
 
     if emergency_override:
@@ -164,6 +181,8 @@ def build_muji_translation(
         headline = "คำแนะนำวันนี้"
     elif decision == "NO_ACTION":
         headline = "พอร์ตของคุณอยู่ในสถานะดี ไม่ต้องทำอะไรเพิ่ม"
+    elif cooldown:
+        headline = COOLDOWN_HEADLINE_TH
     else:
         headline = "เริ่มต้นด้วยการอัปเดตมุมมองพอร์ตครั้งแรก"
 
@@ -187,8 +206,10 @@ def build_muji_translation(
         summary.append("ยังไม่มีข้อมูลเพียงพอ — เริ่มต้นด้วยการสร้างแผนการลงทุน")
 
     action = translate_decision(decision)
+    if cooldown and risk_conflict:
+        action["action_th"] = f"{action['action_th']} · {COOLDOWN_RISK_NOTE_TH}"
     required = emergency_override or decision in ("REVIEW", "REBALANCE")
-    link = "/optimizer" if decision in ("REVIEW", "REBALANCE") else None
+    link = "/optimizer" if decision in ("REVIEW", "REBALANCE", "COOLDOWN_ACTIVE") else None
     if emergency_override:
         action = {
             "action_th": "กรอบการลงทุนจำกัดความเสี่ยงอัตโนมัติ — ดูแผนการลงทุนเพื่อดูรายละเอียด",

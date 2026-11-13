@@ -5,11 +5,22 @@ import Link from "next/link";
 import { listOptimizerHistory, type OperationsOptimizer } from "@/lib/api";
 import { optimizerFreshnessTh, contextualGuidanceTh, optimizerLastAnalysisBadgeTh } from "../freshness";
 
+const NO_ACTION_CFG = { text: "text-emerald-700", badge: "bg-emerald-100 border-emerald-300", label_th: "ไม่ต้องดำเนินการ" };
+
 const DECISION_CFG: Record<string, { text: string; badge: string; label_th: string }> = {
-  NO_ACTION: { text: "text-emerald-700", badge: "bg-emerald-100 border-emerald-300", label_th: "ไม่ต้องดำเนินการ" },
+  NO_ACTION: NO_ACTION_CFG,
+  // Stabilization's "no rebalance needed" kept its previous (no-action) badge.
+  NO_REBALANCE_REQUIRED: NO_ACTION_CFG,
   REVIEW:    { text: "text-amber-700",   badge: "bg-amber-100 border-amber-300",    label_th: "รอตรวจสอบ" },
   REBALANCE: { text: "text-blue-700",    badge: "bg-blue-100 border-blue-300",      label_th: "ควรปรับสัดส่วน" },
+  // Recommendation cooldown: the latest plan is paused, not cleared.
+  COOLDOWN_ACTIVE: { text: "text-slate-700", badge: "bg-slate-100 border-slate-300", label_th: "พักคำแนะนำชั่วคราว" },
 };
+
+// Shown for a cooldown run: the pause follows the previous recommendation,
+// not a confirmed trade.
+const COOLDOWN_NOTE_TH =
+  "ระบบพักคำแนะนำการปรับพอร์ตไว้ชั่วคราวหลังคำแนะนำครั้งก่อน (ไม่ได้หมายความว่ามีการซื้อขายแล้ว) — เปิดดูแผนล่าสุดเพื่อดูรายละเอียด";
 
 const RISK_LABEL_TH: Record<string, string> = {
   low:    "ต่ำ",
@@ -20,6 +31,7 @@ const RISK_LABEL_TH: Record<string, string> = {
 const OPTIMIZER_STATUS_TH: Record<string, string> = {
   REBALANCE: "ควรปรับสัดส่วน",
   NO_ACTION: "ไม่ต้องดำเนินการ",
+  COOLDOWN_ACTIVE: "พักคำแนะนำชั่วคราว",
 };
 
 export default function ConsensusRoomCard({
@@ -39,7 +51,9 @@ export default function ConsensusRoomCard({
   const [resolvingLatest, setResolvingLatest] = useState(false);
   const score = optimizer.consensus_score;
   const decision = optimizer.consensus_decision;
-  const cfg = decision ? (DECISION_CFG[decision] ?? DECISION_CFG.NO_ACTION) : null;
+  // Unrecognised decisions get no badge rather than a "no action" claim.
+  const cfg = decision ? (DECISION_CFG[decision] ?? null) : null;
+  const cooldown = decision === "COOLDOWN_ACTIVE" || optimizer.optimizer_status === "COOLDOWN_ACTIVE";
   const guidance = contextualGuidanceTh(optimizer.last_run_at, daysSinceRebalance);
 
   useEffect(() => {
@@ -156,6 +170,10 @@ export default function ConsensusRoomCard({
           </span>
         )}
       </div>
+
+      {cooldown && (
+        <p className="text-xs text-slate-700 bg-slate-50 rounded-lg px-3 py-2">{COOLDOWN_NOTE_TH}</p>
+      )}
 
       {optimizer.recommended_action && (
         <p className="text-xs text-gray-600 leading-relaxed border-t border-gray-100 pt-2">

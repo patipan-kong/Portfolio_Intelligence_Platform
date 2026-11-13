@@ -4184,9 +4184,10 @@ export interface OperationsMarket {
 
 export interface OperationsOptimizer {
   last_run_at: string | null;
-  optimizer_status: "REBALANCE" | "NO_ACTION" | null;
+  // Stabilization can also store REVIEW, COOLDOWN_ACTIVE or NO_REBALANCE_REQUIRED.
+  optimizer_status: "REBALANCE" | "NO_ACTION" | "REVIEW" | "COOLDOWN_ACTIVE" | "NO_REBALANCE_REQUIRED" | null;
   consensus_status: string | null;
-  consensus_decision: "NO_ACTION" | "REVIEW" | "REBALANCE" | null;
+  consensus_decision: "NO_ACTION" | "REVIEW" | "REBALANCE" | "COOLDOWN_ACTIVE" | "NO_REBALANCE_REQUIRED" | null;
   consensus_score: number | null;
   final_risk_level: string | null;
   recommendation_summary_th: string;
