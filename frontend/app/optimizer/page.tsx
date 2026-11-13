@@ -634,6 +634,7 @@ const BLOCKED_REASON_LABELS: Record<string, string> = {
   sector_limit_exceeded: "Sector limit exceeded",
   insufficient_cash:     "Insufficient cash balance",
   portfolio_count_cap:   "Portfolio stock count cap reached",
+  emergency_buy_freeze:  "Emergency policy freezes new buying",
 };
 
 function scoreZone(s: number): { label: string; fill: string; text: string } {
