@@ -419,30 +419,88 @@ def _normalize_l1_swaps(swaps: list, score_map: dict[str, dict] | None = None) -
     return result
 
 
+def _resolve_model_symbols(raw_symbols, known_symbols) -> dict[str, str | None]:
+    """Map each model-written symbol to a known canonical symbol, or None when unresolved.
+
+    An exact match wins. Otherwise a case-insensitive match is accepted only when it names exactly
+    one known symbol and no other row in the same list already claims that symbol; a variant that
+    would duplicate another row, matches several known symbols, or matches none stays unresolved.
+    The canonical spelling always comes from the known set, never from re-casing the model text.
+    """
+    known = {str(s) for s in known_symbols if s}
+    folded: dict[str, set[str]] = {}
+    for symbol in known:
+        folded.setdefault(symbol.strip().casefold(), set()).add(symbol)
+    raw = {s for s in raw_symbols if s}
+    resolved: dict[str, str | None] = {}
+    variants: dict[str, set[str]] = {}
+    for symbol in raw:
+        if symbol in known:
+            resolved[symbol] = symbol
+            continue
+        matches = folded.get(symbol.strip().casefold(), set())
+        resolved[symbol] = next(iter(matches)) if len(matches) == 1 else None
+        if resolved[symbol] is not None:
+            variants.setdefault(resolved[symbol], set()).add(symbol)
+    for canonical, spellings in variants.items():
+        if canonical in raw or len(spellings) > 1:
+            for symbol in spellings:
+                resolved[symbol] = None
+    return resolved
+
+
 def _normalize_allocations(
     allocs: list,
     pc_map: dict[str, float] | None = None,
     score_map: dict[str, dict] | None = None,
     *, muji_v2: bool = False,
+    known_symbols=None,
 ) -> list[dict]:
     """Normalise L2 allocation objects to the internal TargetAllocation schema.
 
     pc_map: symbol → actual weight_pct from portfolio data (authoritative source for current_weight).
+        When supplied, it is the complete holdings book: a symbol absent from it is not held and
+        its current_weight is 0, whatever the model reported. Only a caller with no holdings
+        context (pc_map=None) falls back to the model-reported current_weight.
+    known_symbols: the run's allowed universe besides holdings (the watchlist). When supplied with
+        pc_map, model symbols resolve to canonical known symbols (_resolve_model_symbols) before
+        any weight lookup. An unresolved symbol keeps its model spelling (so candidate
+        eligibility still sees it as UNKNOWN_SYMBOL) and cannot be an executable BUY/ACCUMULATE:
+        it becomes HOLD at 0%, the same safe shape as other suppressed openings.
     allocation_change_percent and estimated_amount are computed in Python — never trusted from AI.
     score_map: symbol → compact score dict (see _build_score_context_map), attached for Reason UX.
     """
+    resolved = None
+    if pc_map is not None and known_symbols is not None:
+        resolved = _resolve_model_symbols(
+            [str(a.get("symbol") or a.get("s") or "") for a in (allocs or []) if isinstance(a, dict)],
+            {*pc_map, *known_symbols},
+        )
     result = []
     for a in (allocs or []):
         sym = str(a.get("symbol") or a.get("s") or "")
         target_w = float(a.get("target_weight") or a.get("tw") or 0)
-        # Use real portfolio weight if available; AI's reported current_weight is a fallback only
-        current_w = (pc_map or {}).get(sym, float(a.get("current_weight") or a.get("w") or 0))
+        action = str(a.get("action") or a.get("sig") or "HOLD").upper()
+        if resolved is not None and sym:
+            canonical = resolved.get(sym)
+            if canonical is not None:
+                if canonical != sym:
+                    logger.info("[SYMBOL] model symbol %r resolved to %s", sym, canonical)
+                sym = canonical
+            elif action in ("BUY", "ACCUMULATE"):
+                logger.info("[SYMBOL] %r unknown or ambiguous — %s→HOLD", sym, action)
+                action, target_w = "HOLD", 0.0
+        if pc_map is None:
+            current_w = float(a.get("current_weight") or a.get("w") or 0)
+        else:
+            # Current exposure is portfolio state, not a model output (Phase 4.17).
+            current_w = float(pc_map.get(sym, 0.0))
         change_pct = round(target_w - current_w, 2)
         row = {
             "symbol": sym,
             "current_weight": round(current_w, 2),
             "target_weight": round(target_w, 2),
-            "action": str(a.get("action") or a.get("sig") or "HOLD").upper(),
+            "action": action,
             "allocation_change_percent": change_pct,
             "estimated_amount": 0,  # filled in by caller once total_value is known
             "reason": str(a.get("reason") or a.get("r") or ""),
@@ -2035,6 +2093,7 @@ def _run_single_shot_fallback(
     regime_context: dict | None = None,
     strategy_selection_mode: str | None = None,
     evidence_provenance: dict | None = None,
+    watch_symbols=None,
 ) -> dict:
     """Single-shot emergency fallback when the 3-layer pipeline fails completely.
 
@@ -2091,7 +2150,8 @@ def _run_single_shot_fallback(
     result = safe_parse_json(raw["text"])
 
     raw_allocs = result.pop("allocations", None) or []
-    allocations = _normalize_allocations(raw_allocs, pc_map, score_map, muji_v2=muji_v2)
+    allocations = _normalize_allocations(raw_allocs, pc_map, score_map, muji_v2=muji_v2,
+                                         known_symbols=watch_symbols)
     sector_alternatives = []
     if sector_advisory:
         concentration = freeze_concentration(portfolio_data, wc, policy_context, total_value) if policy_context else None
@@ -2512,6 +2572,8 @@ def run_layered_optimizer(
     _canonical_weights = advisory.canonical_current_weights() if advisory is not None else None
     if _canonical_weights:
         pc_map.update(_canonical_weights)
+    # Allowed non-held universe for resolving model-written symbols (holdings come from pc_map).
+    watch_symbols = frozenset(w["symbol"] for w in watchlist_data if w.get("symbol"))
 
     swap_eligible = [p["symbol"] for p in portfolio_data if p.get("allow_swap", True) and p.get("signal") != "SELL"]
     pc = _compact_p(portfolio_data)
@@ -2709,7 +2771,8 @@ def run_layered_optimizer(
                     if not isinstance(plan, dict):
                         continue
                     raw_extra = plan.get("allocations", plan.get("target_allocations", []))
-                    normalized = _normalize_allocations(raw_extra, pc_map, score_map, muji_v2=True)
+                    normalized = _normalize_allocations(raw_extra, pc_map, score_map, muji_v2=True,
+                                                        known_symbols=watch_symbols)
                     extra_plans.append({**plan, "target_allocations": normalized,
                                         "candidate_input_invalid": not _complete_candidate_input(raw_extra),
                                         "target_cash_weight": plan.get("target_cash_weight", plan.get("cash_balance_target"))})
@@ -2720,7 +2783,8 @@ def run_layered_optimizer(
                 raw_allocs = l2_result.pop("target_allocations", [])
             if selection_enabled:
                 l2_result["candidate_input_invalid"] = not _complete_candidate_input(raw_allocs)
-            l2_allocs = _normalize_allocations(raw_allocs, pc_map, score_map, muji_v2=muji_v2)
+            l2_allocs = _normalize_allocations(raw_allocs, pc_map, score_map, muji_v2=muji_v2,
+                                               known_symbols=watch_symbols)
             if sector_advisory:
                 sector_alternatives = _separate_sector_alternatives(
                     l2_result, l2_allocs, pc_map, total_value, sector_context if policy_context else None,
@@ -3269,5 +3333,6 @@ def run_layered_optimizer(
             regime_context=regime_context if muji_v2 else None,
             strategy_selection_mode=strategy_selection_mode,
             evidence_provenance=evidence_provenance,
+            watch_symbols=watch_symbols,
             **({"advisory": advisory} if advisory is not None else {}),
         )
