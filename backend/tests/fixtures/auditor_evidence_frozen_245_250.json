@@ -169,16 +169,6 @@
     ],
     "candidate_input_invalid": false,
     "cash_balance_target": 46.8,
-    "constraint_notes": [
-     "NAV is THB 747680; starting cash is THB 238280, approximately 31.87% of NAV.",
-     "Gross sales total THB 111634.24, approximately 14.93% of NAV, below the 15% turnover ceiling. No purchases or new positions are proposed.",
-     "Target cash is THB 349914.24 before trading costs. Estimated slippage is THB 504.27; commissions and taxes are unavailable.",
-     "All five holdings are explicitly flagged by supplied policy. Full liquidation would require approximately 68.13% NAV turnover, incompatible with the current ceiling.",
-     "BH.BK, GULF.BK, NVDA01.BK, and MICRON01.BK remain residual suppression violations after these reductions. Escalate for authorized remediation; do not assume a turnover reset.",
-     "The 18/100 risk budget cannot be quantitatively certified without a portfolio risk model.",
-     "Verified held DR exposure is approximately 30.03% of NAV initially. The 40% basket guidance is advisory, not a verified breach.",
-     "Targets use supplied local THB prices and pre-trade NAV. Confirm executable quantities, liquidity, and aggregate turnover before placing orders."
-    ],
     "disagreements": [
      "Layer 1 omits suppression actions for flagged BH.BK, NVDA01.BK, and MICRON01.BK.",
      "Replace the unspecified GULF.BK reduction with a complete, turnover-budgeted allocation across all flagged holdings.",
@@ -196,12 +186,10 @@
      "symbol:NVDA01.BK:timing_score",
      "symbol:MICRON01.BK:timing_score"
     ],
-    "portfolio_assessment": "Confirm the GOOGL01.BK exit, but distribute remaining turnover capacity across every other flagged holding rather than GULF.BK alone. Compared with no trading, this raises cash and reduces policy-ineligible exposure at approximately THB 504 estimated slippage, although superior returns are not assured. Emergency preservation overrides ordinary balanced deployment preferences; these interim targets do not fully resolve suppression violations.",
     "provider": "openai",
     "rebalance_opportunity_score": 64,
     "status": "REBALANCE",
     "strategy_family": "RAISE_CASH",
-    "summary": "Confirm the GOOGL01.BK exit, but distribute remaining turnover capacity across every other flagged holding rather than GULF.BK alone. Compared with no trading, this raises cash and reduces policy-ineligible exposure at approximately THB 504 estimated slippage, although superior returns are not assured. Emergency preservation overrides ordinary balanced deployment preferences; these interim targets do not fully resolve suppression violations.",
     "target_allocations": [
      {
       "action": "REDUCE",
@@ -209,7 +197,6 @@
       "combined_score": 2.4,
       "current_weight": 21.19,
       "decision_basis": "INVESTMENT_THESIS",
-      "estimated_amount": -16374,
       "fa_score": 4,
       "pe_ratio": 22.66,
       "reason": "FA 4 provides limited quality support; reduce despite favorable timing, consistent with emergency suppression.",
@@ -238,7 +225,6 @@
       "combined_score": 5.0,
       "current_weight": 7.69,
       "decision_basis": "INVESTMENT_THESIS",
-      "estimated_amount": -57497,
       "fa_score": 6,
       "pe_ratio": 15.01,
       "reason": "Timing 15, DEFER execution, and strong downtrend support exiting policy-ineligible exposure.",
@@ -267,7 +253,6 @@
       "combined_score": 2.6,
       "current_weight": 16.92,
       "decision_basis": "INVESTMENT_THESIS",
-      "estimated_amount": -10617,
       "fa_score": 5,
       "pe_ratio": 12.43,
       "reason": "TA -1 and modest fundamental support favor a measured reduction despite favorable entry-timing indicators.",
@@ -296,7 +281,6 @@
       "combined_score": 5.0,
       "current_weight": 11.64,
       "decision_basis": "INVESTMENT_THESIS",
-      "estimated_amount": -19739,
       "fa_score": 6,
       "pe_ratio": 21.35,
       "reason": "Timing 25 and downtrend weaken near-term downside protection; prioritize reduction over policy-ineligible accumulation.",
@@ -325,7 +309,6 @@
       "combined_score": 5.0,
       "current_weight": 10.7,
       "decision_basis": "INVESTMENT_THESIS",
-      "estimated_amount": -7477,
       "fa_score": 7,
       "pe_ratio": 9.76,
       "reason": "Low valuation supports a smaller trim, but timing 20 and downtrend undermine immediate accumulation.",
@@ -370,10 +353,8 @@
      "CURRENT:effective_sector_limits:Healthcare": {
       "basis": "EQUITY",
       "binding_source": "REGIME_POLICY",
-      "breach_amount": 33597.00000000001,
       "breach_pp": 6.595406360424029,
       "currency": "THB",
-      "denominator": 509400.0,
       "evidence_id": "CURRENT:effective_sector_limits:Healthcare",
       "evidence_version": "wealth.policy-evidence.v2",
       "limit_pct": 24.5,
@@ -391,7 +372,6 @@
         "symbol": "BH.BK"
        }
       ],
-      "numerator": 158400.0,
       "observed_pct": 31.09540636042403,
       "rule": "effective_sector_limits",
       "scope": "SECTOR",
@@ -402,10 +382,8 @@
      "CURRENT:effective_sector_limits:Technology": {
       "basis": "EQUITY",
       "binding_source": "EMERGENCY_OVERRIDE",
-      "breach_amount": 39650.00000000001,
       "breach_pp": 7.783667059285435,
       "currency": "THB",
-      "denominator": 509400.0,
       "evidence_id": "CURRENT:effective_sector_limits:Technology",
       "evidence_version": "wealth.policy-evidence.v2",
       "limit_pct": 25.0,
@@ -435,7 +413,6 @@
         "symbol": "NVDA01.BK"
        }
       ],
-      "numerator": 167000.0,
       "observed_pct": 32.783667059285435,
       "rule": "effective_sector_limits",
       "scope": "SECTOR",
@@ -446,10 +423,8 @@
      "PROJECTED_TARGET:effective_sector_limits:Healthcare": {
       "basis": "EQUITY",
       "binding_source": "REGIME_POLICY",
-      "breach_amount": 44606.60194608103,
       "breach_pp": 11.214285714285722,
       "currency": "THB",
-      "denominator": 397765.87722619995,
       "evidence_id": "PROJECTED_TARGET:effective_sector_limits:Healthcare",
       "evidence_version": "wealth.policy-evidence.v2",
       "limit_pct": 24.5,
@@ -467,7 +442,6 @@
         "symbol": "BH.BK"
        }
       ],
-      "numerator": 142059.2418665,
       "observed_pct": 35.71428571428572,
       "rule": "effective_sector_limits",
       "scope": "SECTOR",
@@ -478,10 +452,8 @@
      "PROJECTED_TARGET:effective_sector_limits:Technology": {
       "basis": "EQUITY",
       "binding_source": "EMERGENCY_OVERRIDE",
-      "breach_amount": 40374.7318989,
       "breach_pp": 10.150375939849624,
       "currency": "THB",
-      "denominator": 397765.87722619995,
       "evidence_id": "PROJECTED_TARGET:effective_sector_limits:Technology",
       "evidence_version": "wealth.policy-evidence.v2",
       "limit_pct": 25.0,
@@ -511,7 +483,6 @@
         "symbol": "NVDA01.BK"
        }
       ],
-      "numerator": 139816.20120545,
       "observed_pct": 35.150375939849624,
       "rule": "effective_sector_limits",
       "scope": "SECTOR",
@@ -522,10 +493,8 @@
      "PROJECTED_TARGET:effective_sector_limits:Utilities": {
       "basis": "EQUITY",
       "binding_source": "EMERGENCY_OVERRIDE",
-      "breach_amount": 16448.96484770001,
       "breach_pp": 4.135338345864664,
       "currency": "THB",
-      "denominator": 397765.87722619995,
       "evidence_id": "PROJECTED_TARGET:effective_sector_limits:Utilities",
       "evidence_version": "wealth.policy-evidence.v2",
       "limit_pct": 25.0,
@@ -543,7 +512,6 @@
         "symbol": "GULF.BK"
        }
       ],
-      "numerator": 115890.43415424999,
       "observed_pct": 29.135338345864664,
       "rule": "effective_sector_limits",
       "scope": "SECTOR",
@@ -632,10 +600,8 @@
       "provenance": {
        "basis": "EQUITY",
        "binding_source": "REGIME_POLICY",
-       "breach_amount": 33597.00000000001,
        "breach_pp": 6.595406360424029,
        "currency": "THB",
-       "denominator": 509400.0,
        "evidence_id": "CURRENT:effective_sector_limits:Healthcare",
        "evidence_version": "wealth.policy-evidence.v2",
        "limit_pct": 24.5,
@@ -653,7 +619,6 @@
          "symbol": "BH.BK"
         }
        ],
-       "numerator": 158400.0,
        "observed_pct": 31.09540636042403,
        "rule": "effective_sector_limits",
        "scope": "SECTOR",
@@ -674,10 +639,8 @@
       "provenance": {
        "basis": "EQUITY",
        "binding_source": "EMERGENCY_OVERRIDE",
-       "breach_amount": 39650.00000000001,
        "breach_pp": 7.783667059285435,
        "currency": "THB",
-       "denominator": 509400.0,
        "evidence_id": "CURRENT:effective_sector_limits:Technology",
        "evidence_version": "wealth.policy-evidence.v2",
        "limit_pct": 25.0,
@@ -707,7 +670,6 @@
          "symbol": "NVDA01.BK"
         }
        ],
-       "numerator": 167000.0,
        "observed_pct": 32.783667059285435,
        "rule": "effective_sector_limits",
        "scope": "SECTOR",
@@ -774,7 +736,6 @@
     "candidates": [
      {
       "cash_intent": {
-       "amount": 238280.22035,
        "kind": "KEEP_CURRENT"
       },
       "eligibility_reasons": [],
@@ -858,7 +819,6 @@
        "UNVERIFIED_SELL:MICRON01.BK",
        "UNVERIFIED_SELL:NVDA01.BK"
       ],
-      "model_rationale": "Confirm the GOOGL01.BK exit, but distribute remaining turnover capacity across every other flagged holding rather than GULF.BK alone. Compared with no trading, this raises cash and reduces policy-ineligible exposure at approximately THB 504 estimated slippage, although superior returns are not assured. Emergency preservation overrides ordinary balanced deployment preferences; these interim targets do not fully resolve suppression violations.",
       "observed_evidence_refs": {
        "symbol:BH.BK:fa_score": 4,
        "symbol:GOOGL01.BK:timing_score": 15,
@@ -1602,7 +1562,6 @@
      "asset_type": "EQUITY",
      "combined_score": 2.4,
      "current_weight": 21.185527674632166,
-     "estimated_amount": 0,
      "execution_priority": "HIGH",
      "execution_risk": "MEDIUM",
      "execution_warnings": [],
@@ -1634,7 +1593,6 @@
      "asset_type": "DR",
      "combined_score": 5.0,
      "current_weight": 7.690453543505995,
-     "estimated_amount": 0,
      "execution_priority": "DEFER",
      "execution_risk": "MEDIUM",
      "execution_warnings": [
@@ -1669,7 +1627,6 @@
      "asset_type": "EQUITY",
      "combined_score": 2.6,
      "current_weight": 16.91899779571319,
-     "estimated_amount": 0,
      "execution_priority": "HIGH",
      "execution_risk": "MEDIUM",
      "execution_warnings": [],
@@ -1701,7 +1658,6 @@
      "asset_type": "DR",
      "combined_score": 5.0,
      "current_weight": 10.699761451834428,
-     "estimated_amount": 0,
      "execution_priority": "DEFER",
      "execution_risk": "MEDIUM",
      "execution_warnings": [
@@ -1736,7 +1692,6 @@
      "asset_type": "DR",
      "combined_score": 5.0,
      "current_weight": 11.63599057886994,
-     "estimated_amount": 0,
      "execution_priority": "DEFER",
      "execution_risk": "MEDIUM",
      "execution_warnings": [
@@ -1954,22 +1909,10 @@
      "symbol:AMATA.BK:timing_score",
      "symbol:TOP.BK:timing_score"
     ],
-    "portfolio_assessment": "Confirm cash-raising reductions, but broaden execution across all flagged holdings rather than only two. Compared with holding unchanged, approximately 14.49% NAV of sales reduces exposed capital at estimated slippage of THB 437, excluding fees and taxes. This is a partial emergency remediation, not full compliance; balanced diversification remains the longer-term objective.",
     "provider": "openai",
     "rebalance_opportunity_score": 64,
-    "risk_constraint_notes": [
-     "NAV includes cash: THB 747680. Current cash is 31.87% NAV; no cash-floor breach exists.",
-     "Gross sales are approximately THB 108347, or 14.49% NAV; no purchases or new positions are proposed.",
-     "Targets use supplied local THB quotes and pre-cost NAV. Post-slippage cash is approximately 46.33%, comfortably above 20%.",
-     "All five supplied suppression violations retain residual exposure. Eliminating all holdings requires 68.13% NAV turnover, exceeding the 15% ceiling.",
-     "Do not execute additional remediation beyond the cumulative turnover ceiling without explicit authorization; confirm actual fills and costs.",
-     "Emergency preservation overrides the normal 5% cash preference and growth-first factor ranking. Dividend data are insufficient to verify a dividend tilt.",
-     "The three verified DR holdings total approximately 30.03% NAV currently; the 40% basket guidance is advisory, not a verified breach.",
-     "No concentration threshold or allocation-drift diagnostic independently drives these trades."
-    ],
     "status": "REBALANCE",
     "strategy_family": "RAISE_CASH",
-    "summary": "Confirm cash-raising reductions, but broaden execution across all flagged holdings rather than only two. Compared with holding unchanged, approximately 14.49% NAV of sales reduces exposed capital at estimated slippage of THB 437, excluding fees and taxes. This is a partial emergency remediation, not full compliance; balanced diversification remains the longer-term objective.",
     "target_allocations": [
      {
       "action": "REDUCE",
@@ -1977,7 +1920,6 @@
       "combined_score": 2.4,
       "current_weight": 21.19,
       "decision_basis": "INVESTMENT_THESIS",
-      "estimated_amount": -29907,
       "fa_score": 4,
       "pe_ratio": 22.66,
       "reason": "FA 4 and P/E 22.66 provide limited defensive valuation support despite ROE 27%.",
@@ -2006,7 +1948,6 @@
       "combined_score": 5.0,
       "current_weight": 7.69,
       "decision_basis": "INVESTMENT_THESIS",
-      "estimated_amount": -22430,
       "fa_score": 6,
       "pe_ratio": 15.01,
       "reason": "Strong-downtrend momentum and timing 15 favor reducing downside exposure despite attractive profitability.",
@@ -2035,7 +1976,6 @@
       "combined_score": 2.6,
       "current_weight": 16.92,
       "decision_basis": "INVESTMENT_THESIS",
-      "estimated_amount": -22430,
       "fa_score": 5,
       "pe_ratio": 12.43,
       "reason": "Negative TA and flagged quality warrant a measured trim, not an unsupported full exit.",
@@ -2064,7 +2004,6 @@
       "combined_score": 5.0,
       "current_weight": 11.64,
       "decision_basis": "INVESTMENT_THESIS",
-      "estimated_amount": -22430,
       "fa_score": 6,
       "pe_ratio": 21.35,
       "reason": "Downtrend momentum and timing 25 weaken near-term capital-preservation suitability despite strong reported ROE.",
@@ -2093,7 +2032,6 @@
       "combined_score": 5.0,
       "current_weight": 10.7,
       "decision_basis": "INVESTMENT_THESIS",
-      "estimated_amount": -11215,
       "fa_score": 7,
       "pe_ratio": 9.76,
       "reason": "Downtrend warrants suppression; stronger FA 7 and P/E 9.76 support a smaller reduction.",
@@ -2138,10 +2076,8 @@
      "CURRENT:effective_sector_limits:Healthcare": {
       "basis": "EQUITY",
       "binding_source": "REGIME_POLICY",
-      "breach_amount": 33597.00000000001,
       "breach_pp": 6.595406360424029,
       "currency": "THB",
-      "denominator": 509400.0,
       "evidence_id": "CURRENT:effective_sector_limits:Healthcare",
       "evidence_version": "wealth.policy-evidence.v2",
       "limit_pct": 24.5,
@@ -2159,7 +2095,6 @@
         "symbol": "BH.BK"
        }
       ],
-      "numerator": 158400.0,
       "observed_pct": 31.09540636042403,
       "rule": "effective_sector_limits",
       "scope": "SECTOR",
@@ -2170,10 +2105,8 @@
      "CURRENT:effective_sector_limits:Technology": {
       "basis": "EQUITY",
       "binding_source": "EMERGENCY_OVERRIDE",
-      "breach_amount": 39650.00000000001,
       "breach_pp": 7.783667059285435,
       "currency": "THB",
-      "denominator": 509400.0,
       "evidence_id": "CURRENT:effective_sector_limits:Technology",
       "evidence_version": "wealth.policy-evidence.v2",
       "limit_pct": 25.0,
@@ -2203,7 +2136,6 @@
         "symbol": "NVDA01.BK"
        }
       ],
-      "numerator": 167000.0,
       "observed_pct": 32.783667059285435,
       "rule": "effective_sector_limits",
       "scope": "SECTOR",
@@ -2214,10 +2146,8 @@
      "PROJECTED_TARGET:effective_sector_limits:Healthcare": {
       "basis": "EQUITY",
       "binding_source": "REGIME_POLICY",
-      "breach_amount": 30267.59068020872,
       "breach_pp": 7.546979865771817,
       "currency": "THB",
-      "denominator": 401055.67019573995,
       "evidence_id": "PROJECTED_TARGET:effective_sector_limits:Healthcare",
       "evidence_version": "wealth.policy-evidence.v2",
       "limit_pct": 24.5,
@@ -2235,7 +2165,6 @@
         "symbol": "BH.BK"
        }
       ],
-      "numerator": 128526.229878165,
       "observed_pct": 32.04697986577182,
       "rule": "effective_sector_limits",
       "scope": "SECTOR",
@@ -2246,10 +2175,8 @@
      "PROJECTED_TARGET:effective_sector_limits:Technology": {
       "basis": "EQUITY",
       "binding_source": "EMERGENCY_OVERRIDE",
-      "breach_amount": 33122.233761505,
       "breach_pp": 8.25876211782252,
       "currency": "THB",
-      "denominator": 401055.67019573995,
       "evidence_id": "PROJECTED_TARGET:effective_sector_limits:Technology",
       "evidence_version": "wealth.policy-evidence.v2",
       "limit_pct": 25.0,
@@ -2279,7 +2206,6 @@
         "symbol": "NVDA01.BK"
        }
       ],
-      "numerator": 133386.15131043998,
       "observed_pct": 33.25876211782252,
       "rule": "effective_sector_limits",
       "scope": "SECTOR",
@@ -2290,10 +2216,8 @@
      "PROJECTED_TARGET:effective_sector_limits:Utilities": {
       "basis": "EQUITY",
       "binding_source": "EMERGENCY_OVERRIDE",
-      "breach_amount": 3813.1691237850177,
       "breach_pp": 0.9507829977628681,
       "currency": "THB",
-      "denominator": 401055.67019573995,
       "evidence_id": "PROJECTED_TARGET:effective_sector_limits:Utilities",
       "evidence_version": "wealth.policy-evidence.v2",
       "limit_pct": 25.0,
@@ -2311,7 +2235,6 @@
         "symbol": "GULF.BK"
        }
       ],
-      "numerator": 104077.08667271999,
       "observed_pct": 25.950782997762868,
       "rule": "effective_sector_limits",
       "scope": "SECTOR",
@@ -2457,10 +2380,8 @@
       "provenance": {
        "basis": "EQUITY",
        "binding_source": "REGIME_POLICY",
-       "breach_amount": 33597.00000000001,
        "breach_pp": 6.595406360424029,
        "currency": "THB",
-       "denominator": 509400.0,
        "evidence_id": "CURRENT:effective_sector_limits:Healthcare",
        "evidence_version": "wealth.policy-evidence.v2",
        "limit_pct": 24.5,
@@ -2478,7 +2399,6 @@
          "symbol": "BH.BK"
         }
        ],
-       "numerator": 158400.0,
        "observed_pct": 31.09540636042403,
        "rule": "effective_sector_limits",
        "scope": "SECTOR",
@@ -2510,10 +2430,8 @@
       "provenance": {
        "basis": "EQUITY",
        "binding_source": "EMERGENCY_OVERRIDE",
-       "breach_amount": 39650.00000000001,
        "breach_pp": 7.783667059285435,
        "currency": "THB",
-       "denominator": 509400.0,
        "evidence_id": "CURRENT:effective_sector_limits:Technology",
        "evidence_version": "wealth.policy-evidence.v2",
        "limit_pct": 25.0,
@@ -2543,7 +2461,6 @@
          "symbol": "NVDA01.BK"
         }
        ],
-       "numerator": 167000.0,
        "observed_pct": 32.783667059285435,
        "rule": "effective_sector_limits",
        "scope": "SECTOR",
@@ -2564,10 +2481,8 @@
       "provenance": {
        "basis": "EQUITY",
        "binding_source": "EMERGENCY_OVERRIDE",
-       "breach_amount": 39650.00000000001,
        "breach_pp": 7.783667059285435,
        "currency": "THB",
-       "denominator": 509400.0,
        "evidence_id": "CURRENT:effective_sector_limits:Technology",
        "evidence_version": "wealth.policy-evidence.v2",
        "limit_pct": 25.0,
@@ -2597,7 +2512,6 @@
          "symbol": "NVDA01.BK"
         }
        ],
-       "numerator": 167000.0,
        "observed_pct": 32.783667059285435,
        "rule": "effective_sector_limits",
        "scope": "SECTOR",
@@ -2642,7 +2556,6 @@
     "candidates": [
      {
       "cash_intent": {
-       "amount": 238280.22035,
        "kind": "KEEP_CURRENT"
       },
       "eligibility_reasons": [],
@@ -2726,7 +2639,6 @@
        "UNVERIFIED_SELL:MICRON01.BK",
        "UNVERIFIED_SELL:NVDA01.BK"
       ],
-      "model_rationale": "Confirm cash-raising reductions, but broaden execution across all flagged holdings rather than only two. Compared with holding unchanged, approximately 14.49% NAV of sales reduces exposed capital at estimated slippage of THB 437, excluding fees and taxes. This is a partial emergency remediation, not full compliance; balanced diversification remains the longer-term objective.",
       "observed_evidence_refs": {
        "symbol:AMATA.BK:timing_score": 30,
        "symbol:BH.BK:fa_score": 4,
@@ -3565,7 +3477,6 @@
      "asset_type": "EQUITY",
      "combined_score": 2.4,
      "current_weight": 21.185527674632166,
-     "estimated_amount": 0,
      "execution_priority": "HIGH",
      "execution_risk": "MEDIUM",
      "execution_warnings": [],
@@ -3597,7 +3508,6 @@
      "asset_type": "DR",
      "combined_score": 5.0,
      "current_weight": 7.690453543505995,
-     "estimated_amount": 0,
      "execution_priority": "DEFER",
      "execution_risk": "MEDIUM",
      "execution_warnings": [
@@ -3632,7 +3542,6 @@
      "asset_type": "EQUITY",
      "combined_score": 2.6,
      "current_weight": 16.91899779571319,
-     "estimated_amount": 0,
      "execution_priority": "HIGH",
      "execution_risk": "MEDIUM",
      "execution_warnings": [],
@@ -3664,7 +3573,6 @@
      "asset_type": "DR",
      "combined_score": 5.0,
      "current_weight": 10.699761451834428,
-     "estimated_amount": 0,
      "execution_priority": "DEFER",
      "execution_risk": "MEDIUM",
      "execution_warnings": [
@@ -3699,7 +3607,6 @@
      "asset_type": "DR",
      "combined_score": 5.0,
      "current_weight": 11.63599057886994,
-     "estimated_amount": 0,
      "execution_priority": "DEFER",
      "execution_risk": "MEDIUM",
      "execution_warnings": [
@@ -3888,25 +3795,10 @@
      "symbol:AMATA.BK:timing_score",
      "symbol:TOP.BK:timing_score"
     ],
-    "portfolio_assessment": "Confirm BH.BK and GULF.BK reductions, but spread limited turnover across all five policy-flagged holdings rather than only two. Compared with holding unchanged, this reduces exposed capital at approximately THB 403 estimated slippage, although avoided losses cannot be quantified.",
     "provider": "openai",
     "rebalance_opportunity_score": 65,
-    "risk_constraint_notes": [
-     "Emergency restrictions supersede normal growth priorities, 5% cash preference and 40% turnover tolerance; BALANCED remains the long-term philosophy.",
-     "Targets use THB 747680 NAV, not invested-equity value. No purchases or new positions are proposed.",
-     "Indicative sales: BH.BK 200 shares, GULF.BK 600, GOOGL01.BK 300, NVDA01.BK 1000 and MICRON01.BK 500.",
-     "At supplied local THB prices, gross sales total THB 111575, or 14.9229% NAV; gross cash becomes THB 349855.",
-     "Estimated slippage is THB 402.78 using supplied instrument estimates; commissions and taxes are additional and unspecified.",
-     "Weights and cash are rounded pre-cost targets. Recheck live NAV, prices, executable quantities and remaining turnover before orders.",
-     "Cash already exceeds the 20% minimum. Additional cash is a preservation choice, not remediation of a cash breach.",
-     "Full liquidation of flagged holdings requires 68.13% NAV turnover and is incompatible with the 15% ceiling. Residual violations remain unresolved.",
-     "GOOGL01.BK, NVDA01.BK and MICRON01.BK are verified THB-quoted depositary receipts; instrument form is not the sale rationale.",
-     "Verified DR exposure is approximately 30.03% NAV before trading; the advisory 40% basket threshold is not breached.",
-     "GOOGL01.BK and MICRON01.BK ACCUMULATE signals face timing scores 15 and 20 respectively, both DEFER; policy independently prohibits additions."
-    ],
     "status": "REBALANCE",
     "strategy_family": "RAISE_CASH",
-    "summary": "Confirm BH.BK and GULF.BK reductions, but spread limited turnover across all five policy-flagged holdings rather than only two. Compared with holding unchanged, this reduces exposed capital at approximately THB 403 estimated slippage, although avoided losses cannot be quantified.",
     "target_allocations": [
      {
       "action": "REDUCE",
@@ -3915,7 +3807,6 @@
       "combined_score": 2.4,
       "current_weight": 21.19,
       "decision_basis": "INVESTMENT_THESIS",
-      "estimated_amount": -39627,
       "execution_priority": "HIGH",
       "execution_risk": "MEDIUM",
       "execution_warnings": [],
@@ -3950,7 +3841,6 @@
       "combined_score": 5.0,
       "current_weight": 7.69,
       "decision_basis": "INVESTMENT_THESIS",
-      "estimated_amount": -8598,
       "execution_priority": "DEFER",
       "execution_risk": "MEDIUM",
       "execution_warnings": [
@@ -3988,7 +3878,6 @@
       "combined_score": 2.6,
       "current_weight": 16.92,
       "decision_basis": "INVESTMENT_THESIS",
-      "estimated_amount": -37982,
       "execution_priority": "HIGH",
       "execution_risk": "MEDIUM",
       "execution_warnings": [],
@@ -4023,7 +3912,6 @@
       "combined_score": 5.0,
       "current_weight": 11.64,
       "decision_basis": "INVESTMENT_THESIS",
-      "estimated_amount": -17421,
       "execution_priority": "DEFER",
       "execution_risk": "MEDIUM",
       "execution_warnings": [
@@ -4061,7 +3949,6 @@
       "combined_score": 5.0,
       "current_weight": 10.7,
       "decision_basis": "INVESTMENT_THESIS",
-      "estimated_amount": -8000,
       "execution_priority": "DEFER",
       "execution_risk": "MEDIUM",
       "execution_warnings": [
@@ -4114,10 +4001,8 @@
      "CURRENT:effective_sector_limits:Healthcare": {
       "basis": "EQUITY",
       "binding_source": "REGIME_POLICY",
-      "breach_amount": 33597.00000000001,
       "breach_pp": 6.595406360424029,
       "currency": "THB",
-      "denominator": 509400.0,
       "evidence_id": "CURRENT:effective_sector_limits:Healthcare",
       "evidence_version": "wealth.policy-evidence.v2",
       "limit_pct": 24.5,
@@ -4135,7 +4020,6 @@
         "symbol": "BH.BK"
        }
       ],
-      "numerator": 158400.0,
       "observed_pct": 31.09540636042403,
       "rule": "effective_sector_limits",
       "scope": "SECTOR",
@@ -4146,10 +4030,8 @@
      "CURRENT:effective_sector_limits:Technology": {
       "basis": "EQUITY",
       "binding_source": "EMERGENCY_OVERRIDE",
-      "breach_amount": 39650.00000000001,
       "breach_pp": 7.783667059285435,
       "currency": "THB",
-      "denominator": 509400.0,
       "evidence_id": "CURRENT:effective_sector_limits:Technology",
       "evidence_version": "wealth.policy-evidence.v2",
       "limit_pct": 25.0,
@@ -4179,7 +4061,6 @@
         "symbol": "NVDA01.BK"
        }
       ],
-      "numerator": 167000.0,
       "observed_pct": 32.783667059285435,
       "rule": "effective_sector_limits",
       "scope": "SECTOR",
@@ -4190,10 +4071,8 @@
      "PROJECTED_TARGET:effective_sector_limits:Healthcare": {
       "basis": "EQUITY",
       "binding_source": "REGIME_POLICY",
-      "breach_amount": 21335.42892779742,
       "breach_pp": 5.362807742905467,
       "currency": "THB",
-      "denominator": 397840.645248235,
       "evidence_id": "PROJECTED_TARGET:effective_sector_limits:Healthcare",
       "evidence_version": "wealth.policy-evidence.v2",
       "limit_pct": 24.5,
@@ -4211,7 +4090,6 @@
         "symbol": "BH.BK"
        }
       ],
-      "numerator": 118806.38701361499,
       "observed_pct": 29.862807742905467,
       "rule": "effective_sector_limits",
       "scope": "SECTOR",
@@ -4222,10 +4100,8 @@
      "PROJECTED_TARGET:effective_sector_limits:Technology": {
       "basis": "EQUITY",
       "binding_source": "EMERGENCY_OVERRIDE",
-      "breach_amount": 42150.47242223126,
       "breach_pp": 10.594813005074236,
       "currency": "THB",
-      "denominator": 397840.645248235,
       "evidence_id": "PROJECTED_TARGET:effective_sector_limits:Technology",
       "evidence_version": "wealth.policy-evidence.v2",
       "limit_pct": 25.0,
@@ -4255,7 +4131,6 @@
         "symbol": "NVDA01.BK"
        }
       ],
-      "numerator": 141610.63373429002,
       "observed_pct": 35.594813005074236,
       "rule": "effective_sector_limits",
       "scope": "SECTOR",
@@ -4351,10 +4226,8 @@
       "provenance": {
        "basis": "EQUITY",
        "binding_source": "EMERGENCY_OVERRIDE",
-       "breach_amount": 39650.00000000001,
        "breach_pp": 7.783667059285435,
        "currency": "THB",
-       "denominator": 509400.0,
        "evidence_id": "CURRENT:effective_sector_limits:Technology",
        "evidence_version": "wealth.policy-evidence.v2",
        "limit_pct": 25.0,
@@ -4384,7 +4257,6 @@
          "symbol": "NVDA01.BK"
         }
        ],
-       "numerator": 167000.0,
        "observed_pct": 32.783667059285435,
        "rule": "effective_sector_limits",
        "scope": "SECTOR",
@@ -4405,10 +4277,8 @@
       "provenance": {
        "basis": "EQUITY",
        "binding_source": "EMERGENCY_OVERRIDE",
-       "breach_amount": 39650.00000000001,
        "breach_pp": 7.783667059285435,
        "currency": "THB",
-       "denominator": 509400.0,
        "evidence_id": "CURRENT:effective_sector_limits:Technology",
        "evidence_version": "wealth.policy-evidence.v2",
        "limit_pct": 25.0,
@@ -4438,7 +4308,6 @@
          "symbol": "NVDA01.BK"
         }
        ],
-       "numerator": 167000.0,
        "observed_pct": 32.783667059285435,
        "rule": "effective_sector_limits",
        "scope": "SECTOR",
@@ -4459,10 +4328,8 @@
       "provenance": {
        "basis": "EQUITY",
        "binding_source": "EMERGENCY_OVERRIDE",
-       "breach_amount": 39650.00000000001,
        "breach_pp": 7.783667059285435,
        "currency": "THB",
-       "denominator": 509400.0,
        "evidence_id": "CURRENT:effective_sector_limits:Technology",
        "evidence_version": "wealth.policy-evidence.v2",
        "limit_pct": 25.0,
@@ -4492,7 +4359,6 @@
          "symbol": "NVDA01.BK"
         }
        ],
-       "numerator": 167000.0,
        "observed_pct": 32.783667059285435,
        "rule": "effective_sector_limits",
        "scope": "SECTOR",
@@ -4513,10 +4379,8 @@
       "provenance": {
        "basis": "EQUITY",
        "binding_source": "REGIME_POLICY",
-       "breach_amount": 33597.00000000001,
        "breach_pp": 6.595406360424029,
        "currency": "THB",
-       "denominator": 509400.0,
        "evidence_id": "CURRENT:effective_sector_limits:Healthcare",
        "evidence_version": "wealth.policy-evidence.v2",
        "limit_pct": 24.5,
@@ -4534,7 +4398,6 @@
          "symbol": "BH.BK"
         }
        ],
-       "numerator": 158400.0,
        "observed_pct": 31.09540636042403,
        "rule": "effective_sector_limits",
        "scope": "SECTOR",
@@ -4626,7 +4489,6 @@
     "candidates": [
      {
       "cash_intent": {
-       "amount": 238280.22035,
        "kind": "KEEP_CURRENT"
       },
       "eligibility_reasons": [],
@@ -4708,7 +4570,6 @@
        "UNVERIFIED_SELL:MICRON01.BK",
        "UNVERIFIED_SELL:NVDA01.BK"
       ],
-      "model_rationale": "Confirm BH.BK and GULF.BK reductions, but spread limited turnover across all five policy-flagged holdings rather than only two. Compared with holding unchanged, this reduces exposed capital at approximately THB 403 estimated slippage, although avoided losses cannot be quantified.",
       "observed_evidence_refs": {
        "symbol:AMATA.BK:timing_score": 30,
        "symbol:BH.BK:fa_score": 4,
@@ -5453,7 +5314,6 @@
      "combined_score": 2.4,
      "current_weight": 21.19,
      "decision_basis": "INVESTMENT_THESIS",
-     "estimated_amount": -39627,
      "execution_priority": "HIGH",
      "execution_risk": "MEDIUM",
      "execution_warnings": [],
@@ -5488,7 +5348,6 @@
      "combined_score": 5.0,
      "current_weight": 7.69,
      "decision_basis": "INVESTMENT_THESIS",
-     "estimated_amount": -8598,
      "execution_priority": "DEFER",
      "execution_risk": "MEDIUM",
      "execution_warnings": [
@@ -5526,7 +5385,6 @@
      "combined_score": 2.6,
      "current_weight": 16.92,
      "decision_basis": "INVESTMENT_THESIS",
-     "estimated_amount": -37982,
      "execution_priority": "HIGH",
      "execution_risk": "MEDIUM",
      "execution_warnings": [],
@@ -5561,7 +5419,6 @@
      "combined_score": 5.0,
      "current_weight": 11.64,
      "decision_basis": "INVESTMENT_THESIS",
-     "estimated_amount": -17421,
      "execution_priority": "DEFER",
      "execution_risk": "MEDIUM",
      "execution_warnings": [
@@ -5599,7 +5456,6 @@
      "combined_score": 5.0,
      "current_weight": 10.7,
      "decision_basis": "INVESTMENT_THESIS",
-     "estimated_amount": -8000,
      "execution_priority": "DEFER",
      "execution_risk": "MEDIUM",
      "execution_warnings": [
@@ -5794,19 +5650,16 @@
     "no_action_reason": null,
     "no_action_summary": null,
     "observed_evidence_refs": [],
-    "portfolio_assessment": "Emergency preservation overrides normal BALANCED deployment preferences: sell approximately THB 109,800 across all flagged holdings, with no purchases. Gross turnover is 14.69% of NAV; estimated slippage is THB 419.20, leaving approximately 46.50% cash after slippage versus the 46.55% gross target. Keeping holdings avoids trading costs but leaves every suppression violation untouched; these partial reductions cannot fully resolve violations within the turnover ceiling and are not a verified optional investment strategy.",
     "provider": "openai",
     "rebalance_opportunity_score": 42,
     "status": "REBALANCE",
     "strategy_family": null,
-    "summary": "Emergency preservation overrides normal BALANCED deployment preferences: sell approximately THB 109,800 across all flagged holdings, with no purchases. Gross turnover is 14.69% of NAV; estimated slippage is THB 419.20, leaving approximately 46.50% cash after slippage versus the 46.55% gross target. Keeping holdings avoids trading costs but leaves every suppression violation untouched; these partial reductions cannot fully resolve violations within the turnover ceiling and are not a verified optional investment strategy.",
     "target_allocations": [
      {
       "action": "REDUCE",
       "allocation_change_percent": -5.3,
       "combined_score": 2.4,
       "current_weight": 21.19,
-      "estimated_amount": -39627,
       "fa_score": 4,
       "pe_ratio": 22.66,
       "reason": "Sell approximately 200 shares to partially remediate the explicit emergency suppression flag.",
@@ -5834,7 +5687,6 @@
       "allocation_change_percent": -1.54,
       "combined_score": 5.0,
       "current_weight": 7.69,
-      "estimated_amount": -11514,
       "fa_score": 6,
       "pe_ratio": 15.01,
       "reason": "Sell approximately 400 local DR units; freeze accumulation under the explicit suppression mandate.",
@@ -5862,7 +5714,6 @@
       "allocation_change_percent": -3.38,
       "combined_score": 2.6,
       "current_weight": 16.92,
-      "estimated_amount": -25272,
       "fa_score": 5,
       "pe_ratio": 12.43,
       "reason": "Sell approximately 400 shares; emergency suppression overrides favorable execution timing.",
@@ -5890,7 +5741,6 @@
       "allocation_change_percent": -2.33,
       "combined_score": 5.0,
       "current_weight": 11.64,
-      "estimated_amount": -17421,
       "fa_score": 6,
       "pe_ratio": 21.35,
       "reason": "Sell approximately 1,000 local DR units as partial policy remediation, not because of instrument form.",
@@ -5918,7 +5768,6 @@
       "allocation_change_percent": -2.14,
       "combined_score": 5.0,
       "current_weight": 10.7,
-      "estimated_amount": -16000,
       "fa_score": 7,
       "pe_ratio": 9.76,
       "reason": "Sell approximately 1,000 local DR units; attractive reported valuation does not override emergency suppression.",
@@ -5963,10 +5812,8 @@
      "CURRENT:effective_sector_limits:Healthcare": {
       "basis": "EQUITY",
       "binding_source": "REGIME_POLICY",
-      "breach_amount": 33597.00000000001,
       "breach_pp": 6.595406360424029,
       "currency": "THB",
-      "denominator": 509400.0,
       "evidence_id": "CURRENT:effective_sector_limits:Healthcare",
       "evidence_version": "wealth.policy-evidence.v2",
       "limit_pct": 24.5,
@@ -5984,7 +5831,6 @@
         "symbol": "BH.BK"
        }
       ],
-      "numerator": 158400.0,
       "observed_pct": 31.09540636042403,
       "rule": "effective_sector_limits",
       "scope": "SECTOR",
@@ -5995,10 +5841,8 @@
      "CURRENT:effective_sector_limits:Technology": {
       "basis": "EQUITY",
       "binding_source": "EMERGENCY_OVERRIDE",
-      "breach_amount": 39650.00000000001,
       "breach_pp": 7.783667059285435,
       "currency": "THB",
-      "denominator": 509400.0,
       "evidence_id": "CURRENT:effective_sector_limits:Technology",
       "evidence_version": "wealth.policy-evidence.v2",
       "limit_pct": 25.0,
@@ -6028,7 +5872,6 @@
         "symbol": "NVDA01.BK"
        }
       ],
-      "numerator": 167000.0,
       "observed_pct": 32.783667059285435,
       "rule": "effective_sector_limits",
       "scope": "SECTOR",
@@ -6039,10 +5882,8 @@
      "PROJECTED_TARGET:effective_sector_limits:Healthcare": {
       "basis": "EQUITY",
       "binding_source": "REGIME_POLICY",
-      "breach_amount": 20895.79295823162,
       "breach_pp": 5.228718428437791,
       "currency": "THB",
-      "denominator": 399635.077777075,
       "evidence_id": "PROJECTED_TARGET:effective_sector_limits:Healthcare",
       "evidence_version": "wealth.policy-evidence.v2",
       "limit_pct": 24.5,
@@ -6060,7 +5901,6 @@
         "symbol": "BH.BK"
        }
       ],
-      "numerator": 118806.38701361499,
       "observed_pct": 29.72871842843779,
       "rule": "effective_sector_limits",
       "scope": "SECTOR",
@@ -6071,10 +5911,8 @@
      "PROJECTED_TARGET:effective_sector_limits:Technology": {
       "basis": "EQUITY",
       "binding_source": "EMERGENCY_OVERRIDE",
-      "breach_amount": 33701.685932276276,
       "breach_pp": 8.433115060804496,
       "currency": "THB",
-      "denominator": 399635.077777075,
       "evidence_id": "PROJECTED_TARGET:effective_sector_limits:Technology",
       "evidence_version": "wealth.policy-evidence.v2",
       "limit_pct": 25.0,
@@ -6104,7 +5942,6 @@
         "symbol": "NVDA01.BK"
        }
       ],
-      "numerator": 133610.45537654503,
       "observed_pct": 33.4331150608045,
       "rule": "effective_sector_limits",
       "scope": "SECTOR",
@@ -6115,10 +5952,8 @@
      "PROJECTED_TARGET:effective_sector_limits:Utilities": {
       "basis": "EQUITY",
       "binding_source": "EMERGENCY_OVERRIDE",
-      "breach_amount": 1327.1323911212332,
       "breach_pp": 0.3320860617399397,
       "currency": "THB",
-      "denominator": 399635.077777075,
       "evidence_id": "PROJECTED_TARGET:effective_sector_limits:Utilities",
       "evidence_version": "wealth.policy-evidence.v2",
       "limit_pct": 25.0,
@@ -6136,7 +5971,6 @@
         "symbol": "GULF.BK"
        }
       ],
-      "numerator": 101235.90183538999,
       "observed_pct": 25.33208606173994,
       "rule": "effective_sector_limits",
       "scope": "SECTOR",
@@ -6216,10 +6050,8 @@
       "provenance": {
        "basis": "EQUITY",
        "binding_source": "REGIME_POLICY",
-       "breach_amount": 33597.00000000001,
        "breach_pp": 6.595406360424029,
        "currency": "THB",
-       "denominator": 509400.0,
        "evidence_id": "CURRENT:effective_sector_limits:Healthcare",
        "evidence_version": "wealth.policy-evidence.v2",
        "limit_pct": 24.5,
@@ -6237,7 +6069,6 @@
          "symbol": "BH.BK"
         }
        ],
-       "numerator": 158400.0,
        "observed_pct": 31.09540636042403,
        "rule": "effective_sector_limits",
        "scope": "SECTOR",
@@ -6326,7 +6157,6 @@
     "candidates": [
      {
       "cash_intent": {
-       "amount": 238280.22035,
        "kind": "KEEP_CURRENT"
       },
       "eligibility_reasons": [],
@@ -7040,7 +6870,6 @@
      "asset_type": "EQUITY",
      "combined_score": 2.4,
      "current_weight": 21.185527674632166,
-     "estimated_amount": 0,
      "execution_priority": "HIGH",
      "execution_risk": "MEDIUM",
      "execution_warnings": [],
@@ -7072,7 +6901,6 @@
      "asset_type": "DR",
      "combined_score": 5.0,
      "current_weight": 7.690453543505995,
-     "estimated_amount": 0,
      "execution_priority": "DEFER",
      "execution_risk": "MEDIUM",
      "execution_warnings": [
@@ -7107,7 +6935,6 @@
      "asset_type": "EQUITY",
      "combined_score": 2.6,
      "current_weight": 16.91899779571319,
-     "estimated_amount": 0,
      "execution_priority": "HIGH",
      "execution_risk": "MEDIUM",
      "execution_warnings": [],
@@ -7139,7 +6966,6 @@
      "asset_type": "DR",
      "combined_score": 5.0,
      "current_weight": 10.699761451834428,
-     "estimated_amount": 0,
      "execution_priority": "DEFER",
      "execution_risk": "MEDIUM",
      "execution_warnings": [
@@ -7174,7 +7000,6 @@
      "asset_type": "DR",
      "combined_score": 5.0,
      "current_weight": 11.63599057886994,
-     "estimated_amount": 0,
      "execution_priority": "DEFER",
      "execution_risk": "MEDIUM",
      "execution_warnings": [
@@ -7287,7 +7112,6 @@
       "combined_score": 2.4,
       "current_weight": 20.73,
       "decision_basis": "INVESTMENT_THESIS",
-      "estimated_amount": 0,
       "fa_score": 4,
       "pe_ratio": 22.66,
       "reason": "ROE 27% and strong uptrend support retention; preservation does not require adding exposure.",
@@ -7315,7 +7139,6 @@
       "combined_score": 5.0,
       "current_weight": 7.9,
       "decision_basis": "INVESTMENT_THESIS",
-      "estimated_amount": 0,
       "fa_score": 6,
       "pe_ratio": 15.01,
       "reason": "P/E 15.01 supports retention; timing 15, DEFER, and strong downtrend argue against accumulation.",
@@ -7343,7 +7166,6 @@
       "combined_score": 2.6,
       "current_weight": 17.01,
       "decision_basis": "INVESTMENT_THESIS",
-      "estimated_amount": 0,
       "fa_score": 5,
       "pe_ratio": 12.43,
       "reason": "P/E 12.43 and strong uptrend support retention without additional trading costs.",
@@ -7371,7 +7193,6 @@
       "combined_score": 5.0,
       "current_weight": 10.87,
       "decision_basis": "INVESTMENT_THESIS",
-      "estimated_amount": 0,
       "fa_score": 6,
       "pe_ratio": 21.35,
       "reason": "Profitability supports retention; timing 25, DEFER, and downtrend weaken the case for adding.",
@@ -7399,7 +7220,6 @@
       "combined_score": 5.0,
       "current_weight": 11.34,
       "decision_basis": "INVESTMENT_THESIS",
-      "estimated_amount": 0,
       "fa_score": 7,
       "pe_ratio": 9.76,
       "reason": "P/E 9.76 supports retention; timing 20, DEFER, and downtrend caution against accumulation.",
@@ -7443,10 +7263,8 @@
      "CURRENT:effective_sector_limits:Healthcare": {
       "basis": "EQUITY",
       "binding_source": "REGIME_POLICY",
-      "breach_amount": 30463.000000000015,
       "breach_pp": 6.061082371667332,
       "currency": "THB",
-      "denominator": 502600.0,
       "evidence_id": "CURRENT:effective_sector_limits:Healthcare",
       "evidence_version": "wealth.policy-evidence.v2",
       "limit_pct": 24.5,
@@ -7464,7 +7282,6 @@
         "symbol": "BH.BK"
        }
       ],
-      "numerator": 153600.0,
       "observed_pct": 30.561082371667332,
       "rule": "effective_sector_limits",
       "scope": "SECTOR",
@@ -7475,10 +7292,8 @@
      "CURRENT:effective_sector_limits:Technology": {
       "basis": "EQUITY",
       "binding_source": "EMERGENCY_OVERRIDE",
-      "breach_amount": 38849.99999999999,
       "breach_pp": 7.7298050139275745,
       "currency": "THB",
-      "denominator": 502600.0,
       "evidence_id": "CURRENT:effective_sector_limits:Technology",
       "evidence_version": "wealth.policy-evidence.v2",
       "limit_pct": 25.0,
@@ -7508,7 +7323,6 @@
         "symbol": "NVDA01.BK"
        }
       ],
-      "numerator": 164500.0,
       "observed_pct": 32.729805013927574,
       "rule": "effective_sector_limits",
       "scope": "SECTOR",
@@ -7519,10 +7333,8 @@
      "CURRENT:effective_sector_limits:Utilities": {
       "basis": "EQUITY",
       "binding_source": "EMERGENCY_OVERRIDE",
-      "breach_amount": 349.9999999999902,
       "breach_pp": 0.0696378830083546,
       "currency": "THB",
-      "denominator": 502600.0,
       "evidence_id": "CURRENT:effective_sector_limits:Utilities",
       "evidence_version": "wealth.policy-evidence.v2",
       "limit_pct": 25.0,
@@ -7540,7 +7352,6 @@
         "symbol": "GULF.BK"
        }
       ],
-      "numerator": 126000.0,
       "observed_pct": 25.069637883008355,
       "rule": "effective_sector_limits",
       "scope": "SECTOR",
@@ -7551,10 +7362,8 @@
      "PROJECTED_TARGET:effective_sector_limits:Healthcare": {
       "basis": "EQUITY",
       "binding_source": "REGIME_POLICY",
-      "breach_amount": 30463.000000000015,
       "breach_pp": 6.061082371667332,
       "currency": "THB",
-      "denominator": 502600.0,
       "evidence_id": "PROJECTED_TARGET:effective_sector_limits:Healthcare",
       "evidence_version": "wealth.policy-evidence.v2",
       "limit_pct": 24.5,
@@ -7572,7 +7381,6 @@
         "symbol": "BH.BK"
        }
       ],
-      "numerator": 153600.0,
       "observed_pct": 30.561082371667332,
       "rule": "effective_sector_limits",
       "scope": "SECTOR",
@@ -7583,10 +7391,8 @@
      "PROJECTED_TARGET:effective_sector_limits:Technology": {
       "basis": "EQUITY",
       "binding_source": "EMERGENCY_OVERRIDE",
-      "breach_amount": 38849.99999999999,
       "breach_pp": 7.7298050139275745,
       "currency": "THB",
-      "denominator": 502600.0,
       "evidence_id": "PROJECTED_TARGET:effective_sector_limits:Technology",
       "evidence_version": "wealth.policy-evidence.v2",
       "limit_pct": 25.0,
@@ -7616,7 +7422,6 @@
         "symbol": "NVDA01.BK"
        }
       ],
-      "numerator": 164500.0,
       "observed_pct": 32.729805013927574,
       "rule": "effective_sector_limits",
       "scope": "SECTOR",
@@ -7627,10 +7432,8 @@
      "PROJECTED_TARGET:effective_sector_limits:Utilities": {
       "basis": "EQUITY",
       "binding_source": "EMERGENCY_OVERRIDE",
-      "breach_amount": 349.9999999999902,
       "breach_pp": 0.0696378830083546,
       "currency": "THB",
-      "denominator": 502600.0,
       "evidence_id": "PROJECTED_TARGET:effective_sector_limits:Utilities",
       "evidence_version": "wealth.policy-evidence.v2",
       "limit_pct": 25.0,
@@ -7648,7 +7451,6 @@
         "symbol": "GULF.BK"
        }
       ],
-      "numerator": 126000.0,
       "observed_pct": 25.069637883008355,
       "rule": "effective_sector_limits",
       "scope": "SECTOR",
@@ -7732,10 +7534,8 @@
       "provenance": {
        "basis": "EQUITY",
        "binding_source": "REGIME_POLICY",
-       "breach_amount": 30463.000000000015,
        "breach_pp": 6.061082371667332,
        "currency": "THB",
-       "denominator": 502600.0,
        "evidence_id": "CURRENT:effective_sector_limits:Healthcare",
        "evidence_version": "wealth.policy-evidence.v2",
        "limit_pct": 24.5,
@@ -7753,7 +7553,6 @@
          "symbol": "BH.BK"
         }
        ],
-       "numerator": 153600.0,
        "observed_pct": 30.561082371667332,
        "rule": "effective_sector_limits",
        "scope": "SECTOR",
@@ -7774,10 +7573,8 @@
       "provenance": {
        "basis": "EQUITY",
        "binding_source": "EMERGENCY_OVERRIDE",
-       "breach_amount": 349.9999999999902,
        "breach_pp": 0.0696378830083546,
        "currency": "THB",
-       "denominator": 502600.0,
        "evidence_id": "CURRENT:effective_sector_limits:Utilities",
        "evidence_version": "wealth.policy-evidence.v2",
        "limit_pct": 25.0,
@@ -7795,7 +7592,6 @@
          "symbol": "GULF.BK"
         }
        ],
-       "numerator": 126000.0,
        "observed_pct": 25.069637883008355,
        "rule": "effective_sector_limits",
        "scope": "SECTOR",
@@ -7816,10 +7612,8 @@
       "provenance": {
        "basis": "EQUITY",
        "binding_source": "EMERGENCY_OVERRIDE",
-       "breach_amount": 38849.99999999999,
        "breach_pp": 7.7298050139275745,
        "currency": "THB",
-       "denominator": 502600.0,
        "evidence_id": "CURRENT:effective_sector_limits:Technology",
        "evidence_version": "wealth.policy-evidence.v2",
        "limit_pct": 25.0,
@@ -7849,7 +7643,6 @@
          "symbol": "NVDA01.BK"
         }
        ],
-       "numerator": 164500.0,
        "observed_pct": 32.729805013927574,
        "rule": "effective_sector_limits",
        "scope": "SECTOR",
@@ -7870,10 +7663,8 @@
       "provenance": {
        "basis": "EQUITY",
        "binding_source": "EMERGENCY_OVERRIDE",
-       "breach_amount": 38849.99999999999,
        "breach_pp": 7.7298050139275745,
        "currency": "THB",
-       "denominator": 502600.0,
        "evidence_id": "CURRENT:effective_sector_limits:Technology",
        "evidence_version": "wealth.policy-evidence.v2",
        "limit_pct": 25.0,
@@ -7903,7 +7694,6 @@
          "symbol": "NVDA01.BK"
         }
        ],
-       "numerator": 164500.0,
        "observed_pct": 32.729805013927574,
        "rule": "effective_sector_limits",
        "scope": "SECTOR",
@@ -7955,7 +7745,6 @@
     "candidates": [
      {
       "cash_intent": {
-       "amount": 238280.22035,
        "kind": "KEEP_CURRENT"
       },
       "eligibility_reasons": [],
@@ -8669,7 +8458,6 @@
      "asset_type": "EQUITY",
      "combined_score": 2.4,
      "current_weight": 20.73209619868616,
-     "estimated_amount": 0,
      "execution_priority": "HIGH",
      "execution_risk": "MEDIUM",
      "execution_warnings": [],
@@ -8701,7 +8489,6 @@
      "asset_type": "DR",
      "combined_score": 5.0,
      "current_weight": 7.8960132006714865,
-     "estimated_amount": 0,
      "execution_priority": "DEFER",
      "execution_risk": "MEDIUM",
      "execution_warnings": [
@@ -8736,7 +8523,6 @@
      "asset_type": "EQUITY",
      "combined_score": 2.6,
      "current_weight": 17.006797662984745,
-     "estimated_amount": 0,
      "execution_priority": "HIGH",
      "execution_risk": "MEDIUM",
      "execution_warnings": [],
@@ -8768,7 +8554,6 @@
      "asset_type": "DR",
      "combined_score": 5.0,
      "current_weight": 11.337865108656494,
-     "estimated_amount": 0,
      "execution_priority": "DEFER",
      "execution_risk": "MEDIUM",
      "execution_warnings": [
@@ -8803,7 +8588,6 @@
      "asset_type": "DR",
      "combined_score": 5.0,
      "current_weight": 10.865454062462474,
-     "estimated_amount": 0,
      "execution_priority": "DEFER",
      "execution_risk": "MEDIUM",
      "execution_warnings": [
@@ -8923,7 +8707,6 @@
       "combined_score": 2.4,
       "current_weight": 20.85,
       "decision_basis": "INVESTMENT_THESIS",
-      "estimated_amount": 0,
       "fa_score": 4,
       "pe_ratio": 22.66,
       "reason": "ROE 27% and strong uptrend support retention; preservation mode provides no rationale for adding.",
@@ -8951,7 +8734,6 @@
       "combined_score": 3.6,
       "current_weight": 7.95,
       "decision_basis": "INVESTMENT_THESIS",
-      "estimated_amount": 0,
       "fa_score": 6,
       "pe_ratio": 15.01,
       "reason": "P/E 15.01 supports retention; timing 15/DEFER and strong downtrend caution against accumulation without disproving fundamentals.",
@@ -8979,7 +8761,6 @@
       "combined_score": 2.6,
       "current_weight": 16.97,
       "decision_basis": "INVESTMENT_THESIS",
-      "estimated_amount": 0,
       "fa_score": 5,
       "pe_ratio": 12.43,
       "reason": "P/E 12.43, ROE 14.3%, and strong uptrend support retention rather than a cost-incurring rotation.",
@@ -9007,7 +8788,6 @@
       "combined_score": 4.0,
       "current_weight": 10.84,
       "decision_basis": "INVESTMENT_THESIS",
-      "estimated_amount": 0,
       "fa_score": 6,
       "pe_ratio": 21.35,
       "reason": "Profitability supports retention; timing 25/DEFER and downtrend weaken accumulation timing, not the fundamental thesis.",
@@ -9035,7 +8815,6 @@
       "combined_score": 4.2,
       "current_weight": 11.31,
       "decision_basis": "INVESTMENT_THESIS",
-      "estimated_amount": 0,
       "fa_score": 7,
       "pe_ratio": 9.76,
       "reason": "P/E 9.76 supports retention; timing 20/DEFER and downtrend warrant caution rather than valuation-led additions.",
@@ -9079,10 +8858,8 @@
      "CURRENT:effective_sector_limits:Healthcare": {
       "basis": "EQUITY",
       "binding_source": "REGIME_POLICY",
-      "breach_amount": 31246.50000000001,
       "breach_pp": 6.196014277215944,
       "currency": "THB",
-      "denominator": 504300.0,
       "evidence_id": "CURRENT:effective_sector_limits:Healthcare",
       "evidence_version": "wealth.policy-evidence.v2",
       "limit_pct": 24.5,
@@ -9100,7 +8877,6 @@
         "symbol": "BH.BK"
        }
       ],
-      "numerator": 154800.0,
       "observed_pct": 30.696014277215944,
       "rule": "effective_sector_limits",
       "scope": "SECTOR",
@@ -9111,10 +8887,8 @@
      "CURRENT:effective_sector_limits:Technology": {
       "basis": "EQUITY",
       "binding_source": "EMERGENCY_OVERRIDE",
-      "breach_amount": 38424.999999999985,
       "breach_pp": 7.619472536188773,
       "currency": "THB",
-      "denominator": 504300.0,
       "evidence_id": "CURRENT:effective_sector_limits:Technology",
       "evidence_version": "wealth.policy-evidence.v2",
       "limit_pct": 25.0,
@@ -9144,7 +8918,6 @@
         "symbol": "NVDA01.BK"
        }
       ],
-      "numerator": 164500.0,
       "observed_pct": 32.61947253618877,
       "rule": "effective_sector_limits",
       "scope": "SECTOR",
@@ -9155,10 +8928,8 @@
      "PROJECTED_TARGET:effective_sector_limits:Healthcare": {
       "basis": "EQUITY",
       "binding_source": "REGIME_POLICY",
-      "breach_amount": 31246.50000000001,
       "breach_pp": 6.196014277215944,
       "currency": "THB",
-      "denominator": 504300.0,
       "evidence_id": "PROJECTED_TARGET:effective_sector_limits:Healthcare",
       "evidence_version": "wealth.policy-evidence.v2",
       "limit_pct": 24.5,
@@ -9176,7 +8947,6 @@
         "symbol": "BH.BK"
        }
       ],
-      "numerator": 154800.0,
       "observed_pct": 30.696014277215944,
       "rule": "effective_sector_limits",
       "scope": "SECTOR",
@@ -9187,10 +8957,8 @@
      "PROJECTED_TARGET:effective_sector_limits:Technology": {
       "basis": "EQUITY",
       "binding_source": "EMERGENCY_OVERRIDE",
-      "breach_amount": 38424.999999999985,
       "breach_pp": 7.619472536188773,
       "currency": "THB",
-      "denominator": 504300.0,
       "evidence_id": "PROJECTED_TARGET:effective_sector_limits:Technology",
       "evidence_version": "wealth.policy-evidence.v2",
       "limit_pct": 25.0,
@@ -9220,7 +8988,6 @@
         "symbol": "NVDA01.BK"
        }
       ],
-      "numerator": 164500.0,
       "observed_pct": 32.61947253618877,
       "rule": "effective_sector_limits",
       "scope": "SECTOR",
@@ -9300,10 +9067,8 @@
       "provenance": {
        "basis": "EQUITY",
        "binding_source": "REGIME_POLICY",
-       "breach_amount": 31246.50000000001,
        "breach_pp": 6.196014277215944,
        "currency": "THB",
-       "denominator": 504300.0,
        "evidence_id": "CURRENT:effective_sector_limits:Healthcare",
        "evidence_version": "wealth.policy-evidence.v2",
        "limit_pct": 24.5,
@@ -9321,7 +9086,6 @@
          "symbol": "BH.BK"
         }
        ],
-       "numerator": 154800.0,
        "observed_pct": 30.696014277215944,
        "rule": "effective_sector_limits",
        "scope": "SECTOR",
@@ -9342,10 +9106,8 @@
       "provenance": {
        "basis": "EQUITY",
        "binding_source": "EMERGENCY_OVERRIDE",
-       "breach_amount": 38424.999999999985,
        "breach_pp": 7.619472536188773,
        "currency": "THB",
-       "denominator": 504300.0,
        "evidence_id": "CURRENT:effective_sector_limits:Technology",
        "evidence_version": "wealth.policy-evidence.v2",
        "limit_pct": 25.0,
@@ -9375,7 +9137,6 @@
          "symbol": "NVDA01.BK"
         }
        ],
-       "numerator": 164500.0,
        "observed_pct": 32.61947253618877,
        "rule": "effective_sector_limits",
        "scope": "SECTOR",
@@ -9449,7 +9210,6 @@
     "candidates": [
      {
       "cash_intent": {
-       "amount": 238280.22035,
        "kind": "KEEP_CURRENT"
       },
       "eligibility_reasons": [],
@@ -10163,7 +9923,6 @@
      "asset_type": "EQUITY",
      "combined_score": 2.4,
      "current_weight": 20.846232603265165,
-     "estimated_amount": 0,
      "execution_priority": "HIGH",
      "execution_risk": "MEDIUM",
      "execution_warnings": [],
@@ -10195,7 +9954,6 @@
      "asset_type": "DR",
      "combined_score": 3.6,
      "current_weight": 7.945269532252228,
-     "estimated_amount": 0,
      "execution_priority": "DEFER",
      "execution_risk": "MEDIUM",
      "execution_warnings": [
@@ -10230,7 +9988,6 @@
      "asset_type": "EQUITY",
      "combined_score": 2.6,
      "current_weight": 16.96786374684374,
-     "estimated_amount": 0,
      "execution_priority": "HIGH",
      "execution_risk": "MEDIUM",
      "execution_warnings": [],
@@ -10262,7 +10019,6 @@
      "asset_type": "DR",
      "combined_score": 4.2,
      "current_weight": 11.311909164562493,
-     "estimated_amount": 0,
      "execution_priority": "DEFER",
      "execution_risk": "MEDIUM",
      "execution_warnings": [
@@ -10297,7 +10053,6 @@
      "asset_type": "DR",
      "combined_score": 4.0,
      "current_weight": 10.840579616039056,
-     "estimated_amount": 0,
      "execution_priority": "DEFER",
      "execution_risk": "MEDIUM",
      "execution_warnings": [
