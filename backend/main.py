@@ -4927,18 +4927,30 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
     # drift threshold buffer, cooldown engine, NO_REBALANCE_REQUIRED state,
     # minimum impact filter, and duplicate ticker diagnostics.
     try:
-        from services.optimizer.stabilization import apply_stabilization
+        from services.optimizer.stabilization import (
+            COOLDOWN_DAYS, apply_stabilization, select_cooldown_reference,
+        )
 
-        # Find the last REBALANCE run for this portfolio to compute cooldown
+        # Cooldown reference: the newest REBALANCE run inside the cooldown
+        # window that recommended a trade. Runs whose stored final rows are all
+        # HOLD/WATCH are skipped. When none qualifies, the newest older
+        # REBALANCE run is used as before; it cannot start a cooldown and only
+        # feeds the "last rebalance" display.
         _last_rebalance: datetime | None = None
         _prev_regime: str | None = None
-        _last_rebalance_row = (
-            db.query(OptimizerHistory)
-            .filter(
-                OptimizerHistory.portfolio_id == body.portfolio_id,
-                OptimizerHistory.workspace_id == ws,
-                OptimizerHistory.optimizer_status == "REBALANCE",
-            )
+        _rebalance_runs = db.query(OptimizerHistory).filter(
+            OptimizerHistory.portfolio_id == body.portfolio_id,
+            OptimizerHistory.workspace_id == ws,
+            OptimizerHistory.optimizer_status == "REBALANCE",
+        )
+        _window_start = datetime.utcnow() - timedelta(days=COOLDOWN_DAYS)
+        _last_rebalance_row = select_cooldown_reference(
+            _rebalance_runs
+            .filter(OptimizerHistory.analyzed_at > _window_start)
+            .order_by(OptimizerHistory.analyzed_at.desc())
+        ) or (
+            _rebalance_runs
+            .filter(OptimizerHistory.analyzed_at <= _window_start)
             .order_by(OptimizerHistory.analyzed_at.desc())
             .first()
         )
