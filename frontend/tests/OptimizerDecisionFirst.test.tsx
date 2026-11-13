@@ -7,8 +7,8 @@ import OptimizerDecisionSummary from "@/components/optimizer/OptimizerDecisionSu
 import ExecutionPlanCard from "@/components/optimizer/ExecutionPlanCard";
 import AuditorClaimFlag from "@/components/optimizer/AuditorClaimFlag";
 import { DecisionActionPanel } from "@/components/optimizer/DecisionActionPanel";
-import { assessment, economicRecommendation, scheduledTradeCount } from "@/lib/optimizerPresentation";
-import type { OptimizerResult } from "@/lib/api";
+import { assessment, committeeDecisionPresentation, economicRecommendation, safeguardsRemovedAllTrades, scheduledTradeCount } from "@/lib/optimizerPresentation";
+import type { OptimizerResult, TargetAllocation } from "@/lib/api";
 import raw217 from "./fixtures/optimizer-217.json";
 import raw218 from "./fixtures/optimizer-218.json";
 
@@ -552,6 +552,97 @@ describe("Committee primary summary and technical details", () => {
     renderSummary(result);
     const row = within(screen.getByTestId("committee-primary-summary")).getByText("AAA.BK").closest("li")!;
     expect(row).toHaveTextContent("Hold");
+  });
+
+  // Phase 4.7 D3 shape: Committee selects BUY BBB 20->30; the 15% execution cap
+  // turns the effective row into HOLD, so no actionable trade remains.
+  const row = (symbol: string, action: TargetAllocation["action"], current: number, target: number): TargetAllocation => ({
+    symbol, action, current_weight: current, target_weight: target, allocation_change_percent: target - current,
+    estimated_amount: (target - current) * 1000, reason: "Frozen observation", note: "" } as TargetAllocation);
+  const committeeAltered = (effective: TargetAllocation[] | undefined, uncertainty: string[] = []) => {
+    const result = optedInHold();
+    result.strategy_selection = { version: "wealth.strategy-selection.v1", state: "SELECTED",
+      selected_candidate_id: "proposal-b", supporting_evidence_refs: ["symbol:BBB:signal"], opposing_evidence_refs: [],
+      comparison_against_hold: "Observed evidence favours this over waiting.", decision_rationale: "Act on the observed evidence.",
+      material_uncertainty: uncertainty, reason_codes: ["COMMITTEE_SELECTED"],
+      downstream_outcome: { status: "ALTERED_BY_SAFEGUARDS" } };
+    result.strategic_candidates = { version: "wealth.strategic-candidates.v1", status: "PREPARED_NOT_SELECTED", candidates: [
+      { id: "hold-current", family: "HOLD", eligibility_status: "ELIGIBLE", proposed_allocations: [] },
+      { id: "proposal-b", family: "GROWTH_ROTATION", eligibility_status: "ELIGIBLE",
+        observed_evidence_refs: { "symbol:BBB:signal": "ACCUMULATE" },
+        proposed_allocations: [row("AAA", "HOLD", 60, 60), row("BBB", "BUY", 20, 30)] },
+    ] };
+    result.candidate_audit = { status: "AVAILABLE", reviews: {
+      "proposal-b": { supporting_refs: ["symbol:BBB:signal"], opposing_refs: [] } } };
+    result.target_allocations = effective;
+    const actionable = (effective ?? []).filter((r) => r.action === "BUY");
+    result.action_summary = { sell: [], reduce: [], new_position: [],
+      accumulate: actionable.map((r) => ({ symbol: r.symbol, allocation_change_percent: r.allocation_change_percent })),
+      hold: (effective ?? []).filter((r) => r.action === "HOLD").map((r) => ({ symbol: r.symbol, allocation_change_percent: 0 })) } as never;
+    result.execution_optimization = { cash_available: 200000, total_buy_deployment: 0, funding_gap: 0, idle_cash_after: 200000,
+      scheduled_buys: {}, scheduled_changes: {}, estimated_trade_costs: {}, trades: [] } as never;
+    return result;
+  };
+  const neutralizedRows = () => [row("AAA", "HOLD", 60, 60), row("BBB", "HOLD", 20, 20)];
+
+  it("presents a Committee selection fully neutralized by safeguards as HOLD and keeps provenance in details", () => {
+    const result = committeeAltered(neutralizedRows(),
+      ["AUDITOR_UNAVAILABLE", "MODEL_SCORE_ONLY_SUPPORT", "Timing uncertain", "MATERIAL_CONFLICT_UNRESOLVED"]);
+    renderSummary(result);
+    const primary = screen.getByTestId("committee-primary-summary");
+    expect(primary).toHaveTextContent("Hold Current Portfolio");
+    expect(primary).toHaveTextContent("The Committee selected a strategy, but downstream safeguards removed all proposed trades. No trades are scheduled.");
+    expect(primary).not.toHaveTextContent("Growth rotation");
+    expect(primary).not.toHaveTextContent("The Committee selected this plan over holding");
+    expect(primary).not.toHaveTextContent("cautious default");
+    expect(within(primary).getByText("Scheduled trades").nextElementSibling).toHaveTextContent(/^0$/);
+    // Safeguard caution leads, so the three-caution cap cannot hide it.
+    const cautions = screen.getByTestId("committee-cautions");
+    expect(cautions.firstElementChild).toHaveTextContent("Safeguards changed the selected plan");
+    expect(cautions).toHaveTextContent(/more caveats in technical details/);
+    const details = screen.getByTestId("technical-details");
+    const decision = within(details).getByTestId("committee-decision");
+    expect(decision).toHaveTextContent("Decision owner: Committee · SELECTED");
+    expect(decision).toHaveTextContent("Selected strategy: GROWTH ROTATION · proposal-b");
+    expect(decision).toHaveTextContent("COMMITTEE_SELECTED");
+    expect(decision).toHaveTextContent("Proposed allocation: HOLD AAA 60%; BUY BBB 30%");
+    expect(decision).toHaveTextContent("Effective post-safeguard allocation: HOLD AAA 60%; HOLD BBB 20%");
+    expect(decision).toHaveTextContent("Safeguards removed every proposed trade; no actionable trade remains");
+    expect(decision).not.toHaveTextContent("Selection is a recommendation.");
+    expect(economicRecommendation(result)).toBe("Keep held positions unchanged");
+  });
+
+  it("keeps the selected strategy for a partially altered plan where a trade survives", () => {
+    const result = committeeAltered([row("AAA", "HOLD", 60, 60), row("BBB", "BUY", 20, 25)]);
+    renderSummary(result);
+    const primary = screen.getByTestId("committee-primary-summary");
+    expect(primary).toHaveTextContent("Growth rotation");
+    expect(primary).toHaveTextContent("The Committee selected this plan over holding the current portfolio.");
+    expect(primary).not.toHaveTextContent("Hold Current Portfolio");
+    expect(primary).not.toHaveTextContent("removed all proposed trades");
+    expect(screen.getByTestId("committee-cautions")).toHaveTextContent("Safeguards changed the selected plan");
+    const decision = screen.getByTestId("committee-decision");
+    expect(decision).toHaveTextContent("Effective post-safeguard allocation: HOLD AAA 60%; BUY BBB 25%");
+    expect(decision).not.toHaveTextContent("Safeguards removed every proposed trade");
+    expect(decision).toHaveTextContent("Selection is a recommendation.");
+  });
+
+  it("keeps ordinary Committee HOLD presentation and claims nothing without effective rows", () => {
+    const hold = optedInHold();
+    expect(safeguardsRemovedAllTrades(committeeDecisionPresentation(hold))).toBe(false);
+    renderSummary(hold);
+    const primary = screen.getByTestId("committee-primary-summary");
+    expect(primary).toHaveTextContent("Keep the current portfolio unchanged.");
+    expect(primary).toHaveTextContent("not a guarantee");
+    expect(primary).not.toHaveTextContent("removed all proposed trades");
+    // Old/partial snapshots: missing, empty or unknown effective rows never qualify.
+    for (const effective of [undefined, [], [row("BBB", "PENDING" as TargetAllocation["action"], 20, 20)]]) {
+      expect(safeguardsRemovedAllTrades(committeeDecisionPresentation(committeeAltered(effective)))).toBe(false);
+    }
+    const unaltered = committeeAltered(neutralizedRows());
+    unaltered.strategy_selection!.downstream_outcome = { status: "UNCHANGED" };
+    expect(safeguardsRemovedAllTrades(committeeDecisionPresentation(unaltered))).toBe(false);
+    expect(safeguardsRemovedAllTrades(committeeDecisionPresentation(committeeAltered(neutralizedRows())))).toBe(true);
   });
 
   it("leaves non-Committee MUJI and Challenger layouts unchanged", () => {

@@ -84,6 +84,23 @@ export function scheduledTradeCount(result: OptimizerResult): number | null {
     ? deriveExecutionPlan(result.action_summary, result.target_allocations, result.execution_optimization).trades.length : null;
 }
 
+const KNOWN_ACTIONS = ["BUY", "ACCUMULATE", "REDUCE", "SELL", "HOLD", "WATCH"];
+const NO_TRADE_ACTIONS = ["HOLD", "WATCH"];
+
+/**
+ * True only when the Committee selected a non-HOLD candidate, safeguards
+ * altered it, and the effective (final) rows contain no actionable change.
+ * Derived from existing run/snapshot data; unknown or missing rows never qualify.
+ */
+export function safeguardsRemovedAllTrades(view: ReturnType<typeof committeeDecisionPresentation>): boolean {
+  if (view.owner !== "Committee" || view.unavailable || !view.altered) return false;
+  if (view.selection?.state !== "SELECTED" || !view.candidate || view.candidate.id === "hold-current") return false;
+  const rows = view.effective;
+  return Array.isArray(rows) && rows.length > 0 &&
+    rows.every((row) => row && typeof row.action === "string" && KNOWN_ACTIONS.includes(row.action)) &&
+    rows.every((row) => NO_TRADE_ACTIONS.includes(row.action));
+}
+
 export function economicRecommendation(result: OptimizerResult): string {
   // Retain economic changes even when scheduling has deferred them. If the
   // response has already suppressed an action, do not reconstruct its origin.
@@ -92,8 +109,8 @@ export function economicRecommendation(result: OptimizerResult): string {
   if (allocations.some((a) => typeof a.symbol !== "string" || !a.symbol.trim()) || new Set(allocations.map((a) => a.symbol)).size !== allocations.length) return "Recommendation unavailable";
   if (allocations.some((a) => a.noise_suppressed)) return "Original economic recommendation unavailable — a change was suppressed";
   const actions = allocations.map((a) => ({ symbol: a.symbol, action: a.action }));
-  if (actions.some((a) => !["BUY", "ACCUMULATE", "REDUCE", "SELL", "HOLD", "WATCH"].includes(a.action))) return "Recommendation unavailable";
-  const changes = actions.filter((a) => !["HOLD", "WATCH"].includes(a.action));
+  if (actions.some((a) => !KNOWN_ACTIONS.includes(a.action))) return "Recommendation unavailable";
+  const changes = actions.filter((a) => !NO_TRADE_ACTIONS.includes(a.action));
   return changes.length ? changes.map((a) => `${a.action} ${a.symbol}`).join("; ") : "Keep held positions unchanged";
 }
 
@@ -167,7 +184,14 @@ export function committeeSummaryPresentation(result: OptimizerResult, view: Comm
     explanation: join("The Committee abstained, so no strategy was selected or approved.", regimeSentence) };
   if (selection.state === "HUMAN_REVIEW_REQUIRED") return { cautions, showHoldings: false, headline: "Human Review Required",
     explanation: join("The evidence does not support an automatic recommendation. No strategy is approved for action.", regimeSentence) };
-  if (view.altered) cautions.push("Safeguards changed the selected plan; see technical details for the effective allocation.");
+  const safeguardCaution = "Safeguards changed the selected plan; see technical details for the effective allocation.";
+  if (safeguardsRemovedAllTrades(view)) {
+    // Lead with the safeguard caution so the visible-caution cap cannot hide it.
+    return { cautions: [safeguardCaution, ...cautions], showHoldings: true, headline: "Hold Current Portfolio",
+      explanation: join("The Committee selected a strategy, but downstream safeguards removed all proposed trades. No trades are scheduled.",
+        regimeSentence) };
+  }
+  if (view.altered) cautions.push(safeguardCaution);
   if (candidate?.id === "hold-current") {
     const weakEvidence = selection.reason_codes?.includes("CAUTIONED_HOLD")
       || selection.material_uncertainty?.includes("NO_ELIGIBLE_ACTION");
