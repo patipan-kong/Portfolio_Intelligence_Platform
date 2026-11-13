@@ -523,6 +523,30 @@ def _separate_sector_alternatives(model_result, allocations, holdings, nav, conc
     return list(alternatives.values())
 
 
+def _verify_count_cap_reasons(blocked, *, portfolio_count, max_stocks, policy_context):
+    """Correct model-reported portfolio_count_cap reasons that portfolio/policy facts contradict.
+
+    Explanation only: allocations, eligibility and selection never read blocked_opportunities.
+    The cap reason stands only when the actual count reaches max_stocks (the max_reached flag is
+    not trusted on its own). Otherwise it becomes emergency_buy_freeze when the backend emergency
+    BUY freeze is active, or the entry is dropped. Other reasons pass through. Returns a new list;
+    the model's items are never mutated.
+    """
+    if not isinstance(blocked, list):
+        return blocked
+    if max_stocks and portfolio_count >= max_stocks:
+        return blocked
+    # Same flag that makes _enforce_hard_policy freeze every BUY/ACCUMULATE.
+    emergency = bool((policy_context or {}).get("emergency_override", False))
+    verified = []
+    for item in blocked:
+        if not isinstance(item, dict) or str(item.get("reason", "")).strip().lower() != "portfolio_count_cap":
+            verified.append(item)
+        elif emergency:
+            verified.append({**item, "reason": "emergency_buy_freeze"})
+    return verified
+
+
 def _degraded_sector_policy(limits, default_cap, effective_envelope):
     if effective_envelope is not None:
         return {
@@ -2132,7 +2156,9 @@ def _run_single_shot_fallback(
     xai_score             = int(result.get("rebalance_opportunity_score") or 50)
     xai_no_action_reason  = result.get("no_action_reason")
     xai_no_action_summary = result.get("no_action_summary")
-    xai_blocked           = result.get("blocked_opportunities", [])
+    xai_blocked           = _verify_count_cap_reasons(
+        result.get("blocked_opportunities", []), portfolio_count=portfolio_count, max_stocks=max_stocks,
+        policy_context=policy_context)
 
     consensus = {
         "consensus_type":             "WEAK_CONSENSUS",
@@ -2866,7 +2892,9 @@ def run_layered_optimizer(
         xai_score               = int(l2_result.get("rebalance_opportunity_score") or 50)
         xai_no_action_reason    = l2_result.get("no_action_reason")
         xai_no_action_summary   = l2_result.get("no_action_summary")
-        xai_blocked             = l2_result.get("blocked_opportunities", [])
+        xai_blocked             = _verify_count_cap_reasons(
+            l2_result.get("blocked_opportunities", []), portfolio_count=portfolio_count, max_stocks=max_stocks,
+            policy_context=policy_context)
 
         # Older runs retain Challenger ownership. Only explicit Phase 3 selection transfers it.
         final_allocations = l2_result.get("target_allocations", [])
