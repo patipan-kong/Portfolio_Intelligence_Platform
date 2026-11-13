@@ -471,17 +471,21 @@ def decide_selection(envelope, audit, committee, *, hold_safe=True, failure_reas
             or (selected_id != "hold-current" and not comparison.strip())):
         return decide_selection(envelope, audit, None, hold_safe=hold_safe,
                                 failure_reason="COMMITTEE_EVIDENCE_INVALID")
-    unresolved = list(dict.fromkeys(
-        conflict for candidate_review in audit["reviews"].values()
-        for conflict in candidate_review.get("material_conflicts", [])
-        if isinstance(conflict, str)
+    # Candidate-scoped, not evidence-verified (Slice 4.6B, option B1): only the
+    # selected candidate's own non-blank conflicts can veto it, and HOLD is never
+    # vetoed. Other reviews' conflicts stay in candidate_audit only.
+    own_conflicts = list(dict.fromkeys(
+        conflict.strip() for conflict in review.get("material_conflicts") or []
+        if isinstance(conflict, str) and conflict.strip()
     ))
-    if unresolved and selected_id != "hold-current":
-        return decide_selection(envelope, audit, None, hold_safe=hold_safe,
-                                failure_reason="MATERIAL_CONFLICT_UNRESOLVED")
+    if own_conflicts and selected_id != "hold-current":
+        vetoed = decide_selection(envelope, audit, None, hold_safe=hold_safe,
+                                  failure_reason="MATERIAL_CONFLICT_UNRESOLVED")
+        vetoed["material_uncertainty"] = list(dict.fromkeys([*vetoed["material_uncertainty"], *own_conflicts]))
+        return vetoed
     base.update(state="SELECTED", selected_candidate_id=selected_id,
                 supporting_evidence_refs=supporting, opposing_evidence_refs=opposing,
                 comparison_against_hold=comparison, decision_rationale=rationale,
-                material_uncertainty=list(dict.fromkeys([*uncertainty, *unresolved])),
+                material_uncertainty=list(dict.fromkeys([*uncertainty, *own_conflicts])),
                 reason_codes=["COMMITTEE_SELECTED"])
     return base

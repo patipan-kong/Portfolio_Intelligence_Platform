@@ -3947,3 +3947,33 @@ The fixture `tests/fixtures/liquidity_evidence_shadow_frozen.json` is a read-onl
 - No live runs were performed.
 
 **Disposition:** `IMPLEMENTED`
+
+## MUJI V2 Phase 4 Slice 4.6B — Candidate-Scoped Material Conflict Veto
+
+**Date:** 2026-11-13
+**Problem (D5, deferred from Slice 4.6A):** in Committee opt-in runs, `decide_selection` pooled every string from every candidate review's `material_conflicts` and vetoed any non-HOLD Committee choice when one existed (`MATERIAL_CONFLICT_UNRESOLVED`). The strings are model-authored and unvalidated.
+- A conflict written on `hold-current`'s review, or on another candidate's review, vetoed the selected action.
+- Blank or whitespace-only strings vetoed.
+- Sector-concentration text could veto a trade, although under MUJI V2 concentration is advisory and cannot by itself veto a trade.
+- After a veto, `strategy_selection` recorded only the code, not the text that caused it.
+- A Committee-selected HOLD had other candidates' conflict text appended to its `material_uncertainty`.
+No frozen history (245–250) reached the Committee, so the veto never fired in a stored run.
+**Decision (owner-approved option B1):** a candidate-scoped veto in `services/optimizer/strategic_candidates.py::decide_selection`.
+- Only the selected candidate's own review can veto it. Its conflicts are stripped; blank and non-string items are dropped; duplicates are removed in order.
+- A non-HOLD selection with any remaining conflict becomes the existing cautioned HOLD (`CAUTIONED_HOLD`, `MATERIAL_CONFLICT_UNRESOLVED`). The triggering texts follow the code in `material_uncertainty`, without duplication.
+- HOLD is never vetoed by conflicts. A Committee-selected HOLD records only its own conflict texts.
+- Other candidates' conflicts neither veto nor attach to the selected plan. Their review records stay unchanged in `candidate_audit`.
+- **B1 is candidate-scoped, NOT an evidence-verified veto.** Conflict text is still model-authored and is not checked against observed evidence; no keyword, heuristic or threshold classifies it.
+- Making conflicts non-binding (option B2), or verifying them against evidence (structured conflicts with refs, which needs a prompt and schema change), requires separate owner approval.
+**Unchanged:** review validation and every fail-closed rule (an unknown ref, duplicate review or missing review still makes the audit `UNAVAILABLE`), candidate eligibility, hard safeguards, sector advisory policy, consensus, all prompts (the Committee prompt still receives the full audit), schemas, frontend and stored histories.
+**Invariants preserved:** frozen histories 245–250 replay to identical decisions (outcome digests unchanged). All three Auditor prompt baselines are byte-identical.
+**Impact:**
+- Code: `decide_selection` only.
+- Tests: `tests/test_strategy_selection.py` gains 12 cases on a synthetic envelope with three eligible candidates and valid Committee choices. `tests/test_auditor_evidence_validation.py` gains one counterfactual: history 245's real conflict text, with its proposal marked eligible in a copy, vetoes its own candidate and stops vetoing once moved to HOLD's review. The existing selected-candidate conflict regression passes unchanged.
+- Known limits:
+  - Text on the selected candidate's own review that describes missing information (uncertainty, not a proven conflict) still vetoes it.
+  - Any non-blank own text vetoes, however vague or unsupported.
+  - One unknown ref in any review still fails the whole review closed (unchanged by design).
+- No live runs were performed.
+
+**Disposition:** `IMPLEMENTED`
