@@ -199,10 +199,10 @@ def test_diagnostics_change_no_review_status_eligibility_or_selection(run):
     assert audit == data["candidate_audit"]
 
 
-def test_run245_real_conflict_is_scoped_to_its_own_candidate():
-    """Slice 4.6B counterfactual: history 245's proposal was UNVERIFIED, so the
-    Committee never ran. Marking it ELIGIBLE in a copy sends the real Auditor
-    conflict text through actual selection (B1: candidate-scoped, not verified)."""
+def test_run245_real_conflict_is_recorded_without_veto_and_scoped_to_its_candidate():
+    """Counterfactual: history 245's proposal was UNVERIFIED, so the Committee
+    never ran. Marking it ELIGIBLE in a copy sends the real Auditor conflict text
+    through actual selection (Slice 4.6C, B2: recorded, never binding)."""
     data = RUNS["245"]
     envelope = copy.deepcopy(data["strategic_candidates"])
     proposal = next(c for c in envelope["candidates"] if c["id"] == "proposal-633bb49f9c7e")
@@ -216,12 +216,13 @@ def test_run245_real_conflict_is_scoped_to_its_own_candidate():
                  "opposing_evidence_refs": list(review["opposing_refs"]),
                  "comparison_against_hold": "Counterfactual comparison.", "decision_rationale": "Counterfactual.",
                  "material_uncertainty": []}
-    vetoed = decide_selection(envelope, audit, committee)
-    assert (vetoed["selected_candidate_id"], vetoed["reason_codes"]) == ("hold-current", ["CAUTIONED_HOLD"])
-    assert vetoed["material_uncertainty"] == ["MATERIAL_CONFLICT_UNRESOLVED", text]
+    recorded = decide_selection(envelope, audit, committee)
+    assert (recorded["state"], recorded["selected_candidate_id"], recorded["reason_codes"]) == (
+        "SELECTED", proposal["id"], ["COMMITTEE_SELECTED", "AUDITOR_CONFLICT_UNVERIFIED"])
+    assert recorded["material_uncertainty"] == [text]
 
-    # The same text on HOLD's review no longer vetoes the proposal, is not attached
-    # to it, and stays in the audit record.
+    # The same text on HOLD's review is not attached to the proposal, adds no
+    # reason code, and stays in the audit record.
     reviews = {r["candidate_id"]: r for r in raw["candidate_reviews"]}
     reviews["hold-current"]["material_conflicts"] = reviews[proposal["id"]]["material_conflicts"]
     reviews[proposal["id"]]["material_conflicts"] = []

@@ -3977,3 +3977,34 @@ No frozen history (245–250) reached the Committee, so the veto never fired in 
 - No live runs were performed.
 
 **Disposition:** `IMPLEMENTED`
+
+
+## MUJI V2 Phase 4 Slice 4.6C — Non-Binding Auditor Material Conflicts
+
+**Date:** 2026-11-13
+**Problem:** after Slice 4.6B (B1), any non-blank `material_conflicts` text on the selected candidate's own Auditor review still vetoed a Committee-selected action, turning it into a cautioned HOLD. The text is model-authored and is not checked against evidence, so the veto applied to text that could not be verified:
+- Sector-concentration text could block an action, contradicting the MUJI V2 rule that sector thresholds alone cannot block BUY/ACCUMULATE.
+- Missing-information text could veto, even though eligibility had already confirmed observed evidence for every traded symbol.
+- Unverifiable topics could veto. History 245's only real conflict, "Conflicting evidence on divisional management for GOOGL01.BK and GULF.BK.", names data never supplied to the Auditor.
+- Every deterministically verifiable contradiction is already enforced before the Committee runs, whatever the Auditor writes: signal direction (`BUY_CONTRADICTS_SIGNAL`, `UNVERIFIED_SELL`), `SIGNAL_UNOBSERVED`, advisory-only sales, score-only or missing support, hard safeguards and mandatory locks. B1's binding authority therefore covered only unverifiable text.
+No frozen history (245–250) reached the Committee, so neither B1 nor B2 changes a stored decision.
+**Decision (owner-approved option B2):** in `services/optimizer/strategic_candidates.py::decide_selection`, Auditor material conflicts are non-binding.
+- A Committee selection that passes every existing check stays `SELECTED` (`COMMITTEE_SELECTED`), whatever conflict text its review carries.
+- The selected candidate's own conflicts are stripped, blank and non-string items are dropped, and duplicates are removed in order. They are appended after the Committee's own `material_uncertainty`.
+- A non-HOLD selection with any remaining own conflict also records the non-binding reason code `AUDITOR_CONFLICT_UNVERIFIED`. A Committee-selected HOLD records its own texts without the code, as before.
+- Model text that imitates a reason code stays text in `material_uncertainty` and never becomes a reason code.
+- Other candidates' conflicts neither veto nor attach to the selection. Their review records stay unchanged in `candidate_audit`.
+- `decide_selection` no longer emits `MATERIAL_CONFLICT_UNRESOLVED`. The frontend label for it remains for display only.
+**Rejected:** a structured conflict validator (option B). Its binding set would be provably empty for any eligible candidate, because the only deterministic contradiction rules are the eligibility rules. It would duplicate them and need a prompt and schema change.
+**Deferred (separate owner approval):** new deterministic contradiction rules, which belong in eligibility rather than in a conflict validator; tightening the Auditor prompt's `material_conflicts` definition; labeling conflict text as model-authored in the UI.
+**Unchanged:** review validation and every fail-closed rule (an unknown ref, duplicate review or missing review still makes the audit `UNAVAILABLE`), Committee evidence checks, candidate eligibility, hard safeguards, `hold_safe`, downstream coherence, sector advisory policy, consensus, all prompts (the Committee still receives the full audit), schemas, frontend and stored histories.
+**Invariants preserved:** frozen histories 245–250 replay to identical decisions (outcome digests unchanged). All three Auditor prompt baselines are byte-identical.
+**Impact:**
+- Code: `decide_selection` only.
+- Tests:
+  - `tests/test_strategy_selection.py`: the conflict cases now assert recording without a veto. New cases cover sector-advisory text on the selected candidate, and a verifiable contradiction (an observed SELL signal on a BUY) that keeps a candidate unselectable through eligibility when the Auditor writes no conflict.
+  - `tests/test_auditor_evidence_validation.py`: the history 245 counterfactual now records the real text with `AUDITOR_CONFLICT_UNVERIFIED` instead of vetoing.
+- What offline data cannot establish: conflict quality when the Committee actually runs, and whether the Auditor raises grounded concerns that eligibility misses. Both need opt-in live runs.
+- No live runs were performed.
+
+**Disposition:** `IMPLEMENTED`
