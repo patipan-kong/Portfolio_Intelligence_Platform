@@ -416,6 +416,8 @@ def test_pipeline_selection_and_degraded_paths(monkeypatch, chosen):
         assert selection["selected_candidate_id"] == action_id
         assert result["target_allocations"][0]["action"] == "SELL"
         assert result["target_cash_weight"] == (70 if chosen == "cap" else 80)
+        if chosen == "action":
+            assert selection["reason_codes"] == ["COMMITTEE_SELECTED"]
         if chosen == "cap":
             assert selection["downstream_outcome"]["status"] == "ALTERED_BY_SAFEGUARDS"
             assert result["target_allocations"][1]["target_weight"] == 25
@@ -426,4 +428,233 @@ def test_pipeline_selection_and_degraded_paths(monkeypatch, chosen):
             assert "MANDATORY_LOCK_CONFLICT" in result["strategic_candidates"]["candidates"][1]["eligibility_reasons"]
         else:
             assert selection["reason_codes"] == ["CAUTIONED_HOLD"]
+        if chosen == "invalid":
+            assert selection["material_uncertainty"] == ["COMMITTEE_CANDIDATE_INVALID"]
     assert result["active_policy"]["strategy_selection_mode"] == SELECTION_VERSION
+
+
+# ── Phase 4.7: offline end-to-end selection in the production evidence mode ────
+# The real run_layered_optimizer runs Candidate Discovery → Eligibility (incl. the
+# hard-safeguard trial) → Auditor validation → Committee → Selection → Downstream.
+# Only call_ai, the model boundary, is replaced. Evidence provenance is supplied
+# as the production Committee path always does, so observed-signal rules run.
+
+E2E_HOLDINGS = [
+    {"symbol": "AAA", "shares": 60, "current_price": 10, "weight_pct": 60,
+     "signal": "SELL", "fa_score": 30, "pe_ratio": 40},
+    {"symbol": "BBB", "shares": 20, "current_price": 10, "weight_pct": 20,
+     "signal": "ACCUMULATE", "fa_score": 70, "pe_ratio": 12},
+]
+_OBSERVED = {"status": "OBSERVED", "source": "ANALYSIS_CACHE", "as_of": "2026-11-01T00:00:00"}
+E2E_PROVENANCE = {
+    symbol: {"signal": _OBSERVED, "fa_score": _OBSERVED, "ta_score": _OBSERVED,
+             "timing_score": {"status": "MISSING", "source": "TIMING_INTELLIGENCE"}}
+    for symbol in ("AAA", "BBB")
+}
+E2E_OPT_IN = {"sector_policy_mode": SECTOR_POLICY_ADVISORY,
+              "optimizer_policy_mode": OPTIMIZER_POLICY_MUJI_V2,
+              "strategy_selection_mode": SELECTION_VERSION}
+RAISE_CASH_PLAN = {
+    "allocations": [{"s": "AAA", "tw": 0, "sig": "SELL", "decision_basis": "INVESTMENT_THESIS"},
+                    {"s": "BBB", "tw": 20, "sig": "HOLD"}],
+    "strategy_family": "RAISE_CASH", "observed_evidence_refs": ["symbol:AAA:signal"],
+    "cash_balance_target": 80, "status": "REBALANCE"}
+# Valuation support is cited, but AAA's observed signal is SELL.
+BUY_AGAINST_SELL_PLAN = {
+    "allocations": [{"s": "AAA", "tw": 70, "sig": "BUY"}, {"s": "BBB", "tw": 20, "sig": "HOLD"}],
+    "strategy_family": "GROWTH_ROTATION", "observed_evidence_refs": ["symbol:AAA:pe_ratio"],
+    "cash_balance_target": 10, "status": "REBALANCE"}
+# Supported by BBB's observed ACCUMULATE signal; leaves 10% cash.
+BUY_BBB_PLAN = {
+    "allocations": [{"s": "AAA", "tw": 60, "sig": "HOLD"}, {"s": "BBB", "tw": 30, "sig": "BUY"}],
+    "strategy_family": "GROWTH_ROTATION", "observed_evidence_refs": ["symbol:BBB:signal"],
+    "cash_balance_target": 10, "status": "REBALANCE"}
+UNKNOWN_CANDIDATE_ID = "proposal-000000000000"
+ALL_HOLD = [("AAA", "HOLD", 60), ("BBB", "HOLD", 20)]
+
+
+def _no_committee(ids):
+    pytest.fail("the Committee must not be called")
+
+
+def _run_e2e(monkeypatch, plan, *, pick=_no_committee, reviews=None, **kwargs):
+    """Run the real orchestrator offline; return (result, model calls, reviewed IDs).
+
+    The Auditor reviews every candidate in prompt order and cites the plan's refs
+    for the primary proposal; ``reviews`` may rewrite that list. ``pick`` maps the
+    reviewed IDs to the Committee's choice.
+    """
+    calls, ids = [], []
+
+    def fake_ai(prompt, *args, usage_layer, **kw):
+        calls.append(usage_layer)
+        if usage_layer == "layer1":
+            payload = {"swaps": [], "top_buys": []}
+        elif usage_layer == "layer2":
+            payload = plan
+        elif usage_layer == "layer3":
+            ids[:] = re.findall(r'"candidate_id": "([^"]+)"', prompt)
+            items = [{"candidate_id": cid,
+                      "supporting_refs": list(plan["observed_evidence_refs"]) if index == 1 else [],
+                      "opposing_refs": [], "material_conflicts": [], "assessment": "Model view"}
+                     for index, cid in enumerate(ids)]
+            payload = {"risk_flags": [], "candidate_reviews": reviews(items) if reviews else items}
+        elif usage_layer == "committee":
+            chosen = pick(ids)
+            payload = {"selected_candidate_id": chosen,
+                       "supporting_evidence_refs": ([] if chosen == "hold-current"
+                                                    else list(plan["observed_evidence_refs"])),
+                       "opposing_evidence_refs": [],
+                       "comparison_against_hold": "Observed evidence favours this over waiting.",
+                       "decision_rationale": "Act on the observed evidence.",
+                       "material_uncertainty": []}
+        else:
+            pytest.fail(f"unexpected model call: {usage_layer}")
+        return {"text": json.dumps(payload), "latency_ms": 1}
+
+    monkeypatch.setattr(optimizer, "call_ai", fake_ai)
+    result = optimizer.run_layered_optimizer(
+        [dict(row) for row in E2E_HOLDINGS], [], "P", cash_balance=200,
+        evidence_provenance=E2E_PROVENANCE, **E2E_OPT_IN, **kwargs)
+    assert result["strategic_candidates"]["evidence_provenance_status"] == "SUPPLIED"
+    assert result["active_policy"]["strategy_selection_mode"] == SELECTION_VERSION
+    return result, calls, ids
+
+
+def _rows(result):
+    return [(row["symbol"], row["action"], row["target_weight"]) for row in result["target_allocations"]]
+
+
+def _assert_cautioned_hold(result, cause):
+    selection = result["strategy_selection"]
+    assert (selection["state"], selection["selected_candidate_id"]) == ("SELECTED", "hold-current")
+    assert selection["reason_codes"] == ["CAUTIONED_HOLD"]
+    assert selection["material_uncertainty"] == [cause]
+    assert _rows(result) == ALL_HOLD
+
+
+def test_e2e_committee_selects_eligible_action(monkeypatch):
+    result, calls, ids = _run_e2e(monkeypatch, RAISE_CASH_PLAN, pick=lambda ids: ids[1])
+    action = result["strategic_candidates"]["candidates"][1]
+    selection = result["strategy_selection"]
+    assert calls == ["layer1", "layer2", "layer3", "committee"]
+    assert (action["id"], action["family"], action["eligibility_status"]) == (ids[1], "RAISE_CASH", "ELIGIBLE")
+    assert result["candidate_audit"]["status"] == "AVAILABLE"
+    assert (selection["state"], selection["selected_candidate_id"]) == ("SELECTED", action["id"])
+    assert selection["reason_codes"] == ["COMMITTEE_SELECTED"]
+    assert selection["material_uncertainty"] == []
+    assert selection["downstream_outcome"] == {"status": "UNCHANGED"}
+    assert _rows(result) == [("AAA", "SELL", 0), ("BBB", "HOLD", 20)]
+    assert result["target_cash_weight"] == 80
+
+
+def test_e2e_selected_action_auditor_conflicts_are_recorded_not_binding(monkeypatch):
+    conflicts = ["Earnings data conflict", "  Earnings data conflict ", "", "Earnings data conflict"]
+
+    def with_conflicts(items):
+        items[1]["material_conflicts"] = list(conflicts)
+        return items
+
+    result, calls, ids = _run_e2e(monkeypatch, RAISE_CASH_PLAN, reviews=with_conflicts,
+                                  pick=lambda ids: ids[1])
+    selection = result["strategy_selection"]
+    assert "committee" in calls
+    assert (selection["state"], selection["selected_candidate_id"]) == ("SELECTED", ids[1])
+    assert selection["reason_codes"] == ["COMMITTEE_SELECTED", "AUDITOR_CONFLICT_UNVERIFIED"]
+    assert selection["material_uncertainty"] == ["Earnings data conflict"]
+    assert result["candidate_audit"]["status"] == "AVAILABLE"
+    assert result["candidate_audit"]["reviews"][ids[1]]["material_conflicts"] == conflicts
+    assert result["candidate_audit"]["reviews"]["hold-current"]["material_conflicts"] == []
+    assert _rows(result) == [("AAA", "SELL", 0), ("BBB", "HOLD", 20)]
+
+
+def test_e2e_buy_against_observed_sell_signal_is_never_selectable(monkeypatch):
+    result, calls, _ = _run_e2e(monkeypatch, BUY_AGAINST_SELL_PLAN)
+    action = result["strategic_candidates"]["candidates"][1]
+    assert (action["family"], action["eligibility_status"]) == ("GROWTH_ROTATION", "UNVERIFIED")
+    assert action["eligibility_reasons"] == ["BUY_CONTRADICTS_SIGNAL:AAA"]
+    assert "committee" not in calls
+    _assert_cautioned_hold(result, "NO_ELIGIBLE_ACTION")
+
+
+def test_e2e_high_volatility_cash_floor_makes_candidate_ineligible(monkeypatch):
+    # The same plan is ELIGIBLE without the regime (see the execution-cap test).
+    result, calls, _ = _run_e2e(monkeypatch, BUY_BBB_PLAN,
+                                regime_context={"regime": "HIGH_VOLATILITY", "confidence_pct": 85})
+    action = result["strategic_candidates"]["candidates"][1]
+    assert action["eligibility_status"] == "INELIGIBLE"
+    assert action["eligibility_reasons"] == ["HARD_SAFEGUARD_CONFLICT"]
+    assert "committee" not in calls
+    _assert_cautioned_hold(result, "NO_ELIGIBLE_ACTION")
+
+
+def test_e2e_unknown_review_substituted_for_required_review_fails_closed(monkeypatch):
+    def substitute(items):
+        return [items[0], {**items[1], "candidate_id": UNKNOWN_CANDIDATE_ID}]
+
+    result, calls, ids = _run_e2e(monkeypatch, RAISE_CASH_PLAN, reviews=substitute)
+    assert UNKNOWN_CANDIDATE_ID not in ids
+    audit = result["candidate_audit"]
+    assert (audit["status"], audit["reason"]) == ("UNAVAILABLE", "INCOMPLETE_AUDITOR_COVERAGE")
+    assert "committee" not in calls
+    _assert_cautioned_hold(result, "INCOMPLETE_AUDITOR_COVERAGE")
+
+
+def test_e2e_extra_unknown_review_is_ignored_when_coverage_is_complete(monkeypatch):
+    # Pins current behaviour (Phase 4.7 D1): an extra review for an unknown candidate
+    # is dropped and never reaches the Committee or the selection.
+    def add_unknown(items):
+        return items + [{**items[1], "candidate_id": UNKNOWN_CANDIDATE_ID}]
+
+    result, calls, ids = _run_e2e(monkeypatch, RAISE_CASH_PLAN, reviews=add_unknown,
+                                  pick=lambda ids: ids[1])
+    audit = result["candidate_audit"]
+    assert UNKNOWN_CANDIDATE_ID not in ids
+    assert (audit["status"], audit["reason"]) == ("AVAILABLE", None)
+    assert set(audit["reviews"]) == set(ids)
+    assert "committee" in calls
+    assert result["strategy_selection"]["selected_candidate_id"] == ids[1]
+    assert result["strategy_selection"]["reason_codes"] == ["COMMITTEE_SELECTED"]
+
+
+def test_e2e_committee_choosing_ineligible_candidate_falls_back_to_hold(monkeypatch):
+    plan = {**RAISE_CASH_PLAN, "additional_plans": [BUY_AGAINST_SELL_PLAN]}
+    result, calls, ids = _run_e2e(monkeypatch, plan, pick=lambda ids: ids[2])
+    candidates = result["strategic_candidates"]["candidates"]
+    assert [c["id"] for c in candidates] == ids
+    assert candidates[1]["eligibility_status"] == "ELIGIBLE"
+    assert (candidates[2]["family"], candidates[2]["eligibility_status"]) == ("GROWTH_ROTATION", "UNVERIFIED")
+    assert candidates[2]["eligibility_reasons"] == ["BUY_CONTRADICTS_SIGNAL:AAA"]
+    assert calls[-1] == "committee"
+    _assert_cautioned_hold(result, "COMMITTEE_CANDIDATE_INVALID")
+
+
+def test_e2e_execution_cap_alters_selected_plan_downstream(monkeypatch):
+    # Real downstream path: the 15% cap leaves BBB's BUY below its 20% weight and
+    # MUJI V2 relabelling turns it into HOLD. The record stays SELECTED /
+    # COMMITTEE_SELECTED with ALTERED_BY_SAFEGUARDS (current behaviour; D3 deferred).
+    result, calls, ids = _run_e2e(monkeypatch, BUY_BBB_PLAN, pick=lambda ids: ids[1],
+                                  execution_context={"per_symbol": {"BBB": {"position_cap_pct": 15}}})
+    action = result["strategic_candidates"]["candidates"][1]
+    selection = result["strategy_selection"]
+    assert action["eligibility_status"] == "ELIGIBLE"
+    assert "committee" in calls
+    assert (selection["state"], selection["selected_candidate_id"]) == ("SELECTED", ids[1])
+    assert selection["reason_codes"] == ["COMMITTEE_SELECTED"]
+    downstream = selection["downstream_outcome"]
+    assert downstream["status"] == "ALTERED_BY_SAFEGUARDS"
+    assert downstream["original"] == {"AAA": ("HOLD", 60), "BBB": ("BUY", 30)}
+    assert downstream["result"] == {"AAA": ("HOLD", 60), "BBB": ("HOLD", 20)}
+    assert _rows(result) == ALL_HOLD
+    bbb = result["target_allocations"][1]
+    assert (bbb["original_action"], bbb["execution_capped"]) == ("BUY", True)
+
+
+def test_e2e_committee_selects_hold(monkeypatch):
+    result, calls, _ = _run_e2e(monkeypatch, RAISE_CASH_PLAN, pick=lambda ids: "hold-current")
+    selection = result["strategy_selection"]
+    assert "committee" in calls
+    assert (selection["state"], selection["selected_candidate_id"]) == ("SELECTED", "hold-current")
+    assert selection["reason_codes"] == ["COMMITTEE_SELECTED"]
+    assert selection["downstream_outcome"] == {"status": "UNCHANGED"}
+    assert _rows(result) == ALL_HOLD
