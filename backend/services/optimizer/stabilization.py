@@ -24,7 +24,9 @@ Override conditions bypass the cooldown when urgent action is warranted:
 """
 from __future__ import annotations
 
+import json
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from services.optimizer.risk_flags import investment_risk_flags
@@ -175,6 +177,42 @@ def check_cooldown(
         cooldown_days=cooldown_days,
         overridden=False,
     )
+
+
+def stored_run_has_no_trades(result_json: str | None) -> bool:
+    """True only when a stored run's final rows show it recommended no trade.
+
+    The stored ``target_allocations`` must be a non-empty list whose every row
+    has a HOLD or WATCH action. Missing, empty, malformed or unrecognised data
+    returns False, so the run keeps counting toward the cooldown as before.
+    """
+    try:
+        rows = json.loads(result_json).get("target_allocations")
+    except (TypeError, ValueError, AttributeError):
+        return False
+    if not isinstance(rows, list) or not rows:
+        return False
+    return all(
+        isinstance(row, dict)
+        and isinstance(row.get("action"), str)
+        and row["action"].upper() in ("HOLD", "WATCH")
+        for row in rows
+    )
+
+
+def select_cooldown_reference(runs: Iterable):
+    """Return the first stored run (newest first) that starts the cooldown.
+
+    A REBALANCE run whose final rows are all HOLD/WATCH (for example, when
+    safeguards removed every trade the Committee selected) recommended nothing
+    to do, so it is skipped and the search continues with older runs.
+    """
+    for run in runs:
+        if stored_run_has_no_trades(run.result_json):
+            log.info("[COOLDOWN] skipping zero-trade REBALANCE run id=%s", getattr(run, "id", None))
+            continue
+        return run
+    return None
 
 
 def detect_cooldown_overrides(
