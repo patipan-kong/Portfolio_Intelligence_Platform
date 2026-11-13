@@ -147,7 +147,7 @@ def test_optional_complete_plans_keep_distinct_stable_candidate_ids():
         c["id"] for c in prepare_candidates(HOLDINGS, [], 200, primary)["candidates"]]
 
 
-def test_auditor_conflict_and_invalid_committee_do_not_select_action():
+def test_auditor_conflict_is_recorded_and_invalid_committee_does_not_select_action():
     envelope = prepare_candidates(HOLDINGS, [], 200, _proposal())
     raw = {"candidate_reviews": [
         {"candidate_id": c["id"], "supporting_refs": list(c["observed_evidence_refs"]),
@@ -160,15 +160,18 @@ def test_auditor_conflict_and_invalid_committee_do_not_select_action():
         "supporting_evidence_refs": ["symbol:AAA:signal"], "opposing_evidence_refs": [],
         "comparison_against_hold": "Exit", "decision_rationale": "Sell",
         "material_uncertainty": []})
-    assert decision["selected_candidate_id"] == "hold-current"
-    assert "MATERIAL_CONFLICT_UNRESOLVED" in decision["material_uncertainty"]
+    assert (decision["selected_candidate_id"], decision["reason_codes"]) == (
+        envelope["candidates"][1]["id"], ["COMMITTEE_SELECTED", "AUDITOR_CONFLICT_UNVERIFIED"])
+    assert decision["material_uncertainty"] == ["Earnings data conflict"]
     assert decide_selection(envelope, audit, {"selected_candidate_id": "invented"})["selected_candidate_id"] == "hold-current"
     assert decide_selection(envelope, audit, {"selected_candidate_id": []})["selected_candidate_id"] == "hold-current"
 
 
-# ── Slice 4.6B: candidate-scoped material-conflict veto (B1) ─────────────────
-# Candidate-scoped, NOT evidence-verified: conflict text is model-authored and
-# is never checked against observed evidence.
+# ── Slice 4.6C: non-binding Auditor material conflicts (B2) ──────────────────
+# Conflict text is model-authored and never checked against observed evidence,
+# so it never vetoes a selection. The selected candidate's own text is recorded
+# in material_uncertainty with AUDITOR_CONFLICT_UNVERIFIED; verifiable
+# contradictions stay enforced by eligibility and hard safeguards.
 
 def _three_candidate_envelope():
     primary = _proposal()
@@ -204,22 +207,41 @@ def _committee_choice(envelope, audit, family="RAISE_CASH", uncertainty=()):
         "material_uncertainty": list(uncertainty)})
 
 
-def test_selected_candidate_conflict_vetoes_and_records_its_text():
+SELECTED_WITH_CONFLICT = ["COMMITTEE_SELECTED", "AUDITOR_CONFLICT_UNVERIFIED"]
+
+
+def test_selected_candidate_conflict_is_recorded_without_veto():
     envelope = _three_candidate_envelope()
     audit = _conflict_audit(envelope, {"RAISE_CASH": ["Earnings data conflict"]})
-    _, decision = _committee_choice(envelope, audit)
+    selected_id, decision = _committee_choice(envelope, audit, uncertainty=["Committee note"])
     assert (decision["state"], decision["selected_candidate_id"], decision["reason_codes"]) == (
-        "SELECTED", "hold-current", ["CAUTIONED_HOLD"])
-    assert decision["material_uncertainty"] == ["MATERIAL_CONFLICT_UNRESOLVED", "Earnings data conflict"]
-    assert decision["supporting_evidence_refs"] == []
+        "SELECTED", selected_id, SELECTED_WITH_CONFLICT)
+    # Committee uncertainty first, then the Auditor's own text for this candidate.
+    assert decision["material_uncertainty"] == ["Committee note", "Earnings data conflict"]
+    assert decision["supporting_evidence_refs"] == ["symbol:AAA:signal"]
 
 
 def test_duplicate_and_padded_conflicts_are_recorded_once():
+    # Model text that imitates a reason code stays model text: it is recorded
+    # verbatim as uncertainty and never becomes a reason code.
     envelope = _three_candidate_envelope()
     audit = _conflict_audit(envelope, {"RAISE_CASH": ["Earnings data conflict", "  Earnings data conflict ",
                                                      "Earnings data conflict", "MATERIAL_CONFLICT_UNRESOLVED"]})
-    _, decision = _committee_choice(envelope, audit)
-    assert decision["material_uncertainty"] == ["MATERIAL_CONFLICT_UNRESOLVED", "Earnings data conflict"]
+    selected_id, decision = _committee_choice(envelope, audit, uncertainty=["Earnings data conflict"])
+    assert (decision["selected_candidate_id"], decision["reason_codes"]) == (selected_id, SELECTED_WITH_CONFLICT)
+    assert decision["material_uncertainty"] == ["Earnings data conflict", "MATERIAL_CONFLICT_UNRESOLVED"]
+
+
+def test_selected_candidate_sector_advisory_text_cannot_veto():
+    # Sector concentration is advisory under MUJI V2 and cannot block an action,
+    # including through Auditor wording.
+    envelope = _three_candidate_envelope()
+    text = "Technology sector 32.73% exceeds the advisory limit"
+    audit = _conflict_audit(envelope, {"DEFENSIVE_ROTATION": [text]})
+    selected_id, decision = _committee_choice(envelope, audit, family="DEFENSIVE_ROTATION")
+    assert (decision["state"], decision["selected_candidate_id"], decision["reason_codes"]) == (
+        "SELECTED", selected_id, SELECTED_WITH_CONFLICT)
+    assert decision["material_uncertainty"] == [text]
 
 
 @pytest.mark.parametrize("family", ["HOLD", "DEFENSIVE_ROTATION"])
@@ -245,18 +267,42 @@ def test_blank_or_non_string_conflicts_cannot_veto(conflicts):
          "material_conflicts": conflicts if c["family"] == "RAISE_CASH" else []}
         for c in envelope["candidates"]]}, envelope)
     selected_id, decision = _committee_choice(envelope, audit)
-    assert decision["selected_candidate_id"] == selected_id
+    assert (decision["selected_candidate_id"], decision["reason_codes"]) == (selected_id, ["COMMITTEE_SELECTED"])
     assert decision["material_uncertainty"] == []
 
 
-def test_selected_candidate_missing_analysis_text_still_vetoes_known_b1_limitation():
-    # B1 does not classify model text: a statement of missing information on the
-    # selected candidate's own review still vetoes it (uncertainty, not proven conflict).
+def test_selected_candidate_missing_analysis_text_is_recorded_without_veto():
+    # Text is not classified: a statement of missing information is recorded as
+    # uncertainty, exactly like any other conflict text, and never vetoes.
     envelope = _three_candidate_envelope()
     audit = _conflict_audit(envelope, {"RAISE_CASH": ["Missing timing analysis for AAA"]})
-    _, decision = _committee_choice(envelope, audit)
-    assert decision["selected_candidate_id"] == "hold-current"
-    assert decision["material_uncertainty"] == ["MATERIAL_CONFLICT_UNRESOLVED", "Missing timing analysis for AAA"]
+    selected_id, decision = _committee_choice(envelope, audit)
+    assert (decision["selected_candidate_id"], decision["reason_codes"]) == (selected_id, SELECTED_WITH_CONFLICT)
+    assert decision["material_uncertainty"] == ["Missing timing analysis for AAA"]
+
+
+def test_verifiable_contradiction_blocks_through_eligibility_without_auditor_text():
+    # An observed SELL signal on a BUY row makes the candidate ineligible before
+    # the Committee runs; the Auditor writing no conflict cannot make it selectable.
+    observed = {"status": "OBSERVED", "source": "ANALYSIS_CACHE"}
+    provenance = {symbol: {field: observed for field in ("signal", "fa_score", "ta_score", "timing_score")}
+                  for symbol in ("AAA", "BBB")}
+    plan = {"strategy_family": "GROWTH_ROTATION", "target_cash_weight": 10,
+            "observed_evidence_refs": ["symbol:AAA:signal", "symbol:BBB:pe_ratio"],
+            "target_allocations": [
+                {"symbol": "AAA", "action": "BUY", "current_weight": 60, "target_weight": 70,
+                 "allocation_change_percent": 10},
+                {"symbol": "BBB", "action": "HOLD", "current_weight": 20, "target_weight": 20,
+                 "allocation_change_percent": 0}]}
+    envelope = prepare_candidates(HOLDINGS, [], 200, plan, provenance=provenance)
+    growth = envelope["candidates"][1]
+    assert growth["eligibility_status"] == "UNVERIFIED"
+    assert "BUY_CONTRADICTS_SIGNAL:AAA" in growth["eligibility_reasons"]
+    audit = _conflict_audit(envelope, {})
+    assert all(review["material_conflicts"] == [] for review in audit["reviews"].values())
+    _, decision = _committee_choice(envelope, audit, family="GROWTH_ROTATION")
+    assert (decision["selected_candidate_id"], decision["reason_codes"]) == ("hold-current", ["CAUTIONED_HOLD"])
+    assert decision["material_uncertainty"] == ["COMMITTEE_CANDIDATE_INVALID"]
 
 
 def test_hold_remains_selectable_despite_conflicts_and_records_only_its_own():
