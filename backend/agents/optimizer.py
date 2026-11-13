@@ -628,7 +628,7 @@ def _degraded_sector_policy(limits, default_cap, effective_envelope):
 
 
 def _capture_sector_policy(output, policy, mode, portfolio, candidates, nav, degraded_policy, alternatives,
-                           optimizer_policy_mode=None):
+                           optimizer_policy_mode=None, *, max_stocks=None):
     if mode == SECTOR_POLICY_ADVISORY:
         if policy is None:
             # Exposure remains measurable when hard-policy evidence is unavailable.
@@ -640,6 +640,10 @@ def _capture_sector_policy(output, policy, mode, portfolio, candidates, nav, deg
             policy["optimizer_policy_mode"] = optimizer_policy_mode
         output["active_policy"] = policy
         policy["concentration"] = freeze_concentration(portfolio, candidates, policy, nav)
+        if _explicit_max_stocks(max_stocks) is not None:
+            # Optional frozen fact: the scheduler applies its max_stocks check only to runs that
+            # carry it, so stored runs without it replay unchanged.
+            policy["concentration"]["max_stocks"] = max_stocks
         attach_target_evaluation(output)
 
 
@@ -1733,13 +1737,14 @@ def _explicit_new_position_limit(policy_context: dict | None) -> int | None:
     return None
 
 
-def _limit_new_positions(allocations: list[dict], held_symbols, limit: int, observer=None) -> None:
+def _limit_new_positions(allocations: list[dict], held_symbols, limit: int, observer=None, *,
+                         reason_code: str = "NEW_POSITION_LIMIT", reason_text: str | None = None) -> None:
     """Keep at most `limit` distinct newly opened symbols; the rest become HOLD at 0%.
 
     A new position is a BUY/ACCUMULATE with a positive target on a symbol absent from the
     authoritative holdings set. Model-reported current weights are never consulted, sells do
-    not create replacement allowances, and duplicate rows count once. Survivors are the highest
-    target weights, ties broken by symbol ascending.
+    not create replacement allowances here (the caller sizes `limit`), and duplicate rows
+    count once. Survivors are the highest target weights, ties broken by symbol ascending.
     """
     held = set(held_symbols)
     weights: dict[str, float] = {}
@@ -1752,14 +1757,94 @@ def _limit_new_positions(allocations: list[dict], held_symbols, limit: int, obse
     for row in allocations:
         symbol = row.get("symbol")
         if symbol in weights and symbol not in keep and row.get("action") in ("BUY", "ACCUMULATE"):
-            logger.info("[POLICY] %s BUY→HOLD (max_new_positions=%d)", symbol, limit)
+            logger.info("[POLICY] %s BUY→HOLD (%s, allowance=%d)", symbol, reason_code, limit)
             before = _alloc_basis(row)
             # Not held, so the authoritative current weight is 0 (later HOLD pinning keeps it at 0).
             row.update(action="HOLD", current_weight=0.0, target_weight=0.0,
                        allocation_change_percent=0.0, estimated_amount=0)
             _observe(observer, symbol, before, row, stage=_STAGE_HARD_POLICY,
-                     source=_SRC_POLICY, effect=_SUPPRESS, reason_code="NEW_POSITION_LIMIT",
-                     reason_text=f"Policy allows at most {limit} new position(s) in one rebalance.")
+                     source=_SRC_POLICY, effect=_SUPPRESS, reason_code=reason_code,
+                     reason_text=reason_text or f"Policy allows at most {limit} new position(s) in one rebalance.")
+
+
+def _explicit_max_stocks(max_stocks) -> int | None:
+    """The portfolio max_stocks setting when it is a nonnegative int; otherwise None (no rule)."""
+    if isinstance(max_stocks, int) and not isinstance(max_stocks, bool) and max_stocks >= 0:
+        return max_stocks
+    return None
+
+
+def _position_count_inputs(portfolio_data: list[dict]) -> tuple[frozenset, frozenset]:
+    """(active symbols, symbols with a frozen SELL signal) from authoritative holdings.
+
+    Active means shares > 0: a zero-share portfolio row is not a position, and buying it again
+    opens a new one. The SELL-signal set is the evidence the MUJI V2 scheduler uses to verify a
+    sale (freeze_concentration marks the same holdings).
+    """
+    active, sell_signal = set(), set()
+    for row in portfolio_data or []:
+        symbol = row.get("symbol")
+        try:
+            shares = float(row.get("shares") or 0)
+        except (TypeError, ValueError):
+            shares = 0.0
+        if symbol and shares > 0:
+            active.add(symbol)
+            if row.get("signal") == "SELL":
+                sell_signal.add(symbol)
+    return frozenset(active), frozenset(sell_signal)
+
+
+def _verified_full_exits(allocations: list[dict], active, sell_signal_symbols, total_value: float) -> set:
+    """Active symbols whose proposed SELL the MUJI V2 scheduler will liquidate in full.
+
+    Mirrors the scheduler's evidence: a SELL to 0% of an active holding with a frozen SELL
+    signal and a non-advisory basis, large enough to survive the trade-noise floor (a smaller
+    trade becomes HOLD and is never scheduled). A REDUCE, a partial SELL or an unverified SELL
+    earns nothing; the scheduler re-checks what it actually schedules.
+    """
+    from services.noise_filter import MIN_TRADE_VALUE_THB
+
+    exits = set()
+    for row in allocations:
+        symbol = row.get("symbol")
+        if (row.get("action") != "SELL" or symbol not in active or symbol not in (sell_signal_symbols or ())
+                or float(row.get("target_weight") or 0) > 0
+                or row.get("decision_basis") in ("SECTOR_ADVISORY", "CONCENTRATION_ADVISORY")):
+            continue
+        change = float(row.get("target_weight") or 0) - float(row.get("current_weight") or 0)
+        if change < 0 and abs(round(change / 100 * total_value)) >= MIN_TRADE_VALUE_THB:
+            exits.add(symbol)
+    return exits
+
+
+def _limit_openings(allocations: list[dict], *, policy_context, max_stocks, held_symbols,
+                    sell_signal_symbols, muji_v2: bool, total_value: float, observer=None) -> None:
+    """Apply max_new_positions and max_stocks through one new-position allowance.
+
+    room = max_stocks - active + verified full exits (MUJI V2 only; Legacy may defer any sale).
+    The allowance is the smaller applicable limit. When both bind equally, NEW_POSITION_LIMIT
+    is reported, so a run that max_new_positions already limited keeps its existing reason.
+    """
+    if held_symbols is None:
+        return
+    held = set(held_symbols)
+    new_limit = _explicit_new_position_limit(policy_context)
+    stock_limit = _explicit_max_stocks(max_stocks)
+    if stock_limit is None:
+        if new_limit is not None:
+            _limit_new_positions(allocations, held, new_limit, observer)
+        return
+    exits = _verified_full_exits(allocations, held, sell_signal_symbols, total_value) if muji_v2 else set()
+    room = max(0, stock_limit - len(held) + len(exits))
+    if new_limit is not None and new_limit <= room:
+        _limit_new_positions(allocations, held, new_limit, observer)
+        return
+    _limit_new_positions(
+        allocations, held, room, observer, reason_code="MAX_STOCKS_LIMIT",
+        reason_text=(f"Portfolio holds {len(held)} of at most {stock_limit} stocks; "
+                     f"{room} new position(s) fit after {len(exits)} verified full exit(s)."),
+    )
 
 
 def _enforce_hard_policy(
@@ -1771,13 +1856,20 @@ def _enforce_hard_policy(
     observer=None,
     muji_v2: bool = False,
     held_symbols=None,
+    max_stocks=None,
+    sell_signal_symbols=None,
 ) -> None:
     """Apply the existing Goal-agnostic deterministic hard-policy sequence.
 
     observer: optional Advisory Integration V1 run; records each mutation.
-    held_symbols: authoritative symbols held before the run. Required for the
-        max_new_positions rule, which applies only when the policy states that limit.
+    held_symbols: authoritative active holdings (shares > 0) before the run. Required for the
+        new-position rules: max_new_positions (only when the policy states it) and max_stocks
+        (only when a valid portfolio setting is supplied). Both run through _limit_openings.
+    sell_signal_symbols: active holdings with a frozen SELL signal; with muji_v2, a verified
+        full exit of one of them frees a max_stocks slot (see _verified_full_exits).
     """
+    _openings = dict(max_stocks=max_stocks, held_symbols=held_symbols, sell_signal_symbols=sell_signal_symbols,
+                     muji_v2=muji_v2, total_value=total_value, observer=observer)
     if policy_context:
         pc_hard = policy_context.get("hard_constraints", {})
         min_cash_pct = float(pc_hard.get("min_cash_pct", 5.0))
@@ -1800,9 +1892,7 @@ def _enforce_hard_policy(
                              source=_SRC_POLICY, effect=_SUPPRESS, reason_code="EMERGENCY_BUY_FREEZE",
                              reason_text="Emergency policy override freezes new buying.")
 
-        new_position_limit = _explicit_new_position_limit(policy_context)
-        if new_position_limit is not None and held_symbols is not None:
-            _limit_new_positions(allocations, held_symbols, new_position_limit, observer)
+        _limit_openings(allocations, policy_context=policy_context, **_openings)
 
         for allocation in allocations:
             if (
@@ -1863,6 +1953,7 @@ def _enforce_hard_policy(
         regime_constraints = get_regime_constraints(regime_context.get("regime", "SIDEWAYS"))
         min_cash_pct = regime_constraints["min_cash_pct"]
         max_pos_pct = regime_constraints["max_single_position_pct"]
+        _limit_openings(allocations, policy_context=None, **_openings)
         for allocation in allocations:
             if (
                 not muji_v2 and allocation.get("action") in ("BUY", "ACCUMULATE")
@@ -2152,6 +2243,8 @@ def _run_single_shot_fallback(
     raw_allocs = result.pop("allocations", None) or []
     allocations = _normalize_allocations(raw_allocs, pc_map, score_map, muji_v2=muji_v2,
                                          known_symbols=watch_symbols)
+    _active, _sell_signal = _position_count_inputs(portfolio_data)
+    _count_kw = dict(held_symbols=_active, max_stocks=max_stocks, sell_signal_symbols=_sell_signal)
     sector_alternatives = []
     if sector_advisory:
         concentration = freeze_concentration(portfolio_data, wc, policy_context, total_value) if policy_context else None
@@ -2180,7 +2273,7 @@ def _run_single_shot_fallback(
                 _enforce_hard_policy(trial, total_value=total_value,
                                      policy_context=policy_context,
                                      regime_context=regime_context, muji_v2=True,
-                                     held_symbols=pc_map.keys())
+                                     **_count_kw)
                 hold_safe = trial == hold["proposed_allocations"]
                 floor_pct = (policy_context or {}).get("hard_constraints", {}).get("min_cash_pct")
                 if floor_pct is not None and total_value > 0 and cash_balance / total_value * 100 < floor_pct:
@@ -2217,7 +2310,7 @@ def _run_single_shot_fallback(
                 policy_context=policy_context,
                 regime_context=None,
                 muji_v2=muji_v2,
-                held_symbols=pc_map.keys(),
+                **_count_kw,
                 **_observer_kw,
             )
             if policy_context and not sector_advisory:
@@ -2336,7 +2429,8 @@ def _run_single_shot_fallback(
     policy_output = ({**{k: v for k, v in policy_context.items() if k != "prompt_block"},
                       "violation_details": fallback_details} if policy_context else None)
     _capture_sector_policy(output, policy_output, sector_policy_mode, portfolio_data, wc,
-                           total_value, degraded_policy, sector_alternatives, optimizer_policy_mode)
+                           total_value, degraded_policy, sector_alternatives, optimizer_policy_mode,
+                           max_stocks=max_stocks)
     if selection_enabled:
         output["strategic_candidates"] = fallback_candidates
         output["strategy_selection"] = fallback_selection
@@ -2574,6 +2668,9 @@ def run_layered_optimizer(
         pc_map.update(_canonical_weights)
     # Allowed non-held universe for resolving model-written symbols (holdings come from pc_map).
     watch_symbols = frozenset(w["symbol"] for w in watchlist_data if w.get("symbol"))
+    # Position-count facts for max_new_positions / max_stocks (active means shares > 0).
+    _active, _sell_signal = _position_count_inputs(portfolio_data)
+    _count_kw = dict(held_symbols=_active, max_stocks=max_stocks, sell_signal_symbols=_sell_signal)
 
     swap_eligible = [p["symbol"] for p in portfolio_data if p.get("allow_swap", True) and p.get("signal") != "SELL"]
     pc = _compact_p(portfolio_data)
@@ -2842,7 +2939,7 @@ def run_layered_optimizer(
                     _enforce_hard_policy(trial, total_value=total_value,
                                          policy_context=policy_context,
                                          regime_context=regime_context, muji_v2=True,
-                                         held_symbols=pc_map.keys())
+                                         **_count_kw)
                     if any((a.get("action"), a.get("target_weight")) !=
                            (b.get("action"), b.get("target_weight"))
                            for a, b in zip(candidate["proposed_allocations"], trial)):
@@ -3047,7 +3144,7 @@ def run_layered_optimizer(
                 policy_context=policy_context,
                 regime_context=regime_context,
                 muji_v2=muji_v2,
-                held_symbols=pc_map.keys(),
+                **_count_kw,
                 **_observer_kw,
             )
         except Exception as exc:
@@ -3280,7 +3377,8 @@ def run_layered_optimizer(
             **persona_fields,
         }
         _capture_sector_policy(output, active_policy_out, sector_policy_mode, portfolio_data, watchlist_data,
-                               total_value, degraded_policy, sector_alternatives, optimizer_policy_mode)
+                               total_value, degraded_policy, sector_alternatives, optimizer_policy_mode,
+                               max_stocks=max_stocks)
         if selection_enabled:
             output["strategic_candidates"] = candidate_envelope
             output["strategy_selection"] = strategy_selection

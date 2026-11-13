@@ -4732,7 +4732,9 @@ async def analyze_optimizer(body: OptimizerRequest, db: Session = Depends(get_db
     max_stocks = ps["max_stocks"]
     max_sector_pct = ps["max_sector_pct"]
     sector_limits = _get_sector_limits(db, ws)
-    portfolio_count = len(portfolio_data)
+    # Active positions only (shares > 0): a zero-share portfolio row is kept as a record but is
+    # not a position, matching the optimizer's max_stocks / max_new_positions enforcement.
+    portfolio_count = sum(1 for p in portfolio_data if float(p.get("shares") or 0) > 0)
     max_reached = portfolio_count >= max_stocks
     room = max(0, max_stocks - portfolio_count)
 

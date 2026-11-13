@@ -16,8 +16,31 @@ def _floor_money(amount: float) -> float:
     return floor(max(0.0, amount) * 100 + TOLERANCE) / 100
 
 
-def _muji_schedule(sales, buys, verified_sales, values, cash, spendable_cash, budget, emergency_buy_freeze):
-    """Schedule independently evidenced sales before sizing funded purchases."""
+def _position_slot_excess(position_limit, sales, buys, changes):
+    """New buys that max_stocks leaves no slot for, given the sales actually scheduled.
+
+    position_limit: (max_stocks, active holdings, SELL-row symbols, target weight per buy).
+    Only a SELL scheduled for its full position value frees a slot: a deferred, partial,
+    noise-suppressed (never summarized) or REDUCE sale does not. Slots go to the highest
+    target weights, ties by symbol, as in the hard-policy new-position limiter.
+    """
+    if position_limit is None:
+        return set()
+    max_stocks, active, sell_rows, priority = position_limit
+    full_exits = {symbol for symbol in sell_rows
+                  if symbol in active and symbol in changes and -changes[symbol] >= sales[symbol] - TOLERANCE}
+    room = max(0, max_stocks - len(active) + len(full_exits))
+    new = sorted((symbol for symbol in buys if symbol not in active),
+                 key=lambda symbol: (-priority.get(symbol, 0.0), symbol))
+    return set(new[room:])
+
+
+def _muji_schedule(sales, buys, verified_sales, values, cash, spendable_cash, budget, emergency_buy_freeze,
+                   position_limit=None):
+    """Schedule independently evidenced sales before sizing funded purchases.
+
+    Returns the buys excluded by position_limit (max_stocks) as a fifth value.
+    """
     changes = {}
     remaining_turnover = budget
     costs = {}
@@ -27,11 +50,12 @@ def _muji_schedule(sales, buys, verified_sales, values, cash, spendable_cash, bu
             changes[symbol] = -amount
             costs[symbol] = ceil(amount * _ADVISORY_COST_RATE * 100 - TOLERANCE) / 100
             remaining_turnover = _floor_money(remaining_turnover - amount)
+    excluded = _position_slot_excess(position_limit, sales, buys, changes)
     available = _floor_money(max(0.0, spendable_cash) + sum(-change - costs[symbol]
                                                            for symbol, change in changes.items()))
     scheduled_buys = {}
     if not emergency_buy_freeze:
-        for symbol in sorted(buys):
+        for symbol in sorted(set(buys) - excluded):
             amount = min(buys[symbol], remaining_turnover,
                          _floor_money(available / (1 + _ADVISORY_COST_RATE)))
             while amount > 0 and amount + ceil(amount * _ADVISORY_COST_RATE * 100 - TOLERANCE) / 100 > available + TOLERANCE:
@@ -42,7 +66,8 @@ def _muji_schedule(sales, buys, verified_sales, values, cash, spendable_cash, bu
                 costs[symbol] = ceil(amount * _ADVISORY_COST_RATE * 100 - TOLERANCE) / 100
                 available = _floor_money(available - amount - costs[symbol])
                 remaining_turnover = _floor_money(remaining_turnover - amount)
-    return changes, scheduled_buys, costs, round(cash - sum(changes.values()) - sum(costs.values()), 2)
+    return (changes, scheduled_buys, costs, round(cash - sum(changes.values()) - sum(costs.values()), 2),
+            excluded)
 
 
 def _position_row(context, values, symbol, stage):
@@ -355,10 +380,20 @@ def optimize_concentration_execution(payload, summary, cash):
     muji_costs = {}
     muji_cash = None
     if muji_v2:
-        changes, muji_buys, muji_costs, muji_cash = _muji_schedule(
+        position_limit = None
+        max_stocks = context.get("max_stocks")   # frozen only by runs that enforce it
+        if isinstance(max_stocks, int) and not isinstance(max_stocks, bool) and max_stocks >= 0:
+            position_limit = (max_stocks, {symbol for symbol, row in positions.items() if row.get("held")},
+                              {entry["symbol"] for entry in summary.get("sell", [])},
+                              {symbol: float(allocs[symbol].get("target_weight") or 0) for symbol in buys})
+        changes, muji_buys, muji_costs, muji_cash, capped = _muji_schedule(
             sales, buys, verified_sales, values, cash, spendable_cash, budget, emergency_buy_freeze,
+            position_limit,
         )
-        funded = not buys or sum(muji_buys.values()) >= sum(buys.values()) - TOLERANCE
+        admitted = {symbol: amount for symbol, amount in buys.items() if symbol not in capped}
+        funded = not admitted or sum(muji_buys.values()) >= sum(admitted.values()) - TOLERANCE
+        if capped and not emergency_buy_freeze:
+            review.add("MAX_STOCKS_LIMIT")
         scheduled = {**values, **{symbol: values.get(symbol, 0) + change for symbol, change in changes.items()}}
         evaluation = evaluate_frozen_sectors(context, scheduled, "PROJECTED_SCHEDULED")
         effects = {symbol: _effects(context, values, scheduled, symbol, change)
