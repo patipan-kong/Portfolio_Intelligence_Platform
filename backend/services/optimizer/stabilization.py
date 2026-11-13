@@ -500,18 +500,21 @@ def apply_stabilization(
     )
     all_within_tol      = not needing_action and not has_sell
     already_no_action   = original_status in ("NO_ACTION", "NO_REBALANCE_REQUIRED", "COOLDOWN_ACTIVE")
+    # Top-level REVIEW: no plan was approved and a human must decide. Neither a
+    # manual override nor the cooldown may relabel it; there is nothing to trade.
+    review_required     = original_status == "REVIEW"
 
     stabilized_status = original_status
     stabilization_reason: str | None = None
 
-    if force_rebalance:
+    if force_rebalance and not review_required:
         # User explicitly requested — pass through regardless
         stabilized_status = "REBALANCE"
         stabilization_reason = "Manual override requested — all stabilization filters bypassed."
         overrides_active = list({*overrides_active, OVERRIDE_MANUAL})
 
-    elif already_no_action:
-        # AI already said no action — keep that decision, just enrich metadata
+    elif already_no_action or review_required:
+        # AI already said no action, or review is required — keep that decision, just enrich metadata
         stabilized_status = original_status
 
     elif not muji_v2 and all_within_tol and not has_violations and not has_risk_flags:
