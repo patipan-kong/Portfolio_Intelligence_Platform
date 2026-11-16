@@ -260,8 +260,25 @@ def _seed_ai_shadow(db, ws, portfolio, *, inception_days_ago, holdings, snapshot
     shadow_tracker.value_shadow_portfolio wrote from its own (live-cache)
     price source; compute_three_portfolios must ignore them post-fix and
     revalue holdings_json from the canonical price archive instead.
+
+    Each row is persisted in the exact shape value_shadow_portfolio writes
+    (Phase 4.19): holdings_json carries the enriched current_price/
+    market_value priced at the live price implied by stored_total_value,
+    with zero paper cash, so total_value = Σ market_value + cash. Production
+    has always persisted enriched holdings; the historical revaluation
+    derives each row's own cash from exactly these fields.
     """
     from models.database import ShadowPortfolio, ShadowPortfolioSnapshot
+    from services.decision_memory.shadow_tracker import _compute_paper_value
+
+    def _as_persisted(holdings_json, stored_total_value):
+        if holdings_json is None:
+            return None, stored_total_value
+        at_inception, _ = _compute_paper_value(holdings_json, {})
+        scale = stored_total_value / at_inception
+        live_prices = {h["symbol"]: h["inception_price"] * scale for h in holdings_json}
+        equity, enriched = _compute_paper_value(holdings_json, live_prices)
+        return enriched, equity  # cash 0.0
 
     shadow = ShadowPortfolio(
         workspace_id=ws.id, portfolio_id=portfolio.id, shadow_type="ACTIVE_MODEL",
@@ -274,6 +291,7 @@ def _seed_ai_shadow(db, ws, portfolio, *, inception_days_ago, holdings, snapshot
     db.refresh(shadow)
 
     for days_ago, holdings_json, stored_total_value, stored_return_pct in snapshot_rows:
+        holdings_json, stored_total_value = _as_persisted(holdings_json, stored_total_value)
         db.add(ShadowPortfolioSnapshot(
             shadow_portfolio_id=shadow.id, snapshot_date=_d(days_ago),
             total_value=stored_total_value, return_pct_since_inception=stored_return_pct,

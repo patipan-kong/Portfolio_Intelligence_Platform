@@ -112,6 +112,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from datetime import date, timedelta
 from typing import Any
 
@@ -345,6 +346,88 @@ def _reindex_to_100(
     return out, base_date
 
 
+# Persisted holdings_json market_value is round(shares * price, 2) (see
+# shadow_tracker._compute_paper_value), so each holding contributes at most
+# 0.005 of rounding between the row's total_value and its holdings' sum.
+_MARKET_VALUE_ROUNDING_TOLERANCE = 0.01
+
+
+def _derive_snapshot_cash(holdings: list[dict], stored_total_value: Any) -> tuple[float | None, str | None]:
+    """Recover one ShadowPortfolioSnapshot row's own paper cash.
+
+    Every ACTIVE_MODEL row writer persists one consistent state:
+    value_shadow_portfolio writes total_value = Σ shares × price +
+    paper_cash_balance (as of that day) with the enriched holdings it priced,
+    and _replay_active_model_series / regenerate_active_model_shadow write
+    total_value = equity_today + cash with that date's enriched holdings
+    (Accounting Correctness C5, Issue A). So, on the row's own valuation
+    basis:
+
+        cash_t = total_value_t − Σ holdings_json[].market_value_t
+
+    The persisted price source (live AgentCache or replay) cancels out here;
+    only cash remains. Returns (cash, None), or (None, reason) when this row
+    does not let that cash be recovered reliably. Callers must treat that as
+    missing data and never substitute another cash figure (in particular
+    ShadowPortfolio.paper_cash_balance, which is today's cash, overwritten
+    at every rebalance).
+    """
+    try:
+        total = float(stored_total_value)
+    except (TypeError, ValueError):
+        return None, "invalid_stored_total_value"
+    if not math.isfinite(total) or total <= 0:
+        return None, "invalid_stored_total_value"
+
+    equity = 0.0
+    priced = 0
+    for h in holdings:
+        if not isinstance(h, dict):
+            return None, "invalid_holding_entry"
+        try:
+            shares = float(h.get("shares") or 0)
+        except (TypeError, ValueError):
+            return None, "invalid_shares"
+        if not math.isfinite(shares):
+            return None, "invalid_shares"
+        if shares <= 0:
+            continue  # persisted as market_value 0.0 ("zero_shares")
+        mv_raw = h.get("market_value")
+        if mv_raw is None:
+            # Either a legacy row written without enriched valuation fields,
+            # or a holding the writer could not price (price_source
+            # "missing"), which includes every NAV-floor-fallback row,
+            # where total_value is a carried-forward NAV, not cash + equity.
+            return None, "missing_market_value"
+        try:
+            mv = float(mv_raw)
+        except (TypeError, ValueError):
+            return None, "invalid_market_value"
+        if not math.isfinite(mv) or mv < 0:
+            return None, "invalid_market_value"
+        price = h.get("current_price")
+        if price is not None:
+            try:
+                price_f = float(price)
+            except (TypeError, ValueError):
+                return None, "invalid_market_value"
+            # Same valuation basis: market_value must be shares × the
+            # price the writer recorded alongside it.
+            if abs(shares * price_f - mv) > _MARKET_VALUE_ROUNDING_TOLERANCE + 1e-9 * abs(mv):
+                return None, "market_value_mismatch"
+        equity += mv
+        priced += 1
+
+    cash = total - equity
+    # Paper cash is never negative by construction (_resolve_shares_from_weights
+    # returns max(0, residual) and scales over-100% weights down), so a
+    # negative residual beyond rounding means total_value and holdings_json
+    # do not describe the same state. Reject it; never clamp it to 0.
+    if cash < -_MARKET_VALUE_ROUNDING_TOLERANCE * (priced + 1):
+        return None, "negative_derived_cash"
+    return cash, None
+
+
 def _revalue_ai_portfolio_with_canonical_prices(
     db: Session,
     portfolio_id: int,
@@ -379,6 +462,20 @@ def _revalue_ai_portfolio_with_canonical_prices(
     (Scorecard, S4, S5, the attribution waterfall) — a legitimately
     different question from "controlling for identical market data, how
     much of the Ideal-vs-AI gap is friction."
+
+    Per-date cash (Historical Shadow Cash Integrity, Phase 4.19): each row
+    is valued as canonical equity of its own holdings + that row's OWN cash
+    (_derive_snapshot_cash), never ShadowPortfolio.paper_cash_balance.
+    That column holds today's cash and is overwritten in place at every
+    ACTIVE_MODEL rebalance, so adding it to every historical date shifted
+    each row by (cash_now − cash_t). The curve then jumped at every
+    rebalance that changed the cash weight, inflating return, drawdown,
+    volatility and both gaps. A row whose cash cannot be recovered reliably
+    (legacy/unenriched holdings, unpriced holdings, NAV-floor fallback,
+    inconsistent total vs holdings) or whose holdings cannot be fully
+    canonically valued is excluded and logged. It is never filled with a
+    substitute value. The surrounding valid rows still define the series, and
+    status is "incomplete_snapshot_data" only when no row survives.
     """
     from models.database import ShadowPortfolio, ShadowPortfolioSnapshot
     from services.decision_memory.shadow_tracker import _price_near_date, _compute_paper_value
@@ -408,33 +505,64 @@ def _revalue_ai_portfolio_with_canonical_prices(
         return {"status": "no_snapshots_in_window", "return_pct": None, "max_drawdown_pct": None,
                 "annualized_volatility": None, "series": []}
 
-    cash = shadow.paper_cash_balance or 0.0
     series: list[dict[str, Any]] = []
     values: list[float] = []
     daily_returns: list[float] = []
+    excluded: list[dict[str, str]] = []
 
     for snap in snaps:
-        try:
-            holdings = json.loads(snap.holdings_json) if snap.holdings_json else []
-        except Exception:
+        if not snap.holdings_json:
+            # Pre-fix rows with no holdings record cannot be revalued at all.
+            excluded.append({"date": snap.snapshot_date, "reason": "missing_holdings_json"})
             continue
+        try:
+            holdings = json.loads(snap.holdings_json)
+        except Exception:
+            excluded.append({"date": snap.snapshot_date, "reason": "invalid_holdings_json"})
+            continue
+        if not isinstance(holdings, list):
+            excluded.append({"date": snap.snapshot_date, "reason": "invalid_holdings_json"})
+            continue
+
+        cash, reason = _derive_snapshot_cash(holdings, snap.total_value)
+        if reason is not None:
+            excluded.append({"date": snap.snapshot_date, "reason": reason})
+            continue
+
         symbols = [h.get("symbol") for h in holdings if h.get("symbol")]
         canonical_prices = {
             sym: p for sym in symbols
             if (p := _price_near_date(history, snap.snapshot_date, sym))
         }
-        total, _ = _compute_paper_value(holdings, canonical_prices)
-        total += cash
+        equity, enriched = _compute_paper_value(holdings, canonical_prices)
+        if any(e.get("price_source") == "missing" for e in enriched):
+            # Dropping a held position from NAV would fabricate a loss.
+            excluded.append({"date": snap.snapshot_date, "reason": "canonical_price_unavailable"})
+            continue
+        total = equity + cash
         if total <= 0:
+            excluded.append({"date": snap.snapshot_date, "reason": "non_positive_nav"})
             continue
         if values and values[-1] > 0:
             daily_returns.append((total - values[-1]) / values[-1] * 100)
         values.append(total)
         series.append({"date": snap.snapshot_date, "value": total})
 
+    if excluded:
+        logger.warning(
+            "[IDEAL_SERIES] AI Portfolio revaluation excluded %d of %d ACTIVE_MODEL "
+            "snapshot rows (shadow_id=%s) whose historical cash/valuation could not be "
+            "recovered reliably: %s",
+            len(excluded), len(snaps), shadow.id, excluded[:10],
+        )
+
     if not values:
-        return {"status": "no_price_history", "return_pct": None, "max_drawdown_pct": None,
-                "annualized_volatility": None, "series": []}
+        has_holdings_rows = any(
+            e["reason"] not in ("missing_holdings_json", "invalid_holdings_json") for e in excluded
+        )
+        return {"status": "incomplete_snapshot_data" if has_holdings_rows else "no_price_history",
+                "return_pct": None, "max_drawdown_pct": None,
+                "annualized_volatility": None, "series": [], "excluded_rows": excluded}
 
     base = values[0]
     indexed_series = [
@@ -449,6 +577,7 @@ def _revalue_ai_portfolio_with_canonical_prices(
         "max_drawdown_pct": compute_max_drawdown(values),
         "annualized_volatility": _compute_daily_volatility(daily_returns),
         "series": indexed_series,
+        "excluded_rows": excluded,
     }
 
 
