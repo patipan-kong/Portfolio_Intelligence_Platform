@@ -4083,3 +4083,47 @@ Rules:
 - Not verified against live data.
 
 **Disposition:** `IMPLEMENTED` (uncommitted)
+
+---
+
+## Three Portfolios Window Alignment (Phase 4.21)
+
+**Date:** 2026-11-16
+**Problem:** The Phase 4.20R real-data validation found that Three Portfolios compared unequal intervals.
+- Ideal and AI observations are point-in-time valuations. An owner `PortfolioSnapshot` row carries the return since the PREVIOUS row.
+- `compute_three_portfolios` aligned only Ideal and AI, and only at the start (`max(first dates)`). "You" came from `compute_portfolio_attribution` over the whole `period_days` cutoff window, so it chained the first in-window return, which covers the interval before the Ideal/AI base valuation.
+- No series was bounded at the end. The ACTIVE_MODEL shadow is valued after the last owner snapshot, so the AI series ran past Ideal and You (real data: AI through 11-16, Ideal and You through 11-13).
+- On real data, Gap B read +4.27pp where the start-aligned value is ≈ +3.51pp.
+- `_return_over_window` also re-appended the base observation, injecting a fabricated 0% first interval into Ideal/AI volatility.
+**Decision:** one shared comparison window for every compared headline and both gaps (`ideal_series._shared_comparison_window`).
+- **Start:** the earliest date on which every participating series (one with data in the window) has a real valuation. Any positive-NAV owner row is a valid opening valuation.
+- **End:** the latest later date on which every participant can close. An owner row closes only if it carries its own return; legacy windows without any adjusted return keep the raw-NAV fallback, so every valid-NAV row qualifies.
+- Both bounds are real observations of every series. Nothing is forward-filled at either edge, and missing data is never read as a flat return.
+- **Ideal/AI:** `_return_over_window(series, start, end)`. The base is the start observation, and the tail holds only the observations strictly after it.
+- **You:** `_owner_window_metrics` reuses `_actual_portfolio_metrics` unchanged (flow-adjusted TWR, return-index drawdown, volatility, legacy raw-NAV fallback). It runs on the window's rows with the start row's return masked out in a read-only view.
+- Gap A = Ideal − AI and Gap B = AI − You are computed from those same headline figures. The Scorecard's Implementation Shortfall reads `gap_a`, so it follows automatically.
+- With fewer than two series holding data (`not_applicable`), or no shared interval of at least two dates (`insufficient_overlap`), both gaps are `None` and each headline keeps its own-window figure, as before.
+- Additive response field: `comparison_window {status, start, end, series}`.
+- **Chart rows** (`_window_chart`, `_owner_window_chart_points`) follow the same window:
+  - When aligned, they hold only observations inside [start, end].
+  - Ideal / AI / You are indexed to 100 at the shared start valuation, so each line ends at 100 + its headline `return_pct`.
+  - The benchmark (display only) is rebased at its first in-window observation.
+  - A missing observation is `None`, never carried forward.
+  - `insufficient_overlap` draws no chart (`[]`); `not_applicable` keeps the previous single-series display.
+  - The frontend renders `chart` verbatim and derives its "Actual comparison" dates from the first `actual` row and the last row, so it now shows `comparison_window`'s dates with no frontend change.
+**Unchanged:**
+- Return, pricing and drawdown formulas.
+- The owner cash-flow adjustment, the AI historical-cash revaluation (Phase 4.19) and the Ideal replay.
+- `compute_portfolio_attribution`, which still runs (its AttributionMetric upsert is unchanged), together with the Scorecard outcome lens and `regret_score`, which remain the stored live-priced full-window methodology.
+- The chart series, the benchmark line, the waterfall and opportunity cost.
+- The schema, snapshot rows, the optimizer and the scheduler.
+**Impact:**
+- Code: `services/evaluation/ideal_series.py`. Dead helper `_index_at_or_before` removed.
+- Tests: new `tests/test_three_portfolios_window_alignment.py` (26 tests, including 9 for the chart). No existing test changed.
+- Ideal/AI volatility in Three Portfolios changes slightly (the fabricated first 0% interval is gone).
+- **Limitations:**
+  - An owner row with a missing return INSIDE the window is still skipped by the TWR (pre-existing).
+  - With `insufficient_overlap`, a one-observation AI series still shows its own 0.0% headline (pre-existing; gaps are `None`).
+  - Inside the window, the frontend's `connectNulls` draws a straight segment across a date where a series has no observation. The data is `None` there; the segment is a visual join only.
+
+**Disposition:** `IMPLEMENTED` (uncommitted)
