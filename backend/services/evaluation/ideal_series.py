@@ -581,33 +581,30 @@ def _revalue_ai_portfolio_with_canonical_prices(
     }
 
 
-def _index_at_or_before(series: list[dict], target_date: str) -> float | None:
-    """Nearest indexed value on/before target_date in a [{date, index}]
-    series sorted ascending by date; falls back to the first value after
-    target_date if nothing precedes it (mirrors _price_near_date)."""
-    best: float | None = None
-    for row in series:
-        d, idx = row.get("date"), row.get("index")
-        if d is None or idx is None:
-            continue
-        if d <= target_date:
-            best = idx
-        elif best is None:
-            return idx
-        else:
-            break
-    return best
-
-
-def _return_over_window(series: list[dict], start_date: str) -> tuple[float | None, float | None, float | None]:
+def _return_over_window(
+    series: list[dict], start_date: str, end_date: str | None = None,
+) -> tuple[float | None, float | None, float | None]:
     """(return_pct, max_drawdown_pct, annualized_volatility) for a
-    [{date, index}] series restricted to [start_date, end] — used to align
-    Ideal and AI Portfolio to a common comparison window (see
-    compute_three_portfolios docstring, "event-sequence alignment")."""
+    [{date, index}] series restricted to [start_date, end_date] (end_date
+    None = the series' own last observation) — used to align Ideal and AI
+    Portfolio to a common comparison window (see compute_three_portfolios
+    docstring, "Shared comparison window")."""
     from services.analytics.attribution_engine import compute_max_drawdown, _compute_daily_volatility
 
-    base = _index_at_or_before(series, start_date)
-    tail = [row["index"] for row in series if row.get("date") and row["date"] >= start_date and row.get("index") is not None]
+    obs = [row for row in series if row.get("date") and row.get("index") is not None]
+    # Base observation: the latest valuation on/before start_date, else the
+    # first one after it (mirrors _price_near_date). The tail is
+    # every observation strictly AFTER the base — re-appending the base
+    # itself (as before Phase 4.21, whenever start_date was an observation)
+    # injected a fabricated 0% first interval into the volatility.
+    before = [row for row in obs if row["date"] <= start_date]
+    base_row = before[-1] if before else (obs[0] if obs else None)
+    base = base_row["index"] if base_row else None
+    tail = [
+        row["index"] for row in obs
+        if base_row is not None and row["date"] > base_row["date"]
+        and (end_date is None or row["date"] <= end_date)
+    ]
     if base is None or not base or not tail:
         return None, None, None
 
@@ -621,6 +618,156 @@ def _return_over_window(series: list[dict], start_date: str) -> tuple[float | No
 
     return_pct = round((values[-1] - base) / base * 100, 4)
     return return_pct, compute_max_drawdown(values), _compute_daily_volatility(daily_returns)
+
+
+def _valuation_dates(series: list[dict]) -> set[str]:
+    """Dates carrying a usable point-in-time valuation in a [{date, index}]
+    series (Ideal, AI canonical) — every one can open or close a window."""
+    return {row["date"] for row in series if row.get("date") and row.get("index") is not None}
+
+
+def _owner_window_dates(snaps: list[Any]) -> tuple[set[str], set[str]]:
+    """(start-capable, end-capable) dates for the owner portfolio.
+
+    Owner rows carry a valuation (total_value) AND a return since the
+    PREVIOUS row (investment_return_pct), so the two roles differ. Any row
+    with a positive NAV is a valid starting valuation: returns of later rows
+    are measured from it. Only a row that carries its own return can close
+    a window — ending on a row whose return is missing would silently treat
+    that last interval as flat. When no row in the window has an adjusted
+    return at all (legacy pre-Phase-3B.8 history), the existing raw-NAV
+    fallback of _actual_portfolio_metrics applies and every valid-NAV row
+    is also end-capable.
+    """
+    valid = [s for s in snaps if s.total_value and s.total_value > 0]
+    starts = {s.snapshot_date for s in valid}
+    if any(s.investment_return_pct is not None for s in valid):
+        ends = {s.snapshot_date for s in valid if s.investment_return_pct is not None}
+    else:
+        ends = set(starts)
+    return starts, ends
+
+
+def _shared_comparison_window(participants: dict[str, tuple[set[str], set[str]]]) -> dict[str, Any]:
+    """One comparison interval shared by every participating series.
+
+    participants: name -> (start-capable dates, end-capable dates). A series
+    with no start-capable date does not participate (it has no data in the
+    window; its own status already says so). start is the earliest date on
+    which EVERY participant has a starting valuation; end is the latest date
+    after start on which every participant can close. Both bounds are real
+    observations of each series — never a forward-filled value — so no
+    series is credited with a flat, fabricated interval at either edge.
+    """
+    present = {k: v for k, v in participants.items() if v[0]}
+    names = sorted(present)
+    if len(present) < 2:
+        return {"status": "not_applicable", "start": None, "end": None, "series": names}
+    starts = set.intersection(*(v[0] for v in present.values()))
+    ends = set.intersection(*(v[1] for v in present.values()))
+    start = min(starts) if starts else None
+    later_ends = [d for d in ends if start is not None and d > start]
+    if start is None or not later_ends:
+        return {"status": "insufficient_overlap", "start": None, "end": None, "series": names}
+    return {"status": "aligned", "start": start, "end": max(later_ends), "series": names}
+
+
+def _owner_window_metrics(
+    snaps: list[Any], start: str, end: str,
+) -> tuple[float | None, float | None, float | None]:
+    """(return_pct, max_drawdown_pct, annualized_volatility) for the owner
+    over [start, end], using the unchanged production formulas
+    (_actual_portfolio_metrics: flow-adjusted TWR, return-index drawdown,
+    daily volatility; raw-NAV fallback only for legacy rows).
+
+    The start row is the opening valuation: its own return covers the
+    interval BEFORE start (previous row -> start), so it is masked out.
+    Persisted rows are never modified — the mask is a read-only view.
+    """
+    from types import SimpleNamespace
+    from services.analytics.attribution_engine import _actual_portfolio_metrics, _safe_return
+
+    rows = [
+        SimpleNamespace(
+            snapshot_date=s.snapshot_date,
+            total_value=s.total_value,
+            investment_return_pct=None if s.snapshot_date == start else s.investment_return_pct,
+            daily_return_pct=None if s.snapshot_date == start else s.daily_return_pct,
+        )
+        for s in snaps
+        if start <= s.snapshot_date <= end
+    ]
+    ret, dd, vol = _actual_portfolio_metrics(rows)
+    return _safe_return(ret), dd, vol
+
+
+def _owner_window_chart_points(snaps: list[Any], start: str, end: str) -> dict[str, float]:
+    """Owner index over [start, end], 100 at the start valuation — the same
+    observations _owner_window_metrics chains, so the last point equals
+    100 + actual.return_pct.
+
+    Flow-adjusted rows: the start row's own return is excluded (it covers
+    the interval before start), and each later row with a return adds one
+    point. A row without a return gets no point: it is not carried forward
+    or bridged. Legacy windows with no adjusted return at all use the raw-NAV
+    fallback, start and end only, as the headline and the previous chart did.
+    """
+    rows = [s for s in snaps if start <= s.snapshot_date <= end and s.total_value and s.total_value > 0]
+    if not rows or rows[0].snapshot_date != start:
+        return {}
+    later = rows[1:]
+    if any(s.investment_return_pct is not None for s in later):
+        running = 100.0
+        points = {start: 100.0}
+        for s in later:
+            if s.investment_return_pct is None:
+                continue
+            running *= 1.0 + s.investment_return_pct / 100.0
+            points[s.snapshot_date] = round(running, 4)
+        return points
+    last = rows[-1]
+    if last.snapshot_date != end:
+        return {start: 100.0}
+    return {start: 100.0, end: round(last.total_value / rows[0].total_value * 100, 4)}
+
+
+def _window_chart(
+    start: str,
+    end: str,
+    ideal_dated: dict[str, float],
+    ai_dated: dict[str, float],
+    actual_points: dict[str, float],
+    bench_dated: dict[str, float],
+) -> list[dict[str, Any]]:
+    """Chart rows for the shared comparison window [start, end] (Phase 4.21).
+
+    - Only observations inside [start, end]; the axis is the union of their
+      dates.
+    - Ideal / AI / You are all 100 at the shared start valuation, so each
+      line's last point equals 100 + its headline return_pct.
+    - The benchmark (display only, not part of any metric) is rebased to 100
+      at its own first observation inside the window, as before.
+    - A series without an observation on an axis date gets None there. Values
+      are never carried forward, and no zero-return day is invented.
+    """
+    def _rebased(dated: dict[str, float], anchor: str | None) -> dict[str, float]:
+        inside = {d: v for d, v in dated.items() if start <= d <= end and v is not None}
+        if not inside:
+            return {}
+        base_date = anchor if anchor is not None else min(inside)
+        base = inside.get(base_date)
+        if not base:
+            return {}
+        return {d: round(v / base * 100, 4) for d, v in inside.items()}
+
+    lines = {
+        "ideal": _rebased(ideal_dated, start),
+        "ai": _rebased(ai_dated, start),
+        "actual": actual_points,
+        "benchmark": _rebased(bench_dated, None),
+    }
+    axis = sorted(set().union(*(set(v) for v in lines.values())))
+    return [{"date": d, **{k: v.get(d) for k, v in lines.items()}} for d in axis]
 
 
 def compute_three_portfolios(db: Session, portfolio_id: int, period_days: int = 90) -> dict[str, Any]:
@@ -668,13 +815,45 @@ def compute_three_portfolios(db: Session, portfolio_id: int, period_days: int = 
     an admin reset-inception, Phase 4C.6). Comparing a full period_days
     Ideal return against a much-shorter AI Portfolio return would silently
     conflate "different time horizons" with "friction cost." Both sides are
-    therefore truncated to their overlap — max(ideal_first_date,
-    ai_first_date) through period_end — before return_pct/max_drawdown_pct/
-    annualized_volatility are computed for either the ideal/ai_portfolio
-    blocks or gap_a below.
+    therefore truncated to their overlap before return_pct/max_drawdown_pct/
+    annualized_volatility are computed.
+
+    Shared comparison window (Phase 4.21, window alignment): the overlap
+    above previously bounded only Ideal and AI, and only at the START.
+    "You" was measured over the full period_days cutoff window, and no
+    series was bounded at the END. That broke two things:
+      - Ideal/AI observations are point-in-time valuations, but an owner row
+        carries the return since the PREVIOUS row. So the first in-window
+        owner return (previous row -> first row) covered an interval before
+        the Ideal/AI base valuation, and "You" chained one more interval
+        than AI or Ideal.
+      - The AI shadow is valued later in the day than owner snapshots exist,
+        so its series could run days past Ideal/You.
+    Gap A, Gap B and the Scorecard's Implementation Shortfall (which reads
+    gap_a) then compared unequal intervals. Now all three series share ONE
+    window (_shared_comparison_window). It starts at the earliest date where
+    every participating series has a real valuation and ends at the latest
+    later date where every one can close (an owner close requires that row's
+    own return). For "You", the start row's return is masked out
+    (_owner_window_metrics); its formulas, cash-flow adjustment and
+    drawdown index are otherwise unchanged. Nothing is forward-filled at
+    either edge. With no shared interval, gaps are None and each headline
+    keeps its own-window figure. The interval is exposed as
+    comparison_window.
+
+    Chart rows follow the same window (_window_chart). When aligned, they hold
+    only observations inside [start, end]. Ideal / AI / You are indexed to
+    100 at the shared start valuation, so each line ends at 100 + its
+    headline return. A missing observation is None, never carried forward.
+    insufficient_overlap draws no chart, since there is no valid comparison;
+    not_applicable keeps the previous single-series display.
+    compute_portfolio_attribution (Scorecard outcome lens, regret_score) is
+    untouched.
     """
     from models.database import BenchmarkPrice
-    from services.analytics.attribution_engine import compute_portfolio_attribution, compute_actual_indexed_series
+    from services.analytics.attribution_engine import (
+        compute_portfolio_attribution, compute_actual_indexed_series, _get_actual_snapshots,
+    )
     from services.decision_memory.shadow_tracker import _snapshot_price_history
 
     cutoff = (date.today() - timedelta(days=period_days)).isoformat()
@@ -690,38 +869,52 @@ def compute_three_portfolios(db: Session, portfolio_id: int, period_days: int = 
         db, portfolio_id, history, ideal["period_start"], ideal["period_end"],
     )
 
-    actual_return = actual.get("return_pct")
-
-    # ── Align Ideal and AI Portfolio to their overlapping window ──────────
-    # (see "Event-sequence alignment" in the docstring above)
+    # ── Shared comparison window (Phase 4.21) ─────────────────────────────
+    # (see "Shared comparison window" in the docstring above)
     ideal_series_list = ideal.get("series") or []
     ai_series_list = ai_canonical.get("series") or []
+    owner_snaps = _get_actual_snapshots(db, portfolio_id, cutoff)
 
-    if ideal_series_list and ai_series_list:
-        comparison_start = max(ideal_series_list[0]["date"], ai_series_list[0]["date"])
+    ideal_dates = _valuation_dates(ideal_series_list)
+    ai_dates = _valuation_dates(ai_series_list)
+    window = _shared_comparison_window({
+        "ideal": (ideal_dates, ideal_dates),
+        "ai": (ai_dates, ai_dates),
+        "actual": _owner_window_dates(owner_snaps),
+    })
+
+    if window["status"] == "aligned":
+        w_start, w_end = window["start"], window["end"]
+        none3 = (None, None, None)
+        ideal_return, ideal_max_dd, ideal_vol = (
+            _return_over_window(ideal_series_list, w_start, w_end) if "ideal" in window["series"] else none3
+        )
+        ai_return, ai_max_dd, ai_vol = (
+            _return_over_window(ai_series_list, w_start, w_end) if "ai" in window["series"] else none3
+        )
+        actual_return, actual_max_dd, actual_vol = (
+            _owner_window_metrics(owner_snaps, w_start, w_end) if "actual" in window["series"] else none3
+        )
+        gap_a = round(ideal_return - ai_return, 4) if ideal_return is not None and ai_return is not None else None
+        # DOGFOOD-03 fix: reuse this function's own aligned ai_return/actual_return
+        # (the exact figures rendered as "AI Portfolio"/"You" on this screen) —
+        # never attribution's regret_score, which sources "AI" from a different,
+        # undisplayed, live-priced valuation. See docstring above and DECISION_LOG.
+        gap_b = round(ai_return - actual_return, 4) if ai_return is not None and actual_return is not None else None
     else:
-        comparison_start = None
-
-    if comparison_start:
-        i_ret, i_dd, i_vol = _return_over_window(ideal_series_list, comparison_start)
-        a_ret, a_dd, a_vol = _return_over_window(ai_series_list, comparison_start)
-    else:
-        i_ret = i_dd = i_vol = a_ret = a_dd = a_vol = None
-
-    ideal_return = i_ret if i_ret is not None else ideal.get("return_pct")
-    ideal_max_dd = i_dd if i_dd is not None else ideal.get("max_drawdown_pct")
-    ideal_vol = i_vol if i_vol is not None else ideal.get("annualized_volatility")
-
-    ai_return = a_ret if a_ret is not None else ai_canonical.get("return_pct")
-    ai_max_dd = a_dd if a_dd is not None else ai_canonical.get("max_drawdown_pct")
-    ai_vol = a_vol if a_vol is not None else ai_canonical.get("annualized_volatility")
-
-    gap_a = round(ideal_return - ai_return, 4) if ideal_return is not None and ai_return is not None else None
-    # DOGFOOD-03 fix: reuse this function's own aligned ai_return/actual_return
-    # (the exact figures rendered as "AI Portfolio"/"You" on this screen) —
-    # never attribution's regret_score, which sources "AI" from a different,
-    # undisplayed, live-priced valuation. See docstring above and DECISION_LOG.
-    gap_b = round(ai_return - actual_return, 4) if ai_return is not None and actual_return is not None else None
+        # Nothing to compare (fewer than two series have data) or no shared
+        # interval: each headline keeps its own-window figure, and no gap is
+        # computed — a gap across mismatched intervals is not a comparison.
+        ideal_return = ideal.get("return_pct")
+        ideal_max_dd = ideal.get("max_drawdown_pct")
+        ideal_vol = ideal.get("annualized_volatility")
+        ai_return = ai_canonical.get("return_pct")
+        ai_max_dd = ai_canonical.get("max_drawdown_pct")
+        ai_vol = ai_canonical.get("annualized_volatility")
+        actual_return = actual.get("return_pct")
+        actual_max_dd = actual.get("max_drawdown_pct")
+        actual_vol = actual.get("annualized_volatility")
+        gap_a = gap_b = None
 
     # ── Aligned chart series (display only) ───────────────────────────────
     # Issue B (Accounting Correctness C5): "actual" must be the same
@@ -744,23 +937,41 @@ def compute_three_portfolios(db: Session, portfolio_id: int, period_days: int = 
 
     ideal_dated = {row["date"]: row["index"] for row in ideal.get("series", []) if row.get("index") is not None}
 
-    axis = sorted(set(ideal_dated) | set(ai_dated) | set(actual_dated) | set(bench_dated))
+    if window["status"] == "aligned":
+        # Phase 4.21: the chart covers exactly the interval the headline
+        # figures and both gaps were measured over (see _window_chart).
+        chart = _window_chart(
+            window["start"], window["end"],
+            ideal_dated if "ideal" in window["series"] else {},
+            ai_dated if "ai" in window["series"] else {},
+            _owner_window_chart_points(owner_snaps, window["start"], window["end"])
+            if "actual" in window["series"] else {},
+            bench_dated,
+        )
+    elif window["status"] == "insufficient_overlap":
+        # Several series have data but share no interval: there is no valid
+        # comparison to draw. Plotting each on its own base would read as one
+        # (gaps are None for the same reason).
+        chart = []
+    else:
+        # not_applicable (at most one series has data): unchanged display.
+        axis = sorted(set(ideal_dated) | set(ai_dated) | set(actual_dated) | set(bench_dated))
 
-    ideal_chart, _ = _reindex_to_100(ideal_dated, axis) if axis else ([], None)
-    ai_chart, _ = _reindex_to_100(ai_dated, axis) if axis else ([], None)
-    actual_chart, _ = _reindex_to_100(actual_dated, axis, rebase=False) if axis else ([], None)
-    bench_chart, _ = _reindex_to_100(bench_dated, axis) if axis else ([], None)
+        ideal_chart, _ = _reindex_to_100(ideal_dated, axis) if axis else ([], None)
+        ai_chart, _ = _reindex_to_100(ai_dated, axis) if axis else ([], None)
+        actual_chart, _ = _reindex_to_100(actual_dated, axis, rebase=False) if axis else ([], None)
+        bench_chart, _ = _reindex_to_100(bench_dated, axis) if axis else ([], None)
 
-    chart = [
-        {
-            "date": axis[i],
-            "ideal": ideal_chart[i] if i < len(ideal_chart) else None,
-            "ai": ai_chart[i] if i < len(ai_chart) else None,
-            "actual": actual_chart[i] if i < len(actual_chart) else None,
-            "benchmark": bench_chart[i] if i < len(bench_chart) else None,
-        }
-        for i in range(len(axis))
-    ]
+        chart = [
+            {
+                "date": axis[i],
+                "ideal": ideal_chart[i] if i < len(ideal_chart) else None,
+                "ai": ai_chart[i] if i < len(ai_chart) else None,
+                "actual": actual_chart[i] if i < len(actual_chart) else None,
+                "benchmark": bench_chart[i] if i < len(bench_chart) else None,
+            }
+            for i in range(len(axis))
+        ]
 
     # BenchmarkPrice is a global (not portfolio-scoped) table synced
     # independently of any portfolio's own activity — its presence alone must
@@ -792,9 +1003,18 @@ def compute_three_portfolios(db: Session, portfolio_id: int, period_days: int = 
         "actual": {
             "status": attribution.get("status"),
             "return_pct": actual_return,
-            "max_drawdown_pct": actual.get("max_drawdown_pct"),
-            "annualized_volatility": actual.get("annualized_volatility"),
+            "max_drawdown_pct": actual_max_dd,
+            "annualized_volatility": actual_vol,
         },
         "gap_a": {"value": gap_a, "label": "Ideal − AI"},
         "gap_b": {"value": gap_b, "label": "AI − You"},
+        # Additive (Phase 4.21): the interval every compared headline and
+        # both gaps were measured over. status: aligned | insufficient_overlap
+        # | not_applicable (fewer than two series have data).
+        "comparison_window": {
+            "status": window["status"],
+            "start": window["start"],
+            "end": window["end"],
+            "series": window["series"],
+        },
     }
