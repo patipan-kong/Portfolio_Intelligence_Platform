@@ -4008,3 +4008,35 @@ No frozen history (245–250) reached the Committee, so neither B1 nor B2 change
 - No live runs were performed.
 
 **Disposition:** `IMPLEMENTED`
+
+---
+
+## Historical Shadow Cash Integrity (Phase 4.19)
+
+**Date:** 2026-11-16
+**Problem:** Performance Integrity Audit finding F1. `services/evaluation/ideal_series.py::_revalue_ai_portfolio_with_canonical_prices` added `ShadowPortfolio.paper_cash_balance` to the canonical equity of every historical ACTIVE_MODEL row. That column holds today's cash and is overwritten in place at every rebalance, and `ShadowPortfolioSnapshot` has no cash column. Each historical row was therefore shifted by (cash_now − cash_t), so the AI Portfolio curve jumped at every rebalance that changed the shadow's cash weight. This inflated:
+- the AI Portfolio return, drawdown and volatility;
+- Gap A and Gap B;
+- the Scorecard's Implementation Shortfall (= Gap A).
+Synthetic reproduction: flat prices with rebalances 95% → 50% → 95% invested gave a 45% drawdown and 270% volatility, where the true values are 0. The C5 entry above had recorded this as a known residual, deferred for separate review.
+**Decision:** value each row as the canonical equity of its own holdings plus that row's own cash:
+
+    cash_t = total_value_t − Σ holdings_json[].market_value_t     (_derive_snapshot_cash)
+
+Both ACTIVE_MODEL row writers (`value_shadow_portfolio`, and `regenerate_active_model_shadow` via `_replay_active_model_series`) persist `total_value = Σ market_value + cash` together with the enriched holdings they priced. The persisted price source therefore cancels, and only that date's cash remains. A row is excluded and logged, never filled with `paper_cash_balance` and never clamped, when any of these holds:
+- a held position has no `market_value` (a legacy row, or an unpriced holding, which includes every NAV-floor fallback row);
+- `market_value` ≠ shares × `current_price`;
+- derived cash is negative beyond 2-dp rounding (paper cash is never negative by construction);
+- a held position has neither a canonical price nor an inception price.
+Surrounding valid rows still define the series. If no row survives, status is `incomplete_snapshot_data`; rows with no `holdings_json` at all keep `no_price_history`.
+**Rejected:** a per-row cash column. It would need a schema migration and a backfill, and the information already exists in every row.
+**Unchanged:** shadow trading and rebalancing, all persisted rows, the Ideal replay, owner-portfolio accounting, `compute_portfolio_attribution` (the Scorecard's stored-return AI figure and regret score), pricing rules (canonical price, then inception-price fallback), the API response shape, the frontend.
+**Impact:**
+- Code: `ideal_series.py` only.
+- Tests:
+  - New `tests/test_ai_portfolio_historical_cash.py` (27 tests).
+  - The `_seed_ai_shadow` fixtures in `tests/test_ideal_series.py` and `tests/test_scorecard.py` now persist rows in `value_shadow_portfolio`'s enriched shape. They previously wrote `holdings_json` without `market_value`, a shape production ACTIVE_MODEL writers have never produced, which the fix now correctly treats as missing data. Test intent is unchanged: the stored total still diverges from canonical through price, not through cash.
+- Values are computed on read, so no regeneration is needed. Live figures change on the next request.
+- Not verified against live data: no PostgreSQL access in this phase.
+
+**Disposition:** `IMPLEMENTED` (uncommitted)

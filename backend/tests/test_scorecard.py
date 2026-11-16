@@ -241,8 +241,22 @@ def _seed_ai_shadow(db, ws, portfolio, *, inception_days_ago, holdings, snapshot
     snapshot_rows: list of (days_ago, holdings_json_or_None, stored_total_value,
     stored_return_pct_since_inception) -- the STORED fields simulate whatever
     shadow_tracker.value_shadow_portfolio wrote from its own (live-cache)
-    price source."""
+    price source.
+
+    Rows are persisted in value_shadow_portfolio's exact shape (Phase 4.19):
+    enriched current_price/market_value at the live price implied by
+    stored_total_value, zero cash, so total_value = Σ market_value + cash."""
     from models.database import ShadowPortfolio, ShadowPortfolioSnapshot
+    from services.decision_memory.shadow_tracker import _compute_paper_value
+
+    def _as_persisted(holdings_json, stored_total_value):
+        if holdings_json is None:
+            return None, stored_total_value
+        at_inception, _ = _compute_paper_value(holdings_json, {})
+        scale = stored_total_value / at_inception
+        live_prices = {h["symbol"]: h["inception_price"] * scale for h in holdings_json}
+        equity, enriched = _compute_paper_value(holdings_json, live_prices)
+        return enriched, equity  # cash 0.0
 
     shadow = ShadowPortfolio(
         workspace_id=ws.id, portfolio_id=portfolio.id, shadow_type="ACTIVE_MODEL",
@@ -255,6 +269,7 @@ def _seed_ai_shadow(db, ws, portfolio, *, inception_days_ago, holdings, snapshot
     db.refresh(shadow)
 
     for days_ago, holdings_json, stored_total_value, stored_return_pct in snapshot_rows:
+        holdings_json, stored_total_value = _as_persisted(holdings_json, stored_total_value)
         db.add(ShadowPortfolioSnapshot(
             shadow_portfolio_id=shadow.id, snapshot_date=_d(days_ago),
             total_value=stored_total_value, return_pct_since_inception=stored_return_pct,
