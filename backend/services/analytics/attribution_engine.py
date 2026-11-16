@@ -264,6 +264,111 @@ def _get_shadow_snapshots(db: Session, shadow_id: int, cutoff: str) -> list[Any]
     )
 
 
+# Largest calendar-day gap between a comparison boundary and the static
+# shadow's nearest valuation that still counts as covering it. Capped at 5
+# (Thai holiday clusters; same as horizon_grader's _MAX_VALUATION_GAP_DAYS) but
+# scaled with the window so a short window cannot be mostly uncovered:
+# min(5, window_days // 5) -> 7D: 1, 30D: 5, 90D: 5.
+_STATIC_COVERAGE_GAP_DAYS = 5
+
+
+def _edge_tolerance_days(window_days: int) -> int:
+    return max(0, min(_STATIC_COVERAGE_GAP_DAYS, int(window_days) // 5))
+
+
+def _days_between(a: str, b: str) -> int:
+    return (date.fromisoformat(b) - date.fromisoformat(a)).days
+
+
+def _select_static_shadow(
+    db: Session,
+    portfolio_id: int,
+    cutoff: str,
+    today: str,
+    actual_start: str | None,
+    actual_end: str | None,
+    window_days: int = 30,
+) -> tuple[Any | None, list[Any], dict[str, Any]]:
+    """Pick the decision-keyed STATIC_FROZEN shadow that supports this window.
+
+    STATIC_FROZEN has two families sharing one shadow_type: decision-keyed
+    (execution_decision_id set: holdings frozen when a human decision was
+    recorded) and recommendation-keyed (execution_decision_id NULL: one per
+    optimizer run, read by horizon_grader). Attribution's static comparison is
+    the decision-keyed meaning, so only that family is eligible here.
+
+    Eligible when all hold:
+      - same portfolio, active, decision-keyed;
+      - inception_date <= cutoff (the shadow existed at the window start);
+      - >= 2 positive-NAV valuations dated in [cutoff, end_bound], where
+        end_bound is the owner's last in-window snapshot (or today when the
+        owner has none), so neither side runs past the other's end;
+      - start coverage: first such valuation within the edge tolerance
+        min(5, window_days // 5) calendar days of the owner's first in-window
+        snapshot (or cutoff);
+      - end coverage: last such valuation within the same tolerance of
+        end_bound.
+    Candidates are tried newest-first by (inception_date, created_at, id);
+    the first eligible one wins. Missing valuations are never filled.
+
+    Returns (shadow | None, in-window snapshots, selection-info dict).
+    """
+    from models.database import ShadowPortfolio, ShadowPortfolioSnapshot
+
+    tol = _edge_tolerance_days(window_days)
+    start_anchor = actual_start or cutoff
+    end_bound = actual_end or today
+    candidates = (
+        db.query(ShadowPortfolio)
+        .filter(
+            ShadowPortfolio.portfolio_id == portfolio_id,
+            ShadowPortfolio.shadow_type == "STATIC_FROZEN",
+            ShadowPortfolio.is_active == True,  # noqa: E712
+            ShadowPortfolio.execution_decision_id.isnot(None),
+        )
+        .order_by(
+            ShadowPortfolio.inception_date.desc(),
+            ShadowPortfolio.created_at.desc(),
+            ShadowPortfolio.id.desc(),
+        )
+        .all()
+    )
+    info: dict[str, Any] = {
+        "status": "no_decision_shadow" if not candidates else "no_eligible_shadow",
+        "shadow_id": None,
+        "inception_date": None,
+        "first_valuation": None,
+        "last_valuation": None,
+    }
+    for shadow in candidates:
+        if not shadow.inception_date or shadow.inception_date > cutoff:
+            continue
+        snaps = [
+            s for s in (
+                db.query(ShadowPortfolioSnapshot)
+                .filter(
+                    ShadowPortfolioSnapshot.shadow_portfolio_id == shadow.id,
+                    ShadowPortfolioSnapshot.snapshot_date >= cutoff,
+                    ShadowPortfolioSnapshot.snapshot_date <= end_bound,
+                )
+                .order_by(ShadowPortfolioSnapshot.snapshot_date)
+                .all()
+            )
+            if s.total_value and s.total_value > 0
+        ]
+        if len(snaps) < 2:
+            continue
+        first, last = snaps[0].snapshot_date, snaps[-1].snapshot_date
+        if abs(_days_between(start_anchor, first)) > tol:
+            continue
+        if _days_between(last, end_bound) > tol:
+            continue
+        info.update(status="selected", shadow_id=shadow.id, inception_date=shadow.inception_date,
+                    first_valuation=first, last_valuation=last)
+        return shadow, snaps, info
+    return None, [], info
+
+
 def _find_shadow(db: Session, portfolio_id: int, shadow_type: str) -> Any | None:
     from models.database import ShadowPortfolio
     return (
@@ -397,6 +502,13 @@ def compute_portfolio_attribution(
     Cash-flow correctness:
         Actual portfolio uses TWR from investment_return_pct (adjusted).
         Shadow portfolios use TWR from daily_return_pct (already clean).
+
+    Static shadow (Phase 4.22): chosen per window by _select_static_shadow —
+    decision-keyed only, existing at the window start, with valuations
+    covering the owner's first and last in-window snapshots. When none
+    qualifies, static_shadow is None and avoided_drawdown_pct is None (never
+    0 − actual drawdown). static_shadow_selection reports which shadow was
+    used, or why none was.
     """
     from models.database import AttributionMetric, Workspace
 
@@ -412,16 +524,22 @@ def compute_portfolio_attribution(
     actual_return = _safe_return(actual_return_raw)
 
     # ── STATIC_FROZEN shadow ───────────────────────────────────────────────────
-    static_shadow = _find_shadow(db, portfolio_id, "STATIC_FROZEN")
+    # Decision-keyed shadow whose valuations cover the owner's window (see
+    # _select_static_shadow). None when no shadow supports the window — its
+    # return/drawdown are then unavailable, never 0.0.
+    valid_actual = [s for s in actual_snaps if s.total_value and s.total_value > 0]
+    static_shadow, static_snaps, static_selection = _select_static_shadow(
+        db, portfolio_id, cutoff, today,
+        valid_actual[0].snapshot_date if valid_actual else None,
+        valid_actual[-1].snapshot_date if valid_actual else None, evaluation_window_days,
+    )
     static_return: float | None = None
     static_drawdown: float | None = None
     static_volatility: float | None = None
     static_shadow_id: int | None = None
-    static_snaps: list[Any] = []
 
     if static_shadow:
         static_shadow_id = static_shadow.id
-        static_snaps = _get_shadow_snapshots(db, static_shadow.id, cutoff)
         sr_raw, sd, sv = _shadow_portfolio_metrics(static_snaps)
         static_return = _safe_return(sr_raw)
         static_drawdown = sd
@@ -446,8 +564,15 @@ def compute_portfolio_attribution(
     shadow_id_for_record = shadow_id_for_record or static_shadow_id
 
     # ── Derived metrics ────────────────────────────────────────────────────────
+    # Determine data quality for frontend display guidance
+    valid_actual_count = len(valid_actual)
+    has_sufficient_history = valid_actual_count >= 2
+
+    # Both drawdowns must rest on >= 2 valuations over the same window; a
+    # missing side is "unavailable", not a 0.0 drawdown.
     avoided_drawdown: float | None = None
-    if actual_drawdown is not None and static_drawdown is not None:
+    if (has_sufficient_history and static_shadow is not None
+            and actual_drawdown is not None and static_drawdown is not None):
         avoided_drawdown = round(static_drawdown - actual_drawdown, 4)
 
     regret_score: float | None = None
@@ -455,10 +580,6 @@ def compute_portfolio_attribution(
     if ai_model_return is not None and actual_return is not None:
         regret_score = round(ai_model_return - actual_return, 4)
         ai_outperformed = regret_score > 0
-
-    # Determine data quality for frontend display guidance
-    valid_actual_count = len([s for s in actual_snaps if s.total_value and s.total_value > 0])
-    has_sufficient_history = valid_actual_count >= 2
 
     # ── Structured data-readiness status ──────────────────────────────────────
     # Lets the frontend and diagnostic endpoint differentiate between:
@@ -478,7 +599,7 @@ def compute_portfolio_attribution(
         data_status = "insufficient_portfolio_history"
         data_points_available = valid_actual_count
         required_days_remaining = max(0, 2 - valid_actual_count)
-    elif static_shadow is None and ai_shadow is None:
+    elif static_selection["status"] == "no_decision_shadow" and ai_shadow is None:
         data_status = "no_shadows"
         data_points_available = valid_actual_count
         required_days_remaining = 0
@@ -519,6 +640,7 @@ def compute_portfolio_attribution(
             "max_drawdown_pct": static_drawdown,
             "annualized_volatility": static_volatility,
         } if static_shadow else None,
+        "static_shadow_selection": static_selection,
         "ai_model_shadow": {
             "shadow_id": ai_shadow.id if ai_shadow else None,
             "return_pct": ai_model_return,

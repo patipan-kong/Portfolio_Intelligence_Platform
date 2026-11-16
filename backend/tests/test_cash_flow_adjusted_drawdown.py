@@ -466,12 +466,30 @@ def test_xp_avoided_drawdown_no_longer_credits_a_withdrawal(db, wp):
     from models.database import ShadowPortfolio, ShadowPortfolioSnapshot
     from services.analytics.attribution_engine import compute_portfolio_attribution
 
+    from models.database import OptimizerHistory, RecommendationSnapshot, UserExecutionDecision
+
     ws, p = wp
     _seed(db, ws, p, [(n, 1_000_000.0 if n > 5 else 700_000.0, None if n == 10 else 0.0)
                       for n in range(10, -1, -1)])
+    # Phase 4.22: attribution only uses a decision-keyed static shadow that
+    # existed at the window start, so the shadow is linked to a decision and
+    # the window (10D) starts on its inception day.
+    oh = OptimizerHistory(workspace_id=ws.id, portfolio_id=p.id, portfolio_name="P1",
+                          analyzed_at=datetime.utcnow(), swap_count=0, result_json="{}")
+    db.add(oh)
+    db.commit()
+    rs = RecommendationSnapshot(workspace_id=ws.id, optimizer_history_id=oh.id, portfolio_id=p.id,
+                                total_portfolio_value=1e6, projected_allocations_json="[]")
+    db.add(rs)
+    db.commit()
+    dec = UserExecutionDecision(workspace_id=ws.id, recommendation_snapshot_id=rs.id, portfolio_id=p.id,
+                                decision="APPROVED", executed_at=datetime.utcnow())
+    db.add(dec)
+    db.commit()
     sh = ShadowPortfolio(workspace_id=ws.id, portfolio_id=p.id, shadow_type="STATIC_FROZEN",
                          name="S", inception_date=_d(10), inception_value=1e6,
                          inception_holdings_json="[]", paper_cash_balance=0.0, is_active=True,
+                         execution_decision_id=dec.id, recommendation_snapshot_id=rs.id,
                          created_at=datetime.utcnow())
     db.add(sh)
     db.commit()
@@ -480,8 +498,9 @@ def test_xp_avoided_drawdown_no_longer_credits_a_withdrawal(db, wp):
                                        total_value=1e6, daily_return_pct=0.0, created_at=datetime.utcnow()))
     db.commit()
 
-    att = compute_portfolio_attribution(db, p.id, 30)
+    att = compute_portfolio_attribution(db, p.id, 10)
 
+    assert att["static_shadow"]["shadow_id"] == sh.id
     assert att["actual"]["max_drawdown_pct"] == pytest.approx(0.0)
     assert att["avoided_drawdown_pct"] == pytest.approx(0.0)  # pre-fix: 0 − 30 = −30
 

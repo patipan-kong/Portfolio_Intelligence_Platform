@@ -4127,3 +4127,61 @@ Rules:
   - Inside the window, the frontend's `connectNulls` draws a straight segment across a date where a series has no observation. The data is `None` there; the segment is a visual join only.
 
 **Disposition:** `IMPLEMENTED` (uncommitted)
+
+## Attribution STATIC_FROZEN Selection Integrity (Phase 4.22)
+
+**Date:** 2026-11-16
+**Background: why 182 active STATIC_FROZEN shadows are expected.** A read-only investigation of portfolio 4 found 96 decision-keyed and 86 recommendation-keyed shadows, all active.
+- `shadow_type="STATIC_FROZEN"` covers two families, told apart only by `execution_decision_id`:
+  - **Decision-keyed** (`create_static_frozen_shadow`): holdings frozen when a human decision is recorded (APPROVED, or `create_static_shadow=true`). Never deactivated by any code path.
+  - **Recommendation-keyed** (`create_recommendation_shadow`, AI Evaluation M1/P2): one per optimizer snapshot, no decision. `horizon_grader` deactivates it after the final (H180) grade. None had reached H180 yet.
+- Both are idempotent: no snapshot has two recommendation shadows and no decision has two decision shadows.
+- Shadows 619 and 620 are the recommendation shadow (snapshot 208) and the APPROVED-decision shadow (decision 191) of the same optimizer run. Decision 191 had no `approved_allocations_json`, so both froze identical holdings. 63 such pairs exist. They are not duplicates.
+- Only the ACTIVE_MODEL type is "one per portfolio" (see the earlier shadow-type decision).
+
+**Problem:** `compute_portfolio_attribution` took its static shadow from `_find_shadow`: the newest `created_at` of either family, with no check on inception date or valuations.
+- Every optimizer run creates a recommendation shadow, so the pick was almost always a shadow under a day old with 0–1 valuations.
+- `_shadow_portfolio_metrics` returns drawdown `0.0` for such a series, so `avoided_drawdown_pct` became `0 − owner drawdown`.
+- Real data (portfolio 4, recomputed read-only): −1.15 (7D), −8.13 (30D), −11.58 (90D). 156 of 194 stored rows had a null static return.
+
+**Decision:** new `attribution_engine._select_static_shadow` chooses the static shadow per window.
+- **Family:** decision-keyed only (`execution_decision_id` set). The endpoint documentation describes the static shadow as created when an execution decision is recorded. Recommendation shadows are excluded.
+- **Existence:** `inception_date <= cutoff`, so the shadow existed at the window start.
+- **Evidence:** at least two positive-NAV valuations dated in `[cutoff, end_bound]`. `end_bound` is the owner's last valid in-window snapshot (today if the owner has none), so the shadow side never runs past the owner's end.
+- **Coverage:** the first such valuation must be within `edge_tolerance_days = min(5, window_days // 5)` calendar days of the owner's first valid in-window snapshot (or the cutoff). The last must be within the same tolerance of `end_bound`. `window_days` is the requested window: 7D → 1 day, 30D → 5, 90D → 5.
+  - The 5-day cap spans a weekend plus a Thai holiday; same cap as `horizon_grader._MAX_VALUATION_GAP_DAYS`.
+  - Scaled because a fixed 5 days is not proportional: on a 7D window it accepted a shadow valued only on days 2 and 1 (1 of 7 days covered). See "Revision" below.
+- **Tie-breaking:** newest-first by `(inception_date, created_at, id)`; the first eligible candidate wins, so an older eligible shadow is used when a newer one lacks coverage.
+- Nothing is carried forward or invented to make a shadow eligible.
+- **Missing evidence stays null, never zero.** An unavailable drawdown must not look like "the frozen portfolio never fell". Zero-as-missing is what created the false credit.
+  - No eligible shadow → `static_shadow: null` (the existing nullable object) and `avoided_drawdown_pct: null`.
+  - `avoided_drawdown_pct` also requires at least two valid owner snapshots.
+  - A genuine 0.0 drawdown backed by at least two valuations remains `0.0`.
+- Owner drawdown is unchanged: the Phase 4.20 cash-flow-adjusted return index.
+- `data_status` is `no_shadows` only when there is neither a decision-keyed static shadow nor an ACTIVE_MODEL.
+
+**API compatibility:**
+- All existing fields and their meanings are unchanged; `static_shadow` keeps its object-or-null shape.
+- Additive field `static_shadow_selection {status, shadow_id, inception_date, first_valuation, last_valuation}`. `status` is `selected`, `no_decision_shadow` or `no_eligible_shadow`.
+- The frontend (`AttributionPanel`, `ShadowPortfolioPanel`, `portfolio-intelligence`) already renders null as "—"; no frontend change.
+- No schema change, migration, backfill or historical cleanup. Stored `AttributionMetric` rows are rolling figures, upserted per `(shadow, period_start, period_end)`; older rows keep their past values.
+
+**Unchanged:** ACTIVE_MODEL selection and `regret_score`; the AttributionMetric upsert key; `_shadow_portfolio_metrics`; Human-vs-AI and timing (decision-linked shadows); horizon grading (recommendation shadows); waterfall; opportunity cost; Three Portfolios; shadow creation, valuation and lifecycle.
+
+**Tests:**
+- New `tests/test_attribution_static_shadow_selection.py`: 31 tests (21 original + 10 for the scaled tolerance) (one-row newest shadow, recommendation-keyed exclusion, before/after window start, start and end coverage, no eligible shadow, genuine zero, invalid-NAV evidence, deterministic tie-breaks, portfolio isolation, 7D/30D/90D selecting different shadows, ACTIVE_MODEL unchanged, Human-vs-AI and horizon grader unchanged, response keys and nullability).
+- Changed `tests/test_cash_flow_adjusted_drawdown.py::test_xp_avoided_drawdown_no_longer_credits_a_withdrawal`: its shadow now carries a decision and a 10D window starts at its inception. The old fixture (no decision, started after the 30D start) is exactly what is now rejected; assertions are unchanged plus a check of the selected shadow.
+- Results (synthetic in-memory SQLite, network blocked, 0 connection attempts): the two files above 48 passed; related regression 247 passed with only the 14 known baseline failures; a further 210 passed across Human-vs-AI, attribution, shadow and timing suites.
+
+**Revision (final review, implemented):** the first version used a fixed 5-day tolerance at each edge.
+- Reproduced synthetically (owner dip on day 3, 5%): a 7D shadow valued only on days 2 and 1, missing its own dip on day 4, was selected and reported drawdown 0.0, so avoided drawdown showed −5.0. Missing edge observations can only miss drawdown, so this biased the static drawdown low.
+- Fix: the tolerance is `min(5, window_days // 5)` (7D: 1, 30D: 5, 90D: 5). After the fix the same shadow is rejected and `avoided_drawdown_pct` is null. A fully covered 7D shadow gives static drawdown 10.0 and avoided +5.0. 30D and 90D behave as before.
+- Weekend/holiday limitation: the 7D rule is strict by design. It compares against the owner's own first and last in-window snapshot dates, so a valid shadow is rejected only when the two series are valued on dates more than 1 day apart (for example an owner snapshot on a non-trading day with the shadow's first valuation 2 days later). That yields null, never a wrong number. The rule was not loosened; trading-calendar awareness was deliberately not added.
+- Tests added: 10 in `test_attribution_static_shadow_selection.py` (tolerance values, last-two-valuations rejected, missing early drawdown rejected, fully covered 7D accepted, 1-day gap accepted and 2-day gap rejected, ineligible newer shadow does not displace an eligible older one, valid 7D zero stays 0.0, valid 90D accepted).
+
+**Follow-ups (recorded, not implemented):**
+1. `GET /analytics/shadow-performance` (`summary.static_frozen`, `main.py`) still takes the first STATIC_FROZEN row of either family, so the shadow-performance panel's since-inception return can come from a different shadow than the Attribution static comparison. The Drawdown row in that panel mixes the two.
+2. Persisted `AttributionMetric` history can hold obsolete avoided-drawdown values (and null static returns) from the old selection. Rolling rows rewrite only when recomputed for the same period.
+3. Rows persisted on 2026-11-16 still show the raw-NAV owner drawdown (90D −27.49), which suggests the running backend predates Phase 4.20 (#89). Runtime/deployment version needs separate verification (not checked here).
+
+**Disposition:** `IMPLEMENTED` (uncommitted)
