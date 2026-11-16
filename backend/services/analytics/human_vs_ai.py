@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 
 from services.analytics.attribution_engine import (
     compute_max_drawdown,
+    compute_owner_max_drawdown,
     _compute_return_pct,
     _compute_twr,
     _compute_daily_volatility,
@@ -38,11 +39,12 @@ def _portfolio_return_since(
     db: Session,
     portfolio_id: int,
     since_date: str,
-) -> tuple[float | None, float, float | None]:
+) -> tuple[float | None, float | None, float | None]:
     """Return (return_pct, max_drawdown_pct, annualized_vol) for actual portfolio since since_date.
 
     Uses investment_return_pct (cash-flow-adjusted) for TWR when available,
-    falling back to raw daily_return_pct for historical rows.
+    falling back to raw daily_return_pct for historical rows. Max drawdown
+    comes from the same adjusted-return index (compute_owner_max_drawdown).
     """
     from models.database import PortfolioSnapshot
 
@@ -63,7 +65,7 @@ def _portfolio_return_since(
 
     total_return = _safe_return(_compute_twr(adjusted) if adjusted else _compute_return_pct(values))
     volatility = _compute_daily_volatility(adjusted if adjusted else raw_daily)
-    return total_return, compute_max_drawdown(values), volatility
+    return total_return, compute_owner_max_drawdown(adjusted, values), volatility
 
 
 def _shadow_return_since(
