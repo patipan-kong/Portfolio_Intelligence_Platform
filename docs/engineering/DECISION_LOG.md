@@ -4040,3 +4040,46 @@ Surrounding valid rows still define the series. If no row survives, status is `i
 - Not verified against live data: no PostgreSQL access in this phase.
 
 **Disposition:** `IMPLEMENTED` (uncommitted)
+
+---
+
+## Cash-flow-adjusted Drawdown (Phase 4.20)
+
+**Date:** 2026-11-16
+**Problem:** Performance Integrity Audit finding F2. Every owner-portfolio max drawdown was measured on raw `PortfolioSnapshot.total_value`, which includes deposits and withdrawals:
+- A withdrawal read as an investment loss: a flat market with a 30% withdrawal gave a 30% drawdown.
+- A deposit could hide a genuine loss: a −20% market move offset by a deposit gave no drawdown.
+- Drawdown disagreed methodologically with Total Return, monthly returns, volatility and Sharpe, which all chain the cash-flow-adjusted `investment_return_pct`.
+**Decision:** owner drawdown is measured on the same flow-adjusted return index each module's Total Return already chains (same observations, same order):
+
+    index[0] = 100;  index[t] = index[t-1] × (1 + r_t / 100);  drawdown = index / running_peak − 1
+
+One formula, `attribution_engine.compute_return_index_drawdown`, returns the drawdown together with peak, trough and recovery dates. `compute_owner_max_drawdown` wraps it. Call sites:
+- `quant_engine.calculate_max_drawdown`: Performance page, including peak, trough, recovery and duration. The index starts on the snapshot before the first chained return.
+- `attribution_engine._actual_portfolio_metrics`: Three Portfolios "You", Scorecard `max_drawdown_pct.actual`, `avoided_drawdown_pct`.
+- `human_vs_ai._portfolio_return_since`: Human vs AI `actual_max_drawdown_pct` / `drawdown_delta`.
+- `timing_performance._max_drawdown`: period drawdown, which feeds `timing_score` and regime attribution.
+- `human_vs_ai_timing._owner_max_drawdown`: human drawdown and `saved_drawdown_pct`.
+Rules:
+- Rows without a return are not observations, exactly as in the TWR.
+- A return that is non-numeric, non-finite or below −100% makes drawdown unavailable, never fabricated, and never replaced with raw NAV, which would bring back the cash-flow distortion. Exactly −100% is a valid total loss.
+  - The Performance page and attribution report it as unavailable.
+  - In the timing modules `None` already means "NAV never fell", and `timing_score` awards +15 for it. So `timing_performance._drawdown_evidence` returns `(None, False)`, and `PeriodPerformance.return_evidence_valid` carries the `False`. That attribute is internal: `Field(exclude=True)`, and the endpoints, which build their dicts by hand, never emit it. When it is `False`, `calculate_timing_score` scores both the drawdown and the excess-return components neutrally (0, as a missing benchmark already is). That denies the +15 drawdown bonus, and also the excess bonus that chained impossible returns could produce: two −300% returns chain to +300%.
+  - `human_vs_ai_timing._owner_max_drawdown` returns `None`, so `saved_drawdown_pct` is `None` and is left out of `total_saved_drawdown_pct`. Unavailable data earns no credit.
+- Valid zero drawdown keeps its existing values: `None` (with +15) in the timing modules and the Performance page, `0.0` in attribution and Human vs AI.
+- When a window has no return observations at all (rows written before Phase 3B.8, or an empty window), drawdown keeps the raw-NAV basis and its existing `None` → +15 behavior, the same fallback Total Return itself uses there. Known limitation: a legacy or empty window with no evidence still earns the +15 bonus, as before.
+- Not changed, but noted: impossible returns still flow into the period and override TWR (`period_return_pct`, `human_return_pct`, `delta_return_pct`, override outcome). Total Return was out of scope.
+**Unchanged:**
+- AI shadow and STATIC_FROZEN drawdowns, which are paper portfolios without external flows, and the Ideal replay.
+- Total Return, volatility, Sharpe, monthly returns.
+- Snapshots, transactions and cash-flow handling.
+- Every response field and its meaning: units stay %, dates stay dates, and the Performance page and timing modules keep `None` for "no drawdown".
+- The frontend, the schema and the optimizer and scheduler.
+**Impact:**
+- Code: `services/analytics/attribution_engine.py`, `quant_engine.py`, `human_vs_ai.py`, `services/timing_performance.py`, `services/human_vs_ai_timing.py`.
+- Code (invalid-return safety review): `services/timing_score.py`.
+- Tests: new `tests/test_cash_flow_adjusted_drawdown.py` (27 tests). No existing test needed changing: the drawdown tests that seed rows without returns exercise the legacy raw-NAV fallback.
+- Values are computed on read. `compute_portfolio_attribution` still upserts `avoided_drawdown_pct` on each call, as before, so new values are written on the next request.
+- Not verified against live data.
+
+**Disposition:** `IMPLEMENTED` (uncommitted)

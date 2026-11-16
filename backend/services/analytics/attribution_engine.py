@@ -27,6 +27,11 @@ so their daily_return_pct is clean and used for TWR chaining directly.
 
 Public API:
     compute_max_drawdown(values)           → float (% as positive number)
+    compute_return_index_drawdown(dated_returns, base_date)
+                                           → dict | None (owner portfolios:
+                                             drawdown of the flow-adjusted
+                                             return index, with dates)
+    compute_owner_max_drawdown(adjusted_returns, nav_values) → float | None
     compute_portfolio_attribution(db, portfolio_id, evaluation_window_days)
     get_attribution_summary(db, portfolio_id)
 """
@@ -34,6 +39,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from datetime import date, datetime, timedelta
 from typing import Any
 
@@ -69,6 +75,102 @@ def compute_max_drawdown(values: list[float]) -> float:
             if dd > max_dd:
                 max_dd = dd
     return round(max_dd * 100, 4)
+
+
+# Float noise below this (relative) is not a drawdown or a missed recovery.
+_INDEX_EPS = 1e-9
+
+
+def compute_return_index_drawdown(
+    dated_returns: list[tuple[str | None, Any]],
+    base_date: str | None = None,
+) -> dict[str, Any] | None:
+    """Max drawdown of the cash-flow-adjusted wealth index (owner portfolios).
+
+    Raw NAV includes deposits and withdrawals, so a withdrawal reads as a
+    loss and a deposit can hide one. The authoritative flow-adjusted series
+    is the per-snapshot investment return (PortfolioSnapshot.
+    investment_return_pct, PORTFOLIO_CALCULATION_RULES.md §10). This chains
+    exactly the observations a caller's Total Return chains (same list,
+    same order), so drawdown and TWR always describe one index:
+
+        index[0] = 100                                (at base_date)
+        index[k] = index[k-1] × (1 + r_k / 100)       (at r_k's date)
+        drawdown = index / running_peak − 1
+
+    Observations missing from dated_returns (rows without a return) are not
+    bridged with a synthetic value. They are simply not observations, as in
+    the TWR chain.
+
+    Returns None when there is no observation, or when any observation is
+    impossible (non-finite, or below −100%, which would put the index below
+    zero). Impossible data yields "unknown", never a fabricated figure.
+    Otherwise a dict with:
+        max_drawdown_pct  positive % (0.0 when the index never fell)
+        peak_date / trough_date / recovery_date   (None when no drawdown;
+                          recovery_date None while still below the peak)
+        index             [(date, value), …] including the base point
+    """
+    if not dated_returns:
+        return None
+    points: list[tuple[str | None, float]] = [(base_date, 100.0)]
+    running = 100.0
+    for d, r in dated_returns:
+        try:
+            r_f = float(r)
+        except (TypeError, ValueError):
+            logger.warning("[DRAWDOWN] non-numeric return %r on %s — drawdown unavailable", r, d)
+            return None
+        if not math.isfinite(r_f) or r_f < -100.0:
+            logger.warning("[DRAWDOWN] impossible return %r on %s — drawdown unavailable", r, d)
+            return None
+        running *= 1.0 + r_f / 100.0
+        points.append((d, running))
+
+    peak_i = 0
+    max_dd = 0.0
+    best_peak = best_trough = None
+    for i in range(1, len(points)):
+        if points[i][1] >= points[peak_i][1] * (1.0 - _INDEX_EPS):
+            peak_i = i
+            continue
+        dd = 1.0 - points[i][1] / points[peak_i][1]
+        if dd > max_dd + _INDEX_EPS:
+            max_dd = dd
+            best_peak, best_trough = peak_i, i
+
+    recovery_date = None
+    if best_trough is not None:
+        peak_value = points[best_peak][1]
+        for d, v in points[best_trough + 1:]:
+            if v >= peak_value * (1.0 - _INDEX_EPS):
+                recovery_date = d
+                break
+
+    return {
+        "max_drawdown_pct": round(max_dd * 100, 4),
+        "peak_date": points[best_peak][0] if best_peak is not None else None,
+        "trough_date": points[best_trough][0] if best_trough is not None else None,
+        "recovery_date": recovery_date,
+        "index": points,
+    }
+
+
+def compute_owner_max_drawdown(
+    adjusted_returns: list[Any],
+    nav_values: list[float],
+) -> float | None:
+    """Owner-portfolio max drawdown (positive %) on the same basis as its TWR.
+
+    With flow-adjusted returns: drawdown of their chained index (None if
+    any observation is impossible). With none at all (legacy rows written
+    before Phase 3B.8): raw NAV, exactly the fallback the Total Return
+    figure itself uses (_compute_return_pct), so both stay on one basis.
+    """
+    if adjusted_returns:
+        result = compute_return_index_drawdown([(None, r) for r in adjusted_returns])
+        return result["max_drawdown_pct"] if result else None
+    return compute_max_drawdown(nav_values)
 
 
 def _safe_return(ret: float | None) -> float | None:
@@ -178,13 +280,16 @@ def _find_shadow(db: Session, portfolio_id: int, shadow_type: str) -> Any | None
 
 def _actual_portfolio_metrics(
     snaps: list[Any],
-) -> tuple[float | None, float, float | None]:
+) -> tuple[float | None, float | None, float | None]:
     """Compute (total_return_pct, max_drawdown_pct, annualized_vol) for actual portfolio.
 
     Filters snapshots with zero/negative total_value before any arithmetic.
     Uses cash-flow-adjusted investment_return_pct for TWR when available.
     Falls back to raw daily_return_pct for volatility (historical rows).
     Falls back to first/last NAV for total return when no adjusted returns exist.
+    Max drawdown is taken from the same adjusted-return index as the TWR
+    (compute_owner_max_drawdown), never from raw NAV when adjusted returns
+    exist, so deposits/withdrawals cannot create or hide a drawdown.
     """
     # Filter out corrupted / missing NAV rows
     valid_snaps = [s for s in snaps if s.total_value and s.total_value > 0]
@@ -208,7 +313,7 @@ def _actual_portfolio_metrics(
 
     total_return = _compute_twr(adjusted) if adjusted else _compute_return_pct(values)
     volatility = _compute_daily_volatility(adjusted if adjusted else raw_daily)
-    max_dd = compute_max_drawdown(values)
+    max_dd = compute_owner_max_drawdown(adjusted, values)
 
     return total_return, max_dd, volatility
 

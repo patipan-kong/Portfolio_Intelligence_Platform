@@ -205,7 +205,9 @@ def evaluate_override(
 
     delta = _subtract(human_return, ai_return)
 
-    human_dd = _max_drawdown(portfolio_snaps)
+    # Owner portfolio: flow-adjusted index (Phase 4.20). AI shadow: paper
+    # portfolio without external cash flows, valued as before.
+    human_dd = _owner_max_drawdown(portfolio_snaps)
     ai_dd = _max_drawdown(shadow_snaps)
     saved_dd = _subtract(ai_dd, human_dd)  # positive = human avoided more drawdown
 
@@ -289,7 +291,38 @@ def _twr(snaps: list, return_field: str, fallback_field: str) -> float | None:
     return round((product - 1.0) * 100.0, 4)
 
 
+def _owner_max_drawdown(snaps: list) -> float | None:
+    """Owner-portfolio drawdown on the same cash-flow-adjusted index the
+    human_return TWR chains (investment_return_pct, else daily_return_pct),
+    so a withdrawal is not a loss and a deposit cannot hide one.
+
+    None both when the index never fell (existing "no drawdown" value) and
+    when a return observation is impossible (unavailable). Either way
+    saved_drawdown_pct becomes None and is left out of
+    total_saved_drawdown_pct, so unavailable evidence earns no credit; there
+    is no raw-NAV fallback for it. Raw total_value (_max_drawdown) is used
+    only for legacy windows with no return observation at all.
+    """
+    dated = sorted(
+        ((_snap_date(s), r) for s in snaps
+         if (r := _attr(s, "investment_return_pct") or _attr(s, "daily_return_pct")) is not None),
+        key=lambda t: t[0],
+    )
+    if not dated:
+        return _max_drawdown(snaps)
+
+    from services.analytics.attribution_engine import compute_return_index_drawdown
+
+    result = compute_return_index_drawdown(dated)
+    if result is None:
+        return None  # unavailable: never fall back to raw NAV
+    dd = result["max_drawdown_pct"]
+    return dd if dd > 0 else None
+
+
 def _max_drawdown(snaps: list) -> float | None:
+    """Raw total_value drawdown: AI shadow (no external flows) and the
+    owner-portfolio legacy fallback."""
     values = [
         float(v) for s in snaps
         if (v := _attr(s, "total_value")) is not None and float(v) > 0

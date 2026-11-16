@@ -15,7 +15,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from services.timing_periods import AllocationPeriod, build_allocation_periods
@@ -33,9 +33,17 @@ class PeriodPerformance(BaseModel):
     period_return_pct: Optional[float]       # portfolio TWR over the period
     benchmark_return_pct: Optional[float]    # benchmark price return over same window
     excess_return_pct: Optional[float]       # period_return_pct − benchmark_return_pct
-    max_drawdown_pct: Optional[float]        # peak-to-trough decline in total_value
+    max_drawdown_pct: Optional[float]        # peak-to-trough decline of the flow-adjusted return index
+                                             # (None: never fell, or unavailable if not return_evidence_valid)
 
     snapshot_count: int                      # portfolio snapshots found in window
+
+    # Internal only (Phase 4.20): False when the window holds an impossible
+    # return observation (non-numeric, non-finite or below -100%). The
+    # drawdown is then unavailable (None) rather than "never fell", and
+    # timing_score must not award return/drawdown bonuses on it. Excluded
+    # from serialization; the endpoints never emit it.
+    return_evidence_valid: bool = Field(default=True, exclude=True)
 
 
 # ── Top-level builder (loads DB data then delegates to pure evaluator) ────────
@@ -104,7 +112,8 @@ def evaluate_period_performance(
         period_return_pct    TWR chain of investment_return_pct (or daily_return_pct)
         benchmark_return_pct (end_price - start_price) / start_price * 100
         excess_return_pct    period_return_pct - benchmark_return_pct
-        max_drawdown_pct     largest peak-to-trough drawdown in total_value
+        max_drawdown_pct     largest peak-to-trough drawdown of the same
+                             cash-flow-adjusted return index (see _max_drawdown)
     """
     start_str = _date_str(period.start_date)
     end_str = _date_str(period.end_date) if period.end_date is not None else date.today().isoformat()
@@ -118,7 +127,7 @@ def evaluate_period_performance(
     period_return = _twr(window)
     benchmark_return = _benchmark_return(bench_map, start_str, end_str)
     excess = _subtract(period_return, benchmark_return)
-    drawdown = _max_drawdown(window)
+    drawdown, evidence_valid = _drawdown_evidence(window)
 
     return PeriodPerformance(
         recommendation_snapshot_id=period.recommendation_snapshot_id,
@@ -131,6 +140,7 @@ def evaluate_period_performance(
         excess_return_pct=excess,
         max_drawdown_pct=drawdown,
         snapshot_count=len(window),
+        return_evidence_valid=evidence_valid,
     )
 
 
@@ -177,7 +187,47 @@ def _benchmark_return(
 
 
 def _max_drawdown(snaps: list) -> float | None:
-    """Maximum peak-to-trough decline in total_value within a period."""
+    """Maximum peak-to-trough decline within a period (see _drawdown_evidence)."""
+    return _drawdown_evidence(snaps)[0]
+
+
+def _drawdown_evidence(snaps: list) -> tuple[float | None, bool]:
+    """(max_drawdown_pct, return_evidence_valid) for a period window.
+
+    The drawdown is measured on the same cash-flow-adjusted return index
+    _twr() chains (Phase 4.20): a withdrawal is not a loss and a deposit
+    cannot hide one. Three cases are kept apart:
+
+      valid returns     -> (dd, True); dd None when the index never fell
+                           (the existing "no drawdown" value, +15 in
+                           timing_score)
+      impossible return -> (None, False): drawdown unavailable. No raw-NAV
+                           fallback (it would reintroduce the cash-flow
+                           distortion) and callers must not read this None
+                           as "never fell".
+      no return at all  -> (raw total_value drawdown, True): legacy rows
+                           only, pre-4.20 behavior kept for compatibility.
+    """
+    dated = sorted(
+        ((_snap_date(s), r) for s in snaps
+         if (r := _attr(s, "investment_return_pct") or _attr(s, "daily_return_pct")) is not None),
+        key=lambda t: t[0],
+    )
+    if not dated:
+        return _raw_nav_max_drawdown(snaps), True
+
+    from services.analytics.attribution_engine import compute_return_index_drawdown
+
+    result = compute_return_index_drawdown(dated)
+    if result is None:
+        return None, False
+    dd = result["max_drawdown_pct"]
+    return (dd if dd > 0 else None), True
+
+
+def _raw_nav_max_drawdown(snaps: list) -> float | None:
+    """Pre-4.20 raw total_value drawdown (legacy windows without any return
+    observation only; never used for a window with an invalid return)."""
     values = [float(v) for s in snaps if (v := _attr(s, "total_value")) is not None and v > 0]
     if len(values) < 2:
         return None

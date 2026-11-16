@@ -181,8 +181,35 @@ def calculate_annualized_return(snapshots: list) -> float | None:
     return _r(((1.0 + twr) ** (365.25 / days) - 1.0) * 100.0, 2)
 
 
+def _dated_stored_returns(df: pd.DataFrame) -> list[tuple[int, float]] | None:
+    """(row position, return %) for exactly the observations _daily_returns
+    chains from stored returns, or None when _daily_returns would instead
+    fall back to total_value.pct_change() (fewer than 2 stored returns)."""
+    if "daily_return_pct" not in df.columns:
+        return None
+    stored = df["daily_return_pct"].dropna()
+    if len(stored) < 2:
+        return None
+    out: list[tuple[int, float]] = []
+    for pos, val in stored.items():
+        fval = float(val)
+        if math.isfinite(fval):
+            out.append((int(pos), fval))
+    return out
+
+
 def calculate_max_drawdown(snapshots: list) -> dict:
-    """Maximum peak-to-trough drawdown with peak/trough/recovery dates and duration."""
+    """Maximum peak-to-trough drawdown with peak/trough/recovery dates and duration.
+
+    Measured on the cash-flow-adjusted return index: the identical stored
+    returns _twr() chains for cumulative_return_pct, so deposits and
+    withdrawals can neither create nor hide a drawdown (Phase 4.20). The
+    index starts at 100 on the snapshot preceding the first chained return.
+    Only when _daily_returns itself falls back to raw NAV (legacy rows with
+    fewer than 2 stored returns) does this fall back to raw total_value too.
+    Response fields and their meaning are unchanged (dates, duration days;
+    max_drawdown_pct negative, None when there is no drawdown).
+    """
     _empty: dict = {
         "max_drawdown_pct": None,
         "peak_date": None,
@@ -194,6 +221,31 @@ def calculate_max_drawdown(snapshots: list) -> dict:
     if len(df) < 2:
         return _empty
 
+    dated = _dated_stored_returns(df)
+    if dated is not None:
+        from services.analytics.attribution_engine import compute_return_index_drawdown
+
+        if not dated:
+            return _empty
+        first_pos = dated[0][0]
+        base_date = str(df.iloc[first_pos - 1]["date"] if first_pos > 0 else df.iloc[0]["date"])
+        res = compute_return_index_drawdown(
+            [(str(df.iloc[pos]["date"]), r) for pos, r in dated], base_date=base_date,
+        )
+        if res is None or not res["max_drawdown_pct"]:
+            return _empty
+        end_for_duration = res["recovery_date"] or res["trough_date"]
+        return {
+            "max_drawdown_pct": _r(-res["max_drawdown_pct"], 2),
+            "peak_date": res["peak_date"],
+            "trough_date": res["trough_date"],
+            "recovery_date": res["recovery_date"],
+            "duration_days": (
+                datetime.fromisoformat(end_for_duration) - datetime.fromisoformat(res["peak_date"])
+            ).days,
+        }
+
+    # Legacy fallback (no stored returns): raw NAV, matching _daily_returns.
     values = df["total_value"].values
     dates = df["date"].values
 

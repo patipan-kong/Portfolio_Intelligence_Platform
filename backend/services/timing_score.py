@@ -39,8 +39,17 @@ class TimingScore(BaseModel):
 
 def calculate_timing_score(period: PeriodPerformance) -> TimingScore:
     """Return a deterministic 0-100 timing quality score for one period."""
-    excess_component = _excess_return_component(period.excess_return_pct)
-    drawdown_component = _drawdown_component(period.max_drawdown_pct)
+    if period.return_evidence_valid:
+        excess_component = _excess_return_component(period.excess_return_pct)
+        drawdown_component = _drawdown_component(period.max_drawdown_pct)
+    else:
+        # Phase 4.20: an impossible return observation makes the period's
+        # return and drawdown evidence unavailable. Score both neutrally
+        # (as a missing benchmark already is) instead of reading the
+        # unavailable drawdown (None) as "never fell" (+15) or a chained
+        # impossible return as excess return.
+        excess_component = 0.0
+        drawdown_component = 0.0
     duration_component = _duration_component(period.days_active)
 
     raw = 50.0 + excess_component + drawdown_component + duration_component
@@ -71,6 +80,8 @@ def _drawdown_component(max_drawdown_pct: float | None) -> float:
     """Tiered bonus/penalty based on peak-to-trough drawdown magnitude.
 
     None means the NAV never fell during the period → treat as ≤ 2% → +15.
+    An unavailable drawdown never reaches here: calculate_timing_score
+    scores it neutrally when period.return_evidence_valid is False.
     """
     if max_drawdown_pct is None:
         return 15.0
