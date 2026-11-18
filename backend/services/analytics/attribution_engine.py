@@ -561,6 +561,27 @@ def compute_portfolio_attribution(
         ai_model_drawdown = aid
         ai_model_volatility = aiv
 
+    # Phase 4.23: additive coverage report for the AI return, so a consumer can
+    # tell whether it spans the same boundaries as the owner's return. Read-only
+    # and separate from ai_model_shadow (whose figures are unchanged).
+    ai_coverage: dict[str, Any] = {
+        "window_covered": False, "first_valuation": None, "last_valuation": None,
+    }
+    if ai_shadow:
+        tol = _edge_tolerance_days(evaluation_window_days)
+        a_start = valid_actual[0].snapshot_date if valid_actual else cutoff
+        a_end = valid_actual[-1].snapshot_date if valid_actual else today
+        ai_valid = [s for s in ai_snaps if s.total_value and s.total_value > 0
+                    and s.snapshot_date <= a_end]
+        if ai_valid:
+            ai_coverage["first_valuation"] = ai_valid[0].snapshot_date
+            ai_coverage["last_valuation"] = ai_valid[-1].snapshot_date
+            ai_coverage["window_covered"] = (
+                len(ai_valid) >= 2
+                and abs(_days_between(a_start, ai_valid[0].snapshot_date)) <= tol
+                and _days_between(ai_valid[-1].snapshot_date, a_end) <= tol
+            )
+
     shadow_id_for_record = shadow_id_for_record or static_shadow_id
 
     # ── Derived metrics ────────────────────────────────────────────────────────
@@ -647,6 +668,7 @@ def compute_portfolio_attribution(
             "max_drawdown_pct": ai_model_drawdown,
             "annualized_volatility": ai_model_volatility,
         } if ai_shadow else None,
+        "ai_model_shadow_coverage": ai_coverage if ai_shadow else None,
         "avoided_drawdown_pct": avoided_drawdown,
         "regret_score": regret_score,
         "ai_outperformed": ai_outperformed,

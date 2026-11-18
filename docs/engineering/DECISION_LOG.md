@@ -4185,3 +4185,33 @@ Rules:
 3. Rows persisted on 2026-11-16 still show the raw-NAV owner drawdown (90D −27.49), which suggests the running backend predates Phase 4.20 (#89). Runtime/deployment version needs separate verification (not checked here).
 
 **Disposition:** `IMPLEMENTED` (uncommitted)
+
+## Shadow Performance Summary Integrity (Phase 4.23)
+
+**Problem:** `GET /analytics/shadow-performance` set `summary.static_frozen` to the newest-created STATIC_FROZEN shadow of either family. Recommendation-keyed shadows are created on every optimizer run, so the "frozen decision" card could show a shadow with no decision and no history. `ShadowPortfolioPanel` then mixed that shadow's since-inception return with a drawdown from the Phase 4.22 attribution shadow, and subtracted a since-inception return from a 30D actual return ("Divergence vs Actual"). `DecisionActionPanel` rendered missing alpha as "+0.00%" and treated a genuine 0.0% return as missing.
+
+**Two independent concepts (not forced onto one shadow):**
+- *Latest Frozen Decision* — the newest decision-keyed STATIC_FROZEN shadow. Return and alpha are that shadow's own since-inception figures.
+- *Historical Attribution (30D)* — the Phase 4.22 eligible decision shadow. Drawdown, avoided drawdown and divergence are comparison-window metrics. The Phase 4.22 selector is unchanged.
+
+**Selection rule (`summary.static_frozen`, `main.py`):** `execution_decision_id` present, active, same portfolio, ordered newest by `(inception_date, created_at, id)`. Recommendation-keyed shadows never qualify. If none exists, `static_frozen` is null. A shadow with fewer than 2 snapshots has `inception_return_pct`, `latest_alpha` and `latest_benchmark_return_pct` nulled in the summary item only; the `shadows[]` history rows are untouched.
+
+**Null vs zero:** the panels use explicit null checks. A real 0.0 return or alpha renders as `0.00%`; missing renders as `-` or nothing, never `+0.00%`. Alpha chips are labelled per shadow ("Frozen α", "AI α") instead of silently falling back from one to the other.
+
+**Divergence vs Actual:** computed only from the same `/attribution-summary` payload and window (`lib/shadowSummary.ts::windowedDivergence`). Static: only when `static_shadow_selection.status == "selected"` (edge coverage verified in Phase 4.22). AI: only when the ACTIVE_MODEL `inception_date <= period_start`. Otherwise `-`. No new return pipeline.
+
+**API compatibility:** additive only — `execution_decision_id` and `recommendation_snapshot_id` on each shadows item; TypeScript gains optional `static_shadow_selection` and those two fields. No schema change, migration or backfill.
+
+**Unchanged:** Phase 4.22 selector, ACTIVE_MODEL, Three Portfolios, waterfall, shadow creation/valuation/lifecycle, Horizon Grader, optimizer, scheduler.
+
+**Limitations (not fixed):**
+- `GET /analytics/attribution-summary` still upserts AttributionMetric on every read.
+- `GET /analytics/shadow-performance` can still re-trigger valuation for a corrupted (< -99%) shadow.
+- The AI divergence is "-" when ACTIVE_MODEL began inside the 30D window (strict by design).
+- The running backend must be restarted by the owner before real-UI validation.
+
+**Tests:** `tests/test_shadow_performance_summary_integrity.py` (9, synthetic SQLite) and `frontend/tests/ShadowPerformanceSummaryIntegrity.test.tsx` (11). Backend related suites 107 passed with 0 network attempts; frontend 93 passed across the new and existing panel suites.
+
+**AI divergence coverage (final check).** `inception_date <= period_start` does not prove the ACTIVE_MODEL valuations span the owner's window (gaps / stale end). `compute_portfolio_attribution` now also returns an additive `ai_model_shadow_coverage {window_covered, first_valuation, last_valuation}` (same edge tolerance as the 4.22 selector, anchored on the owner's first/last in-window snapshot; the selector and `ai_model_shadow` figures are unchanged). AI divergence shows "-" unless `window_covered` is true.
+
+**Disposition:** `IMPLEMENTED` (uncommitted)

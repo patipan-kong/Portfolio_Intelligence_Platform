@@ -3667,7 +3667,21 @@ export interface PortfolioAttributionResult {
   has_sufficient_history: boolean;
   actual: PortfolioMetrics;
   static_shadow: ShadowMetrics | null;
+  /** Phase 4.22: which decision shadow the 30D comparison used (additive). */
+  static_shadow_selection?: {
+    status: "selected" | "no_decision_shadow" | "no_eligible_shadow";
+    shadow_id: number | null;
+    inception_date: string | null;
+    first_valuation: string | null;
+    last_valuation: string | null;
+  };
   ai_model_shadow: ShadowMetrics | null;
+  /** Phase 4.23: whether the ACTIVE_MODEL valuations span the owner's window (additive). */
+  ai_model_shadow_coverage?: {
+    window_covered: boolean;
+    first_valuation: string | null;
+    last_valuation: string | null;
+  } | null;
   avoided_drawdown_pct: number | null;
   regret_score: number | null;
   ai_outperformed: boolean | null;
@@ -3962,6 +3976,9 @@ export interface ShadowSummaryItem {
   latest_alpha: number | null;
   latest_benchmark_return_pct: number | null;
   snapshot_count: number;
+  /** Phase 4.23 (additive): set for decision-keyed STATIC_FROZEN shadows. */
+  execution_decision_id?: number | null;
+  recommendation_snapshot_id?: number | null;
 }
 
 // AI Evaluation M6 — Three Portfolios (services/evaluation/ideal_series.py),
