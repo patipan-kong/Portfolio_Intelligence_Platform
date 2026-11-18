@@ -7,20 +7,7 @@ import {
   type ShadowPerformanceSummary,
   type AttributionSummaryResponse,
 } from "@/lib/api";
-
-/** Clamp to plausible return bounds — suppresses corrupted -100% values. */
-function safeReturn(v: number | null | undefined): number | null {
-  if (v == null) return null;
-  if (v <= -99.5 || v > 999) return null;
-  return v;
-}
-
-function fmtPct(v: number | null | undefined): string {
-  const safe = safeReturn(v);
-  if (safe == null) return "-";
-  const sign = safe > 0 ? "+" : "";
-  return `${sign}${safe.toFixed(2)}%`;
-}
+import { safeReturn, fmtPct, windowedDivergence } from "@/lib/shadowSummary";
 
 function pctClass(v: number | null | undefined): string {
   const safe = safeReturn(v);
@@ -103,19 +90,14 @@ export default function ShadowPortfolioPanel({ portfolioId }: { portfolioId: num
     safeReturn(aiModel.inception_return_pct) == null &&
     (aiModel.snapshot_count ?? 0) < 2;
 
-  const staticDivergence = useMemo(() => {
-    const sr = safeReturn(staticShadow?.inception_return_pct);
-    const ar = safeReturn(actual?.return_pct);
-    if (sr == null || ar == null) return null;
-    return sr - ar;
-  }, [staticShadow, actual]);
-
-  const aiDivergence = useMemo(() => {
-    const air = safeReturn(aiModel?.inception_return_pct);
-    const ar = safeReturn(actual?.return_pct);
-    if (air == null || ar == null) return null;
-    return air - ar;
-  }, [aiModel, actual]);
+  // Phase 4.23: divergence is a 30D-window comparison only (see
+  // windowedDivergence); never since-inception minus 30D.
+  const current = attribution?.current ?? null;
+  const staticDivergence = useMemo(() => windowedDivergence(current, "static"), [current]);
+  const aiDivergence = useMemo(
+    () => windowedDivergence(current, "ai", aiModel?.inception_date),
+    [current, aiModel],
+  );
 
   if (loading) {
     return (
@@ -148,35 +130,46 @@ export default function ShadowPortfolioPanel({ portfolioId }: { portfolioId: num
         <div className="border border-gray-200 rounded-lg p-4 bg-gray-50/50">
           <p className="text-xs uppercase tracking-wide text-gray-500">Static Shadow Portfolio</p>
           <p className="text-xs text-gray-400 mt-0.5">What if no rebalance happened?</p>
-          {staticIsNew ? (
-            <div className="mt-3 flex items-center gap-2">
+          <p className="text-[11px] font-medium text-gray-600 mt-3">
+            Latest Frozen Decision — since inception
+            {staticShadow?.inception_date ? ` (${staticShadow.inception_date})` : ""}
+          </p>
+          {staticShadow == null ? (
+            <p className="text-xs text-gray-400 mt-1">No execution decision has been frozen yet.</p>
+          ) : staticIsNew ? (
+            <div className="mt-1 flex items-center gap-2">
               <span className="inline-block w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
               <span className="text-xs text-blue-600">Tracking started — first valuation at 17:45 ICT</span>
             </div>
           ) : (
-            <div className="mt-3 space-y-2">
+            <div className="mt-1 space-y-2">
               <MetricRow
                 label="Cumulative Return"
-                value={fmtPct(staticShadow?.inception_return_pct)}
-                className={pctClass(staticShadow?.inception_return_pct)}
-              />
-              <MetricRow
-                label="Drawdown"
-                value={fmtPct(attribution?.current.static_shadow?.max_drawdown_pct ?? null)}
-                className="text-red-600"
+                value={fmtPct(staticShadow.inception_return_pct)}
+                className={pctClass(staticShadow.inception_return_pct)}
               />
               <MetricRow
                 label="Alpha"
-                value={fmtPct(staticShadow?.latest_alpha)}
-                className={pctClass(staticShadow?.latest_alpha)}
-              />
-              <MetricRow
-                label="Divergence vs Actual"
-                value={fmtPct(staticDivergence)}
-                className={pctClass(staticDivergence)}
+                value={fmtPct(staticShadow.latest_alpha)}
+                className={pctClass(staticShadow.latest_alpha)}
               />
             </div>
           )}
+          <p className="text-[11px] font-medium text-gray-600 mt-3">
+            Historical Attribution — {attribution?.current.evaluation_window_days ?? 30}D window
+          </p>
+          <div className="mt-1 space-y-2">
+            <MetricRow
+              label="Drawdown"
+              value={fmtPct(attribution?.current.static_shadow?.max_drawdown_pct ?? null)}
+              className="text-red-600"
+            />
+            <MetricRow
+              label="Divergence vs Actual"
+              value={fmtPct(staticDivergence)}
+              className={pctClass(staticDivergence)}
+            />
+          </div>
         </div>
 
         <div className="border border-gray-200 rounded-lg p-4 bg-blue-50/40">

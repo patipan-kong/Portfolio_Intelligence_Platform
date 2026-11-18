@@ -120,6 +120,16 @@ function GoalContextAtDecisionTime({ goalContext }: { goalContext: DecisionGoalC
   );
 }
 
+/** Alpha chip: missing alpha renders nothing — never "+0.00%". */
+function ShadowAlphaChip({ label, value }: { label: string; value: number | null | undefined }) {
+  if (value == null) return null;
+  return (
+    <div className="text-xs text-gray-400">
+      {label} {value >= 0 ? "+" : ""}{value.toFixed(2)}% vs benchmark
+    </div>
+  );
+}
+
 function ShadowReturnChip({ label, value }: { label: string; value: number | null }) {
   if (value === null) return null;
   const positive = value >= 0;
@@ -253,6 +263,8 @@ export function DecisionActionPanel({
     const badgeCls = DECISION_BADGE[existing.decision] ?? DECISION_BADGE.MANUAL_OVERRIDE;
     const staticShadow = shadowPerf?.summary?.static_frozen ?? null;
     const activeShadow = shadowPerf?.summary?.active_model ?? null;
+    const hasShadowReturn =
+      staticShadow?.inception_return_pct != null || activeShadow?.inception_return_pct != null;
     const trackingActive = shadowPerf?.has_shadows && shadowPerf.shadows.length > 0;
 
     return (
@@ -305,19 +317,15 @@ export function DecisionActionPanel({
                     </span>
                   )}
                 </div>
-                {(staticShadow?.inception_return_pct !== undefined || activeShadow?.inception_return_pct !== undefined) && (
+                {hasShadowReturn && (
                   <div className="flex gap-4 flex-wrap">
-                    <ShadowReturnChip label="Frozen" value={staticShadow?.inception_return_pct ?? null} />
+                    <ShadowReturnChip label="Latest frozen decision (since inception)" value={staticShadow?.inception_return_pct ?? null} />
                     <ShadowReturnChip label="AI Model" value={activeShadow?.inception_return_pct ?? null} />
-                    {(staticShadow?.latest_alpha !== undefined || activeShadow?.latest_alpha !== undefined) && (
-                      <div className="text-xs text-gray-400">
-                        α {(activeShadow?.latest_alpha ?? staticShadow?.latest_alpha ?? 0) >= 0 ? "+" : ""}
-                        {((activeShadow?.latest_alpha ?? staticShadow?.latest_alpha) ?? 0).toFixed(2)}% vs benchmark
-                      </div>
-                    )}
+                    <ShadowAlphaChip label="Frozen α" value={staticShadow?.latest_alpha} />
+                    <ShadowAlphaChip label="AI α" value={activeShadow?.latest_alpha} />
                   </div>
                 )}
-                {!staticShadow?.inception_return_pct && !activeShadow?.inception_return_pct && (
+                {!hasShadowReturn && (
                   <p className="text-xs text-gray-400">Performance data available after first daily valuation (17:45 ICT).</p>
                 )}
               </div>

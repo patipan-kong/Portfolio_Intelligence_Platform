@@ -8980,9 +8980,35 @@ async def get_shadow_performance_summary(
                 .filter_by(shadow_portfolio_id=s.id)
                 .count()
             ),
+            # Phase 4.23 (additive): shadow family identity.
+            "execution_decision_id": s.execution_decision_id,
+            "recommendation_snapshot_id": s.recommendation_snapshot_id,
         })
 
-    static = next((s for s in shadows if s["shadow_type"] == "STATIC_FROZEN"), None)
+    # Phase 4.23: summary.static_frozen is the LATEST FROZEN DECISION — the
+    # newest decision-keyed STATIC_FROZEN shadow — never a recommendation-keyed
+    # one (those are created on every optimizer run). Ordering is deterministic
+    # (inception_date, created_at, id). It reports that shadow's own
+    # since-inception figures; this is deliberately NOT the Phase 4.22
+    # historical-window selector used by Attribution.
+    decision_rows = [
+        s for s in rows
+        if s.shadow_type == "STATIC_FROZEN" and s.execution_decision_id is not None
+    ]
+    latest_decision = max(
+        decision_rows,
+        key=lambda s: (s.inception_date or "", s.created_at or datetime.min, s.id),
+        default=None,
+    )
+    static = None
+    if latest_decision is not None:
+        static = dict(next(x for x in shadows if x["shadow_id"] == latest_decision.id))
+        # A shadow with only its inception valuation has no performance yet;
+        # never present the creation-time 0.0 as a measured return/alpha.
+        if (static["snapshot_count"] or 0) < 2:
+            static["inception_return_pct"] = None
+            static["latest_alpha"] = None
+            static["latest_benchmark_return_pct"] = None
     active = next((s for s in shadows if s["shadow_type"] == "ACTIVE_MODEL"), None)
 
     return {
