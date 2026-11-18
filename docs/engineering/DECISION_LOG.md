@@ -4215,3 +4215,34 @@ Rules:
 **AI divergence coverage (final check).** `inception_date <= period_start` does not prove the ACTIVE_MODEL valuations span the owner's window (gaps / stale end). `compute_portfolio_attribution` now also returns an additive `ai_model_shadow_coverage {window_covered, first_valuation, last_valuation}` (same edge tolerance as the 4.22 selector, anchored on the owner's first/last in-window snapshot; the selector and `ai_model_shadow` figures are unchanged). AI divergence shows "-" unless `window_covered` is true.
 
 **Disposition:** `IMPLEMENTED` (uncommitted)
+
+
+## Opportunity Cost Measurement Integrity (Phase 4.24)
+
+**Problem:** Scorecard "Net Opportunity Cost" showed -105.3% (20 divergence calls). It was `Σ (owner TWR from decision date → today − RecommendationGrade.return_pct)`. Two defects: (1) the owner window ran decision date → today while the grade covers its own shadow window (snapshot/inception → H7/H30/H90 end), so the two sides measured different periods; (2) every decision's window ends today, so windows overlap and the same market move enters many rows — summing percentage-point deltas over overlapping windows is not a portfolio return (it can exceed -100%). No data corruption; a read-only audit and a synthetic reproduction (one -10% decline → -60 pp summed) established this.
+
+**Decision:** replace the headline with **Average Decision Return Difference** — a diagnostic mean, in percentage points.
+
+**Matched-horizon comparison (`services/evaluation/opportunity_cost.py`):**
+- Grade interval = the stored grade's own `window_start` / `window_end` (from `horizon_grader`; `grade_kind` is not assumed to mean N valid days). Stored grades are never modified; grade selection still uses the shared `_nearest_graded_horizon`.
+- Owner return = existing `_compute_twr` chained over `investment_return_pct` for snapshots in `(window_start, window_end]` only. Needs an owner observation at-or-before each boundary within the grader's own 5-day valuation-gap tolerance and an adjusted return on every chained row; deposits/withdrawals therefore do not contaminate it. A genuine 0.0% is valid.
+- `delta_pp = actual_return_pct − grade.return_pct`.
+- Decision executed after the grade window closed, missing/unparseable grade window, missing boundary observation, or missing adjusted returns → row `status="unavailable"` with an explicit `unavailable_reason`. No grade yet → `"maturing"`. Neither is ever counted as 0.
+
+**Aggregation:** `mean_decision_delta_pp = Σ delta_pp / evaluated_count` (valid matched comparisons only). Also returned: `divergence_count`, `evaluated_count`, `pending_count`, `unavailable_count` (`graded_count`/`maturing_count` kept as aliases). Null when no valid comparison. Each divergence decision is one observation, so two decisions on the same snapshot weigh that recommendation twice.
+
+**API compatibility:** additive. `net_opportunity_cost_pct` (and Scorecard `net_opportunity_cost.value_pct`) is retired — always `null` — rather than silently reinterpreted. Row fields keep their names (`counterfactual_delta_pct` is now matched-horizon pp); rows gain `window_start`, `window_end`, `unavailable_reason`. The metric feeds no grade or verdict (verified: Scorecard only passes it through); Belief/Execution/Outcome grades, Recommendation Accuracy, AI shadow return, Implementation Shortfall and Three Portfolios Gap A/B are unchanged.
+
+**UI:** Scorecard card and `/ai-analytics/opportunity-cost` show "Average decision return difference" in `pp` with the evaluated-of-total count, sign meaning, overlap caveat and "not portfolio return or money lost"; `—` when unavailable. The waterfall no longer shows a NET row. `GapAnnotation` / `EffectWaterfall` gained an optional `unit` prop (default `%`).
+
+**Why not portfolio-level opportunity cost:** decision windows overlap and each row prices the whole recommendation against the whole portfolio, not the symbol(s) diverged on. A true portfolio-level figure would need a counterfactual portfolio replay (Three Portfolios Gap B measures a different thing and is not reused).
+
+**Limitations (not fixed):** overlapping windows remain (the mean is a diagnostic, not additive); legacy snapshots without `investment_return_pct` are unavailable rather than estimated; decision-level, not per-symbol; the 5-day boundary tolerance can include a few pre-start days on sparse owner history.
+
+**Unchanged:** optimizer, scheduler, Horizon Grader, stored grades, shadow creation/valuation, Three Portfolios, attribution waterfall, STATIC_FROZEN selection. No schema change or migration.
+
+**Tests:** `tests/test_opportunity_cost.py` (20, synthetic in-memory SQLite) and one Scorecard payload test; `frontend/tests/OpportunityCostPage.test.tsx` (+2).
+
+**Disposition:** `IMPLEMENTED` (uncommitted)
+
+**Phase 4.24 final-review addendum (eligibility).** A grade window opens at the recommendation shadow's inception (the recommendation date), but a human decision can be recorded later. Pricing a late decision over that window would credit it with returns that accrued before it existed, so REJECTED / PARTIAL_EXECUTION / MANUAL_OVERRIDE rows are matched only when executed within 1 day of `window_start` (`_MAX_DECISION_DELAY_DAYS`); later ones are `unavailable` (`decision_delayed_after_window_start`), and decisions after `window_end` stay `decision_after_grade_window`. EXPIRED is exempt: it may be a system-generated lifecycle row (superseded or aged out), not an explicit human rejection, and records inaction that holds from the recommendation date, not a dated user action. Owner boundary tolerance now scales with the window (`max(1, min(5, days//10))`: H7=1, H30=3, H90+=5), consecutive owner observations may not be more than 5 days apart (`owner_observation_gap_in_window`), and the last chained observation must reach `window_end` within tolerance.

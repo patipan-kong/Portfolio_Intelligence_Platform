@@ -28,7 +28,12 @@ function ledger(overrides: Partial<OpportunityCostLedger> = {}): OpportunityCost
     period_days: 90,
     as_of: "2026-09-07T00:00:00Z",
     status: "ok",
-    net_opportunity_cost_pct: 1.25,
+    net_opportunity_cost_pct: null,
+    mean_decision_delta_pp: 1.25,
+    divergence_count: 1,
+    evaluated_count: 1,
+    pending_count: 0,
+    unavailable_count: 0,
     graded_count: 1,
     maturing_count: 0,
     rows: [{
@@ -94,7 +99,9 @@ describe("RAE-01: opportunity-cost decision target", () => {
     mockSearchParams = new URLSearchParams("decisionId=55");
     getOpportunityCost.mockResolvedValue(ledger({
       period_days: 365,
-      net_opportunity_cost_pct: null,
+      mean_decision_delta_pp: null,
+      evaluated_count: 0,
+      pending_count: 1,
       graded_count: 0,
       maturing_count: 1,
       rows: [{
@@ -136,5 +143,31 @@ describe("RAE-01: opportunity-cost decision target", () => {
 
     expect(await screen.findByText("This decision is not present in the current 365-day opportunity-cost evaluation window.")).toBeInTheDocument();
     expect(screen.queryByText(/no opportunity cost exists|no impact|not applicable/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("Phase 4.24: Average Decision Return Difference headline", () => {
+  test("shows the mean in pp with its denominator and non-additive disclosure, not a % sum", async () => {
+    getOpportunityCost.mockResolvedValue(ledger({
+      mean_decision_delta_pp: -5.25, evaluated_count: 4, divergence_count: 6, unavailable_count: 1, pending_count: 1,
+    }));
+
+    render(<OpportunityCostPage />);
+
+    expect(await screen.findByText("Average decision return difference (90D)")).toBeInTheDocument();
+    expect(screen.getByText("-5.25 pp*")).toBeInTheDocument();
+    expect(screen.getByText(/4 valid matched comparison\(s\) of 6 divergence call\(s\)/)).toBeInTheDocument();
+    expect(screen.getByText(/not a portfolio return and not money lost/)).toBeInTheDocument();
+    expect(screen.getByText(/1 divergence\(s\) have no valid matched comparison/)).toBeInTheDocument();
+    expect(screen.queryByText(/Net opportunity cost/)).not.toBeInTheDocument();
+  });
+
+  test("with no matched comparison shows an unavailable dash, never 0", async () => {
+    getOpportunityCost.mockResolvedValue(ledger({ mean_decision_delta_pp: null, evaluated_count: 0, graded_count: 0 }));
+
+    render(<OpportunityCostPage />);
+
+    expect(await screen.findByText(/no matched comparison yet/)).toBeInTheDocument();
+    expect(screen.queryByText(/0\.00 pp/)).not.toBeInTheDocument();
   });
 });

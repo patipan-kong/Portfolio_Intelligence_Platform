@@ -165,22 +165,31 @@ export default function OpportunityCostPage() {
       {!loading && data && data.status !== "cold_start" && (
         <>
           <div className="bg-white border border-gray-200 rounded-xl p-4">
-            <p className="text-sm text-gray-500">Net opportunity cost ({periodDays}D)</p>
-            {data.net_opportunity_cost_pct == null ? (
-              <p className="text-lg font-bold text-gray-400 italic mt-0.5">insufficient graded evidence yet</p>
+            <p className="text-sm text-gray-500">Average decision return difference ({periodDays}D)</p>
+            {data.mean_decision_delta_pp == null ? (
+              <p className="text-lg font-bold text-gray-400 italic mt-0.5">— no matched comparison yet</p>
             ) : (
               <p
                 className={`text-2xl font-bold tabular-nums italic mt-0.5 ${
-                  data.net_opportunity_cost_pct >= 0 ? "text-green-700" : "text-red-600"
+                  data.mean_decision_delta_pp >= 0 ? "text-green-700" : "text-red-600"
                 }`}
-                title="Counterfactual — not realized money."
+                title="Counterfactual diagnostic — not realized money."
               >
-                {data.net_opportunity_cost_pct >= 0 ? "+" : ""}
-                {data.net_opportunity_cost_pct.toFixed(2)}%*
+                {data.mean_decision_delta_pp >= 0 ? "+" : ""}
+                {data.mean_decision_delta_pp.toFixed(2)} pp*
               </p>
             )}
+            <p className="text-xs text-gray-500 mt-1">
+              Based on {data.evaluated_count ?? data.graded_count} valid matched comparison(s) of {data.divergence_count ?? data.rows.length} divergence call(s).
+              Negative: diverging decisions underperformed the AI counterfactual on average; positive: they outperformed it.
+              Each decision is compared with the AI over the same evaluation window. Windows may overlap, so this is a diagnostic average
+              in percentage points — not a portfolio return and not money lost.
+            </p>
             {data.maturing_count > 0 && (
               <p className="text-xs text-amber-600 mt-1">◐ {data.maturing_count} divergence(s) still maturing</p>
+            )}
+            {(data.unavailable_count ?? 0) > 0 && (
+              <p className="text-xs text-gray-500 mt-1">{data.unavailable_count} divergence(s) have no valid matched comparison (excluded, not counted as 0)</p>
             )}
           </div>
 
@@ -193,7 +202,7 @@ export default function OpportunityCostPage() {
             <div className="bg-white border border-gray-200 rounded-xl p-4">
               <h3 className="text-xs font-bold text-gray-700 uppercase tracking-wide mb-3">Waterfall</h3>
               <EffectWaterfall
-                net={data.net_opportunity_cost_pct}
+                unit=" pp"
                 rows={data.rows
                   .filter((r) => r.status === "graded" && r.counterfactual_delta_pct != null)
                   .map((r) => ({
@@ -205,9 +214,9 @@ export default function OpportunityCostPage() {
                   }))}
                 targetRowKey={targetRow?.status === "graded" ? targetRow.decision_id : null}
               />
-              {data.rows.some((r) => r.status === "maturing") && (
+              {data.rows.some((r) => r.status !== "graded") && (
                 <div className="mt-3 pt-3 border-t space-y-1">
-                  {data.rows.filter((r) => r.status === "maturing").map((r) => {
+                  {data.rows.filter((r) => r.status !== "graded").map((r) => {
                     const targeted = targetRow?.decision_id === r.decision_id;
                     return (
                       <div

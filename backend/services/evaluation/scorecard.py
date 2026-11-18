@@ -259,9 +259,17 @@ def _outcome_lens(
     else:
         ideal_return_pct = {"status": "unavailable", "reason": ideal.get("reason") or "insufficient_data"}
 
+    # Phase 4.24: `value_pct` (legacy overlapping-window sum) is retired and
+    # always None; the headline is mean_decision_delta_pp (percentage points,
+    # mean of matched-horizon per-decision deltas over evaluated_count).
     net_opportunity_cost = {
         "status": oc.get("status"),
-        "value_pct": oc.get("net_opportunity_cost_pct"),
+        "value_pct": None,
+        "mean_decision_delta_pp": oc.get("mean_decision_delta_pp"),
+        "divergence_count": oc.get("divergence_count"),
+        "evaluated_count": oc.get("evaluated_count"),
+        "pending_count": oc.get("pending_count"),
+        "unavailable_count": oc.get("unavailable_count"),
         "graded_count": oc.get("graded_count"),
         "maturing_count": oc.get("maturing_count"),
     }
@@ -389,7 +397,7 @@ def compute_scorecard(db: Session, portfolio_id: int, period_days: int = 90) -> 
                         "ideal_return_pct": {"status": "unavailable", "reason": "no_recommendation_snapshot_at_or_before_period"},
                         "benchmark_return_pct": None,
                         "win_rate": {"status": "insufficient_evidence", "n": 0, "hit_rate_pct": None, "ai_wins": 0, "human_wins": 0},
-                        "net_opportunity_cost": {"status": "cold_start", "value_pct": None, "graded_count": 0, "maturing_count": 0},
+                        "net_opportunity_cost": {"status": "cold_start", "value_pct": None, "mean_decision_delta_pp": None, "divergence_count": 0, "evaluated_count": 0, "pending_count": 0, "unavailable_count": 0, "graded_count": 0, "maturing_count": 0},
                         "max_drawdown_pct": {"actual": None, "ai_model": None, "ideal": None},
                         "regret_score": None},
             "verdict": {

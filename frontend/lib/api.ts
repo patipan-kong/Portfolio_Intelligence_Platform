@@ -4652,7 +4652,14 @@ export type IdealReturnField = UnavailableField | { status: "ok"; value_pct: num
 // services/evaluation/opportunity_cost.py instead of shipping unavailable.
 export interface NetOpportunityCostField {
   status: string;
+  /** @deprecated Phase 4.24: legacy overlapping-window sum, always null. Use mean_decision_delta_pp. */
   value_pct: number | null;
+  /** Average Decision Return Difference, in percentage points (mean over evaluated comparisons). */
+  mean_decision_delta_pp?: number | null;
+  divergence_count?: number | null;
+  evaluated_count?: number | null;
+  pending_count?: number | null;
+  unavailable_count?: number | null;
   graded_count: number | null;
   maturing_count: number | null;
 }
@@ -5124,8 +5131,11 @@ export interface OpportunityCostRow {
   override_type: string | null;
   original_symbol: string | null;
   replacement_symbol: string | null;
-  status: "graded" | "maturing";
+  status: "graded" | "maturing" | "unavailable";
   grade_kind: string | null;
+  window_start?: string | null;
+  window_end?: string | null;
+  unavailable_reason?: string | null;
   counterfactual_recommendation_return_pct: number | null;
   actual_return_pct: number | null;
   counterfactual_delta_pct: number | null;
@@ -5148,7 +5158,14 @@ export interface OpportunityCostLedger {
   period_days: number;
   as_of: string;
   status: "ok" | "cold_start";
+  /** @deprecated Phase 4.24: always null. Use mean_decision_delta_pp. */
   net_opportunity_cost_pct: number | null;
+  /** Average Decision Return Difference (pp): mean of matched-horizon per-decision deltas. Not a portfolio return. */
+  mean_decision_delta_pp?: number | null;
+  divergence_count?: number;
+  evaluated_count?: number;
+  pending_count?: number;
+  unavailable_count?: number;
   graded_count: number;
   maturing_count: number;
   rows: OpportunityCostRow[];

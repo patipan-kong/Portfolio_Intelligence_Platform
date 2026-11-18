@@ -29,15 +29,17 @@ export default function EffectWaterfall({
   netLabel = "NET",
   variant = "counterfactual",
   targetRowKey,
+  unit = "%",
 }: {
   rows: WaterfallRow[];
   net?: number | null;
   netLabel?: string;
   variant?: "counterfactual" | "realized";
   targetRowKey?: string | number | null;
+  unit?: string;
 }) {
   const isCounterfactual = variant === "counterfactual";
-  const suffix = isCounterfactual ? "%*" : "%";
+  const suffix = isCounterfactual ? `${unit}*` : unit;
   const valueStyle = isCounterfactual ? "italic" : "";
   const title = isCounterfactual
     ? "Counterfactual — not realized money."
