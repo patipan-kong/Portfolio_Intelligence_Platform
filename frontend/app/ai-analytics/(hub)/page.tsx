@@ -217,25 +217,29 @@ export default function ScorecardPage() {
               <Stat label="Benchmark" value={pct(data.outcome.benchmark_return_pct)} valueClass={pnlTone(data.outcome.benchmark_return_pct)} />
               <div className="pt-1 border-t">
                 <GapAnnotation
-                  label="Net opportunity cost"
+                  label="Average decision return difference"
+                  unit=" pp"
                   value={
-                    data.outcome.net_opportunity_cost.status === "ok" && data.outcome.net_opportunity_cost.graded_count
-                      ? data.outcome.net_opportunity_cost.value_pct
+                    data.outcome.net_opportunity_cost.status === "ok" && data.outcome.net_opportunity_cost.evaluated_count
+                      ? data.outcome.net_opportunity_cost.mean_decision_delta_pp ?? null
                       : null
                   }
                   unavailableReason={
                     data.outcome.net_opportunity_cost.status !== "ok"
                       ? "no decisions recorded yet"
-                      : !data.outcome.net_opportunity_cost.graded_count
-                      ? `maturing${data.outcome.net_opportunity_cost.maturing_count ? ` — ${data.outcome.net_opportunity_cost.maturing_count} pending` : ""}`
+                      : !data.outcome.net_opportunity_cost.evaluated_count
+                      ? `no matched comparison yet${data.outcome.net_opportunity_cost.pending_count ? ` — ${data.outcome.net_opportunity_cost.pending_count} pending` : ""}`
                       : undefined
                   }
                   interpretation={
-                    data.outcome.net_opportunity_cost.graded_count
-                      ? `of diverging from AI calls (n=${data.outcome.net_opportunity_cost.graded_count})`
+                    data.outcome.net_opportunity_cost.evaluated_count
+                      ? `per diverging decision vs the AI counterfactual (n=${data.outcome.net_opportunity_cost.evaluated_count} of ${data.outcome.net_opportunity_cost.divergence_count ?? data.outcome.net_opportunity_cost.evaluated_count} divergences)`
                       : undefined
                   }
                 />
+                <p className="text-[11px] text-gray-400 mt-0.5">
+                  Diagnostic average in percentage points; decision windows may overlap. Not portfolio return or money lost.
+                </p>
                 <Link href="/ai-analytics/opportunity-cost" className="text-[11px] text-blue-600 hover:underline mt-1 inline-block">
                   See every divergence priced →
                 </Link>

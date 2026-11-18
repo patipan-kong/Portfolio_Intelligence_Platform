@@ -12,12 +12,14 @@ export default function GapAnnotation({
   interpretation,
   unavailableReason,
   size = "sm",
+  unit = "%",
 }: {
   label: string;
   value?: number | null;
   interpretation?: string;
   unavailableReason?: string | null;
   size?: "sm" | "lg";
+  unit?: string;
 }) {
   if (size === "lg") {
     return (
@@ -29,7 +31,7 @@ export default function GapAnnotation({
           <>
             <p className={`text-2xl font-bold tabular-nums mt-0.5 ${value >= 0 ? "text-green-700" : "text-red-600"}`}>
               {value >= 0 ? "+" : ""}
-              {value.toFixed(1)}%
+              {value.toFixed(1)}{unit}
             </p>
             {interpretation && <p className="text-xs text-gray-500 mt-1">{interpretation}</p>}
           </>
@@ -52,7 +54,7 @@ export default function GapAnnotation({
       <span className="font-medium text-gray-600">{label}</span>{" "}
       <span className={`font-bold tabular-nums ${value >= 0 ? "text-green-700" : "text-red-600"}`}>
         {sign}
-        {value.toFixed(1)}%
+        {value.toFixed(1)}{unit}
       </span>
       {interpretation && <span className="text-gray-400 ml-1.5">{interpretation}</span>}
     </div>

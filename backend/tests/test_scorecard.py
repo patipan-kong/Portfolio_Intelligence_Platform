@@ -363,3 +363,20 @@ def test_verdict_compliance_wording_does_not_say_ai_portfolio(db, ws_portfolio):
     assert result["branch"] == "ai_ahead"
     assert "AI Portfolio" not in result["en"]
     assert "shadow account" in result["en"]
+
+
+def test_net_opportunity_cost_payload_is_matched_horizon_mean_and_feeds_no_grade(db, ws_portfolio):
+    """Phase 4.24: the lens exposes the mean-delta fields (pp), keeps the legacy
+    value_pct key as None, and the Belief/Execution/Outcome grades are
+    unaffected by the metric."""
+    ws, portfolio = ws_portfolio
+    _seed_snapshot(db, ws, portfolio)
+
+    result = compute_scorecard(db, portfolio.id, period_days=90)
+    noc = result["outcome"]["net_opportunity_cost"]
+
+    assert noc["value_pct"] is None                      # legacy sum retired
+    for key in ("mean_decision_delta_pp", "divergence_count", "evaluated_count",
+                "pending_count", "unavailable_count", "graded_count", "maturing_count"):
+        assert key in noc
+    assert noc["mean_decision_delta_pp"] is None         # no comparison -> null, not 0
