@@ -44,8 +44,26 @@ export function windowedDivergence(
   } else {
     if (!aiInceptionDate || aiInceptionDate > current.period_start) return null;
     if (current.ai_model_shadow_coverage?.window_covered !== true) return null;
+    // The AI return must also START and END on the owner's exact first/last
+    // in-window dates; missing metadata (older backend) is treated as
+    // unmatched, never assumed aligned.
+    if (current.ai_model_shadow_coverage?.return_start_matched !== true) return null;
+    if (current.ai_model_shadow_coverage?.return_end_matched !== true) return null;
     shadowReturn = current.ai_model_shadow?.return_pct;
   }
   const sr = safeReturn(shadowReturn);
   return sr == null ? null : sr - actual;
+}
+
+/**
+ * Historical-window AI drawdown, shown only when the backend proves the
+ * ACTIVE_MODEL valuations cover the owner's window. With 0–1 usable
+ * valuations the backend reports 0.0, which is not evidence of no drawdown.
+ */
+export function windowedAiDrawdown(
+  current: PortfolioAttributionResult | null | undefined,
+): number | null {
+  if (!current) return null;
+  if (current.ai_model_shadow_coverage?.window_covered !== true) return null;
+  return current.ai_model_shadow?.max_drawdown_pct ?? null;
 }

@@ -3681,6 +3681,12 @@ export interface PortfolioAttributionResult {
     window_covered: boolean;
     first_valuation: string | null;
     last_valuation: string | null;
+    /** Dates ai_model_shadow.return_pct actually starts/ends on (additive). */
+    return_start_date?: string | null;
+    return_end_date?: string | null;
+    /** True only when those dates equal the owner's first/last in-window snapshot dates exactly (additive). */
+    return_start_matched?: boolean;
+    return_end_matched?: boolean;
   } | null;
   avoided_drawdown_pct: number | null;
   regret_score: number | null;

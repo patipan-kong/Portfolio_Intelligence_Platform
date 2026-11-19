@@ -170,3 +170,63 @@ def test_ai_coverage_stale_end_and_absent(db, wp):
     ws2, p2 = _portfolio(db, "P2")
     _owner(db, ws2, p2, range(30, -1, -1), OWNER_30)
     assert compute_portfolio_attribution(db, p2.id, 30)["ai_model_shadow_coverage"] is None
+
+
+# ── Final polish: AI return end-date alignment (additive coverage fields) ──
+
+def test_ai_return_end_matches_owner_end(db, wp):
+    ws, p = wp
+    _owner(db, ws, p, range(30, -1, -1), OWNER_30)
+    _shadow(db, ws, p, 60, range(30, -1, -1), kind="active")
+    cov = compute_portfolio_attribution(db, p.id, 30)["ai_model_shadow_coverage"]
+    assert cov["window_covered"] is True
+    assert cov["return_end_matched"] is True
+    assert cov["return_start_matched"] is True
+    assert cov["return_end_date"] == cov["last_valuation"]
+
+
+def test_ai_return_running_past_owner_end_is_flagged(db, wp):
+    # Owner's last snapshot is 2 days ago (within the 5-day edge tolerance, so
+    # window_covered stays True) but the AI return chains valuations to today.
+    ws, p = wp
+    _owner(db, ws, p, range(30, 1, -1), OWNER_30)
+    _shadow(db, ws, p, 60, range(30, -1, -1), kind="active")
+    att = compute_portfolio_attribution(db, p.id, 30)
+    cov = att["ai_model_shadow_coverage"]
+    assert cov["window_covered"] is True
+    assert cov["return_end_matched"] is False
+    assert cov["return_end_date"] > cov["last_valuation"]
+    assert att["ai_model_shadow"]["return_pct"] is not None  # AI figures unchanged
+
+
+def test_ai_coverage_fields_without_valuations(db, wp):
+    ws, p = wp
+    _owner(db, ws, p, range(30, -1, -1), OWNER_30)
+    _shadow(db, ws, p, 60, [], kind="active")
+    att = compute_portfolio_attribution(db, p.id, 30)
+    cov = att["ai_model_shadow_coverage"]
+    assert cov["window_covered"] is False and cov["return_end_matched"] is False
+    assert cov["return_end_date"] is None
+    # The backend still reports 0.0 drawdown here; the UI must gate it on coverage.
+    assert att["ai_model_shadow"]["max_drawdown_pct"] == 0.0
+
+
+def test_ai_return_ending_three_days_early_is_not_matched(db, wp):
+    # Within window_covered's 5-day edge tolerance, but not the same end date.
+    ws, p = wp
+    _owner(db, ws, p, range(30, -1, -1), OWNER_30)
+    _shadow(db, ws, p, 60, range(30, 2, -1), kind="active")
+    cov = compute_portfolio_attribution(db, p.id, 30)["ai_model_shadow_coverage"]
+    assert cov["window_covered"] is True
+    assert cov["return_end_matched"] is False
+    assert cov["return_start_matched"] is True
+
+
+def test_ai_return_starting_late_within_tolerance_is_not_matched(db, wp):
+    ws, p = wp
+    _owner(db, ws, p, range(30, -1, -1), OWNER_30)
+    _shadow(db, ws, p, 60, range(28, -1, -1), kind="active")  # first in-window valuation 2 days late
+    cov = compute_portfolio_attribution(db, p.id, 30)["ai_model_shadow_coverage"]
+    assert cov["window_covered"] is True
+    assert cov["return_start_matched"] is False
+    assert cov["return_end_matched"] is True
