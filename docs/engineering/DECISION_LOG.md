@@ -4246,3 +4246,21 @@ Rules:
 **Disposition:** `IMPLEMENTED` (uncommitted)
 
 **Phase 4.24 final-review addendum (eligibility).** A grade window opens at the recommendation shadow's inception (the recommendation date), but a human decision can be recorded later. Pricing a late decision over that window would credit it with returns that accrued before it existed, so REJECTED / PARTIAL_EXECUTION / MANUAL_OVERRIDE rows are matched only when executed within 1 day of `window_start` (`_MAX_DECISION_DELAY_DAYS`); later ones are `unavailable` (`decision_delayed_after_window_start`), and decisions after `window_end` stay `decision_after_grade_window`. EXPIRED is exempt: it may be a system-generated lifecycle row (superseded or aged out), not an explicit human rejection, and records inaction that holds from the recommendation date, not a dated user action. Owner boundary tolerance now scales with the window (`max(1, min(5, days//10))`: H7=1, H30=3, H90+=5), consecutive owner observations may not be more than 5 days apart (`owner_observation_gap_in_window`), and the last chained observation must reach `window_end` within tolerance.
+
+---
+
+## Shadow Performance Final Integrity Polish (post-4.24)
+
+**Problem.** A read-only audit of the Phase 4.22–4.23 Shadow Portfolio panel found four presentation/evidence gaps: (1) the Static card's "Historical Attribution — 30D" figures can come from an older decision shadow than the "Latest Frozen Decision" shown above them (the 30D selector requires inception on or before the window start), but the shadow was not identified; (2) the AI card mixed since-inception Return/Alpha with 30D Drawdown/Divergence under one "since inception" subtitle; (3) `_shadow_portfolio_metrics` reports a 0.0 drawdown when the ACTIVE_MODEL has 0–1 in-window valuations, which the panel rendered as "0.00%"; (4) `ai_model_shadow.return_pct` chains every in-window AI valuation, so it can end after the owner's last in-window snapshot while `window_covered` (which only inspects valuations up to that snapshot) is still true.
+
+**Decision.**
+- Latest Frozen Decision and Historical Attribution are distinct selections and may be different shadows. The 30D section now names the selected shadow (`Decision shadow #id · frozen date`) from the existing `static_shadow_selection`, or states that no shadow exists / none covers the window.
+- AI since-inception (Return, Alpha, inception date) and 30D (Drawdown, Divergence) metrics are shown in separately labelled groups, matching the Static card.
+- Missing AI drawdown is not zero: the 30D AI drawdown is displayed only when `ai_model_shadow_coverage.window_covered === true` (same shadow, same window, same function); otherwise "-". A covered 0.0 drawdown still shows "0.00%".
+- Divergence requires exactly matched endpoints. `ai_model_shadow_coverage` gains additive `return_start_date`/`return_end_date` (the first/last AI valuations the AI return actually chains) and `return_start_matched`/`return_end_matched` (true only when those dates EQUAL the owner's first/last in-window snapshot dates). `window_covered`'s edge tolerance (5 days at 30D) is not enough on its own: an AI return ending 3 days before the owner's, or starting 2 days after, would otherwise pass. AI divergence requires `window_covered && return_start_matched && return_end_matched`; missing metadata is treated as unmatched.
+
+**Unchanged.** `ai_model_shadow.return_pct/max_drawdown_pct`, `regret_score`, static selection (`_select_static_shadow`), since-inception summary figures, shadow creation/valuation, schema. No backend query or endpoint added.
+
+**Limitations.** (a) AI divergence becomes "-" whenever the AI and owner first/last in-window dates differ (e.g. an owner snapshot job lagging by a day); the AI return is not re-bounded, since that would change the established AI return figure and `regret_score`. (b) Both returns chain the first in-window row's own daily return, which runs from each side's previous (pre-window) observation. Equal first dates therefore prove equal effective start dates only when both sides were also observed on the preceding day; with daily valuation this holds, but a pre-window gap on one side is not detected.
+
+**Disposition:** IMPLEMENTED (uncommitted, branch `fix/shadow-performance-final-integrity-polish`).

@@ -7,7 +7,7 @@ import {
   type ShadowPerformanceSummary,
   type AttributionSummaryResponse,
 } from "@/lib/api";
-import { safeReturn, fmtPct, windowedDivergence } from "@/lib/shadowSummary";
+import { safeReturn, fmtPct, windowedDivergence, windowedAiDrawdown } from "@/lib/shadowSummary";
 
 function pctClass(v: number | null | undefined): string {
   const safe = safeReturn(v);
@@ -93,6 +93,11 @@ export default function ShadowPortfolioPanel({ portfolioId }: { portfolioId: num
   // Phase 4.23: divergence is a 30D-window comparison only (see
   // windowedDivergence); never since-inception minus 30D.
   const current = attribution?.current ?? null;
+  const windowDays = current?.evaluation_window_days ?? 30;
+  // The 30D selector may pick an older decision shadow than the latest frozen
+  // decision shown above — identify it rather than assume they match.
+  const staticSelection = current?.static_shadow_selection ?? null;
+  const aiWindowDrawdown = windowedAiDrawdown(current);
   const staticDivergence = useMemo(() => windowedDivergence(current, "static"), [current]);
   const aiDivergence = useMemo(
     () => windowedDivergence(current, "ai", aiModel?.inception_date),
@@ -156,7 +161,16 @@ export default function ShadowPortfolioPanel({ portfolioId }: { portfolioId: num
             </div>
           )}
           <p className="text-[11px] font-medium text-gray-600 mt-3">
-            Historical Attribution — {attribution?.current.evaluation_window_days ?? 30}D window
+            Historical Attribution — {windowDays}D window
+          </p>
+          <p className="text-[11px] text-gray-400 mt-0.5" data-testid="static-window-shadow">
+            {staticSelection?.status === "selected"
+              ? `Decision shadow #${staticSelection.shadow_id}${
+                  staticSelection.inception_date ? ` · frozen ${staticSelection.inception_date}` : ""
+                }`
+              : staticSelection?.status === "no_decision_shadow"
+                ? "No frozen decision shadow exists for this window."
+                : `No frozen decision shadow covers the full ${windowDays}D window.`}
           </p>
           <div className="mt-1 space-y-2">
             <MetricRow
@@ -174,30 +188,38 @@ export default function ShadowPortfolioPanel({ portfolioId }: { portfolioId: num
 
         <div className="border border-gray-200 rounded-lg p-4 bg-blue-50/40">
           <p className="text-xs uppercase tracking-wide text-gray-500">AI Model Portfolio</p>
-          <p className="text-xs text-gray-400 mt-0.5">
-            Cumulative track record · since {aiModel?.inception_date ?? "—"}
+          <p className="text-xs text-gray-400 mt-0.5">Cumulative track record</p>
+          <p className="text-[11px] font-medium text-gray-600 mt-3">
+            AI Model — since inception
+            {aiModel?.inception_date ? ` (${aiModel.inception_date})` : ""}
           </p>
           {aiIsNew ? (
-            <div className="mt-3 flex items-center gap-2">
+            <div className="mt-1 flex items-center gap-2">
               <span className="inline-block w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
               <span className="text-xs text-blue-600">Tracking started — first valuation at 17:45 ICT</span>
             </div>
           ) : (
-          <div className="mt-3 space-y-2">
-            <MetricRow
-              label="Cumulative Return"
-              value={fmtPct(aiModel?.inception_return_pct)}
-              className={pctClass(aiModel?.inception_return_pct)}
-            />
+            <div className="mt-1 space-y-2">
+              <MetricRow
+                label="Cumulative Return"
+                value={fmtPct(aiModel?.inception_return_pct)}
+                className={pctClass(aiModel?.inception_return_pct)}
+              />
+              <MetricRow
+                label="Alpha"
+                value={fmtPct(aiModel?.latest_alpha)}
+                className={pctClass(aiModel?.latest_alpha)}
+              />
+            </div>
+          )}
+          <p className="text-[11px] font-medium text-gray-600 mt-3">
+            Historical Attribution — {windowDays}D window
+          </p>
+          <div className="mt-1 space-y-2">
             <MetricRow
               label="Drawdown"
-              value={fmtPct(attribution?.current.ai_model_shadow?.max_drawdown_pct ?? null)}
+              value={fmtPct(aiWindowDrawdown)}
               className="text-red-600"
-            />
-            <MetricRow
-              label="Alpha"
-              value={fmtPct(aiModel?.latest_alpha)}
-              className={pctClass(aiModel?.latest_alpha)}
             />
             <MetricRow
               label="Divergence vs Actual"
@@ -205,7 +227,6 @@ export default function ShadowPortfolioPanel({ portfolioId }: { portfolioId: num
               className={pctClass(aiDivergence)}
             />
           </div>
-          )}
         </div>
       </div>
     </section>

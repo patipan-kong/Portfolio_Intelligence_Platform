@@ -564,15 +564,27 @@ def compute_portfolio_attribution(
     # Phase 4.23: additive coverage report for the AI return, so a consumer can
     # tell whether it spans the same boundaries as the owner's return. Read-only
     # and separate from ai_model_shadow (whose figures are unchanged).
+    # return_start/end_* (additive, final polish): ai_model_shadow.return_pct
+    # chains EVERY in-window valuation, from its first to its last. It is only
+    # comparable with the owner's return when both chains begin and end on the
+    # SAME dates as the owner's first/last in-window snapshot — exact equality,
+    # not the edge tolerance window_covered uses.
     ai_coverage: dict[str, Any] = {
         "window_covered": False, "first_valuation": None, "last_valuation": None,
+        "return_start_date": None, "return_end_date": None,
+        "return_start_matched": False, "return_end_matched": False,
     }
     if ai_shadow:
         tol = _edge_tolerance_days(evaluation_window_days)
         a_start = valid_actual[0].snapshot_date if valid_actual else cutoff
         a_end = valid_actual[-1].snapshot_date if valid_actual else today
-        ai_valid = [s for s in ai_snaps if s.total_value and s.total_value > 0
-                    and s.snapshot_date <= a_end]
+        ai_all_valid = [s for s in ai_snaps if s.total_value and s.total_value > 0]
+        ai_valid = [s for s in ai_all_valid if s.snapshot_date <= a_end]
+        if ai_all_valid and valid_actual:
+            ai_coverage["return_start_date"] = ai_all_valid[0].snapshot_date
+            ai_coverage["return_end_date"] = ai_all_valid[-1].snapshot_date
+            ai_coverage["return_start_matched"] = ai_all_valid[0].snapshot_date == a_start
+            ai_coverage["return_end_matched"] = ai_all_valid[-1].snapshot_date == a_end
         if ai_valid:
             ai_coverage["first_valuation"] = ai_valid[0].snapshot_date
             ai_coverage["last_valuation"] = ai_valid[-1].snapshot_date
